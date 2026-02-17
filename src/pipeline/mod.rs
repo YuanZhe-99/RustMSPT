@@ -1,7 +1,7 @@
-pub mod forging;
-pub mod measurement;
-pub mod optimization;
-pub mod packing;
+pub mod forge;
+pub mod measure;
+pub mod optimize;
+pub mod pack;
 pub mod scale;
 
 use crate::error::Result;

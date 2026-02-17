@@ -18,7 +18,7 @@ use std::fs;
 use std::io::IsTerminal;
 use std::path::Path;
 
-pub struct PackingPipeline {
+pub struct PackPipeline {
     pub config: PackingConfig,
 }
 
@@ -389,7 +389,7 @@ fn min_distance_to_set(candidate: &Mesh, others: &[Mesh]) -> f64 {
     }
 }
 
-impl Pipeline for PackingPipeline {
+impl Pipeline for PackPipeline {
     fn run(&self) -> Result<()> {
         // Purpose: Execute particle packing until target VF or attempt limit is reached.
         // Inputs: packing configuration and STL source.

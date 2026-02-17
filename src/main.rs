@@ -2,10 +2,10 @@ use clap::{Parser, Subcommand};
 use rustmspt::config::{
     load_yaml, ForgingConfig, MeasurementConfig, OptimizationConfig, PackingConfig, ScaleConfig,
 };
-use rustmspt::pipeline::forging::ForgingPipeline;
-use rustmspt::pipeline::measurement::MeasurementPipeline;
-use rustmspt::pipeline::optimization::OptimizationPipeline;
-use rustmspt::pipeline::packing::PackingPipeline;
+use rustmspt::pipeline::forge::ForgePipeline;
+use rustmspt::pipeline::measure::MeasurePipeline;
+use rustmspt::pipeline::optimize::OptimizePipeline;
+use rustmspt::pipeline::pack::PackPipeline;
 use rustmspt::pipeline::scale::ScalePipeline;
 use rustmspt::pipeline::Pipeline;
 use std::path::{Path, PathBuf};
@@ -20,7 +20,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    Forging {
+    Forge {
         #[arg(long)]
         config: Option<PathBuf>,
         #[arg(long)]
@@ -28,7 +28,7 @@ enum Commands {
         #[arg(long)]
         output: Option<PathBuf>,
     },
-    Measurement {
+    Measure {
         #[arg(long)]
         config: Option<PathBuf>,
         #[arg(long)]
@@ -36,7 +36,7 @@ enum Commands {
         #[arg(long)]
         output: Option<PathBuf>,
     },
-    Optimization {
+    Optimize {
         #[arg(long)]
         config: Option<PathBuf>,
         #[arg(long)]
@@ -44,7 +44,7 @@ enum Commands {
         #[arg(long)]
         output: Option<PathBuf>,
     },
-    Packing {
+    Pack {
         #[arg(long)]
         config: Option<PathBuf>,
         #[arg(long)]
@@ -83,12 +83,12 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Forging {
+        Commands::Forge {
             config,
             input,
             output,
         } => {
-            let path = pick_config_path(config, "forging_config.yaml");
+            let path = pick_config_path(config, "forge_config.yaml");
             let mut conf: ForgingConfig = load_yaml(&path)?;
             if let Some(input) = input {
                 conf.forging.input_stl_path = input.to_string_lossy().to_string();
@@ -96,14 +96,14 @@ fn main() -> anyhow::Result<()> {
             if let Some(output) = output {
                 conf.forging.output_stl_path = Some(output.to_string_lossy().to_string());
             }
-            ForgingPipeline { config: conf }.run()?;
+            ForgePipeline { config: conf }.run()?;
         }
-        Commands::Measurement {
+        Commands::Measure {
             config,
             input,
             output,
         } => {
-            let path = pick_config_path(config, "measurement_config.yaml");
+            let path = pick_config_path(config, "measure_config.yaml");
             let mut conf: MeasurementConfig = load_yaml(&path)?;
             if let Some(input) = input {
                 conf.measurement.stl_path = input.to_string_lossy().to_string();
@@ -111,14 +111,14 @@ fn main() -> anyhow::Result<()> {
             if let Some(output) = output {
                 conf.measurement.output_path = output.to_string_lossy().to_string();
             }
-            MeasurementPipeline { config: conf }.run()?;
+            MeasurePipeline { config: conf }.run()?;
         }
-        Commands::Optimization {
+        Commands::Optimize {
             config,
             input,
             output,
         } => {
-            let path = pick_config_path(config, "optimization_config.yaml");
+            let path = pick_config_path(config, "optimize_config.yaml");
             let mut conf: OptimizationConfig = load_yaml(&path)?;
             if let Some(input) = input {
                 conf.input.stl_path = input.to_string_lossy().to_string();
@@ -126,14 +126,14 @@ fn main() -> anyhow::Result<()> {
             if let Some(output) = output {
                 conf.output.path = output.to_string_lossy().to_string();
             }
-            OptimizationPipeline { config: conf }.run()?;
+            OptimizePipeline { config: conf }.run()?;
         }
-        Commands::Packing {
+        Commands::Pack {
             config,
             input,
             output,
         } => {
-            let path = pick_config_path(config, "packing_config.yaml");
+            let path = pick_config_path(config, "pack_config.yaml");
             let mut conf: PackingConfig = load_yaml(&path)?;
             if let Some(input) = input {
                 conf.input.path = input.to_string_lossy().to_string();
@@ -141,7 +141,7 @@ fn main() -> anyhow::Result<()> {
             if let Some(output) = output {
                 conf.output.path = output.to_string_lossy().to_string();
             }
-            PackingPipeline { config: conf }.run()?;
+            PackPipeline { config: conf }.run()?;
         }
         Commands::Scale {
             config,

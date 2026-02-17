@@ -22,7 +22,7 @@ box:
 
 # Optimization parameters
 optimization:
-  max_iterations: 10 #1_000
+  max_iterations: 2_000
   initial_temperature: 0.1
   cooling_rate: 0.99
   
@@ -30,7 +30,7 @@ optimization:
   r_max: 10
   voxel_pitch: 1.0 # Larger pitch = faster but less accurate
   mc_method: 'monte_carlo' # 'monte_carlo' or 'exact'
-  mc_samples: 4_000 # Samples for Monte Carlo estimation
+  mc_samples: 8_000 # Samples for Monte Carlo estimation
   
   # Perturbation limits
   max_translation: 25.0

@@ -9,11 +9,11 @@ use crate::types::{BoundingBox, Mesh};
 use std::fs;
 use std::path::Path;
 
-pub struct MeasurementPipeline {
+pub struct MeasurePipeline {
     pub config: MeasurementConfig,
 }
 
-impl MeasurementPipeline {
+impl MeasurePipeline {
     /// Load one STL file, or merge all STL files from a directory.
     /// Input: path from config. Output: single mesh for measurement.
     fn load_input_mesh(&self, stl_path: &Path) -> Result<crate::types::Mesh> {
@@ -76,7 +76,7 @@ impl MeasurementPipeline {
     }
 }
 
-impl Pipeline for MeasurementPipeline {
+impl Pipeline for MeasurePipeline {
     fn run(&self) -> Result<()> {
         // Purpose: Execute measurement pipeline and write VF/S2 report.
         // Inputs: measurement config and STL input source.

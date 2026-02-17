@@ -26,10 +26,10 @@ Deliver correct, maintainable, and testable Rust code for RustMSPT pipelines and
 - `src/config.rs`: YAML models, deserializers, and config parsing helpers
 - `src/io.rs`: STL read/write
 - `src/geometry.rs`: mesh math, clipping, occupancy, S2 kernels
-- `src/pipeline/forging.rs`: forging simulation pipeline
-- `src/pipeline/measurement.rs`: VF/S2 measurement pipeline
-- `src/pipeline/optimization.rs`: structure optimization pipeline
-- `src/pipeline/packing.rs`: particle packing pipeline
+- `src/pipeline/forge.rs`: forging simulation pipeline
+- `src/pipeline/measure.rs`: VF/S2 measurement pipeline
+- `src/pipeline/optimize.rs`: structure optimization pipeline
+- `src/pipeline/pack.rs`: particle packing pipeline
 - `src/pipeline/scale.rs`: scaling pipeline
 - `tests/*.rs`: unit/integration/smoke tests
 

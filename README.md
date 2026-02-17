@@ -5,10 +5,10 @@ RustMSPT is a standalone Rust toolkit for STL-based microstructure processing.
 ## Features
 
 - End-to-end pipelines:
-  - `forging`
-  - `measurement`
-  - `optimization`
-  - `packing`
+  - `forge`
+  - `measure`
+  - `optimize`
+  - `pack`
   - `scale`
 - STL I/O:
   - Load ASCII and Binary STL (auto-detect)
@@ -50,8 +50,8 @@ cargo build --release
 Run binary directly:
 
 ```bash
-./target/release/rustmspt measurement
-./target/release/rustmspt packing --input data/input/particles.stl --output data/output/packed_result.stl
+./target/release/rustmspt measure
+./target/release/rustmspt pack --input data/input/particles.stl --output data/output/packed_result.stl
 ```
 
 ## CLI Usage
@@ -59,38 +59,38 @@ Run binary directly:
 Run with default config paths (`data/input/*.yaml`):
 
 ```bash
-cargo run -- forging
-cargo run -- measurement
-cargo run -- optimization
-cargo run -- packing
+cargo run -- forge
+cargo run -- measure
+cargo run -- optimize
+cargo run -- pack
 cargo run -- scale
 ```
 
 Override config path:
 
 ```bash
-cargo run -- measurement --config data/input/measurement_config.yaml
+cargo run -- measure --config data/input/measure_config.yaml
 ```
 
 Override input/output paths from CLI:
 
 ```bash
-cargo run -- packing --input data/input/particles.stl --output data/output/packed_result.stl
+cargo run -- pack --input data/input/particles.stl --output data/output/packed_result.stl
 ```
 
 ## Configuration
 
 Default config files:
 
-- `data/input/forging_config.yaml`
-- `data/input/measurement_config.yaml`
-- `data/input/optimization_config.yaml`
-- `data/input/packing_config.yaml`
+- `data/input/forge_config.yaml`
+- `data/input/measure_config.yaml`
+- `data/input/optimize_config.yaml`
+- `data/input/pack_config.yaml`
 - `data/input/scale_config.yaml`
 
 ### Measurement `mc_method`
 
-`data/input/measurement_config.yaml` supports:
+`data/input/measure_config.yaml` supports:
 
 - `monte_carlo`: Monte Carlo S2 estimation
 - `exact`: exact S2 using voxel occupancy correlation

@@ -9,11 +9,11 @@ use crate::pipeline::Pipeline;
 use crate::types::{BoundingBox, Vec3};
 use std::path::Path;
 
-pub struct ForgingPipeline {
+pub struct ForgePipeline {
     pub config: ForgingConfig,
 }
 
-impl ForgingPipeline {
+impl ForgePipeline {
     /// Load one STL file, or merge all STL files under a directory.
     /// Input: path from config. Output: one mesh used by forging.
     fn load_input_mesh(&self, input: &Path) -> Result<crate::types::Mesh> {
@@ -86,7 +86,7 @@ impl ForgingPipeline {
     }
 }
 
-impl Pipeline for ForgingPipeline {
+impl Pipeline for ForgePipeline {
     fn run(&self) -> Result<()> {
         // Purpose: Execute forging pipeline and write forged STL output.
         // Inputs: forging config and STL input path.

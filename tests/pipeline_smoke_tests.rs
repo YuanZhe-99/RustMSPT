@@ -6,10 +6,10 @@ use rustmspt::config::{
 };
 use rustmspt::geometry::box_mesh;
 use rustmspt::io::save_stl;
-use rustmspt::pipeline::forging::ForgingPipeline;
-use rustmspt::pipeline::measurement::MeasurementPipeline;
-use rustmspt::pipeline::optimization::OptimizationPipeline;
-use rustmspt::pipeline::packing::PackingPipeline;
+use rustmspt::pipeline::forge::ForgePipeline;
+use rustmspt::pipeline::measure::MeasurePipeline;
+use rustmspt::pipeline::optimize::OptimizePipeline;
+use rustmspt::pipeline::pack::PackPipeline;
 use rustmspt::pipeline::scale::ScalePipeline;
 use rustmspt::pipeline::Pipeline;
 use rustmspt::types::{BoundingBox, Vec3};
@@ -31,7 +31,7 @@ fn forging_pipeline_smoke() {
     let output = tmp.path().join("forged.stl");
     write_sample_mesh(&input);
 
-    let pipeline = ForgingPipeline {
+    let pipeline = ForgePipeline {
         config: ForgingConfig {
             forging: ForgingParams {
                 input_stl_path: input.to_string_lossy().to_string(),
@@ -56,7 +56,7 @@ fn measurement_pipeline_smoke() {
     let output = tmp.path().join("measurement.txt");
     write_sample_mesh(&input);
 
-    let pipeline = MeasurementPipeline {
+    let pipeline = MeasurePipeline {
         config: MeasurementConfig {
             measurement: MeasurementParams {
                 stl_path: input.to_string_lossy().to_string(),
@@ -110,7 +110,7 @@ fn packing_pipeline_smoke() {
     let output = tmp.path().join("packed.stl");
     write_sample_mesh(&input);
 
-    let pipeline = PackingPipeline {
+    let pipeline = PackPipeline {
         config: PackingConfig {
             input: InputPath {
                 path: input.to_string_lossy().to_string(),
@@ -148,7 +148,7 @@ fn optimization_pipeline_smoke() {
     let output = tmp.path().join("optimized.stl");
     write_sample_mesh(&input);
 
-    let pipeline = OptimizationPipeline {
+    let pipeline = OptimizePipeline {
         config: OptimizationConfig {
             input: InputStl {
                 stl_path: input.to_string_lossy().to_string(),

@@ -22,7 +22,7 @@ use std::io::IsTerminal;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-pub struct OptimizationPipeline {
+pub struct OptimizePipeline {
     pub config: OptimizationConfig,
 }
 
@@ -537,7 +537,7 @@ fn selective_prune_to_target_vf(
     );
 }
 
-impl Pipeline for OptimizationPipeline {
+impl Pipeline for OptimizePipeline {
     fn run(&self) -> Result<()> {
         // Purpose: Execute full optimization workflow (load, prune, anneal, save).
         // Inputs: optimization config and STL inputs.
