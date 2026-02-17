@@ -1,0 +1,8 @@
+measurement:
+  stl_path: "data/output/optimized_structure.stl"
+  stl_bounding_box: [0.0, 0.0, 0.0, 50.0, 50.0, 50.0] # Optional: [min_x, min_y, min_z, max_x, max_y, max_z]
+  r_max: 20
+  voxel_pitch: 1.0 # Larger pitch = faster but less accurate
+  mc_method: 'both' # 'monte_carlo' or 'exact' or 'both'
+  mc_samples: 40_000 # Samples for Monte Carlo estimation
+  output_path: "data/output/measured_s2.txt"

@@ -1,0 +1,11 @@
+input:
+  stl_path: "data/output/optimized_structure.stl" # Placeholder, update actual path
+
+output:
+  stl_path: "data/output/scaled_mesh.stl"
+
+scaling:
+  # Options: "mm_per_voxel", "voxel_per_mm", "factor"
+  type: "voxel_per_mm" 
+  # Value corresponding to the type
+  value: 37.5

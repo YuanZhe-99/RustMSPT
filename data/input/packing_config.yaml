@@ -1,0 +1,41 @@
+# config.yaml
+
+# Input settings
+input:
+  # Path to a single STL or a folder of STLs
+  path: "data/input/particles.stl" 
+
+# Output settings
+output:
+  path: "data/output/packed_result.stl"
+
+# Box dimensions (The container)
+box:
+  dimensions: [50.0, 50.0, 50.0] # X, Y, Z size
+
+# Packing algorithm settings
+packing:
+  # Target Volume Fraction (0.0 to 1.0). E.g., 0.3 means 30% filled.
+  target_volume_fraction: 0.1
+  
+  # Mode 1: Strict (No boundary crossing)
+  # Mode 2: Loose (Boundary crossing allowed, ignore walls)
+  # Mode 3: Periodic (Boundary crossing allowed + Periodic collision checks)
+  mode: 2
+  
+  # Max attempts to place a particle before giving up (prevents infinite loops)
+  max_attempts: 2000
+
+  # Constraint: Minimum distance between particles (0.0 to allow touching)
+  min_neighbor_distance: 1.0
+
+  # d_1: Distance for fully internal particles
+  min_boundary_dist: 1.5
+  # d_2: Minimum protrusion/retention depth for crossing particles
+  min_cross_boundary_depth: 3.0
+
+  # Geometry Filters (Particles failing these are discarded BEFORE packing)
+  filters:
+    min_volume: 15.0
+    max_aspect_ratio: 3.0    # Longest side / Shortest side
+    max_sharpness_ratio: 2.0  # (Area^3) / (36*pi*Volume^2). Sphere=1.0. Higher = Sharper/Irregular.

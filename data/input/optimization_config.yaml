@@ -1,0 +1,63 @@
+# optimization_config.yaml
+
+# Input source
+input:
+  stl_path: "data/output/packed_result.stl" # Or single STL
+
+# Target definition
+target:
+  # Type: 'manual_array' or 'reference_stl'
+  type: 'manual_array' 
+  
+  # If type is 'manual_array', provide 11 floats (r=0 to 10)
+  # Example: [0.3, 0.25, 0.15, 0.12, 0.10, 0.09, 0.09, 0.09, 0.09, 0.09, 0.09]
+  s2_array: [0.063074, 0.051980, 0.041610, 0.034790, 0.027570, 0.022830, 0.017730, 0.014000, 0.010800, 0.008240, 0.006440]
+  # If type is 'reference_stl', provide path
+  stl_path: "data/input/particles.stl"
+  stl_bounding_box: [] # Optional: [min_x, min_y, min_z, max_x, max_y, max_z]
+
+# Box dimensions
+box:
+  dimensions: [50.0, 50.0, 50.0]
+
+# Optimization parameters
+optimization:
+  max_iterations: 10 #1_000
+  initial_temperature: 0.1
+  cooling_rate: 0.99
+  
+  # 2PCF Calculation settings
+  r_max: 10
+  voxel_pitch: 1.0 # Larger pitch = faster but less accurate
+  mc_method: 'monte_carlo' # 'monte_carlo' or 'exact'
+  mc_samples: 4_000 # Samples for Monte Carlo estimation
+  
+  # Perturbation limits
+  max_translation: 25.0
+  max_rotation_deg: 30.0
+
+  # Min neighbor distance
+  min_neighbor_distance: 1.0
+
+  # Mode 1: Strict, Mode 2: Loose, Mode 3: Periodic
+  mode: 2 
+  
+  # d_1: Minimum distance for fully internal particles
+  min_boundary_dist: 1.5
+  
+  # d_2: Minimum protrusion/retention depth for crossing particles
+  min_cross_boundary_depth: 3.0
+
+  # Pre-optimization selective pruning stage
+  # This stage removes particles to bring VF close to target_s2[0] before annealing.
+  prune_enabled: true
+  prune_tolerance: 0.01
+  prune_max_rounds: 120
+  prune_eval_samples: 1000
+
+  # CPU worker limit for optimization and S2 computation
+  # -1 means no limit (use all available cores)
+  cpu_max: -1
+  
+output:
+  path: "data/output/optimized_structure.stl"
