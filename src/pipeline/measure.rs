@@ -108,7 +108,11 @@ impl Pipeline for MeasurePipeline {
         );
 
         let size = bbox.size();
-        let pitch = params.voxel_pitch.max(1e-9);
+        let pitch = if params.voxel_pitch <= 0.0 {
+            1.0
+        } else {
+            params.voxel_pitch
+        };
         let nx = (size.x / pitch).ceil().max(1.0) as u64;
         let ny = (size.y / pitch).ceil().max(1.0) as u64;
         let nz = (size.z / pitch).ceil().max(1.0) as u64;

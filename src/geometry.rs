@@ -1266,18 +1266,17 @@ fn build_bbox_occupancy(mesh: &Mesh, bbox: BoundingBox, voxel_pitch: f64) -> (Ve
     (occ, [nx, ny, nz])
 }
 
-fn shell_offsets_for_r(r: usize) -> Vec<[isize; 3]> {
-    // Purpose: Enumerate integer offsets near shell radius r.
-    // Inputs: shell radius index.
+fn shell_offsets_for_distance(distance_vox: f64, half_width_vox: f64) -> Vec<[isize; 3]> {
+    // Purpose: Enumerate integer offsets near a voxel-space shell distance.
+    // Inputs: shell center distance and half-width in voxel units.
     // Outputs: voxel offset vectors.
-    if r == 0 {
+    if distance_vox <= 1e-12 {
         return vec![[0, 0, 0]];
     }
 
-    let rr = r as f64;
-    let low2 = (rr - 0.5).max(0.0).powi(2);
-    let high2 = (rr + 0.5).powi(2);
-    let lim = (rr + 1.5).ceil() as isize;
+    let low2 = (distance_vox - half_width_vox).max(0.0).powi(2);
+    let high2 = (distance_vox + half_width_vox).powi(2);
+    let lim = (distance_vox + half_width_vox + 1.0).ceil() as isize;
     let mut offsets = Vec::new();
 
     for dx in -lim..=lim {
@@ -1294,10 +1293,120 @@ fn shell_offsets_for_r(r: usize) -> Vec<[isize; 3]> {
         }
     }
 
-    if offsets.is_empty() {
-        offsets.push([r as isize, 0, 0]);
-    }
     offsets
+}
+
+fn fill_missing_s2_with_smooth_interpolation(values: &mut [f64], has_support: &[bool], vf: f64) {
+    // Purpose: Smoothly fill unsupported S2 radii using known points.
+    // Inputs: mutable S2 values, support flags per radius, and S2(0)=VF.
+    // Outputs: in-place interpolation for unsupported interior radii.
+    if values.is_empty() || values.len() != has_support.len() {
+        return;
+    }
+
+    values[0] = vf;
+
+    let mut x_known: Vec<usize> = Vec::new();
+    let mut y_known: Vec<f64> = Vec::new();
+    for i in 0..values.len() {
+        if i == 0 || has_support[i] {
+            x_known.push(i);
+            y_known.push(values[i]);
+        }
+    }
+
+    if x_known.len() < 2 {
+        return;
+    }
+
+    if x_known.len() == 2 {
+        let xl = x_known[0];
+        let xr = x_known[1];
+        if xr <= xl + 1 {
+            return;
+        }
+        let yl = y_known[0];
+        let yr = y_known[1];
+        let width = (xr - xl) as f64;
+        for i in (xl + 1)..xr {
+            if has_support[i] {
+                continue;
+            }
+            let t = (i - xl) as f64 / width;
+            let s = t * t * (3.0 - 2.0 * t);
+            values[i] = (yl + (yr - yl) * s).clamp(0.0, 1.0);
+        }
+        return;
+    }
+
+    let m = x_known.len();
+    let xs: Vec<f64> = x_known.iter().map(|&x| x as f64).collect();
+    let ys = y_known;
+
+    let mut h = vec![0.0f64; m - 1];
+    for i in 0..(m - 1) {
+        h[i] = (xs[i + 1] - xs[i]).max(1e-12);
+    }
+
+    let mut a = vec![0.0f64; m];
+    let mut b = vec![0.0f64; m];
+    let mut c = vec![0.0f64; m];
+    let mut d = vec![0.0f64; m];
+
+    b[0] = 1.0;
+    b[m - 1] = 1.0;
+    for i in 1..(m - 1) {
+        a[i] = h[i - 1];
+        b[i] = 2.0 * (h[i - 1] + h[i]);
+        c[i] = h[i];
+        d[i] = 6.0 * ((ys[i + 1] - ys[i]) / h[i] - (ys[i] - ys[i - 1]) / h[i - 1]);
+    }
+
+    for i in 1..m {
+        let denom = if b[i - 1].abs() < 1e-12 { 1e-12 } else { b[i - 1] };
+        let w = a[i] / denom;
+        b[i] -= w * c[i - 1];
+        d[i] -= w * d[i - 1];
+    }
+
+    let mut m2 = vec![0.0f64; m];
+    let last_denom = if b[m - 1].abs() < 1e-12 { 1e-12 } else { b[m - 1] };
+    m2[m - 1] = d[m - 1] / last_denom;
+    for i in (0..(m - 1)).rev() {
+        let denom = if b[i].abs() < 1e-12 { 1e-12 } else { b[i] };
+        m2[i] = (d[i] - c[i] * m2[i + 1]) / denom;
+    }
+
+    for seg in 0..(m - 1) {
+        let xl = x_known[seg];
+        let xr = x_known[seg + 1];
+        if xr <= xl + 1 {
+            continue;
+        }
+
+        let x0 = xs[seg];
+        let x1 = xs[seg + 1];
+        let y0 = ys[seg];
+        let y1 = ys[seg + 1];
+        let hseg = (x1 - x0).max(1e-12);
+        let m20 = m2[seg];
+        let m21 = m2[seg + 1];
+
+        for i in (xl + 1)..xr {
+            if has_support[i] {
+                continue;
+            }
+            let x = i as f64;
+            let acoef = (x1 - x) / hseg;
+            let bcoef = (x - x0) / hseg;
+            let y = acoef * y0
+                + bcoef * y1
+                + ((acoef * acoef * acoef - acoef) * m20
+                    + (bcoef * bcoef * bcoef - bcoef) * m21)
+                    * (hseg * hseg / 6.0);
+            values[i] = y.clamp(0.0, 1.0);
+        }
+    }
 }
 
 fn fft_index_3d(x: usize, y: usize, z: usize, ny: usize, nz: usize) -> usize {
@@ -1394,19 +1503,30 @@ fn autocorrelation_counts_fft(occ: &[bool], nx: usize, ny: usize, nz: usize) -> 
     (corr, [fx, fy, fz])
 }
 
-fn calculate_s2_exact_direct(occ: &[bool], nx: usize, ny: usize, nz: usize, r_max: usize, vf: f64) -> Vec<f64> {
+fn calculate_s2_exact_direct(
+    occ: &[bool],
+    nx: usize,
+    ny: usize,
+    nz: usize,
+    r_max: usize,
+    voxel_pitch: f64,
+    vf: f64,
+) -> Vec<f64> {
     // Purpose: Compute exact S2 by direct offset pair enumeration.
     // Inputs: occupancy grid, dimensions, max radius, VF at r=0.
     // Outputs: S2 values for r=0..r_max.
-    let mut out: Vec<f64> = (0..=r_max)
+    let results: Vec<(f64, bool)> = (0..=r_max)
         .into_par_iter()
         .map(|r| {
             if r == 0 {
-                return vf;
+                return (vf, true);
             }
 
-            let offsets = shell_offsets_for_r(r);
+            let r_vox = r as f64 / voxel_pitch;
+            let half_width_vox = 0.5 / voxel_pitch;
+            let offsets = shell_offsets_for_distance(r_vox, half_width_vox);
             let mut shell_sum = 0.0;
+            let mut used_offsets = 0usize;
 
             for off in &offsets {
                 let dx = off[0];
@@ -1447,21 +1567,38 @@ fn calculate_s2_exact_direct(occ: &[bool], nx: usize, ny: usize, nz: usize, r_ma
 
                 if valid_pairs > 0 {
                     shell_sum += hit_pairs as f64 / valid_pairs as f64;
+                    used_offsets += 1;
                 }
             }
 
-            if offsets.is_empty() {
-                0.0
+            if used_offsets == 0 {
+                (0.0, false)
             } else {
-                shell_sum / offsets.len() as f64
+                (shell_sum / used_offsets as f64, true)
             }
         })
         .collect();
+
+    let mut out = vec![0.0; r_max + 1];
+    let mut has_support = vec![false; r_max + 1];
+    for (r, (value, supported)) in results.into_iter().enumerate() {
+        out[r] = value;
+        has_support[r] = supported;
+    }
+    fill_missing_s2_with_smooth_interpolation(&mut out, &has_support, vf);
     out[0] = vf;
     out
 }
 
-fn calculate_s2_exact_fft(occ: &[bool], nx: usize, ny: usize, nz: usize, r_max: usize, vf: f64) -> Vec<f64> {
+fn calculate_s2_exact_fft(
+    occ: &[bool],
+    nx: usize,
+    ny: usize,
+    nz: usize,
+    r_max: usize,
+    voxel_pitch: f64,
+    vf: f64,
+) -> Vec<f64> {
     // Purpose: Compute exact S2 using FFT-based autocorrelation.
     // Inputs: occupancy grid, dimensions, max radius, VF at r=0.
     // Outputs: S2 values for r=0..r_max.
@@ -1475,14 +1612,16 @@ fn calculate_s2_exact_fft(occ: &[bool], nx: usize, ny: usize, nz: usize, r_max: 
         corr[fft_index_3d(ix, iy, iz, fy, fz)]
     };
 
-    let mut out: Vec<f64> = (0..=r_max)
+    let results: Vec<(f64, bool)> = (0..=r_max)
         .into_par_iter()
         .map(|r| {
             if r == 0 {
-                return vf;
+                return (vf, true);
             }
 
-            let offsets = shell_offsets_for_r(r);
+            let r_vox = r as f64 / voxel_pitch;
+            let half_width_vox = 0.5 / voxel_pitch;
+            let offsets = shell_offsets_for_distance(r_vox, half_width_vox);
             let mut shell_sum = 0.0;
             let mut used = 0usize;
 
@@ -1509,9 +1648,89 @@ fn calculate_s2_exact_fft(occ: &[bool], nx: usize, ny: usize, nz: usize, r_max: 
             }
 
             if used == 0 {
+                (0.0, false)
+            } else {
+                (shell_sum / used as f64, true)
+            }
+        })
+        .collect();
+
+    let mut out = vec![0.0; r_max + 1];
+    let mut has_support = vec![false; r_max + 1];
+    for (r, (value, supported)) in results.into_iter().enumerate() {
+        out[r] = value;
+        has_support[r] = supported;
+    }
+    fill_missing_s2_with_smooth_interpolation(&mut out, &has_support, vf);
+    out[0] = vf;
+    out
+}
+
+fn calculate_s2_monte_carlo_mesh(
+    mesh: &Mesh,
+    bbox: BoundingBox,
+    r_max: usize,
+    samples: usize,
+) -> Vec<f64> {
+    // Purpose: Compute S2 with direct mesh point-inclusion Monte Carlo at real distances.
+    // Inputs: mesh, bbox, max real distance, and MC samples per radius.
+    // Outputs: S2 values for r=0..r_max.
+    let vf = volume_fraction_in_bbox(mesh, bbox);
+    let mc_samples = samples.max(200);
+    let min = bbox.min;
+    let max = bbox.max;
+
+    let mut out: Vec<f64> = (0..=r_max)
+        .into_par_iter()
+        .map(|r| {
+            if r == 0 {
+                return vf;
+            }
+
+            let rr = r as f64;
+            let mut valid = 0usize;
+            let mut hits = 0usize;
+            let mut rng = rand::thread_rng();
+
+            for _ in 0..mc_samples {
+                let p = Vec3::new(
+                    rng.gen_range(min.x..max.x),
+                    rng.gen_range(min.y..max.y),
+                    rng.gen_range(min.z..max.z),
+                );
+
+                let dir = loop {
+                    let x = rng.gen_range(-1.0f64..1.0f64);
+                    let y = rng.gen_range(-1.0f64..1.0f64);
+                    let z = rng.gen_range(-1.0f64..1.0f64);
+                    let n2: f64 = x * x + y * y + z * z;
+                    if n2 > 1e-12 && n2 <= 1.0 {
+                        let inv = 1.0 / n2.sqrt();
+                        break Vec3::new(x * inv, y * inv, z * inv);
+                    }
+                };
+
+                let q = p.add(dir.scale(rr));
+                if q.x < min.x
+                    || q.x > max.x
+                    || q.y < min.y
+                    || q.y > max.y
+                    || q.z < min.z
+                    || q.z > max.z
+                {
+                    continue;
+                }
+
+                valid += 1;
+                if point_inside_mesh(mesh, p) && point_inside_mesh(mesh, q) {
+                    hits += 1;
+                }
+            }
+
+            if valid == 0 {
                 0.0
             } else {
-                shell_sum / used as f64
+                hits as f64 / valid as f64
             }
         })
         .collect();
@@ -1530,7 +1749,20 @@ pub fn calculate_s2(
     // Purpose: Compute S2 by configured method (exact or monte_carlo).
     // Inputs: mesh, bbox, r_max, voxel pitch, method name, sample count.
     // Outputs: S2 values indexed by radius.
-    let (occ, dims) = build_bbox_occupancy(mesh, bbox, voxel_pitch.max(1e-9));
+    if method != "exact" && voxel_pitch <= 0.0 {
+        return calculate_s2_monte_carlo_mesh(mesh, bbox, r_max, samples);
+    }
+
+    let effective_pitch = if voxel_pitch <= 0.0 {
+        println!(
+            "[Warning] exact S2 requested with voxel_pitch <= 0; falling back to voxel_pitch=1.0"
+        );
+        1.0
+    } else {
+        voxel_pitch
+    };
+
+    let (occ, dims) = build_bbox_occupancy(mesh, bbox, effective_pitch.max(1e-9));
     let [nx, ny, nz] = dims;
     let total_vox = (nx * ny * nz).max(1);
     let occupied_count = occ.iter().filter(|&&v| v).count();
@@ -1549,22 +1781,29 @@ pub fn calculate_s2(
             let max_fft_cells = 24_000_000usize;
 
             if fft_cells > max_fft_cells {
-                calculate_s2_exact_direct(&occ, nx, ny, nz, r_max, vf)
+                calculate_s2_exact_direct(&occ, nx, ny, nz, r_max, effective_pitch.max(1e-9), vf)
             } else {
-                calculate_s2_exact_fft(&occ, nx, ny, nz, r_max, vf)
+                calculate_s2_exact_fft(&occ, nx, ny, nz, r_max, effective_pitch.max(1e-9), vf)
             }
         }
         _ => {
             let mc_samples = samples.max(200);
-            let shells: Vec<Vec<[isize; 3]>> = (1..=r_max).map(shell_offsets_for_r).collect();
-            let mut out: Vec<f64> = (0..=r_max)
+            let pitch = effective_pitch.max(1e-9);
+            let half_width_vox = 0.5 / pitch;
+            let shells: Vec<Vec<[isize; 3]>> = (1..=r_max)
+                .map(|r| shell_offsets_for_distance(r as f64 / pitch, half_width_vox))
+                .collect();
+            let results: Vec<(f64, bool)> = (0..=r_max)
                 .into_par_iter()
                 .map(|r| {
                     if r == 0 {
-                        return vf;
+                        return (vf, true);
                     }
 
                     let offsets = &shells[r - 1];
+                    if offsets.is_empty() {
+                        return (0.0, false);
+                    }
                     let mut valid = 0usize;
                     let mut hits = 0usize;
                     let mut rng = rand::thread_rng();
@@ -1597,12 +1836,20 @@ pub fn calculate_s2(
                     }
 
                     if valid == 0 {
-                        0.0
+                        (0.0, false)
                     } else {
-                        hits as f64 / valid as f64
+                        (hits as f64 / valid as f64, true)
                     }
                 })
                 .collect();
+
+            let mut out = vec![0.0; r_max + 1];
+            let mut has_support = vec![false; r_max + 1];
+            for (r, (value, supported)) in results.into_iter().enumerate() {
+                out[r] = value;
+                has_support[r] = supported;
+            }
+            fill_missing_s2_with_smooth_interpolation(&mut out, &has_support, vf);
             out[0] = vf;
             out
         }
