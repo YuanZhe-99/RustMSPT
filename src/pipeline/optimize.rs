@@ -1,16 +1,16 @@
 use crate::config::{parse_box_dimensions, OptimizationConfig};
 use crate::error::{Result, RustMsptError};
 use crate::geometry::{
-    calculate_s2, l2_norm, merge_meshes, mesh_bbox, mesh_centroid, mesh_volume,
-    move_mesh_to_target_center, orient_components_to_positive_volume, particle_volume_in_bbox,
-    split_mesh_into_granules,
+    bbox_distance, calculate_s2, check_boundary_constraints_mode,
+    generate_periodic_ghosts, l2_norm, merge_meshes, mesh_bbox, mesh_centroid, mesh_volume,
+    mesh_collision_exact_prepared, mesh_distance_exact_prepared, move_mesh_to_target_center,
+    orient_components_to_positive_volume, rotate_mesh_around_center, split_mesh_into_granules,
+    to_parry_trimesh, volume_fraction_of_meshes_in_bbox, wrap_mesh_centroid_to_box, vec_norm,
 };
 use crate::io::{load_folder_stls, load_stl, save_stl};
-use crate::pipeline::Pipeline;
+use crate::pipeline::{create_progress_bar, Pipeline};
 use crate::types::{BoundingBox, Vec3};
-use indicatif::{ProgressBar, ProgressStyle};
-use parry3d_f64::math::{Isometry, Point};
-use parry3d_f64::query;
+use indicatif::ProgressBar;
 use parry3d_f64::shape::TriMesh;
 use rand::seq::index::sample;
 use rand::Rng;
@@ -18,7 +18,6 @@ use rayon::ThreadPool;
 use rayon::ThreadPoolBuilder;
 use std::f64::consts::PI;
 use std::fs;
-use std::io::IsTerminal;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -42,321 +41,31 @@ fn prepare_particle(mesh: crate::types::Mesh) -> ParticlePrepared {
     ParticlePrepared { mesh, bbox, shape }
 }
 
-fn vec_norm(v: Vec3) -> f64 {
-    // Purpose: Compute Euclidean norm of a 3D vector.
-    // Inputs: vector value.
-    // Outputs: non-negative length.
-    (v.x * v.x + v.y * v.y + v.z * v.z).sqrt()
-}
-
-fn bbox_overlaps(a: BoundingBox, b: BoundingBox) -> bool {
-    // Purpose: Test overlap between two axis-aligned bounding boxes.
-    // Inputs: two bounding boxes.
-    // Outputs: true when overlap exists.
-    a.min.x < b.max.x
-        && a.max.x > b.min.x
-        && a.min.y < b.max.y
-        && a.max.y > b.min.y
-        && a.min.z < b.max.z
-        && a.max.z > b.min.z
-}
-
-fn bbox_distance(a: BoundingBox, b: BoundingBox) -> f64 {
-    // Purpose: Compute shortest distance between two axis-aligned bounding boxes.
-    // Inputs: two bounding boxes.
-    // Outputs: non-negative distance.
-    let dx = if a.max.x < b.min.x {
-        b.min.x - a.max.x
-    } else if b.max.x < a.min.x {
-        a.min.x - b.max.x
-    } else {
-        0.0
-    };
-
-    let dy = if a.max.y < b.min.y {
-        b.min.y - a.max.y
-    } else if b.max.y < a.min.y {
-        a.min.y - b.max.y
-    } else {
-        0.0
-    };
-
-    let dz = if a.max.z < b.min.z {
-        b.min.z - a.max.z
-    } else if b.max.z < a.min.z {
-        a.min.z - b.max.z
-    } else {
-        0.0
-    };
-
-    (dx * dx + dy * dy + dz * dz).sqrt()
-}
-
-fn to_parry_trimesh(mesh: &crate::types::Mesh) -> Option<TriMesh> {
-    // Purpose: Convert internal mesh to Parry TriMesh for exact queries.
-    // Inputs: triangle mesh.
-    // Outputs: Parry mesh or None when conversion is invalid.
-    if mesh.faces.is_empty() || mesh.vertices.is_empty() {
-        return None;
-    }
-
-    let vertices: Vec<Point<f64>> = mesh
-        .vertices
+fn format_s2_series(values: &[f64]) -> String {
+    // Purpose: Convert S2 array to stable fixed-width text line.
+    // Inputs: S2 values.
+    // Outputs: whitespace-joined decimal series.
+    values
         .iter()
-        .map(|v| Point::new(v.x, v.y, v.z))
-        .collect();
-
-    let mut indices: Vec<[u32; 3]> = Vec::with_capacity(mesh.faces.len());
-    for f in &mesh.faces {
-        if f.a > u32::MAX as usize || f.b > u32::MAX as usize || f.c > u32::MAX as usize {
-            return None;
-        }
-        indices.push([f.a as u32, f.b as u32, f.c as u32]);
-    }
-
-    TriMesh::new(vertices, indices).ok()
+        .map(|v| format!("{v:.6}"))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
-fn mesh_collision_exact_prepared(
-    a_bbox: Option<BoundingBox>,
-    a_shape: Option<&TriMesh>,
-    b_bbox: Option<BoundingBox>,
-    b_shape: Option<&TriMesh>,
-) -> bool {
-    // Purpose: Perform collision test using precomputed bbox and TriMesh handles.
-    // Inputs: optional bboxes and collision shapes for two particles.
-    // Outputs: true when collision occurs or data is invalid conservatively.
-    let Some(a_bbox) = a_bbox else {
-        return true;
-    };
-    let Some(b_bbox) = b_bbox else {
-        return true;
-    };
-    if !bbox_overlaps(a_bbox, b_bbox) {
-        return false;
-    }
+fn push_history_s2(history_log: &mut Vec<String>, label: &str, values: &[f64]) {
+    // Purpose: Append a labeled S2 snapshot to optimization history.
+    // Inputs: mutable history log, label, and S2 values.
+    // Outputs: one history line appended.
+    history_log.push(format!("{label}: {}", format_s2_series(values)));
+}
 
-    let Some(a_shape) = a_shape else {
-        return true;
-    };
-    let Some(b_shape) = b_shape else {
-        return true;
-    };
-
-    query::intersection_test(
-        &Isometry::identity(),
-        a_shape,
-        &Isometry::identity(),
-        b_shape,
+fn prune_progress_message(current_loss: f64, current_vf: f64, target_vf: f64, particles: usize) -> String {
+    // Purpose: Build unified pruning progress/status message.
+    // Inputs: loss, current/target VF, and particle count.
+    // Outputs: formatted progress text.
+    format!(
+        "Loss {current_loss:.6} | VF {current_vf:.6}->{target_vf:.6} | particles {particles}"
     )
-    .unwrap_or(true)
-}
-
-fn mesh_distance_exact_prepared(
-    a_bbox: Option<BoundingBox>,
-    a_shape: Option<&TriMesh>,
-    b_bbox: Option<BoundingBox>,
-    b_shape: Option<&TriMesh>,
-) -> f64 {
-    // Purpose: Compute minimum distance using precomputed data.
-    // Inputs: optional bboxes and collision shapes for two particles.
-    // Outputs: non-negative distance.
-    let Some(a_bbox) = a_bbox else {
-        return 0.0;
-    };
-    let Some(b_bbox) = b_bbox else {
-        return 0.0;
-    };
-    let bbox_d = bbox_distance(a_bbox, b_bbox);
-
-    if bbox_d > 0.0 {
-        if let (Some(a_shape), Some(b_shape)) = (a_shape, b_shape) {
-            return query::distance(
-                &Isometry::identity(),
-                a_shape,
-                &Isometry::identity(),
-                b_shape,
-            )
-            .unwrap_or(bbox_d);
-        }
-        return bbox_d;
-    }
-
-    if mesh_collision_exact_prepared(Some(a_bbox), a_shape, Some(b_bbox), b_shape) {
-        return 0.0;
-    }
-
-    if let (Some(a_shape), Some(b_shape)) = (a_shape, b_shape) {
-        return query::distance(
-            &Isometry::identity(),
-            a_shape,
-            &Isometry::identity(),
-            b_shape,
-        )
-        .unwrap_or(0.0);
-    }
-
-    0.0
-}
-
-fn rotate_mesh_around_center(mesh: &mut crate::types::Mesh, axis: Vec3, angle: f64) {
-    // Purpose: Rotate mesh around its centroid with Rodrigues formula.
-    // Inputs: mutable mesh, axis, angle in radians.
-    // Outputs: mesh vertices updated in place.
-    let axis_len = vec_norm(axis);
-    if axis_len <= 1e-12 {
-        return;
-    }
-    let k = axis.scale(1.0 / axis_len);
-    let center = mesh_centroid(mesh);
-    let cos_t = angle.cos();
-    let sin_t = angle.sin();
-
-    for v in &mut mesh.vertices {
-        let p = v.sub(center);
-        let term1 = p.scale(cos_t);
-        let term2 = k.cross(p).scale(sin_t);
-        let term3 = k.scale(k.dot(p) * (1.0 - cos_t));
-        *v = center.add(term1.add(term2).add(term3));
-    }
-}
-
-fn check_boundary_constraints(
-    mesh: &crate::types::Mesh,
-    box_bounds: BoundingBox,
-    mode: u8,
-    d1: f64,
-    d2: f64,
-) -> bool {
-    // Purpose: Enforce boundary constraints under selected optimization mode.
-    // Inputs: candidate mesh, box bounds, mode, d1 and d2 thresholds.
-    // Outputs: true when constraints are satisfied.
-    let Some(bounds) = mesh_bbox(mesh) else {
-        return false;
-    };
-
-    let local_min = bounds.min.sub(box_bounds.min);
-    let local_max = bounds.max.sub(box_bounds.min);
-    let size = box_bounds.size();
-
-    let is_fully_inside = local_min.x >= 0.0
-        && local_min.y >= 0.0
-        && local_min.z >= 0.0
-        && local_max.x <= size.x
-        && local_max.y <= size.y
-        && local_max.z <= size.z;
-
-    if is_fully_inside {
-        if local_min.x < d1
-            || local_min.y < d1
-            || local_min.z < d1
-            || local_max.x > (size.x - d1)
-            || local_max.y > (size.y - d1)
-            || local_max.z > (size.z - d1)
-        {
-            return false;
-        }
-        return true;
-    }
-
-    if mode == 1 {
-        return false;
-    }
-
-    let min_arr = [local_min.x, local_min.y, local_min.z];
-    let max_arr = [local_max.x, local_max.y, local_max.z];
-    let size_arr = [size.x, size.y, size.z];
-
-    for i in 0..3 {
-        if min_arr[i] < 0.0 {
-            if min_arr[i].abs() < d2 || max_arr[i] < d2 {
-                return false;
-            }
-        }
-        if max_arr[i] > size_arr[i] {
-            if (size_arr[i] - min_arr[i]) < d2 || (max_arr[i] - size_arr[i]) < d2 {
-                return false;
-            }
-        }
-        if min_arr[i] >= 0.0 && max_arr[i] <= size_arr[i] {
-            if min_arr[i] < d1 || max_arr[i] > (size_arr[i] - d1) {
-                return false;
-            }
-        }
-    }
-
-    true
-}
-
-fn generate_periodic_ghosts(mesh: &crate::types::Mesh, box_bounds: BoundingBox) -> Vec<crate::types::Mesh> {
-    // Purpose: Build periodic image meshes that overlap current box.
-    // Inputs: base mesh and simulation box bounds.
-    // Outputs: translated periodic ghost meshes.
-    let mut ghosts = Vec::new();
-    let Some(bounds) = mesh_bbox(mesh) else {
-        return ghosts;
-    };
-
-    let size = box_bounds.size();
-    for x in [-1.0, 0.0, 1.0] {
-        for y in [-1.0, 0.0, 1.0] {
-            for z in [-1.0, 0.0, 1.0] {
-                if x == 0.0 && y == 0.0 && z == 0.0 {
-                    continue;
-                }
-
-                let shift = Vec3::new(x * size.x, y * size.y, z * size.z);
-                let shifted_bounds = BoundingBox {
-                    min: bounds.min.add(shift),
-                    max: bounds.max.add(shift),
-                };
-                if bbox_overlaps(shifted_bounds, box_bounds) {
-                    let mut ghost = mesh.clone();
-                    for v in &mut ghost.vertices {
-                        *v = v.add(shift);
-                    }
-                    ghosts.push(ghost);
-                }
-            }
-        }
-    }
-
-    ghosts
-}
-
-fn wrap_centroid_to_box(mesh: &mut crate::types::Mesh, box_bounds: BoundingBox) {
-    // Purpose: Wrap particle centroid into periodic box range.
-    // Inputs: mutable mesh and periodic box bounds.
-    // Outputs: mesh translated so centroid lies in base box.
-    let center = mesh_centroid(mesh);
-    let size = box_bounds.size();
-
-    let wrap_axis = |value: f64, min: f64, len: f64| -> f64 {
-        if len <= 0.0 {
-            return value;
-        }
-        min + (value - min).rem_euclid(len)
-    };
-
-    let wrapped = Vec3::new(
-        wrap_axis(center.x, box_bounds.min.x, size.x),
-        wrap_axis(center.y, box_bounds.min.y, size.y),
-        wrap_axis(center.z, box_bounds.min.z, size.z),
-    );
-
-    move_mesh_to_target_center(mesh, wrapped);
-}
-
-fn volume_fraction_of_particles(particles: &[crate::types::Mesh], box_bounds: BoundingBox) -> f64 {
-    // Purpose: Compute robust VF as clipped in-box volume sum over particles.
-    // Inputs: particle list and box bounds.
-    // Outputs: VF in [0,1].
-    let box_volume = box_bounds.volume().max(1e-12);
-    let mut volume_sum = 0.0;
-    for p in particles {
-        volume_sum += particle_volume_in_bbox(p, box_bounds);
-    }
-    (volume_sum / box_volume).clamp(0.0, 1.0)
 }
 
 fn selective_prune_to_target_vf(
@@ -396,7 +105,7 @@ fn selective_prune_to_target_vf(
 
     let eval_loss = |parts: &[crate::types::Mesh]| {
         let merged = merge_meshes(parts);
-        let vf = volume_fraction_of_particles(parts, box_bounds);
+        let vf = volume_fraction_of_meshes_in_bbox(parts, box_bounds);
         let s2 = thread_pool.install(|| {
             calculate_s2(&merged, box_bounds, eval_rmax, voxel_pitch, s2_method, eval_samples)
         });
@@ -406,7 +115,7 @@ fn selective_prune_to_target_vf(
 
     let mut rng = rand::thread_rng();
     let mut rounds = 0usize;
-    let mut current_vf = volume_fraction_of_particles(particles, box_bounds);
+    let mut current_vf = volume_fraction_of_meshes_in_bbox(particles, box_bounds);
     let (_, mut current_loss) = eval_loss(particles);
 
     println!(
@@ -414,18 +123,16 @@ fn selective_prune_to_target_vf(
     );
 
     let total_rounds = max_rounds as u64;
-    let progress = ProgressBar::new(total_rounds);
-    if !std::io::stderr().is_terminal() {
-        progress.set_draw_target(indicatif::ProgressDrawTarget::hidden());
-    }
-    progress.set_style(
-        ProgressStyle::with_template("[{elapsed_precise}] {bar:40.cyan/blue} {pos:>4}/{len:4} {msg}")
-            .unwrap_or_else(|_| ProgressStyle::default_bar())
-            .progress_chars("##-"),
+    let progress = create_progress_bar(
+        total_rounds,
+        "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>4}/{len:4} {msg}",
+        "##-",
     );
-    progress.set_message(format!(
-        "Loss {current_loss:.6} | VF {current_vf:.6}->{target_vf:.6} | particles {}",
-        particles.len()
+    progress.set_message(prune_progress_message(
+        current_loss,
+        current_vf,
+        target_vf,
+        particles.len(),
     ));
 
     while current_vf > target_vf * (1.0 + tol) && particles.len() > 1 && rounds < max_rounds {
@@ -517,9 +224,11 @@ fn selective_prune_to_target_vf(
         current_vf = vf_now;
         current_loss = loss_now;
         progress.set_position(rounds as u64);
-        progress.set_message(format!(
-            "Loss {current_loss:.6} | VF {current_vf:.6}->{target_vf:.6} | particles {}",
-            particles.len()
+        progress.set_message(prune_progress_message(
+            current_loss,
+            current_vf,
+            target_vf,
+            particles.len(),
         ));
         if rounds % 5 == 0 || current_vf <= target_vf * (1.0 + tol) {
             println!(
@@ -637,27 +346,13 @@ impl Pipeline for OptimizePipeline {
                 params.mc_samples.max(1000),
             )
         });
-        let input_vf = volume_fraction_of_particles(&particles, box_bounds);
+        let input_vf = volume_fraction_of_meshes_in_bbox(&particles, box_bounds);
         let input_loss = l2_norm(&input_s2, &target);
         println!(
             "[Info] Input stage: VF {input_vf:.6}, Loss {input_loss:.6}, Method {s2_method}"
         );
-        history_log.push(format!(
-            "Target S2: {}",
-            target
-                .iter()
-                .map(|v| format!("{v:.6}"))
-                .collect::<Vec<_>>()
-                .join(" ")
-        ));
-        history_log.push(format!(
-            "Input S2: {}",
-            input_s2
-                .iter()
-                .map(|v| format!("{v:.6}"))
-                .collect::<Vec<_>>()
-                .join(" ")
-        ));
+        push_history_s2(&mut history_log, "Target S2", &target);
+        push_history_s2(&mut history_log, "Input S2", &input_s2);
         history_log.push(format!("Input Loss: {input_loss:.6}"));
 
         selective_prune_to_target_vf(
@@ -693,14 +388,7 @@ impl Pipeline for OptimizePipeline {
             )
         });
         let mut current_loss = l2_norm(&current_s2, &target);
-        history_log.push(format!(
-            "Post-Pruning S2: {}",
-            current_s2
-                .iter()
-                .map(|v| format!("{v:.6}"))
-                .collect::<Vec<_>>()
-                .join(" ")
-        ));
+        push_history_s2(&mut history_log, "Post-Pruning S2", &current_s2);
         history_log.push(format!("Post-Pruning Loss: {current_loss:.6}"));
 
         let mut best_particles = prepared.iter().map(|p| p.mesh.clone()).collect::<Vec<_>>();
@@ -714,14 +402,10 @@ impl Pipeline for OptimizePipeline {
         println!("[Info] Initial loss: {current_loss:.6}");
 
         let total_iters = params.max_iterations.max(1) as u64;
-        let progress = ProgressBar::new(total_iters);
-        if !std::io::stderr().is_terminal() {
-            progress.set_draw_target(indicatif::ProgressDrawTarget::hidden());
-        }
-        progress.set_style(
-            ProgressStyle::with_template("[{elapsed_precise}] {bar:40.cyan/blue} {pos:>5}/{len:5} {msg}")
-                .unwrap_or_else(|_| ProgressStyle::default_bar())
-                .progress_chars("##-"),
+        let progress = create_progress_bar(
+            total_iters,
+            "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>5}/{len:5} {msg}",
+            "##-",
         );
         progress.set_message(format!(
             "Loss {current_loss:.6} | Best {best_loss:.6} | Temp {temperature:.6} | Acc 0"
@@ -809,14 +493,14 @@ impl Pipeline for OptimizePipeline {
             }
 
             if mode == 3 {
-                wrap_centroid_to_box(&mut candidate, box_bounds);
+                wrap_mesh_centroid_to_box(&mut candidate, box_bounds);
             }
 
             let candidate_bbox = mesh_bbox(&candidate);
             let candidate_shape = to_parry_trimesh(&candidate);
 
             let collision_start = Instant::now();
-            if !check_boundary_constraints(&candidate, box_bounds, mode, d1, d2) {
+            if !check_boundary_constraints_mode(&candidate, box_bounds, mode, d1, d2) {
                 temperature *= params.cooling_rate.clamp(0.8, 0.99999);
                 update_progress(&progress, iter + 1, current_loss, best_loss, temperature, accepted_moves);
                 collision_time += collision_start.elapsed();
@@ -957,11 +641,7 @@ impl Pipeline for OptimizePipeline {
                     let best_s2 = current_s2.clone();
                     history_log.push(format!(
                         "Iter {iter}: Loss {best_loss:.6} | S2 {}",
-                        best_s2
-                            .iter()
-                            .map(|v| format!("{v:.6}"))
-                            .collect::<Vec<_>>()
-                            .join(" ")
+                        format_s2_series(&best_s2)
                     ));
                 }
             } else {

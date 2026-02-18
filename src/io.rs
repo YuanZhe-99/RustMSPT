@@ -216,6 +216,35 @@ pub fn load_folder_stls(folder: &Path) -> Result<Vec<(PathBuf, Mesh)>> {
     Ok(out)
 }
 
+/// Load one STL file, or merge all STL files under a directory.
+/// Inputs: file or directory path.
+/// Outputs: merged mesh for directory input, or single loaded mesh.
+pub fn load_stl_or_merge_folder(path: &Path) -> Result<Mesh> {
+    if path.is_dir() {
+        let meshes = load_folder_stls(path)?;
+        if meshes.is_empty() {
+            return Err(RustMsptError::InvalidConfig(format!(
+                "No STL files found in directory: {}",
+                path.display()
+            )));
+        }
+
+        let mut out = Mesh::empty();
+        for (_, m) in meshes {
+            let offset = out.vertices.len();
+            out.vertices.extend(m.vertices.iter().copied());
+            out.faces.extend(m.faces.iter().map(|f| Triangle {
+                a: f.a + offset,
+                b: f.b + offset,
+                c: f.c + offset,
+            }));
+        }
+        Ok(out)
+    } else {
+        load_stl(path)
+    }
+}
+
 /// Save mesh as Binary STL.
 /// Inputs: target path, mesh, and STL header name.
 /// Outputs: writes file to disk or returns error.

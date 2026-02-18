@@ -1,10 +1,10 @@
 use crate::config::ForgingConfig;
-use crate::error::{Result, RustMsptError};
+use crate::error::Result;
 use crate::geometry::{
-    clip_mesh_by_bbox, mesh_bbox, mesh_volume, merge_meshes, orient_components_to_positive_volume,
-    simulate_forging_ffd_with_tracking, translate_mesh,
+    mesh_bbox, mesh_volume, orient_components_to_positive_volume,
+    simulate_forging_ffd_with_tracking, translate_mesh, volume_fraction_in_bbox,
 };
-use crate::io::{load_folder_stls, load_stl, save_stl};
+use crate::io::{load_stl_or_merge_folder, save_stl};
 use crate::pipeline::Pipeline;
 use crate::types::{BoundingBox, Vec3};
 use std::fs;
@@ -15,28 +15,6 @@ pub struct ForgePipeline {
 }
 
 impl ForgePipeline {
-    /// Load one STL file, or merge all STL files under a directory.
-    /// Input: path from config. Output: one mesh used by forging.
-    fn load_input_mesh(&self, input: &Path) -> Result<crate::types::Mesh> {
-        if input.is_dir() {
-            let meshes = load_folder_stls(input)?;
-            if meshes.is_empty() {
-                return Err(RustMsptError::InvalidConfig(format!(
-                    "No STL files found in directory: {}",
-                    input.display()
-                )));
-            }
-            Ok(merge_meshes(
-                &meshes
-                    .into_iter()
-                    .map(|(_, m)| m)
-                    .collect::<Vec<_>>(),
-            ))
-        } else {
-            load_stl(input)
-        }
-    }
-
     /// Parse ROI [min_x, min_y, min_z, max_x, max_y, max_z] if provided.
     /// Input: optional f64 vector. Output: optional bounding box.
     fn parse_roi_bbox(values: &Option<Vec<f64>>) -> Option<BoundingBox> {
@@ -52,39 +30,6 @@ impl ForgePipeline {
         })
     }
 
-    /// Compute volume fraction in a target box.
-    /// Input: mesh and bbox. Output: VF in [0, 1].
-    fn volume_fraction_in_box(mesh: &crate::types::Mesh, bbox: BoundingBox) -> f64 {
-        let denom = bbox.volume();
-        if denom <= f64::EPSILON {
-            return 0.0;
-        }
-
-        if let Some(mb) = mesh_bbox(mesh) {
-            let inside = mb.min.x >= bbox.min.x
-                && mb.min.y >= bbox.min.y
-                && mb.min.z >= bbox.min.z
-                && mb.max.x <= bbox.max.x
-                && mb.max.y <= bbox.max.y
-                && mb.max.z <= bbox.max.z;
-            if inside {
-                return (mesh_volume(mesh) / denom).clamp(0.0, 1.0);
-            }
-
-            let disjoint = mb.max.x < bbox.min.x
-                || mb.min.x > bbox.max.x
-                || mb.max.y < bbox.min.y
-                || mb.min.y > bbox.max.y
-                || mb.max.z < bbox.min.z
-                || mb.min.z > bbox.max.z;
-            if disjoint {
-                return 0.0;
-            }
-        }
-
-        let clipped = clip_mesh_by_bbox(mesh, bbox);
-        (mesh_volume(&clipped) / denom).clamp(0.0, 1.0)
-    }
 }
 
 impl Pipeline for ForgePipeline {
@@ -102,14 +47,14 @@ impl Pipeline for ForgePipeline {
         );
         let report_path = output.with_extension("txt");
 
-        let mesh = self.load_input_mesh(input)?;
+        let mesh = load_stl_or_merge_folder(input)?;
         let lattice_bbox = mesh_bbox(&mesh).unwrap_or(BoundingBox::from_size(Vec3::new(1.0, 1.0, 1.0)));
         let roi_bbox = Self::parse_roi_bbox(&params.roi_bounding_box);
 
         let _before = mesh_volume(&mesh);
         let before_roi_vf = roi_bbox
-            .map(|roi| Self::volume_fraction_in_box(&mesh, roi))
-            .unwrap_or_else(|| Self::volume_fraction_in_box(&mesh, lattice_bbox));
+            .map(|roi| volume_fraction_in_bbox(&mesh, roi))
+            .unwrap_or_else(|| volume_fraction_in_bbox(&mesh, lattice_bbox));
 
         let compression = params.compression_ratio.unwrap_or(0.2);
         let bulge = params.bulge_factor.unwrap_or(0.5);
@@ -128,8 +73,8 @@ impl Pipeline for ForgePipeline {
 
         let _after = mesh_volume(&compressed);
         let after_roi_vf = tracked_roi
-            .map(|roi| Self::volume_fraction_in_box(&compressed, roi))
-            .unwrap_or_else(|| Self::volume_fraction_in_box(&compressed, lattice_bbox));
+            .map(|roi| volume_fraction_in_bbox(&compressed, roi))
+            .unwrap_or_else(|| volume_fraction_in_bbox(&compressed, lattice_bbox));
 
         let (mut compressed_oriented, _flipped_components, _component_count) =
             orient_components_to_positive_volume(&compressed);

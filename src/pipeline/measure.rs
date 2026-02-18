@@ -1,11 +1,11 @@
 use crate::config::{parse_box_dimensions, MeasurementConfig};
-use crate::error::{Result, RustMsptError};
+use crate::error::Result;
 use crate::geometry::{
-    calculate_s2, merge_meshes, mesh_bbox, particle_volume_in_bbox, split_mesh_into_granules,
+    calculate_s2, mesh_bbox, split_mesh_into_granules, volume_fraction_in_bbox,
 };
-use crate::io::{load_folder_stls, load_stl};
+use crate::io::load_stl_or_merge_folder;
 use crate::pipeline::Pipeline;
-use crate::types::{BoundingBox, Mesh};
+use crate::types::BoundingBox;
 use std::fs;
 use std::path::Path;
 
@@ -14,25 +14,6 @@ pub struct MeasurePipeline {
 }
 
 impl MeasurePipeline {
-    /// Load one STL file, or merge all STL files from a directory.
-    /// Input: path from config. Output: single mesh for measurement.
-    fn load_input_mesh(&self, stl_path: &Path) -> Result<crate::types::Mesh> {
-        if stl_path.is_dir() {
-            let items = load_folder_stls(stl_path)?;
-            if items.is_empty() {
-                return Err(RustMsptError::InvalidConfig(format!(
-                    "No STL files found in directory: {}",
-                    stl_path.display()
-                )));
-            }
-            Ok(merge_meshes(
-                &items.into_iter().map(|(_, m)| m).collect::<Vec<_>>(),
-            ))
-        } else {
-            load_stl(stl_path)
-        }
-    }
-
     /// Parse optional bbox from config, treating empty vectors as unset.
     /// Input: optional vector from config. Output: optional parsed bbox.
     fn parse_optional_bbox(values: &Option<Vec<f64>>) -> Result<Option<BoundingBox>> {
@@ -41,21 +22,6 @@ impl MeasurePipeline {
             Some(v) if v.is_empty() => Ok(None),
             Some(v) => Ok(Some(parse_box_dimensions(v)?)),
         }
-    }
-
-    /// Compute robust volume fraction by summing per-particle in-box clipped volumes.
-    /// Inputs: merged mesh and measurement bbox.
-    /// Outputs: (vf, particle_count, negative_oriented_count).
-    fn robust_volume_fraction(mesh: &Mesh, bbox: BoundingBox) -> (f64, usize) {
-        let box_volume = bbox.volume().max(1e-12);
-        let particles = split_mesh_into_granules(mesh);
-        let mut sum = 0.0;
-
-        for p in &particles {
-            sum += particle_volume_in_bbox(p, bbox);
-        }
-
-        ((sum / box_volume).clamp(0.0, 1.0), particles.len())
     }
 
     fn l2_error(a: &[f64], b: &[f64]) -> f64 {
@@ -82,7 +48,7 @@ impl Pipeline for MeasurePipeline {
         // Inputs: measurement config and STL input source.
         // Outputs: report file and runtime diagnostics.
         let params = &self.config.measurement;
-        let mesh = self.load_input_mesh(Path::new(&params.stl_path))?;
+        let mesh = load_stl_or_merge_folder(Path::new(&params.stl_path))?;
 
         let user_bbox = Self::parse_optional_bbox(&params.bounding_box)?;
         let stl_bbox = Self::parse_optional_bbox(&params.stl_bounding_box)?;
@@ -97,7 +63,8 @@ impl Pipeline for MeasurePipeline {
             bbox.min.x, bbox.min.y, bbox.min.z, bbox.max.x, bbox.max.y, bbox.max.z
         );
 
-        let (vf, particle_count) = Self::robust_volume_fraction(&mesh, bbox);
+        let particle_count = split_mesh_into_granules(&mesh).len();
+        let vf = volume_fraction_in_bbox(&mesh, bbox);
 
         let method_raw = params.mc_method.trim();
         let requested_method = if method_raw.eq_ignore_ascii_case("exact") {

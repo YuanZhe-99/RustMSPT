@@ -1,4 +1,7 @@
 use crate::types::{BoundingBox, Mesh, Vec3};
+use parry3d_f64::math::{Isometry, Point};
+use parry3d_f64::query;
+use parry3d_f64::shape::TriMesh;
 use rand::Rng;
 use rayon::prelude::*;
 use rustfft::num_complex::Complex;
@@ -41,6 +44,56 @@ pub fn mesh_centroid(mesh: &Mesh) -> Vec3 {
     } else {
         sum
     }
+}
+
+pub fn vec_norm(v: Vec3) -> f64 {
+    // Purpose: Compute Euclidean norm of a 3D vector.
+    // Inputs: vector value.
+    // Outputs: non-negative length.
+    (v.x * v.x + v.y * v.y + v.z * v.z).sqrt()
+}
+
+pub fn bbox_overlaps(a: BoundingBox, b: BoundingBox) -> bool {
+    // Purpose: Test overlap between two axis-aligned bounding boxes.
+    // Inputs: two bounding boxes.
+    // Outputs: true when overlap exists.
+    a.min.x < b.max.x
+        && a.max.x > b.min.x
+        && a.min.y < b.max.y
+        && a.max.y > b.min.y
+        && a.min.z < b.max.z
+        && a.max.z > b.min.z
+}
+
+pub fn bbox_distance(a: BoundingBox, b: BoundingBox) -> f64 {
+    // Purpose: Compute shortest distance between two axis-aligned bounding boxes.
+    // Inputs: two bounding boxes.
+    // Outputs: non-negative distance.
+    let dx = if a.max.x < b.min.x {
+        b.min.x - a.max.x
+    } else if b.max.x < a.min.x {
+        a.min.x - b.max.x
+    } else {
+        0.0
+    };
+
+    let dy = if a.max.y < b.min.y {
+        b.min.y - a.max.y
+    } else if b.max.y < a.min.y {
+        a.min.y - b.max.y
+    } else {
+        0.0
+    };
+
+    let dz = if a.max.z < b.min.z {
+        b.min.z - a.max.z
+    } else if b.max.z < a.min.z {
+        a.min.z - b.max.z
+    } else {
+        0.0
+    };
+
+    (dx * dx + dy * dy + dz * dz).sqrt()
 }
 
 pub fn mesh_volume(mesh: &Mesh) -> f64 {
@@ -200,12 +253,472 @@ pub fn move_mesh_to_target_center(mesh: &mut Mesh, target: Vec3) {
     translate_mesh(mesh, target.sub(center));
 }
 
+pub fn wrap_mesh_centroid_to_box(mesh: &mut Mesh, box_bounds: BoundingBox) {
+    // Purpose: Wrap mesh centroid into periodic box range.
+    // Inputs: mutable mesh and periodic box bounds.
+    // Outputs: mesh translated so centroid lies in base box.
+    let center = mesh_centroid(mesh);
+    let size = box_bounds.size();
+
+    let wrap_axis = |value: f64, min: f64, len: f64| -> f64 {
+        if len <= 0.0 {
+            return value;
+        }
+        min + (value - min).rem_euclid(len)
+    };
+
+    let wrapped = Vec3::new(
+        wrap_axis(center.x, box_bounds.min.x, size.x),
+        wrap_axis(center.y, box_bounds.min.y, size.y),
+        wrap_axis(center.z, box_bounds.min.z, size.z),
+    );
+
+    move_mesh_to_target_center(mesh, wrapped);
+}
+
+pub fn generate_periodic_ghosts(mesh: &Mesh, box_bounds: BoundingBox) -> Vec<Mesh> {
+    // Purpose: Build periodic image meshes that overlap current box.
+    // Inputs: base mesh and simulation box bounds.
+    // Outputs: translated periodic ghost meshes.
+    let mut ghosts = Vec::new();
+    let Some(bounds) = mesh_bbox(mesh) else {
+        return ghosts;
+    };
+
+    let size = box_bounds.size();
+    for x in [-1.0, 0.0, 1.0] {
+        for y in [-1.0, 0.0, 1.0] {
+            for z in [-1.0, 0.0, 1.0] {
+                if x == 0.0 && y == 0.0 && z == 0.0 {
+                    continue;
+                }
+
+                let shift = Vec3::new(x * size.x, y * size.y, z * size.z);
+                let shifted_bounds = BoundingBox {
+                    min: bounds.min.add(shift),
+                    max: bounds.max.add(shift),
+                };
+                if shifted_bounds.min.x < box_bounds.max.x
+                    && shifted_bounds.max.x > box_bounds.min.x
+                    && shifted_bounds.min.y < box_bounds.max.y
+                    && shifted_bounds.max.y > box_bounds.min.y
+                    && shifted_bounds.min.z < box_bounds.max.z
+                    && shifted_bounds.max.z > box_bounds.min.z
+                {
+                    let mut ghost = mesh.clone();
+                    translate_mesh(&mut ghost, shift);
+                    ghosts.push(ghost);
+                }
+            }
+        }
+    }
+
+    ghosts
+}
+
 pub fn scale_mesh(mesh: &mut Mesh, factor: f64) {
     // Purpose: Uniformly scale mesh vertices around origin.
     // Inputs: mutable mesh and scalar factor.
     // Outputs: scaled mesh in place.
     for v in &mut mesh.vertices {
         *v = v.scale(factor);
+    }
+}
+
+pub fn mesh_surface_area(mesh: &Mesh) -> f64 {
+    // Purpose: Estimate mesh surface area from triangle faces.
+    // Inputs: triangle mesh.
+    // Outputs: total surface area.
+    let mut area = 0.0;
+    for f in &mesh.faces {
+        let a = mesh.vertices[f.a];
+        let b = mesh.vertices[f.b];
+        let c = mesh.vertices[f.c];
+        let ab = b.sub(a);
+        let ac = c.sub(a);
+        area += 0.5 * vec_norm(ab.cross(ac));
+    }
+    area
+}
+
+pub fn rotate_mesh_around_center(mesh: &mut Mesh, axis: Vec3, angle: f64) {
+    // Purpose: Rotate mesh around its centroid with Rodrigues formula.
+    // Inputs: mutable mesh, axis, angle in radians.
+    // Outputs: mesh vertices updated in place.
+    let axis_len = vec_norm(axis);
+    if axis_len <= 1e-12 {
+        return;
+    }
+
+    let k = axis.scale(1.0 / axis_len);
+    let center = mesh_centroid(mesh);
+    let cos_t = angle.cos();
+    let sin_t = angle.sin();
+
+    for v in &mut mesh.vertices {
+        let p = v.sub(center);
+        let term1 = p.scale(cos_t);
+        let term2 = k.cross(p).scale(sin_t);
+        let term3 = k.scale(k.dot(p) * (1.0 - cos_t));
+        *v = center.add(term1.add(term2).add(term3));
+    }
+}
+
+pub fn box_mesh(bbox: BoundingBox) -> Mesh {
+    // Purpose: Build triangulated box mesh from bounding box corners.
+    // Inputs: axis-aligned bounding box.
+    // Outputs: closed box mesh.
+    let min = bbox.min;
+    let max = bbox.max;
+    let v = vec![
+        Vec3::new(min.x, min.y, min.z),
+        Vec3::new(max.x, min.y, min.z),
+        Vec3::new(max.x, max.y, min.z),
+        Vec3::new(min.x, max.y, min.z),
+        Vec3::new(min.x, min.y, max.z),
+        Vec3::new(max.x, min.y, max.z),
+        Vec3::new(max.x, max.y, max.z),
+        Vec3::new(min.x, max.y, max.z),
+    ];
+
+    let idx = [
+        (0, 1, 2), (0, 2, 3),
+        (4, 6, 5), (4, 7, 6),
+        (0, 4, 5), (0, 5, 1),
+        (1, 5, 6), (1, 6, 2),
+        (2, 6, 7), (2, 7, 3),
+        (3, 7, 4), (3, 4, 0),
+    ];
+
+    let faces = idx
+        .iter()
+        .map(|(a, b, c)| crate::types::Triangle {
+            a: *a,
+            b: *b,
+            c: *c,
+        })
+        .collect();
+
+    Mesh { vertices: v, faces }
+}
+
+pub fn simulate_forging_ffd(mesh: &Mesh, compression_ratio: f64, bulge_factor: f64) -> Mesh {
+    // Purpose: Apply simplified forging deformation to mesh.
+    // Inputs: source mesh, compression ratio, bulge factor.
+    // Outputs: deformed mesh.
+    let bbox = mesh_bbox(mesh).unwrap_or(BoundingBox {
+        min: Vec3::new(0.0, 0.0, 0.0),
+        max: Vec3::new(1.0, 1.0, 1.0),
+    });
+    let center = Vec3::new(
+        (bbox.min.x + bbox.max.x) * 0.5,
+        (bbox.min.y + bbox.max.y) * 0.5,
+        (bbox.min.z + bbox.max.z) * 0.5,
+    );
+
+    let mut out = mesh.clone();
+    let z_scale = (1.0 - compression_ratio).clamp(0.01, 1.0);
+    let xy_scale = (1.0 / z_scale.sqrt()).powf(bulge_factor.clamp(0.0, 1.0));
+
+    for v in &mut out.vertices {
+        let local = v.sub(center);
+        *v = Vec3::new(
+            center.x + local.x * xy_scale,
+            center.y + local.y * xy_scale,
+            center.z + local.z * z_scale,
+        );
+    }
+
+    out
+}
+
+/// Apply simplified forging affine transform with optional ROI tracking.
+/// Inputs: source mesh, lattice bbox (deformation frame), optional ROI bbox, compression, bulge, mesh type, void densification factor.
+/// Outputs: deformed mesh and optional transformed ROI bbox.
+pub fn simulate_forging_ffd_with_tracking(
+    mesh: &Mesh,
+    lattice_bbox: BoundingBox,
+    track_bbox: Option<BoundingBox>,
+    compression_ratio: f64,
+    bulge_factor: f64,
+    mesh_type: &str,
+    void_densification: f64,
+) -> (Mesh, Option<BoundingBox>) {
+    let center = Vec3::new(
+        (lattice_bbox.min.x + lattice_bbox.max.x) * 0.5,
+        (lattice_bbox.min.y + lattice_bbox.max.y) * 0.5,
+        (lattice_bbox.min.z + lattice_bbox.max.z) * 0.5,
+    );
+
+    let z_scale = (1.0 - compression_ratio).clamp(0.01, 1.0);
+    let xy_scale = (1.0 / z_scale.sqrt()).powf(bulge_factor.clamp(0.0, 1.0));
+
+    let transform_point = |p: Vec3| {
+        let local = p.sub(center);
+        Vec3::new(
+            center.x + local.x * xy_scale,
+            center.y + local.y * xy_scale,
+            center.z + local.z * z_scale,
+        )
+    };
+
+    let mut out = mesh.clone();
+    for v in &mut out.vertices {
+        *v = transform_point(*v);
+    }
+
+    if mesh_type.eq_ignore_ascii_case("void") {
+        let closure = (1.0 - 0.05 * compression_ratio * void_densification).clamp(0.85, 1.0);
+        let c = mesh_centroid(&out);
+        for v in &mut out.vertices {
+            let local = v.sub(c);
+            *v = c.add(local.scale(closure));
+        }
+    }
+
+    let tracked = track_bbox.map(|tb| {
+        let corners = [
+            Vec3::new(tb.min.x, tb.min.y, tb.min.z),
+            Vec3::new(tb.min.x, tb.min.y, tb.max.z),
+            Vec3::new(tb.min.x, tb.max.y, tb.min.z),
+            Vec3::new(tb.min.x, tb.max.y, tb.max.z),
+            Vec3::new(tb.max.x, tb.min.y, tb.min.z),
+            Vec3::new(tb.max.x, tb.min.y, tb.max.z),
+            Vec3::new(tb.max.x, tb.max.y, tb.min.z),
+            Vec3::new(tb.max.x, tb.max.y, tb.max.z),
+        ];
+
+        let mut min_p = transform_point(corners[0]);
+        let mut max_p = min_p;
+        for p in corners.iter().skip(1).copied().map(transform_point) {
+            min_p.x = min_p.x.min(p.x);
+            min_p.y = min_p.y.min(p.y);
+            min_p.z = min_p.z.min(p.z);
+            max_p.x = max_p.x.max(p.x);
+            max_p.y = max_p.y.max(p.y);
+            max_p.z = max_p.z.max(p.z);
+        }
+        BoundingBox { min: min_p, max: max_p }
+    });
+
+    (out, tracked)
+}
+
+pub fn check_boundary_constraints_mode(
+    mesh: &Mesh,
+    box_bounds: BoundingBox,
+    mode: u8,
+    d1: f64,
+    d2: f64,
+) -> bool {
+    // Purpose: Enforce strict/loose/periodic boundary constraints under selected mode.
+    // Inputs: candidate mesh, box bounds, mode, d1 and d2 thresholds.
+    // Outputs: true when constraints are satisfied.
+    let Some(bounds) = mesh_bbox(mesh) else {
+        return false;
+    };
+
+    let local_min = bounds.min.sub(box_bounds.min);
+    let local_max = bounds.max.sub(box_bounds.min);
+    let size = box_bounds.size();
+
+    let is_fully_inside = local_min.x >= 0.0
+        && local_min.y >= 0.0
+        && local_min.z >= 0.0
+        && local_max.x <= size.x
+        && local_max.y <= size.y
+        && local_max.z <= size.z;
+
+    if is_fully_inside {
+        if local_min.x < d1
+            || local_min.y < d1
+            || local_min.z < d1
+            || local_max.x > (size.x - d1)
+            || local_max.y > (size.y - d1)
+            || local_max.z > (size.z - d1)
+        {
+            return false;
+        }
+        return true;
+    }
+
+    if mode == 1 {
+        return false;
+    }
+
+    let min_arr = [local_min.x, local_min.y, local_min.z];
+    let max_arr = [local_max.x, local_max.y, local_max.z];
+    let size_arr = [size.x, size.y, size.z];
+
+    for i in 0..3 {
+        if min_arr[i] < 0.0 {
+            if min_arr[i].abs() < d2 || max_arr[i] < d2 {
+                return false;
+            }
+        }
+        if max_arr[i] > size_arr[i] {
+            if (size_arr[i] - min_arr[i]) < d2 || (max_arr[i] - size_arr[i]) < d2 {
+                return false;
+            }
+        }
+        if min_arr[i] >= 0.0 && max_arr[i] <= size_arr[i] {
+            if min_arr[i] < d1 || max_arr[i] > (size_arr[i] - d1) {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+pub fn to_parry_trimesh(mesh: &Mesh) -> Option<TriMesh> {
+    // Purpose: Convert internal mesh to Parry TriMesh for exact queries.
+    // Inputs: triangle mesh.
+    // Outputs: Parry mesh or None when conversion is invalid.
+    if mesh.faces.is_empty() || mesh.vertices.is_empty() {
+        return None;
+    }
+
+    let vertices: Vec<Point<f64>> = mesh
+        .vertices
+        .iter()
+        .map(|v| Point::new(v.x, v.y, v.z))
+        .collect();
+
+    let mut indices: Vec<[u32; 3]> = Vec::with_capacity(mesh.faces.len());
+    for f in &mesh.faces {
+        if f.a > u32::MAX as usize || f.b > u32::MAX as usize || f.c > u32::MAX as usize {
+            return None;
+        }
+        indices.push([f.a as u32, f.b as u32, f.c as u32]);
+    }
+
+    TriMesh::new(vertices, indices).ok()
+}
+
+pub fn mesh_collision_exact_prepared(
+    a_bbox: Option<BoundingBox>,
+    a_shape: Option<&TriMesh>,
+    b_bbox: Option<BoundingBox>,
+    b_shape: Option<&TriMesh>,
+) -> bool {
+    // Purpose: Perform collision test using precomputed bbox and TriMesh handles.
+    // Inputs: optional bboxes and collision shapes for two particles.
+    // Outputs: true when collision occurs or data is invalid conservatively.
+    let Some(a_bbox) = a_bbox else {
+        return true;
+    };
+    let Some(b_bbox) = b_bbox else {
+        return true;
+    };
+    if !bbox_overlaps(a_bbox, b_bbox) {
+        return false;
+    }
+
+    let Some(a_shape) = a_shape else {
+        return true;
+    };
+    let Some(b_shape) = b_shape else {
+        return true;
+    };
+
+    query::intersection_test(
+        &Isometry::identity(),
+        a_shape,
+        &Isometry::identity(),
+        b_shape,
+    )
+    .unwrap_or(true)
+}
+
+pub fn mesh_distance_exact_prepared(
+    a_bbox: Option<BoundingBox>,
+    a_shape: Option<&TriMesh>,
+    b_bbox: Option<BoundingBox>,
+    b_shape: Option<&TriMesh>,
+) -> f64 {
+    // Purpose: Compute minimum distance using precomputed data.
+    // Inputs: optional bboxes and collision shapes for two particles.
+    // Outputs: non-negative distance.
+    let Some(a_bbox) = a_bbox else {
+        return 0.0;
+    };
+    let Some(b_bbox) = b_bbox else {
+        return 0.0;
+    };
+    let bbox_d = bbox_distance(a_bbox, b_bbox);
+
+    if bbox_d > 0.0 {
+        if let (Some(a_shape), Some(b_shape)) = (a_shape, b_shape) {
+            return query::distance(
+                &Isometry::identity(),
+                a_shape,
+                &Isometry::identity(),
+                b_shape,
+            )
+            .unwrap_or(bbox_d);
+        }
+        return bbox_d;
+    }
+
+    if mesh_collision_exact_prepared(Some(a_bbox), a_shape, Some(b_bbox), b_shape) {
+        return 0.0;
+    }
+
+    if let (Some(a_shape), Some(b_shape)) = (a_shape, b_shape) {
+        return query::distance(
+            &Isometry::identity(),
+            a_shape,
+            &Isometry::identity(),
+            b_shape,
+        )
+        .unwrap_or(0.0);
+    }
+
+    0.0
+}
+
+pub fn mesh_collision_exact(a: &Mesh, b: &Mesh) -> bool {
+    // Purpose: Perform exact mesh collision test with broad-phase bbox filtering.
+    // Inputs: two meshes.
+    // Outputs: true when meshes intersect or conversion fails conservatively.
+    let a_bbox = mesh_bbox(a);
+    let b_bbox = mesh_bbox(b);
+    let a_shape = to_parry_trimesh(a);
+    let b_shape = to_parry_trimesh(b);
+    mesh_collision_exact_prepared(a_bbox, a_shape.as_ref(), b_bbox, b_shape.as_ref())
+}
+
+pub fn mesh_distance_exact(a: &Mesh, b: &Mesh) -> f64 {
+    // Purpose: Compute exact minimum distance between two meshes.
+    // Inputs: two meshes.
+    // Outputs: non-negative distance.
+    let a_bbox = mesh_bbox(a);
+    let b_bbox = mesh_bbox(b);
+    let a_shape = to_parry_trimesh(a);
+    let b_shape = to_parry_trimesh(b);
+    mesh_distance_exact_prepared(a_bbox, a_shape.as_ref(), b_bbox, b_shape.as_ref())
+}
+
+pub fn mesh_collides_with_any(candidate: &Mesh, others: &[Mesh]) -> bool {
+    // Purpose: Check candidate collision against a set of meshes.
+    // Inputs: candidate mesh and existing meshes.
+    // Outputs: true when any collision is found.
+    others.iter().any(|m| mesh_collision_exact(candidate, m))
+}
+
+pub fn mesh_min_distance_to_set(candidate: &Mesh, others: &[Mesh]) -> f64 {
+    // Purpose: Compute minimum distance from candidate to a mesh set.
+    // Inputs: candidate mesh and existing meshes.
+    // Outputs: smallest distance value.
+    let mut best = f64::INFINITY;
+    for m in others {
+        best = best.min(mesh_distance_exact(candidate, m));
+    }
+    if best.is_infinite() {
+        0.0
+    } else {
+        best
     }
 }
 
@@ -529,7 +1042,7 @@ fn clip_mesh_by_plane_with_cap(mesh: &Mesh, origin: Vec3, normal: Vec3) -> Mesh 
     }
 }
 
-fn clip_mesh_by_bbox_precise(mesh: &Mesh, bbox: BoundingBox) -> Mesh {
+pub fn clip_mesh_by_bbox(mesh: &Mesh, bbox: BoundingBox) -> Mesh {
     // Purpose: Clip mesh by all six bbox planes with capping.
     // Inputs: source mesh and target bounding box.
     // Outputs: clipped mesh.
@@ -552,13 +1065,6 @@ fn clip_mesh_by_bbox_precise(mesh: &Mesh, bbox: BoundingBox) -> Mesh {
     out
 }
 
-pub fn clip_mesh_by_bbox(mesh: &Mesh, bbox: BoundingBox) -> Mesh {
-    // Purpose: Public bbox clipping entry point.
-    // Inputs: source mesh and target bounding box.
-    // Outputs: clipped mesh.
-    clip_mesh_by_bbox_precise(mesh, bbox)
-}
-
 /// Compute volume of one particle within bbox by clipping then measuring.
 /// Inputs: particle mesh and bbox.
 /// Outputs: positive in-box volume.
@@ -567,144 +1073,32 @@ pub fn particle_volume_in_bbox(mesh: &Mesh, bbox: BoundingBox) -> f64 {
     mesh_volume(&clipped)
 }
 
-pub fn box_mesh(bbox: BoundingBox) -> Mesh {
-    // Purpose: Build triangulated box mesh from bounding box corners.
-    // Inputs: axis-aligned bounding box.
-    // Outputs: closed box mesh.
-    let min = bbox.min;
-    let max = bbox.max;
-    let v = vec![
-        Vec3::new(min.x, min.y, min.z),
-        Vec3::new(max.x, min.y, min.z),
-        Vec3::new(max.x, max.y, min.z),
-        Vec3::new(min.x, max.y, min.z),
-        Vec3::new(min.x, min.y, max.z),
-        Vec3::new(max.x, min.y, max.z),
-        Vec3::new(max.x, max.y, max.z),
-        Vec3::new(min.x, max.y, max.z),
-    ];
-
-    let idx = [
-        (0, 1, 2), (0, 2, 3),
-        (4, 6, 5), (4, 7, 6),
-        (0, 4, 5), (0, 5, 1),
-        (1, 5, 6), (1, 6, 2),
-        (2, 6, 7), (2, 7, 3),
-        (3, 7, 4), (3, 4, 0),
-    ];
-
-    let faces = idx
-        .iter()
-        .map(|(a, b, c)| crate::types::Triangle {
-            a: *a,
-            b: *b,
-            c: *c,
-        })
-        .collect();
-
-    Mesh { vertices: v, faces }
+pub fn volume_fraction_in_bbox(mesh: &Mesh, bbox: BoundingBox) -> f64 {
+    // Purpose: Compute true in-box VF for one mesh.
+    // Inputs: mesh and bbox.
+    // Outputs: volume fraction in [0, 1].
+    volume_fraction_of_meshes_in_bbox(std::slice::from_ref(mesh), bbox)
 }
 
-pub fn simulate_forging_ffd(mesh: &Mesh, compression_ratio: f64, bulge_factor: f64) -> Mesh {
-    // Purpose: Apply simplified forging deformation to mesh.
-    // Inputs: source mesh, compression ratio, bulge factor.
-    // Outputs: deformed mesh.
-    let bbox = mesh_bbox(mesh).unwrap_or(BoundingBox {
-        min: Vec3::new(0.0, 0.0, 0.0),
-        max: Vec3::new(1.0, 1.0, 1.0),
-    });
-    let center = Vec3::new(
-        (bbox.min.x + bbox.max.x) * 0.5,
-        (bbox.min.y + bbox.max.y) * 0.5,
-        (bbox.min.z + bbox.max.z) * 0.5,
-    );
+pub fn volume_fraction_of_meshes_in_bbox(meshes: &[Mesh], bbox: BoundingBox) -> f64 {
+    // Purpose: Compute true in-box VF for multiple meshes by per-granule clipping.
+    // Inputs: mesh list and bbox.
+    // Outputs: volume fraction in [0, 1].
+    let box_volume = bbox.volume().max(1e-12);
+    let mut in_box_volume = 0.0;
 
-    let mut out = mesh.clone();
-    let z_scale = (1.0 - compression_ratio).clamp(0.01, 1.0);
-    let xy_scale = (1.0 / z_scale.sqrt()).powf(bulge_factor.clamp(0.0, 1.0));
-
-    for v in &mut out.vertices {
-        let local = v.sub(center);
-        *v = Vec3::new(
-            center.x + local.x * xy_scale,
-            center.y + local.y * xy_scale,
-            center.z + local.z * z_scale,
-        );
-    }
-
-    out
-}
-
-/// Apply simplified forging affine transform with optional ROI tracking.
-/// Inputs: source mesh, lattice bbox (deformation frame), optional ROI bbox, compression, bulge, mesh type, void densification factor.
-/// Outputs: deformed mesh and optional transformed ROI bbox.
-pub fn simulate_forging_ffd_with_tracking(
-    mesh: &Mesh,
-    lattice_bbox: BoundingBox,
-    track_bbox: Option<BoundingBox>,
-    compression_ratio: f64,
-    bulge_factor: f64,
-    mesh_type: &str,
-    void_densification: f64,
-) -> (Mesh, Option<BoundingBox>) {
-    let center = Vec3::new(
-        (lattice_bbox.min.x + lattice_bbox.max.x) * 0.5,
-        (lattice_bbox.min.y + lattice_bbox.max.y) * 0.5,
-        (lattice_bbox.min.z + lattice_bbox.max.z) * 0.5,
-    );
-
-    let z_scale = (1.0 - compression_ratio).clamp(0.01, 1.0);
-    let xy_scale = (1.0 / z_scale.sqrt()).powf(bulge_factor.clamp(0.0, 1.0));
-
-    let transform_point = |p: Vec3| {
-        let local = p.sub(center);
-        Vec3::new(
-            center.x + local.x * xy_scale,
-            center.y + local.y * xy_scale,
-            center.z + local.z * z_scale,
-        )
-    };
-
-    let mut out = mesh.clone();
-    for v in &mut out.vertices {
-        *v = transform_point(*v);
-    }
-
-    if mesh_type.eq_ignore_ascii_case("void") {
-        let closure = (1.0 - 0.05 * compression_ratio * void_densification).clamp(0.85, 1.0);
-        let c = mesh_centroid(&out);
-        for v in &mut out.vertices {
-            let local = v.sub(c);
-            *v = c.add(local.scale(closure));
+    for mesh in meshes {
+        let parts = split_mesh_into_granules(mesh);
+        if parts.is_empty() {
+            in_box_volume += particle_volume_in_bbox(mesh, bbox);
+        } else {
+            for part in &parts {
+                in_box_volume += particle_volume_in_bbox(part, bbox);
+            }
         }
     }
 
-    let tracked = track_bbox.map(|tb| {
-        let corners = [
-            Vec3::new(tb.min.x, tb.min.y, tb.min.z),
-            Vec3::new(tb.min.x, tb.min.y, tb.max.z),
-            Vec3::new(tb.min.x, tb.max.y, tb.min.z),
-            Vec3::new(tb.min.x, tb.max.y, tb.max.z),
-            Vec3::new(tb.max.x, tb.min.y, tb.min.z),
-            Vec3::new(tb.max.x, tb.min.y, tb.max.z),
-            Vec3::new(tb.max.x, tb.max.y, tb.min.z),
-            Vec3::new(tb.max.x, tb.max.y, tb.max.z),
-        ];
-
-        let mut min_p = transform_point(corners[0]);
-        let mut max_p = min_p;
-        for p in corners.iter().skip(1).copied().map(transform_point) {
-            min_p.x = min_p.x.min(p.x);
-            min_p.y = min_p.y.min(p.y);
-            min_p.z = min_p.z.min(p.z);
-            max_p.x = max_p.x.max(p.x);
-            max_p.y = max_p.y.max(p.y);
-            max_p.z = max_p.z.max(p.z);
-        }
-        BoundingBox { min: min_p, max: max_p }
-    });
-
-    (out, tracked)
+    (in_box_volume / box_volume).clamp(0.0, 1.0)
 }
 
 fn index_3d_to_flat(x: usize, y: usize, z: usize, ny: usize, nz: usize) -> usize {
