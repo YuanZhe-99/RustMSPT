@@ -1199,6 +1199,7 @@ fn build_bbox_occupancy(mesh: &Mesh, bbox: BoundingBox, voxel_pitch: f64) -> (Ve
     let mut occ = vec![false; nx * ny * nz];
 
     let parts = split_mesh_into_granules(mesh);
+    let mut part_ranges = Vec::new();
     for p in &parts {
         let Some(pb) = mesh_bbox(p) else {
             continue;
@@ -1212,26 +1213,41 @@ fn build_bbox_occupancy(mesh: &Mesh, bbox: BoundingBox, voxel_pitch: f64) -> (Ve
         let y1 = (((pb.max.y - bbox.min.y) / voxel_pitch).ceil() as isize).min(ny as isize) as usize;
         let z1 = (((pb.max.z - bbox.min.z) / voxel_pitch).ceil() as isize).min(nz as isize) as usize;
 
-        if x0 >= x1 || y0 >= y1 || z0 >= z1 {
-            continue;
+        if x0 < x1 && y0 < y1 && z0 < z1 {
+            part_ranges.push((p, x0, x1, y0, y1, z0, z1));
         }
+    }
 
-        for x in x0..x1 {
-            for y in y0..y1 {
-                for z in z0..z1 {
-                    let center = Vec3::new(
-                        bbox.min.x + (x as f64 + 0.5) * voxel_pitch,
-                        bbox.min.y + (y as f64 + 0.5) * voxel_pitch,
-                        bbox.min.z + (z as f64 + 0.5) * voxel_pitch,
-                    );
-                    if point_inside_mesh(p, center) {
-                        let idx = index_3d_to_flat(x, y, z, ny, nz);
-                        occ[idx] = true;
+    occ.par_chunks_mut(ny * nz)
+        .enumerate()
+        .for_each(|(x, slab)| {
+            let cx = bbox.min.x + (x as f64 + 0.5) * voxel_pitch;
+
+            for (p, x0, x1, y0, y1, z0, z1) in &part_ranges {
+                if x < *x0 || x >= *x1 {
+                    continue;
+                }
+
+                for y in *y0..*y1 {
+                    let cy = bbox.min.y + (y as f64 + 0.5) * voxel_pitch;
+                    for z in *z0..*z1 {
+                        let idx = y * nz + z;
+                        if slab[idx] {
+                            continue;
+                        }
+
+                        let center = Vec3::new(
+                            cx,
+                            cy,
+                            bbox.min.z + (z as f64 + 0.5) * voxel_pitch,
+                        );
+                        if point_inside_mesh(p, center) {
+                            slab[idx] = true;
+                        }
                     }
                 }
             }
-        }
-    }
+        });
 
     (occ, [nx, ny, nz])
 }

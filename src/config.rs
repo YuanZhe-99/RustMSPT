@@ -143,6 +143,8 @@ pub struct MeasurementParams {
     pub mc_method: String,
     #[serde(default, deserialize_with = "deserialize_option_usize_flexible")]
     pub mc_samples: Option<usize>,
+    #[serde(default, deserialize_with = "deserialize_option_i32_flexible")]
+    pub cpu_max: Option<i32>,
     pub output_path: String,
 }
 

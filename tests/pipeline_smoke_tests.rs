@@ -66,6 +66,7 @@ fn measurement_pipeline_smoke() {
                 voxel_pitch: 1.0,
                 mc_method: "monte_carlo".to_string(),
                 mc_samples: Some(2_000),
+                cpu_max: Some(-1),
                 output_path: output.to_string_lossy().to_string(),
             },
         },

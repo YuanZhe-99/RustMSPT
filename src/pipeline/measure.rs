@@ -1,11 +1,12 @@
 use crate::config::{parse_box_dimensions, MeasurementConfig};
-use crate::error::Result;
+use crate::error::{Result, RustMsptError};
 use crate::geometry::{
     calculate_s2, mesh_bbox, split_mesh_into_granules, volume_fraction_in_bbox,
 };
 use crate::io::load_stl_or_merge_folder;
 use crate::pipeline::Pipeline;
 use crate::types::BoundingBox;
+use rayon::ThreadPoolBuilder;
 use std::fs;
 use std::path::Path;
 
@@ -48,6 +49,25 @@ impl Pipeline for MeasurePipeline {
         // Inputs: measurement config and STL input source.
         // Outputs: report file and runtime diagnostics.
         let params = &self.config.measurement;
+
+        let available_cores = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        let cpu_max = params.cpu_max.unwrap_or(-1);
+        let thread_count = if cpu_max == -1 {
+            available_cores
+        } else {
+            (cpu_max.max(1) as usize).min(available_cores)
+        };
+        let thread_pool = ThreadPoolBuilder::new()
+            .num_threads(thread_count)
+            .build()
+            .map_err(|e| RustMsptError::InvalidConfig(format!("Failed to build thread pool: {e}")))?;
+        println!(
+            "[Info] CPU setting: cpu_max={} -> using {} worker threads (available {}).",
+            cpu_max, thread_count, available_cores
+        );
+
         let mesh = load_stl_or_merge_folder(Path::new(&params.stl_path))?;
 
         let user_bbox = Self::parse_optional_bbox(&params.bounding_box)?;
@@ -92,14 +112,16 @@ impl Pipeline for MeasurePipeline {
                 println!(
                     "[Warning] both requested but exact voxel grid too large ({voxel_count}); only monte_carlo will run."
                 );
-                let s2_monte = calculate_s2(
-                    &mesh,
-                    bbox,
-                    params.r_max,
-                    params.voxel_pitch,
-                    "monte_carlo",
-                    params.mc_samples.unwrap_or(10_000),
-                );
+                let s2_monte = thread_pool.install(|| {
+                    calculate_s2(
+                        &mesh,
+                        bbox,
+                        params.r_max,
+                        params.voxel_pitch,
+                        "monte_carlo",
+                        params.mc_samples.unwrap_or(10_000),
+                    )
+                });
                 output.push_str("Method: monte_carlo (exact skipped by voxel limit)\n");
                 output.push_str(&format!("S2(0)-VF diff [monte_carlo]: {:.6}\n", (s2_monte[0] - vf).abs()));
                 output.push_str("S2 Values [monte_carlo]:\n");
@@ -110,22 +132,26 @@ impl Pipeline for MeasurePipeline {
                 summary_lines.push(format!("[Info] S2(0)-VF diff [monte_carlo]: {:.6}", (s2_monte[0] - vf).abs()));
                 summary_lines.push(format!("[Info] S2 points [monte_carlo]: {}", s2_monte.len()));
             } else {
-                let s2_exact = calculate_s2(
-                    &mesh,
-                    bbox,
-                    params.r_max,
-                    params.voxel_pitch,
-                    "exact",
-                    params.mc_samples.unwrap_or(10_000),
-                );
-                let s2_monte = calculate_s2(
-                    &mesh,
-                    bbox,
-                    params.r_max,
-                    params.voxel_pitch,
-                    "monte_carlo",
-                    params.mc_samples.unwrap_or(10_000),
-                );
+                let s2_exact = thread_pool.install(|| {
+                    calculate_s2(
+                        &mesh,
+                        bbox,
+                        params.r_max,
+                        params.voxel_pitch,
+                        "exact",
+                        params.mc_samples.unwrap_or(10_000),
+                    )
+                });
+                let s2_monte = thread_pool.install(|| {
+                    calculate_s2(
+                        &mesh,
+                        bbox,
+                        params.r_max,
+                        params.voxel_pitch,
+                        "monte_carlo",
+                        params.mc_samples.unwrap_or(10_000),
+                    )
+                });
                 let l2 = Self::l2_error(&s2_exact, &s2_monte);
 
                 output.push_str("Method: both\n");
@@ -160,14 +186,16 @@ impl Pipeline for MeasurePipeline {
                 requested_method
             };
 
-            let s2 = calculate_s2(
-                &mesh,
-                bbox,
-                params.r_max,
-                params.voxel_pitch,
-                method,
-                params.mc_samples.unwrap_or(10_000),
-            );
+            let s2 = thread_pool.install(|| {
+                calculate_s2(
+                    &mesh,
+                    bbox,
+                    params.r_max,
+                    params.voxel_pitch,
+                    method,
+                    params.mc_samples.unwrap_or(10_000),
+                )
+            });
 
             output.push_str(&format!("Method: {method}\n"));
             output.push_str(&format!("S2(0)-VF diff: {:.6}\n", (s2[0] - vf).abs()));
