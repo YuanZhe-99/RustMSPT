@@ -22,9 +22,53 @@ box:
 
 # Optimization parameters
 optimization:
-  max_iterations: 2_000
+  max_iterations: 5_000
+
+  # --- Simulated Annealing (SA) temperature schedule ---
+  # initial_temperature:
+  #   Starting SA temperature. Higher = more exploration (accept worse moves more often).
+  # cooling_rate:
+  #   Base per-iteration decay factor (< 1.0). Closer to 1.0 = slower cooling.
+  # adaptive_temp_window:
+  #   Number of iterations in one acceptance-rate window.
+  # target_acceptance_low/high:
+  #   Desired acceptance-rate band. If actual acceptance is below low => heat up.
+  #   If above high => cool down faster.
+  # adaptive_heat_factor:
+  #   Multiplier applied when acceptance is too low (should be > 1.0).
+  # adaptive_cool_factor:
+  #   Multiplier applied when acceptance is too high (should be < 1.0).
+  # adaptive_temp_ceiling_factor:
+  #   Max allowed temperature = initial_temperature * this factor.
+
+  # Recommended profile A (exploration-first):
+  # initial_temperature: 0.15
+  # cooling_rate: 0.992
+  # adaptive_temp_window: 80
+  # target_acceptance_low: 0.25
+  # target_acceptance_high: 0.55
+  # adaptive_heat_factor: 1.12
+  # adaptive_cool_factor: 0.97
+  # adaptive_temp_ceiling_factor: 8.0
+
+  # Recommended profile B (convergence-first):
+  # initial_temperature: 0.08
+  # cooling_rate: 0.988
+  # adaptive_temp_window: 40
+  # target_acceptance_low: 0.15
+  # target_acceptance_high: 0.35
+  # adaptive_heat_factor: 1.05
+  # adaptive_cool_factor: 0.90
+  # adaptive_temp_ceiling_factor: 3.0
+
   initial_temperature: 0.1
   cooling_rate: 0.99
+  adaptive_temp_window: 50
+  target_acceptance_low: 0.20
+  target_acceptance_high: 0.45
+  adaptive_heat_factor: 1.08
+  adaptive_cool_factor: 0.94
+  adaptive_temp_ceiling_factor: 5.0
   
   # 2PCF Calculation settings
   r_max: 10

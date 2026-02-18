@@ -206,6 +206,13 @@ pub struct OptimizationParams {
     pub max_iterations: usize,
     pub initial_temperature: f64,
     pub cooling_rate: f64,
+    #[serde(default, deserialize_with = "deserialize_option_usize_flexible")]
+    pub adaptive_temp_window: Option<usize>,
+    pub target_acceptance_low: Option<f64>,
+    pub target_acceptance_high: Option<f64>,
+    pub adaptive_heat_factor: Option<f64>,
+    pub adaptive_cool_factor: Option<f64>,
+    pub adaptive_temp_ceiling_factor: Option<f64>,
     pub r_max: usize,
     pub voxel_pitch: f64,
     pub mc_method: String,

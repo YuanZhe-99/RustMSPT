@@ -338,6 +338,42 @@ impl Pipeline for OptimizePipeline {
 
         let mut rng = rand::thread_rng();
         let mut temperature = params.initial_temperature.max(1e-8);
+        let cooling_rate = params.cooling_rate.clamp(0.8, 0.99999);
+        let adaptive_window = params
+            .adaptive_temp_window
+            .unwrap_or((params.max_iterations / 40).clamp(20, 100))
+            .max(5);
+        let target_accept_low = params.target_acceptance_low.unwrap_or(0.20).clamp(0.0, 1.0);
+        let mut target_accept_high = params.target_acceptance_high.unwrap_or(0.45).clamp(0.0, 1.0);
+        if target_accept_high <= target_accept_low {
+            target_accept_high = (target_accept_low + 0.05).clamp(0.0, 1.0);
+        }
+        let heat_factor = params.adaptive_heat_factor.unwrap_or(1.08).max(1.0);
+        let cool_factor = params.adaptive_cool_factor.unwrap_or(0.94).clamp(0.01, 1.0);
+        let temp_ceiling_factor = params.adaptive_temp_ceiling_factor.unwrap_or(5.0).max(1.0);
+        let temp_floor = 1e-9;
+        let temp_ceiling = params.initial_temperature.max(1e-8) * temp_ceiling_factor;
+        let mut window_trials = 0usize;
+        let mut window_accepts = 0usize;
+
+        let mut apply_temperature_step = |accepted_this_iter: bool, temperature: &mut f64| {
+            *temperature = (*temperature * cooling_rate).max(temp_floor);
+            window_trials += 1;
+            if accepted_this_iter {
+                window_accepts += 1;
+            }
+
+            if window_trials >= adaptive_window {
+                let accept_rate = window_accepts as f64 / window_trials as f64;
+                if accept_rate < target_accept_low {
+                    *temperature = (*temperature * heat_factor).min(temp_ceiling);
+                } else if accept_rate > target_accept_high {
+                    *temperature = (*temperature * cool_factor).max(temp_floor);
+                }
+                window_trials = 0;
+                window_accepts = 0;
+            }
+        };
         let s2_method = params.mc_method.as_str();
         println!(
             "[Info] S2 config: method={}, r_max={}, mc_samples={}, voxel_pitch={:.6}",
@@ -345,6 +381,16 @@ impl Pipeline for OptimizePipeline {
             params.r_max,
             params.mc_samples,
             params.voxel_pitch
+        );
+        println!(
+            "[Info] SA temperature schedule: base_cooling={:.5}, adaptive_window={}, target_acceptance=[{:.2},{:.2}], heat_factor={:.3}, cool_factor={:.3}, ceiling_factor={:.2}",
+            cooling_rate,
+            adaptive_window,
+            target_accept_low,
+            target_accept_high,
+            heat_factor,
+            cool_factor,
+            temp_ceiling_factor
         );
 
         let merged_input = merge_meshes(&particles);
@@ -513,7 +559,7 @@ impl Pipeline for OptimizePipeline {
 
             let collision_start = Instant::now();
             if !check_boundary_constraints_mode(&candidate, box_bounds, mode, d1, d2) {
-                temperature *= params.cooling_rate.clamp(0.8, 0.99999);
+                apply_temperature_step(false, &mut temperature);
                 update_progress(&progress, iter + 1, current_loss, best_loss, temperature, accepted_moves);
                 collision_time += collision_start.elapsed();
                 continue;
@@ -556,7 +602,7 @@ impl Pipeline for OptimizePipeline {
                 }
             }
             if blocked {
-                temperature *= params.cooling_rate.clamp(0.8, 0.99999);
+                apply_temperature_step(false, &mut temperature);
                 update_progress(&progress, iter + 1, current_loss, best_loss, temperature, accepted_moves);
                 collision_time += collision_start.elapsed();
                 continue;
@@ -604,7 +650,7 @@ impl Pipeline for OptimizePipeline {
                     }
                 }
                 if ghost_blocked {
-                    temperature *= params.cooling_rate.clamp(0.8, 0.99999);
+                    apply_temperature_step(false, &mut temperature);
                     update_progress(&progress, iter + 1, current_loss, best_loss, temperature, accepted_moves);
                     collision_time += collision_start.elapsed();
                     continue;
@@ -660,7 +706,7 @@ impl Pipeline for OptimizePipeline {
                 prepared[idx] = prepare_particle(original);
             }
 
-            temperature *= params.cooling_rate.clamp(0.8, 0.99999);
+            apply_temperature_step(accept, &mut temperature);
             update_progress(&progress, iter + 1, current_loss, best_loss, temperature, accepted_moves);
             if temperature < 1e-9 {
                 break;
