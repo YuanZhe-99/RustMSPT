@@ -1,7 +1,7 @@
 use crate::config::{parse_box_dimensions, OptimizationConfig};
 use crate::error::{Result, RustMsptError};
 use crate::geometry::{
-    bbox_distance, calculate_s2, check_boundary_constraints_mode,
+    bbox_distance, bbox_overlaps, calculate_s2, check_boundary_constraints_mode,
     generate_periodic_ghosts, l2_norm, merge_meshes, mesh_bbox, mesh_centroid, mesh_volume,
     mesh_collision_exact_prepared, mesh_distance_exact_prepared, move_mesh_to_target_center,
     orient_components_to_positive_volume, rotate_mesh_around_center, split_mesh_into_granules,
@@ -292,9 +292,24 @@ impl Pipeline for OptimizePipeline {
             let mesh = load_stl(input_path)?;
             particles.extend(split_mesh_into_granules(&mesh));
         }
+
+        let loaded_particles = particles.len();
+        particles.retain(|mesh| {
+            mesh_bbox(mesh)
+                .map(|bbox| bbox_overlaps(bbox, box_bounds))
+                .unwrap_or(false)
+        });
+        let removed_outside = loaded_particles.saturating_sub(particles.len());
+        if removed_outside > 0 {
+            println!(
+                "[Info] Pre-filter removed {} particles fully outside optimization bbox.",
+                removed_outside
+            );
+        }
+
         if particles.is_empty() {
             return Err(RustMsptError::InvalidMesh(
-                "No particles loaded for optimization".to_string(),
+                "No particles remain after bbox pre-filter for optimization".to_string(),
             ));
         }
 
@@ -571,6 +586,19 @@ impl Pipeline for OptimizePipeline {
                     continue;
                 }
 
+                let mut bbox_gap: Option<f64> = None;
+                if let (Some(cb), Some(ob)) = (candidate_bbox, other.bbox) {
+                    let bd = bbox_distance(cb, ob);
+                    bbox_gap = Some(bd);
+                    if min_neighbor > 0.0 {
+                        if bd >= min_neighbor {
+                            continue;
+                        }
+                    } else if bd > 0.0 {
+                        continue;
+                    }
+                }
+
                 let overlap = mesh_collision_exact_prepared(
                     candidate_bbox,
                     candidate_shape.as_ref(),
@@ -583,20 +611,20 @@ impl Pipeline for OptimizePipeline {
                 }
 
                 if min_neighbor > 0.0 {
-                    // Broad-phase cull by bbox distance.
-                    if let (Some(cb), Some(ob)) = (candidate_bbox, other.bbox) {
-                        let bd = bbox_distance(cb, ob);
-                        if bd < min_neighbor {
-                            let d = mesh_distance_exact_prepared(
-                                candidate_bbox,
-                                candidate_shape.as_ref(),
-                                other.bbox,
-                                other.shape.as_ref(),
-                            );
-                            if d < min_neighbor {
-                                blocked = true;
-                                break;
-                            }
+                    let need_exact_distance = match bbox_gap {
+                        Some(bd) => bd < min_neighbor,
+                        None => true,
+                    };
+                    if need_exact_distance {
+                        let d = mesh_distance_exact_prepared(
+                            candidate_bbox,
+                            candidate_shape.as_ref(),
+                            other.bbox,
+                            other.shape.as_ref(),
+                        );
+                        if d < min_neighbor {
+                            blocked = true;
+                            break;
                         }
                     }
                 }
@@ -618,6 +646,20 @@ impl Pipeline for OptimizePipeline {
                         if j == idx {
                             continue;
                         }
+
+                        let mut bbox_gap: Option<f64> = None;
+                        if let (Some(gb), Some(ob)) = (g_bbox, other.bbox) {
+                            let bd = bbox_distance(gb, ob);
+                            bbox_gap = Some(bd);
+                            if min_neighbor > 0.0 {
+                                if bd >= min_neighbor {
+                                    continue;
+                                }
+                            } else if bd > 0.0 {
+                                continue;
+                            }
+                        }
+
                         if mesh_collision_exact_prepared(
                             g_bbox,
                             g_shape.as_ref(),
@@ -628,19 +670,20 @@ impl Pipeline for OptimizePipeline {
                             break;
                         }
                         if min_neighbor > 0.0 {
-                            if let (Some(gb), Some(ob)) = (g_bbox, other.bbox) {
-                                let bd = bbox_distance(gb, ob);
-                                if bd < min_neighbor {
-                                    let d = mesh_distance_exact_prepared(
-                                        g_bbox,
-                                        g_shape.as_ref(),
-                                        other.bbox,
-                                        other.shape.as_ref(),
-                                    );
-                                    if d < min_neighbor {
-                                        ghost_blocked = true;
-                                        break;
-                                    }
+                            let need_exact_distance = match bbox_gap {
+                                Some(bd) => bd < min_neighbor,
+                                None => true,
+                            };
+                            if need_exact_distance {
+                                let d = mesh_distance_exact_prepared(
+                                    g_bbox,
+                                    g_shape.as_ref(),
+                                    other.bbox,
+                                    other.shape.as_ref(),
+                                );
+                                if d < min_neighbor {
+                                    ghost_blocked = true;
+                                    break;
                                 }
                             }
                         }

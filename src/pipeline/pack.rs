@@ -1,7 +1,7 @@
 use crate::config::{parse_box_dimensions, PackingConfig};
 use crate::error::{Result, RustMsptError};
 use crate::geometry::{
-    check_boundary_constraints_mode, generate_periodic_ghosts, merge_meshes, mesh_bbox,
+    bbox_distance, check_boundary_constraints_mode, generate_periodic_ghosts, merge_meshes, mesh_bbox,
     mesh_collision_exact, mesh_distance_exact, mesh_surface_area, mesh_volume,
     move_mesh_to_target_center, orient_components_to_positive_volume, particle_volume_in_bbox,
     rotate_mesh_around_center, split_mesh_into_granules,
@@ -229,11 +229,27 @@ impl Pipeline for PackPipeline {
                     collision_set.extend(generate_periodic_ghosts(p, box_bounds));
                 }
             }
+            let collision_bboxes: Vec<Option<crate::types::BoundingBox>> =
+                collision_set.iter().map(mesh_bbox).collect();
+            let candidate_bbox = mesh_bbox(&candidate);
 
             let candidate_collision = thread_pool.install(|| {
                 collision_set
                     .par_iter()
-                    .any(|existing| mesh_collision_exact(&candidate, existing))
+                    .zip(collision_bboxes.par_iter())
+                    .any(|(existing, other_bbox)| {
+                        if let (Some(cb), Some(ob)) = (candidate_bbox, *other_bbox) {
+                            let bd = bbox_distance(cb, ob);
+                            if min_neighbor > 0.0 {
+                                if bd >= min_neighbor {
+                                    return false;
+                                }
+                            } else if bd > 0.0 {
+                                return false;
+                            }
+                        }
+                        mesh_collision_exact(&candidate, existing)
+                    })
             });
             if candidate_collision {
                 attempts += 1;
@@ -245,7 +261,16 @@ impl Pipeline for PackPipeline {
                 let distance = thread_pool.install(|| {
                     collision_set
                         .par_iter()
-                        .map(|existing| mesh_distance_exact(&candidate, existing))
+                        .zip(collision_bboxes.par_iter())
+                        .map(|(existing, other_bbox)| {
+                            if let (Some(cb), Some(ob)) = (candidate_bbox, *other_bbox) {
+                                let bd = bbox_distance(cb, ob);
+                                if bd >= min_neighbor {
+                                    return f64::INFINITY;
+                                }
+                            }
+                            mesh_distance_exact(&candidate, existing)
+                        })
                         .reduce(|| f64::INFINITY, f64::min)
                 });
                 if distance < min_neighbor {
@@ -259,9 +284,23 @@ impl Pipeline for PackPipeline {
                 let candidate_ghosts = generate_periodic_ghosts(&candidate, box_bounds);
                 let ghost_collision = thread_pool.install(|| {
                     candidate_ghosts.par_iter().any(|ghost| {
+                        let ghost_bbox = mesh_bbox(ghost);
                         if collision_set
                             .par_iter()
-                            .any(|existing| mesh_collision_exact(ghost, existing))
+                            .zip(collision_bboxes.par_iter())
+                            .any(|(existing, other_bbox)| {
+                                if let (Some(gb), Some(ob)) = (ghost_bbox, *other_bbox) {
+                                    let bd = bbox_distance(gb, ob);
+                                    if min_neighbor > 0.0 {
+                                        if bd >= min_neighbor {
+                                            return false;
+                                        }
+                                    } else if bd > 0.0 {
+                                        return false;
+                                    }
+                                }
+                                mesh_collision_exact(ghost, existing)
+                            })
                         {
                             return true;
                         }
@@ -269,7 +308,16 @@ impl Pipeline for PackPipeline {
                         if min_neighbor > 0.0 && !collision_set.is_empty() {
                             let d = collision_set
                                 .par_iter()
-                                .map(|existing| mesh_distance_exact(ghost, existing))
+                                .zip(collision_bboxes.par_iter())
+                                .map(|(existing, other_bbox)| {
+                                    if let (Some(gb), Some(ob)) = (ghost_bbox, *other_bbox) {
+                                        let bd = bbox_distance(gb, ob);
+                                        if bd >= min_neighbor {
+                                            return f64::INFINITY;
+                                        }
+                                    }
+                                    mesh_distance_exact(ghost, existing)
+                                })
                                 .reduce(|| f64::INFINITY, f64::min);
                             return d < min_neighbor;
                         }
