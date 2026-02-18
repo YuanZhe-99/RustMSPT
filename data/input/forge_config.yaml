@@ -6,8 +6,13 @@ forging:
   output_stl_path: "data/output/forged_mesh.stl"
   
   # Compression Ratio (0.0 to 1.0)
-  # 0.2 means compressing the Z-height by 20%
+  # 0.2 means compressing the selected axis length by 20%
   compression_ratio: 0.5
+
+  # Compression Axis
+  # Choose which axis to compress: 'x', 'y', or 'z'
+  # Default is 'z' when omitted.
+  compression_axis: 'y'
 
   # Bulge Factor (Material Flow Control)
   # 0.0 = Vertical compression only (no side expansion)

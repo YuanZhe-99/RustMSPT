@@ -37,6 +37,7 @@ fn forging_pipeline_smoke() {
                 input_stl_path: input.to_string_lossy().to_string(),
                 output_stl_path: Some(output.to_string_lossy().to_string()),
                 compression_ratio: Some(0.2),
+                compression_axis: Some("z".to_string()),
                 bulge_factor: Some(0.5),
                 roi_bounding_box: None,
                 mesh_type: Some("particle".to_string()),

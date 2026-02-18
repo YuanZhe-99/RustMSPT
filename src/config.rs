@@ -122,6 +122,7 @@ pub struct ForgingParams {
     pub input_stl_path: String,
     pub output_stl_path: Option<String>,
     pub compression_ratio: Option<f64>,
+    pub compression_axis: Option<String>,
     pub bulge_factor: Option<f64>,
     pub roi_bounding_box: Option<Vec<f64>>,
     pub mesh_type: Option<String>,

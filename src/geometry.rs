@@ -417,15 +417,15 @@ pub fn simulate_forging_ffd(mesh: &Mesh, compression_ratio: f64, bulge_factor: f
     );
 
     let mut out = mesh.clone();
-    let z_scale = (1.0 - compression_ratio).clamp(0.01, 1.0);
-    let xy_scale = (1.0 / z_scale.sqrt()).powf(bulge_factor.clamp(0.0, 1.0));
+    let axis_scale = (1.0 - compression_ratio).clamp(0.01, 1.0);
+    let lateral_scale = (1.0 / axis_scale.sqrt()).powf(bulge_factor.clamp(0.0, 1.0));
 
     for v in &mut out.vertices {
         let local = v.sub(center);
         *v = Vec3::new(
-            center.x + local.x * xy_scale,
-            center.y + local.y * xy_scale,
-            center.z + local.z * z_scale,
+            center.x + local.x * lateral_scale,
+            center.y + local.y * lateral_scale,
+            center.z + local.z * axis_scale,
         );
     }
 
@@ -433,13 +433,15 @@ pub fn simulate_forging_ffd(mesh: &Mesh, compression_ratio: f64, bulge_factor: f
 }
 
 /// Apply simplified forging affine transform with optional ROI tracking.
-/// Inputs: source mesh, lattice bbox (deformation frame), optional ROI bbox, compression, bulge, mesh type, void densification factor.
+/// Inputs: source mesh, lattice bbox (deformation frame), optional ROI bbox,
+/// compression, compression axis (0=x,1=y,2=z), bulge, mesh type, void densification factor.
 /// Outputs: deformed mesh and optional transformed ROI bbox.
 pub fn simulate_forging_ffd_with_tracking(
     mesh: &Mesh,
     lattice_bbox: BoundingBox,
     track_bbox: Option<BoundingBox>,
     compression_ratio: f64,
+    compression_axis: usize,
     bulge_factor: f64,
     mesh_type: &str,
     void_densification: f64,
@@ -450,16 +452,28 @@ pub fn simulate_forging_ffd_with_tracking(
         (lattice_bbox.min.z + lattice_bbox.max.z) * 0.5,
     );
 
-    let z_scale = (1.0 - compression_ratio).clamp(0.01, 1.0);
-    let xy_scale = (1.0 / z_scale.sqrt()).powf(bulge_factor.clamp(0.0, 1.0));
+    let axis_scale = (1.0 - compression_ratio).clamp(0.01, 1.0);
+    let lateral_scale = (1.0 / axis_scale.sqrt()).powf(bulge_factor.clamp(0.0, 1.0));
 
     let transform_point = |p: Vec3| {
         let local = p.sub(center);
-        Vec3::new(
-            center.x + local.x * xy_scale,
-            center.y + local.y * xy_scale,
-            center.z + local.z * z_scale,
-        )
+        match compression_axis {
+            0 => Vec3::new(
+                center.x + local.x * axis_scale,
+                center.y + local.y * lateral_scale,
+                center.z + local.z * lateral_scale,
+            ),
+            1 => Vec3::new(
+                center.x + local.x * lateral_scale,
+                center.y + local.y * axis_scale,
+                center.z + local.z * lateral_scale,
+            ),
+            _ => Vec3::new(
+                center.x + local.x * lateral_scale,
+                center.y + local.y * lateral_scale,
+                center.z + local.z * axis_scale,
+            ),
+        }
     };
 
     let mut out = mesh.clone();

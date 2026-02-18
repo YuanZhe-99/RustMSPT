@@ -1,5 +1,5 @@
 use crate::config::ForgingConfig;
-use crate::error::Result;
+use crate::error::{Result, RustMsptError};
 use crate::geometry::{
     mesh_bbox, mesh_volume, orient_components_to_positive_volume,
     simulate_forging_ffd_with_tracking, translate_mesh, volume_fraction_in_bbox,
@@ -30,6 +30,18 @@ impl ForgePipeline {
         })
     }
 
+    fn parse_compression_axis(axis: Option<&str>) -> Result<(usize, &'static str)> {
+        let normalized = axis.unwrap_or("z").trim().to_ascii_lowercase();
+        match normalized.as_str() {
+            "x" => Ok((0, "x")),
+            "y" => Ok((1, "y")),
+            "z" => Ok((2, "z")),
+            other => Err(RustMsptError::InvalidConfig(format!(
+                "forging.compression_axis must be one of: x, y, z (got '{other}')"
+            ))),
+        }
+    }
+
 }
 
 impl Pipeline for ForgePipeline {
@@ -57,6 +69,8 @@ impl Pipeline for ForgePipeline {
             .unwrap_or_else(|| volume_fraction_in_bbox(&mesh, lattice_bbox));
 
         let compression = params.compression_ratio.unwrap_or(0.2);
+        let (compression_axis, compression_axis_label) =
+            Self::parse_compression_axis(params.compression_axis.as_deref())?;
         let bulge = params.bulge_factor.unwrap_or(0.5);
         let mesh_type = params.mesh_type.as_deref().unwrap_or("particle");
         let void_densification = params.void_densification.unwrap_or(1.0);
@@ -66,6 +80,7 @@ impl Pipeline for ForgePipeline {
             lattice_bbox,
             roi_bbox,
             compression,
+            compression_axis,
             bulge,
             mesh_type,
             void_densification,
@@ -141,6 +156,7 @@ impl Pipeline for ForgePipeline {
         ));
         report.push_str(&format!("Spatial ROI VF before: {before_roi_vf:.6}\n"));
         report.push_str(&format!("Spatial ROI VF after:  {after_roi_vf:.6}\n"));
+        report.push_str(&format!("Compression axis: {compression_axis_label}\n"));
         report.push_str(&format!(
             "Output translation: ({:.4},{:.4},{:.4})\n",
             output_shift.x, output_shift.y, output_shift.z
@@ -190,6 +206,7 @@ impl Pipeline for ForgePipeline {
         );
         println!("[Info] Spatial ROI VF before: {before_roi_vf:.6}");
         println!("[Info] Spatial ROI VF after:  {after_roi_vf:.6}");
+        println!("[Info] Compression axis: {compression_axis_label}");
         println!(
             "[Info] Output translation: ({:.4},{:.4},{:.4})",
             output_shift.x, output_shift.y, output_shift.z
