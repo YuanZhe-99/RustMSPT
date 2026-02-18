@@ -272,9 +272,14 @@ impl Pipeline for OptimizePipeline {
             .num_threads(thread_count)
             .build()
             .map_err(|e| RustMsptError::InvalidConfig(format!("Failed to build thread pool: {e}")))?;
+        let effective_pool_threads = thread_pool.install(rayon::current_num_threads);
         println!(
             "[Info] CPU setting: cpu_max={} -> using {} worker threads (available {}).",
             cpu_max, thread_count, available_cores
+        );
+        println!(
+            "[Info] Rayon pool threads (effective): {}",
+            effective_pool_threads
         );
 
         let input_path = Path::new(&self.config.input.stl_path);
@@ -334,6 +339,13 @@ impl Pipeline for OptimizePipeline {
         let mut rng = rand::thread_rng();
         let mut temperature = params.initial_temperature.max(1e-8);
         let s2_method = params.mc_method.as_str();
+        println!(
+            "[Info] S2 config: method={}, r_max={}, mc_samples={}, voxel_pitch={:.6}",
+            s2_method,
+            params.r_max,
+            params.mc_samples,
+            params.voxel_pitch
+        );
 
         let merged_input = merge_meshes(&particles);
         let input_s2 = thread_pool.install(|| {

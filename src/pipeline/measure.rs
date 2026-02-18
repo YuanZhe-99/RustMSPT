@@ -63,9 +63,14 @@ impl Pipeline for MeasurePipeline {
             .num_threads(thread_count)
             .build()
             .map_err(|e| RustMsptError::InvalidConfig(format!("Failed to build thread pool: {e}")))?;
+        let effective_pool_threads = thread_pool.install(rayon::current_num_threads);
         println!(
             "[Info] CPU setting: cpu_max={} -> using {} worker threads (available {}).",
             cpu_max, thread_count, available_cores
+        );
+        println!(
+            "[Info] Rayon pool threads (effective): {}",
+            effective_pool_threads
         );
 
         let mesh = load_stl_or_merge_folder(Path::new(&params.stl_path))?;
@@ -94,6 +99,13 @@ impl Pipeline for MeasurePipeline {
         } else {
             "monte_carlo"
         };
+        println!(
+            "[Info] S2 config: method={}, r_max={}, mc_samples={}, voxel_pitch={:.6}",
+            requested_method,
+            params.r_max,
+            params.mc_samples.unwrap_or(10_000),
+            params.voxel_pitch
+        );
 
         let size = bbox.size();
         let pitch = params.voxel_pitch.max(1e-9);
