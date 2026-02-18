@@ -130,6 +130,7 @@ fn packing_pipeline_smoke() {
                 min_neighbor_distance: Some(0.0),
                 min_boundary_dist: Some(0.0),
                 min_cross_boundary_depth: Some(0.0),
+                cpu_max: Some(1),
                 filters: Some(PackingFilters {
                     min_volume: None,
                     max_aspect_ratio: None,

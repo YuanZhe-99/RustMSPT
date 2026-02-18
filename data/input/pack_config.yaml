@@ -34,6 +34,10 @@ packing:
   # d_2: Minimum protrusion/retention depth for crossing particles
   min_cross_boundary_depth: 3.0
 
+  # CPU worker limit for packing collision/distance checks
+  # -1 means no limit (use all available cores)
+  cpu_max: -1
+
   # Geometry Filters (Particles failing these are discarded BEFORE packing)
   filters:
     min_volume: 15.0

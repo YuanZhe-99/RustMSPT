@@ -2,7 +2,7 @@ use crate::config::{parse_box_dimensions, PackingConfig};
 use crate::error::{Result, RustMsptError};
 use crate::geometry::{
     check_boundary_constraints_mode, generate_periodic_ghosts, merge_meshes, mesh_bbox,
-    mesh_collides_with_any, mesh_min_distance_to_set, mesh_surface_area, mesh_volume,
+    mesh_collision_exact, mesh_distance_exact, mesh_surface_area, mesh_volume,
     move_mesh_to_target_center, orient_components_to_positive_volume, particle_volume_in_bbox,
     rotate_mesh_around_center, split_mesh_into_granules,
 };
@@ -11,6 +11,8 @@ use crate::pipeline::{create_progress_bar, Pipeline};
 use crate::types::{Mesh, Vec3};
 use indicatif::ProgressBar;
 use rand::Rng;
+use rayon::prelude::*;
+use rayon::ThreadPoolBuilder;
 use std::f64::consts::PI;
 use std::fs;
 use std::path::Path;
@@ -119,6 +121,29 @@ impl Pipeline for PackPipeline {
         let target = self.config.packing.target_volume_fraction.clamp(0.0, 1.0);
         let min_neighbor = self.config.packing.min_neighbor_distance.unwrap_or(0.0);
 
+        let available_cores = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        let cpu_max = self.config.packing.cpu_max.unwrap_or(-1);
+        let thread_count = if cpu_max == -1 {
+            available_cores
+        } else {
+            (cpu_max.max(1) as usize).min(available_cores)
+        };
+        let thread_pool = ThreadPoolBuilder::new()
+            .num_threads(thread_count)
+            .build()
+            .map_err(|e| RustMsptError::InvalidConfig(format!("Failed to build thread pool: {e}")))?;
+        let effective_pool_threads = thread_pool.install(rayon::current_num_threads);
+        println!(
+            "[Info] CPU setting: cpu_max={} -> using {} worker threads (available {}).",
+            cpu_max, thread_count, available_cores
+        );
+        println!(
+            "[Info] Rayon pool threads (effective): {}",
+            effective_pool_threads
+        );
+
         let mut rng = rand::thread_rng();
         let mut placed: Vec<Mesh> = Vec::new();
         let mut current_volume = 0.0;
@@ -205,14 +230,24 @@ impl Pipeline for PackPipeline {
                 }
             }
 
-            if mesh_collides_with_any(&candidate, &collision_set) {
+            let candidate_collision = thread_pool.install(|| {
+                collision_set
+                    .par_iter()
+                    .any(|existing| mesh_collision_exact(&candidate, existing))
+            });
+            if candidate_collision {
                 attempts += 1;
                 update_progress(&progress, current_volume, box_volume, target, placed.len(), attempts);
                 continue;
             }
 
             if min_neighbor > 0.0 && !collision_set.is_empty() {
-                let distance = mesh_min_distance_to_set(&candidate, &collision_set);
+                let distance = thread_pool.install(|| {
+                    collision_set
+                        .par_iter()
+                        .map(|existing| mesh_distance_exact(&candidate, existing))
+                        .reduce(|| f64::INFINITY, f64::min)
+                });
                 if distance < min_neighbor {
                     attempts += 1;
                     update_progress(&progress, current_volume, box_volume, target, placed.len(), attempts);
@@ -222,20 +257,26 @@ impl Pipeline for PackPipeline {
 
             if self.config.packing.mode == 3 {
                 let candidate_ghosts = generate_periodic_ghosts(&candidate, box_bounds);
-                let mut ghost_collision = false;
-                for ghost in &candidate_ghosts {
-                    if mesh_collides_with_any(ghost, &collision_set) {
-                        ghost_collision = true;
-                        break;
-                    }
-                    if min_neighbor > 0.0 && !collision_set.is_empty() {
-                        let d = mesh_min_distance_to_set(ghost, &collision_set);
-                        if d < min_neighbor {
-                            ghost_collision = true;
-                            break;
+                let ghost_collision = thread_pool.install(|| {
+                    candidate_ghosts.par_iter().any(|ghost| {
+                        if collision_set
+                            .par_iter()
+                            .any(|existing| mesh_collision_exact(ghost, existing))
+                        {
+                            return true;
                         }
-                    }
-                }
+
+                        if min_neighbor > 0.0 && !collision_set.is_empty() {
+                            let d = collision_set
+                                .par_iter()
+                                .map(|existing| mesh_distance_exact(ghost, existing))
+                                .reduce(|| f64::INFINITY, f64::min);
+                            return d < min_neighbor;
+                        }
+
+                        false
+                    })
+                });
                 if ghost_collision {
                     attempts += 1;
                     update_progress(&progress, current_volume, box_volume, target, placed.len(), attempts);

@@ -714,28 +714,6 @@ pub fn mesh_distance_exact(a: &Mesh, b: &Mesh) -> f64 {
     mesh_distance_exact_prepared(a_bbox, a_shape.as_ref(), b_bbox, b_shape.as_ref())
 }
 
-pub fn mesh_collides_with_any(candidate: &Mesh, others: &[Mesh]) -> bool {
-    // Purpose: Check candidate collision against a set of meshes.
-    // Inputs: candidate mesh and existing meshes.
-    // Outputs: true when any collision is found.
-    others.iter().any(|m| mesh_collision_exact(candidate, m))
-}
-
-pub fn mesh_min_distance_to_set(candidate: &Mesh, others: &[Mesh]) -> f64 {
-    // Purpose: Compute minimum distance from candidate to a mesh set.
-    // Inputs: candidate mesh and existing meshes.
-    // Outputs: smallest distance value.
-    let mut best = f64::INFINITY;
-    for m in others {
-        best = best.min(mesh_distance_exact(candidate, m));
-    }
-    if best.is_infinite() {
-        0.0
-    } else {
-        best
-    }
-}
-
 fn clip_plane_signed_distance(p: Vec3, origin: Vec3, normal: Vec3) -> f64 {
     // Purpose: Evaluate signed distance from point to plane.
     // Inputs: point, plane origin, plane normal.

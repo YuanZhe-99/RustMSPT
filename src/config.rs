@@ -183,6 +183,8 @@ pub struct PackingParams {
     pub min_boundary_dist: Option<f64>,
     pub min_cross_boundary_depth: Option<f64>,
     pub filters: Option<PackingFilters>,
+    #[serde(default, deserialize_with = "deserialize_option_i32_flexible")]
+    pub cpu_max: Option<i32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
