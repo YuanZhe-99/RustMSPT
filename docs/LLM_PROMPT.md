@@ -31,6 +31,7 @@ Deliver correct, maintainable, and testable Rust code for RustMSPT pipelines and
 - `src/pipeline/optimize.rs`: structure optimization pipeline
 - `src/pipeline/pack.rs`: particle packing pipeline
 - `src/pipeline/scale.rs`: scaling pipeline
+- `src/pipeline/split_filter.rs`: split + filter pipeline for particle STL outputs
 - `tests/*.rs`: unit/integration/smoke tests
 
 ## Pipeline Contract
@@ -80,4 +81,5 @@ Before finalizing a change:
 1. Build/test pass.
 2. Function comments are present and accurate.
 3. README and config examples remain consistent with behavior.
-4. No mention of unrelated projects or external migration context.
+4. Split/filter reports and output-path defaults remain consistent with config docs.
+5. No mention of unrelated projects or external migration context.

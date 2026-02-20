@@ -3,6 +3,7 @@ pub mod measure;
 pub mod optimize;
 pub mod pack;
 pub mod scale;
+pub mod split_filter;
 
 use crate::error::Result;
 use indicatif::{ProgressBar, ProgressStyle};

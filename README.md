@@ -10,6 +10,7 @@ RustMSPT is a standalone Rust toolkit for STL-based microstructure processing.
   - `optimize`
   - `pack`
   - `scale`
+  - `split-filter`
 - STL I/O:
   - Load ASCII and Binary STL (auto-detect)
   - Save Binary STL by default
@@ -64,6 +65,7 @@ cargo run -- measure
 cargo run -- optimize
 cargo run -- pack
 cargo run -- scale
+cargo run -- split-filter
 ```
 
 Override config path:
@@ -87,6 +89,23 @@ Default config files:
 - `data/input/optimize_config.yaml`
 - `data/input/pack_config.yaml`
 - `data/input/scale_config.yaml`
+- `data/input/split_filter_config.yaml`
+
+### Split-Filter pipeline
+
+`split-filter` supports STL file or STL folder input and always outputs a folder of split particles:
+
+- Output naming uses `output.prefix`, e.g. `particle_1.stl`, `particle_2.stl`, ...
+- Filtering can be disabled with `filter.enabled: false`
+- Supported filters:
+  - `max_aspect_ratio`
+  - `max_sharpness_ratio`
+  - volume mode `range` (`min/max`, `-1` means no bound)
+  - volume mode `lognormal_rebalance` (reduce overrepresented size ranges)
+- Report output:
+  - explicit: `output.report_path`
+  - default: `parent(output.folder)/split_filter_report.txt`
+  - includes step counts, summary stats, kept histogram, and before-vs-after histogram
 
 ### Measurement `mc_method`
 

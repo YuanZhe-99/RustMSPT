@@ -1,0 +1,37 @@
+# split_filter_config.yaml
+
+input:
+  # Input STL file or folder containing STL files
+  path: "data/input/particles.stl"
+
+output:
+  # Output is always a folder containing split particle STL files
+  folder: "data/output/split_particles"
+  # Output naming prefix, generated as: prefix + index + ".stl"
+  # Example: "particle_" -> particle_1.stl, particle_2.stl, ...
+  prefix: "particle_"
+  # Optional report path. If omitted, defaults to: parent(<output.folder>)/split_filter_report.txt
+  report_path: "data/output/split_filter_report.txt"
+
+filter:
+  # Set false to skip all filtering and only do splitting
+  enabled: true
+
+  # Optional geometric filters
+  max_aspect_ratio: 3.0
+  max_sharpness_ratio: 2.0
+
+  volume:
+    # Volume filtering mode:
+    # - none: no volume filter
+    # - range: keep particles in [min, max], -1 means no bound
+    # - lognormal_rebalance: suppress overrepresented size ranges based on fitted lognormal profile
+    mode: "range"
+
+    # Used by mode=range
+    min: 10.0
+    max: -1
+
+    # Used by mode=lognormal_rebalance
+    bins: 12
+    over_factor: 1.25

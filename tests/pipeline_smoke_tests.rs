@@ -2,7 +2,7 @@ use rustmspt::config::{
     BoxConfig, ForgingConfig, ForgingParams, InputPath, InputStl,
     MeasurementConfig, MeasurementParams, OptimizationConfig, OptimizationParams, OutputPath,
     OutputStl, PackingConfig, PackingFilters, PackingParams, ScaleConfig, ScalingParams,
-    TargetConfig,
+    SplitFilterConfig, SplitFilterOutput, SplitFilterRules, SplitFilterVolume, TargetConfig,
 };
 use rustmspt::geometry::box_mesh;
 use rustmspt::io::save_stl;
@@ -11,6 +11,7 @@ use rustmspt::pipeline::measure::MeasurePipeline;
 use rustmspt::pipeline::optimize::OptimizePipeline;
 use rustmspt::pipeline::pack::PackPipeline;
 use rustmspt::pipeline::scale::ScalePipeline;
+use rustmspt::pipeline::split_filter::SplitFilterPipeline;
 use rustmspt::pipeline::Pipeline;
 use rustmspt::types::{BoundingBox, Vec3};
 use std::fs;
@@ -142,6 +143,52 @@ fn packing_pipeline_smoke() {
 
     pipeline.run().expect("packing pipeline should run");
     assert!(output.exists());
+}
+
+#[test]
+fn split_filter_pipeline_smoke() {
+    let tmp = tempfile::tempdir().expect("tempdir should be created");
+    let input = tmp.path().join("input.stl");
+    let output_dir = tmp.path().join("split_out");
+    write_sample_mesh(&input);
+
+    let pipeline = SplitFilterPipeline {
+        config: SplitFilterConfig {
+            input: InputPath {
+                path: input.to_string_lossy().to_string(),
+            },
+            output: SplitFilterOutput {
+                folder: output_dir.to_string_lossy().to_string(),
+                prefix: "piece_".to_string(),
+                report_path: None,
+            },
+            filter: Some(SplitFilterRules {
+                enabled: Some(true),
+                max_aspect_ratio: Some(10.0),
+                max_sharpness_ratio: Some(10.0),
+                volume: Some(SplitFilterVolume {
+                    mode: Some("range".to_string()),
+                    min: Some(-1.0),
+                    max: Some(-1.0),
+                    bins: None,
+                    over_factor: None,
+                }),
+            }),
+        },
+    };
+
+    pipeline.run().expect("split_filter pipeline should run");
+    let entries = fs::read_dir(&output_dir)
+        .expect("split output folder should exist")
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .map(|ext| ext.to_string_lossy().eq_ignore_ascii_case("stl"))
+                .unwrap_or(false)
+        })
+        .count();
+    assert!(entries > 0);
 }
 
 #[test]
