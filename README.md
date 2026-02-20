@@ -98,41 +98,91 @@ Default config files:
 - `data/input/crop_config.yaml`
 - `data/input/split_filter_config.yaml`
 
-### Crop pipeline
+### Forge pipeline (`forge_config.yaml`)
 
-`crop` reads a 3D CT volume from RAW folder or TIFF file/folder, detects background from boundary mode,
-computes PCA principal axes on foreground voxels, rotates the volume to align with XYZ axes, crops the
-effective cuboid, and writes TIFF output.
+- Root key: `forging`
+- Core fields:
+  - `input_stl_path`, `output_stl_path`
+  - `compression_ratio`, `compression_axis` (`x|y|z`)
+  - `bulge_factor`
+  - optional ROI: `roi_bounding_box: [minx,miny,minz,maxx,maxy,maxz]`
+  - `mesh_type` (`particle|void`) and `void_densification` (for `void`)
 
-- Shared input range: `input.slice_start` / `input.slice_end` (inclusive, `-1` as begin/end)
-- RAW requires `input.raw.width/height/bits/signed/byte_order`
-- Rotation resampling supports `interpolation: trilinear|nearest` (default `trilinear`)
-- Optional edge anti-alias trim on XY border: `edge_trim` (`-1` auto infer 0~2, `0` off, `1/2` manual)
-- Output supports TIFF file (`.tif/.tiff`) or folder with `output.folder_prefix` and `output.folder_extension`
+### Measure pipeline (`measure_config.yaml`)
 
-### Split-Filter pipeline
+- Root key: `measurement`
+- Core fields:
+  - `stl_path`
+  - bounding box via `bounding_box` or `stl_bounding_box` (optional)
+  - `r_max`, `voxel_pitch`
+  - `mc_method` (`monte_carlo|exact|both`)
+  - `mc_samples`, `cpu_max`, `output_path`
+- `mc_method=both` runs exact + Monte Carlo and reports `L2 error [exact vs monte_carlo]`.
 
-`split-filter` supports STL file or STL folder input and always outputs a folder of split particles:
+### Optimize pipeline (`optimize_config.yaml`)
 
-- Output naming uses `output.prefix`, e.g. `particle_1.stl`, `particle_2.stl`, ...
-- Filtering can be disabled with `filter.enabled: false`
-- Supported filters:
-  - `max_aspect_ratio`
-  - `max_sharpness_ratio`
-  - volume mode `range` (`min/max`, `-1` means no bound)
-  - volume mode `lognormal_rebalance` (reduce overrepresented size ranges)
-- Report output:
-  - explicit: `output.report_path`
-  - default: `parent(output.folder)/split_filter_report.txt`
-  - includes step counts, summary stats, kept histogram, and before-vs-after histogram
+- Top-level sections: `input`, `target`, `box`, `optimization`, `output`
+- Core fields:
+  - `input.stl_path`
+  - `target.type` (`manual_array|reference_stl`)
+  - `target.s2_array` or `target.stl_path`
+  - `box.dimensions` (`[sx,sy,sz]` or `[minx,miny,minz,maxx,maxy,maxz]`)
+  - SA controls: `max_iterations`, `initial_temperature`, `cooling_rate`, adaptive parameters
+  - S2 controls: `r_max`, `voxel_pitch`, `mc_method`, `mc_samples`
+  - placement/constraint controls: translation, rotation, neighbor and boundary distances, `mode`
+  - optional prune stage and `cpu_max`
+  - `output.path`
 
-### Measurement `mc_method`
+### Pack pipeline (`pack_config.yaml`)
 
-`data/input/measure_config.yaml` supports:
+- Top-level sections: `input`, `output`, `box`, `packing`
+- Core fields:
+  - `input.path` (single STL or folder)
+  - `output.path`
+  - `box.dimensions`
+  - `packing.target_volume_fraction`, `mode`, `max_attempts`
+  - geometric constraints: `min_neighbor_distance`, `min_boundary_dist`, `min_cross_boundary_depth`
+  - optional `packing.filters` (`min_volume`, `max_aspect_ratio`, `max_sharpness_ratio`)
+  - `packing.cpu_max`
 
-- `monte_carlo`: Monte Carlo S2 estimation
-- `exact`: exact S2 using voxel occupancy correlation
-- `both`: run both methods and report `L2 error [exact vs monte_carlo]`
+### Scale pipeline (`scale_config.yaml`)
+
+- Top-level sections: `input`, `output`, `scaling`
+- Core fields:
+  - `input.stl_path`, `output.stl_path`
+  - `scaling.type` (`mm_per_voxel|voxel_per_mm|factor`)
+  - `scaling.value`
+
+### Crop pipeline (`crop_config.yaml`)
+
+`crop` reads a 3D CT volume from RAW folder or TIFF file/folder, detects boundary background,
+aligns foreground by PCA, crops the effective cuboid, and writes TIFF.
+
+- Top-level sections: `input`, `output` plus optional `interpolation`, `edge_trim`
+- Input fields:
+  - `input.type` (`raw|tiff`)
+  - `input.path`
+  - shared range: `input.slice_start` / `input.slice_end` (inclusive, `-1` as begin/end)
+  - for RAW: `input.raw.width/height/bits/signed/byte_order`
+- Processing/output fields:
+  - `interpolation` (`trilinear|nearest`, default `trilinear`)
+  - `edge_trim` on XY border (`-1` auto infer 0~2, `0` off, `1/2` manual)
+  - output TIFF file (`.tif/.tiff`) or folder with `output.folder_prefix` and `output.folder_extension`
+
+### Split-Filter pipeline (`split_filter_config.yaml`)
+
+`split-filter` accepts an STL file or STL folder and outputs split particle STL files.
+
+- Top-level sections: `input`, `output`, optional `filter`
+- Core fields:
+  - `input.path`
+  - `output.folder`, `output.prefix`, optional `output.report_path`
+  - `filter.enabled`
+  - optional geometric filters: `max_aspect_ratio`, `max_sharpness_ratio`
+  - optional volume filter:
+    - mode `range` with `min/max` (`-1` means no bound)
+    - mode `lognormal_rebalance` with `bins/over_factor`
+- If `output.report_path` is omitted, report defaults to `parent(output.folder)/split_filter_report.txt`.
 
 ## Outputs
 
