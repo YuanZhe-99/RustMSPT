@@ -24,6 +24,8 @@ parry3d-f64 = "0.19"
 indicatif = "0.17"
 rayon = "1.10"
 rustfft = "6.2"
+tiff = "0.10"
+nalgebra = "0.33"
 
 [dev-dependencies]
 tempfile = "3"

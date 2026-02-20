@@ -1,0 +1,32 @@
+input:
+  # Options: raw | tiff
+  type: "raw"
+  # RAW: folder path. TIFF: file path or folder path.
+  path: "data/input/ct_stack/"
+  # Shared slice range for RAW/TIFF. Inclusive indices. -1 means start/end.
+  slice_start: -1
+  slice_end: -1
+
+  # Required when type=raw.
+  raw:
+    width: 744
+    height: 789
+    bits: 16
+    signed: false
+    # little | big
+    byte_order: "little"
+
+output:
+  # Output can be TIFF file (.tif/.tiff) or folder path.
+  path: "data/output/cropped_ct.tiff"
+  # Used only when output.path is a folder.
+  folder_prefix: "crop"
+  # Used only when output.path is a folder. Options: tif | tiff
+  folder_extension: "tiff"
+
+# Resampling mode during rotation: nearest | trilinear
+interpolation: "trilinear"
+
+# Optional XY border trim after rotation/crop to suppress jagged edges.
+# -1: auto infer (0~2), 0: off, 1/2: manual trim pixels.
+edge_trim: -1

@@ -1,8 +1,9 @@
 use clap::{Parser, Subcommand};
 use rustmspt::config::{
-    load_yaml, ForgingConfig, MeasurementConfig, OptimizationConfig, PackingConfig, ScaleConfig,
-    SplitFilterConfig,
+    load_yaml, CropConfig, ForgingConfig, MeasurementConfig, OptimizationConfig, PackingConfig,
+    ScaleConfig, SplitFilterConfig,
 };
+use rustmspt::pipeline::crop::CropPipeline;
 use rustmspt::pipeline::forge::ForgePipeline;
 use rustmspt::pipeline::measure::MeasurePipeline;
 use rustmspt::pipeline::optimize::OptimizePipeline;
@@ -55,6 +56,14 @@ enum Commands {
         output: Option<PathBuf>,
     },
     Scale {
+        #[arg(long)]
+        config: Option<PathBuf>,
+        #[arg(long)]
+        input: Option<PathBuf>,
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    Crop {
         #[arg(long)]
         config: Option<PathBuf>,
         #[arg(long)]
@@ -167,6 +176,21 @@ fn main() -> anyhow::Result<()> {
                 conf.output.stl_path = output.to_string_lossy().to_string();
             }
             ScalePipeline { config: conf }.run()?;
+        }
+        Commands::Crop {
+            config,
+            input,
+            output,
+        } => {
+            let path = pick_config_path(config, "crop_config.yaml");
+            let mut conf: CropConfig = load_yaml(&path)?;
+            if let Some(input) = input {
+                conf.input.path = input.to_string_lossy().to_string();
+            }
+            if let Some(output) = output {
+                conf.output.path = output.to_string_lossy().to_string();
+            }
+            CropPipeline { config: conf }.run()?;
         }
         Commands::SplitFilter {
             config,

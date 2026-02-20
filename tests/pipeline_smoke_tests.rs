@@ -1,11 +1,12 @@
 use rustmspt::config::{
-    BoxConfig, ForgingConfig, ForgingParams, InputPath, InputStl,
+    BoxConfig, CropConfig, CropInput, CropOutput, CropRawParams, ForgingConfig, ForgingParams, InputPath, InputStl,
     MeasurementConfig, MeasurementParams, OptimizationConfig, OptimizationParams, OutputPath,
     OutputStl, PackingConfig, PackingFilters, PackingParams, ScaleConfig, ScalingParams,
     SplitFilterConfig, SplitFilterOutput, SplitFilterRules, SplitFilterVolume, TargetConfig,
 };
 use rustmspt::geometry::box_mesh;
-use rustmspt::io::save_stl;
+use rustmspt::io::{load_tiff_or_folder, save_stl};
+use rustmspt::pipeline::crop::CropPipeline;
 use rustmspt::pipeline::forge::ForgePipeline;
 use rustmspt::pipeline::measure::MeasurePipeline;
 use rustmspt::pipeline::optimize::OptimizePipeline;
@@ -246,4 +247,61 @@ fn optimization_pipeline_smoke() {
 
     pipeline.run().expect("optimization pipeline should run");
     assert!(output.exists());
+}
+
+#[test]
+fn crop_pipeline_smoke() {
+    let tmp = tempfile::tempdir().expect("tempdir should be created");
+    let raw_dir = tmp.path().join("raw_input");
+    fs::create_dir_all(&raw_dir).expect("raw input folder should be created");
+
+    let width = 6usize;
+    let height = 5usize;
+    let depth = 4usize;
+
+    for z in 0..depth {
+        let mut slice = vec![0u8; width * height];
+        for y in 1..4 {
+            for x in 2..5 {
+                let idx = y * width + x;
+                slice[idx] = 80u8 + z as u8;
+            }
+        }
+        fs::write(raw_dir.join(format!("{:03}.raw", z)), slice).expect("raw slice write should succeed");
+    }
+
+    let output_tiff = tmp.path().join("cropped.tiff");
+    let pipeline = CropPipeline {
+        config: CropConfig {
+            input: CropInput {
+                r#type: "raw".to_string(),
+                path: raw_dir.to_string_lossy().to_string(),
+                slice_start: Some(-1),
+                slice_end: Some(-1),
+                raw: Some(CropRawParams {
+                    width,
+                    height,
+                    bits: 8,
+                    signed: false,
+                    byte_order: Some("little".to_string()),
+                }),
+            },
+            output: CropOutput {
+                path: output_tiff.to_string_lossy().to_string(),
+                folder_prefix: Some("crop".to_string()),
+                folder_extension: Some("tiff".to_string()),
+            },
+            interpolation: Some("trilinear".to_string()),
+            edge_trim: Some(-1),
+        },
+    };
+
+    pipeline.run().expect("crop pipeline should run");
+    assert!(output_tiff.exists());
+
+    let out_vol = load_tiff_or_folder(&output_tiff).expect("cropped tiff should be readable");
+    assert!(out_vol.width > 0);
+    assert!(out_vol.height > 0);
+    assert!(out_vol.depth > 0);
+    assert!(out_vol.data.iter().any(|v| *v > 0));
 }

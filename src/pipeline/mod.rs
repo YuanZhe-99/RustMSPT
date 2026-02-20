@@ -2,6 +2,7 @@ pub mod forge;
 pub mod measure;
 pub mod optimize;
 pub mod pack;
+pub mod crop;
 pub mod scale;
 pub mod split_filter;
 

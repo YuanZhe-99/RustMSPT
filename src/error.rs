@@ -8,6 +8,9 @@ pub enum RustMsptError {
     #[error("YAML parse error: {0}")]
     Yaml(#[from] serde_yaml::Error),
 
+    #[error("TIFF error: {0}")]
+    Tiff(#[from] tiff::TiffError),
+
     #[error("Invalid config: {0}")]
     InvalidConfig(String),
 

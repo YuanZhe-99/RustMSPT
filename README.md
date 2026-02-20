@@ -10,10 +10,15 @@ RustMSPT is a standalone Rust toolkit for STL-based microstructure processing.
   - `optimize`
   - `pack`
   - `scale`
+  - `crop`
   - `split-filter`
 - STL I/O:
   - Load ASCII and Binary STL (auto-detect)
   - Save Binary STL by default
+- CT image I/O:
+  - RAW folder input (file sequence) with configurable `width/height/bits/signed/byte_order`
+  - TIFF input/output for file and folder modes with `.tif` and `.tiff` support
+  - Shared slice range `slice_start/slice_end` for both RAW and TIFF input (`-1` means begin/end)
 - Geometry kernels:
   - Mesh splitting/merging
   - Bounding box clipping
@@ -65,6 +70,7 @@ cargo run -- measure
 cargo run -- optimize
 cargo run -- pack
 cargo run -- scale
+cargo run -- crop
 cargo run -- split-filter
 ```
 
@@ -89,7 +95,20 @@ Default config files:
 - `data/input/optimize_config.yaml`
 - `data/input/pack_config.yaml`
 - `data/input/scale_config.yaml`
+- `data/input/crop_config.yaml`
 - `data/input/split_filter_config.yaml`
+
+### Crop pipeline
+
+`crop` reads a 3D CT volume from RAW folder or TIFF file/folder, detects background from boundary mode,
+computes PCA principal axes on foreground voxels, rotates the volume to align with XYZ axes, crops the
+effective cuboid, and writes TIFF output.
+
+- Shared input range: `input.slice_start` / `input.slice_end` (inclusive, `-1` as begin/end)
+- RAW requires `input.raw.width/height/bits/signed/byte_order`
+- Rotation resampling supports `interpolation: trilinear|nearest` (default `trilinear`)
+- Optional edge anti-alias trim on XY border: `edge_trim` (`-1` auto infer 0~2, `0` off, `1/2` manual)
+- Output supports TIFF file (`.tif/.tiff`) or folder with `output.folder_prefix` and `output.folder_extension`
 
 ### Split-Filter pipeline
 
