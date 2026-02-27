@@ -1,5 +1,5 @@
 input:
-  stl_path: "data/output/optimized_structure.stl" # Placeholder, update actual path
+  stl_path: "data/output/optimized_structure.stl" # STL file or folder containing STL files
 
 output:
   stl_path: "data/output/scaled_mesh.stl"

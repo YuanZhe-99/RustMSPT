@@ -1,7 +1,7 @@
 use crate::config::ScaleConfig;
 use crate::error::{Result, RustMsptError};
 use crate::geometry::{mesh_bbox, mesh_volume, orient_components_to_positive_volume, scale_mesh};
-use crate::io::{load_stl, save_stl};
+use crate::io::{load_stl_or_merge_folder, save_stl};
 use crate::pipeline::Pipeline;
 use std::path::Path;
 
@@ -14,7 +14,7 @@ impl Pipeline for ScalePipeline {
         // Purpose: Execute scaling pipeline and save scaled STL.
         // Inputs: scaling config and source mesh path.
         // Outputs: scaled mesh file and summary logs.
-        let mut mesh = load_stl(Path::new(&self.config.input.stl_path))?;
+        let mut mesh = load_stl_or_merge_folder(Path::new(&self.config.input.stl_path))?;
         let mode = self.config.scaling.r#type.as_str();
         let value = self.config.scaling.value;
 
