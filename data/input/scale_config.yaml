@@ -9,3 +9,6 @@ scaling:
   type: "voxel_per_mm" 
   # Value corresponding to the type
   value: 37.5
+  # Orientation fix before output (can be expensive)
+  # false by default to skip; set true to enforce positive signed volume orientation.
+  orient_to_positive_volume: false

@@ -123,6 +123,7 @@ pub struct ForgingParams {
     pub output_stl_path: Option<String>,
     pub compression_ratio: Option<f64>,
     pub compression_axis: Option<String>,
+    pub orient_to_positive_volume: Option<bool>,
     pub bulge_factor: Option<f64>,
     pub roi_bounding_box: Option<Vec<f64>>,
     pub mesh_type: Option<String>,
@@ -158,6 +159,7 @@ pub struct MeasurementConfig {
 pub struct ScalingParams {
     pub r#type: String,
     pub value: f64,
+    pub orient_to_positive_volume: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -220,6 +222,9 @@ pub struct PackingParams {
     pub filters: Option<PackingFilters>,
     #[serde(default, deserialize_with = "deserialize_option_i32_flexible")]
     pub cpu_max: Option<i32>,
+    pub orient_to_positive_volume: Option<bool>,
+    pub rotation_mode: Option<String>,
+    pub rotation_axis_vector: Option<Vec<f64>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -302,6 +307,9 @@ pub struct OptimizationParams {
     pub prune_eval_samples: Option<usize>,
     #[serde(default, deserialize_with = "deserialize_option_i32_flexible")]
     pub cpu_max: Option<i32>,
+    pub orient_to_positive_volume: Option<bool>,
+    pub rotation_mode: Option<String>,
+    pub rotation_axis_vector: Option<Vec<f64>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

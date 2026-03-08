@@ -4,6 +4,10 @@ forging:
   
   # Output file path
   output_stl_path: "data/output/forged_mesh.stl"
+
+  # Orientation fix after deformation (can be expensive)
+  # false by default to skip; set true to enforce positive signed volume orientation.
+  orient_to_positive_volume: false
   
   # Compression Ratio (0.0 to 1.0)
   # 0.2 means compressing the selected axis length by 20%

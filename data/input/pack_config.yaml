@@ -29,6 +29,12 @@ packing:
   # Constraint: Minimum distance between particles (0.0 to allow touching)
   min_neighbor_distance: 1.0
 
+  # Rotation constraint for candidate particle placement
+  # Options: 'none', 'x', 'y', 'z', 'vector', 'any'
+  # 'vector' uses rotation_axis_vector as axis direction and rotates around particle centroid.
+  rotation_mode: 'none'
+  rotation_axis_vector: [0.0, 0.0, 1.0]
+
   # d_1: Distance for fully internal particles
   min_boundary_dist: 1.5
   # d_2: Minimum protrusion/retention depth for crossing particles
@@ -37,6 +43,10 @@ packing:
   # CPU worker limit for packing collision/distance checks
   # -1 means no limit (use all available cores)
   cpu_max: -1
+
+  # Orientation fix before final output (can be expensive)
+  # false by default to skip; set true to enforce positive signed volume orientation.
+  orient_to_positive_volume: false
 
   # Geometry Filters (Particles failing these are discarded BEFORE packing)
   filters:

@@ -80,6 +80,12 @@ optimization:
   max_translation: 25.0
   max_rotation_deg: 30.0
 
+  # Rotation constraint for particle perturbation
+  # Options: 'none', 'x', 'y', 'z', 'vector', 'any'
+  # 'vector' uses rotation_axis_vector as axis direction and rotates around particle centroid.
+  rotation_mode: 'none'
+  rotation_axis_vector: [0.0, 0.0, 1.0]
+
   # Min neighbor distance
   min_neighbor_distance: 1.0
 
@@ -102,6 +108,10 @@ optimization:
   # CPU worker limit for optimization and S2 computation
   # -1 means no limit (use all available cores)
   cpu_max: -1
+
+  # Orientation fix before final output (can be expensive)
+  # false by default to skip; set true to enforce positive signed volume orientation.
+  orient_to_positive_volume: false
   
 output:
   path: "data/output/optimized_structure.stl"

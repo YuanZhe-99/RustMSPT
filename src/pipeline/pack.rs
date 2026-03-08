@@ -21,6 +21,64 @@ pub struct PackPipeline {
     pub config: PackingConfig,
 }
 
+enum RotationMode {
+    None,
+    Axis(Vec3),
+    Any,
+}
+
+fn parse_rotation_mode(mode: Option<&str>, axis_vec: Option<&Vec<f64>>) -> Result<RotationMode> {
+    // Purpose: Parse rotation mode and optional axis vector from config.
+    // Inputs: optional mode string and optional axis vector values.
+    // Outputs: parsed rotation mode.
+    let raw = mode.unwrap_or("any").trim().to_ascii_lowercase();
+    match raw.as_str() {
+        "none" => Ok(RotationMode::None),
+        "x" => Ok(RotationMode::Axis(Vec3::new(1.0, 0.0, 0.0))),
+        "y" => Ok(RotationMode::Axis(Vec3::new(0.0, 1.0, 0.0))),
+        "z" => Ok(RotationMode::Axis(Vec3::new(0.0, 0.0, 1.0))),
+        "vector" => {
+            let v = axis_vec.ok_or_else(|| {
+                RustMsptError::InvalidConfig(
+                    "packing.rotation_axis_vector is required when rotation_mode='vector'"
+                        .to_string(),
+                )
+            })?;
+            if v.len() != 3 {
+                return Err(RustMsptError::InvalidConfig(
+                    "packing.rotation_axis_vector must have length 3".to_string(),
+                ));
+            }
+            let axis = Vec3::new(v[0], v[1], v[2]);
+            if crate::geometry::vec_norm(axis) <= 1e-12 {
+                return Err(RustMsptError::InvalidConfig(
+                    "packing.rotation_axis_vector must be non-zero".to_string(),
+                ));
+            }
+            Ok(RotationMode::Axis(axis))
+        }
+        "any" => Ok(RotationMode::Any),
+        other => Err(RustMsptError::InvalidConfig(format!(
+            "packing.rotation_mode must be one of: none, x, y, z, vector, any (got '{other}')"
+        ))),
+    }
+}
+
+fn sample_rotation_axis(rng: &mut rand::rngs::ThreadRng, mode: &RotationMode) -> Option<Vec3> {
+    // Purpose: Sample or select rotation axis according to configured mode.
+    // Inputs: random generator and parsed rotation mode.
+    // Outputs: optional axis vector (None means no rotation).
+    match mode {
+        RotationMode::None => None,
+        RotationMode::Axis(axis) => Some(*axis),
+        RotationMode::Any => Some(Vec3::new(
+            rng.gen_range(-1.0..1.0),
+            rng.gen_range(-1.0..1.0),
+            rng.gen_range(-1.0..1.0),
+        )),
+    }
+}
+
 fn check_geometry_filters(mesh: &Mesh, config: &PackingConfig) -> bool {
     // Purpose: Validate candidate mesh against configured geometry filters.
     // Inputs: candidate mesh and packing config.
@@ -120,6 +178,10 @@ impl Pipeline for PackPipeline {
 
         let target = self.config.packing.target_volume_fraction.clamp(0.0, 1.0);
         let min_neighbor = self.config.packing.min_neighbor_distance.unwrap_or(0.0);
+        let rotation_mode = parse_rotation_mode(
+            self.config.packing.rotation_mode.as_deref(),
+            self.config.packing.rotation_axis_vector.as_ref(),
+        )?;
 
         let available_cores = std::thread::available_parallelism()
             .map(|n| n.get())
@@ -142,6 +204,10 @@ impl Pipeline for PackPipeline {
         println!(
             "[Info] Rayon pool threads (effective): {}",
             effective_pool_threads
+        );
+        println!(
+            "[Info] Rotation mode: {}",
+            self.config.packing.rotation_mode.as_deref().unwrap_or("any")
         );
 
         let mut rng = rand::thread_rng();
@@ -196,13 +262,10 @@ impl Pipeline for PackPipeline {
                 continue;
             };
 
-            let axis = Vec3::new(
-                rng.gen_range(-1.0..1.0),
-                rng.gen_range(-1.0..1.0),
-                rng.gen_range(-1.0..1.0),
-            );
-            let angle = rng.gen_range(0.0..(2.0 * PI));
-            rotate_mesh_around_center(&mut candidate, axis, angle);
+            if let Some(axis) = sample_rotation_axis(&mut rng, &rotation_mode) {
+                let angle = rng.gen_range(0.0..(2.0 * PI));
+                rotate_mesh_around_center(&mut candidate, axis, angle);
+            }
 
             let random_pos = Vec3::new(
                 rng.gen_range(box_bounds.min.x..box_bounds.max.x),
@@ -346,9 +409,17 @@ impl Pipeline for PackPipeline {
             ));
         }
 
+        let enable_orient = self
+            .config
+            .packing
+            .orient_to_positive_volume
+            .unwrap_or(false);
         let final_mesh = merge_meshes(&placed);
-        let (final_mesh_oriented, flipped_components, component_count) =
-            orient_components_to_positive_volume(&final_mesh);
+        let (final_mesh_oriented, flipped_components, component_count) = if enable_orient {
+            orient_components_to_positive_volume(&final_mesh)
+        } else {
+            (final_mesh.clone(), 0usize, 0usize)
+        };
         save_stl(
             Path::new(&self.config.output.path),
             &final_mesh_oriented,
@@ -359,9 +430,12 @@ impl Pipeline for PackPipeline {
         println!("[Info] Packing completed.");
         println!("[Info] Final count: {}", placed.len());
         println!("[Info] Final volume fraction: {vf:.6}");
-        println!(
-            "[Info] Orientation fix: flipped {flipped_components}/{component_count} components to positive signed volume"
-        );
+        println!("[Info] Orientation fix enabled: {}", enable_orient);
+        if enable_orient {
+            println!(
+                "[Info] Orientation fix: flipped {flipped_components}/{component_count} components to positive signed volume"
+            );
+        }
         Ok(())
     }
 }

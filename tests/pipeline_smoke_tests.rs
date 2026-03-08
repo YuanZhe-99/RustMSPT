@@ -40,6 +40,7 @@ fn forging_pipeline_smoke() {
                 output_stl_path: Some(output.to_string_lossy().to_string()),
                 compression_ratio: Some(0.2),
                 compression_axis: Some("z".to_string()),
+                orient_to_positive_volume: Some(false),
                 bulge_factor: Some(0.5),
                 roi_bounding_box: None,
                 mesh_type: Some("particle".to_string()),
@@ -99,6 +100,7 @@ fn scale_pipeline_smoke() {
             scaling: ScalingParams {
                 r#type: "factor".to_string(),
                 value: 2.0,
+                orient_to_positive_volume: Some(false),
             },
         },
     };
@@ -130,9 +132,12 @@ fn packing_pipeline_smoke() {
                 mode: 1,
                 max_attempts: 100,
                 min_neighbor_distance: Some(0.0),
+                rotation_mode: Some("any".to_string()),
+                rotation_axis_vector: Some(vec![0.0, 0.0, 1.0]),
                 min_boundary_dist: Some(0.0),
                 min_cross_boundary_depth: Some(0.0),
                 cpu_max: Some(1),
+                orient_to_positive_volume: Some(false),
                 filters: Some(PackingFilters {
                     min_volume: None,
                     max_aspect_ratio: None,
@@ -233,6 +238,8 @@ fn optimization_pipeline_smoke() {
                 max_translation: 0.2,
                 max_rotation_deg: 5.0,
                 min_neighbor_distance: Some(0.0),
+                rotation_mode: Some("any".to_string()),
+                rotation_axis_vector: Some(vec![0.0, 0.0, 1.0]),
                 mode: Some(1),
                 min_boundary_dist: Some(0.0),
                 min_cross_boundary_depth: Some(0.0),
@@ -241,6 +248,7 @@ fn optimization_pipeline_smoke() {
                 prune_max_rounds: Some(20),
                 prune_eval_samples: Some(500),
                 cpu_max: Some(1),
+                orient_to_positive_volume: Some(false),
             },
         },
     };

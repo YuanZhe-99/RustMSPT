@@ -71,6 +71,7 @@ impl Pipeline for ForgePipeline {
         let compression = params.compression_ratio.unwrap_or(0.2);
         let (compression_axis, compression_axis_label) =
             Self::parse_compression_axis(params.compression_axis.as_deref())?;
+        let enable_orient = params.orient_to_positive_volume.unwrap_or(false);
         let bulge = params.bulge_factor.unwrap_or(0.5);
         let mesh_type = params.mesh_type.as_deref().unwrap_or("particle");
         let void_densification = params.void_densification.unwrap_or(1.0);
@@ -91,8 +92,12 @@ impl Pipeline for ForgePipeline {
             .map(|roi| volume_fraction_in_bbox(&compressed, roi))
             .unwrap_or_else(|| volume_fraction_in_bbox(&compressed, lattice_bbox));
 
-        let (mut compressed_oriented, _flipped_components, _component_count) =
-            orient_components_to_positive_volume(&compressed);
+        let (mut compressed_oriented, flipped_components, component_count) = if enable_orient {
+            let (mesh_fixed, flipped, total) = orient_components_to_positive_volume(&compressed);
+            (mesh_fixed, flipped, total)
+        } else {
+            (compressed.clone(), 0usize, 0usize)
+        };
 
         let mut output_shift = Vec3::new(0.0, 0.0, 0.0);
         if let (Some(roi_in), Some(roi_out)) = (roi_bbox, tracked_roi) {
@@ -157,6 +162,12 @@ impl Pipeline for ForgePipeline {
         report.push_str(&format!("Spatial ROI VF before: {before_roi_vf:.6}\n"));
         report.push_str(&format!("Spatial ROI VF after:  {after_roi_vf:.6}\n"));
         report.push_str(&format!("Compression axis: {compression_axis_label}\n"));
+        report.push_str(&format!("Orientation fix enabled: {}\n", enable_orient));
+        if enable_orient {
+            report.push_str(&format!(
+                "Orientation fix: flipped {flipped_components}/{component_count} components to positive signed volume\n"
+            ));
+        }
         report.push_str(&format!(
             "Output translation: ({:.4},{:.4},{:.4})\n",
             output_shift.x, output_shift.y, output_shift.z
@@ -207,6 +218,12 @@ impl Pipeline for ForgePipeline {
         println!("[Info] Spatial ROI VF before: {before_roi_vf:.6}");
         println!("[Info] Spatial ROI VF after:  {after_roi_vf:.6}");
         println!("[Info] Compression axis: {compression_axis_label}");
+        println!("[Info] Orientation fix enabled: {}", enable_orient);
+        if enable_orient {
+            println!(
+                "[Info] Orientation fix: flipped {flipped_components}/{component_count} components to positive signed volume"
+            );
+        }
         println!(
             "[Info] Output translation: ({:.4},{:.4},{:.4})",
             output_shift.x, output_shift.y, output_shift.z
