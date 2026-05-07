@@ -5,12 +5,13 @@ use crate::geometry::{
     generate_periodic_ghosts, l2_norm, merge_meshes, mesh_bbox, mesh_centroid, mesh_volume,
     mesh_collision_exact_prepared, mesh_distance_exact_prepared, move_mesh_to_target_center,
     orient_components_to_positive_volume, rotate_mesh_around_center, split_mesh_into_granules,
-    to_parry_trimesh, volume_fraction_of_meshes_in_bbox, wrap_mesh_centroid_to_box, vec_norm,
+    to_parry_trimesh, vec_norm, volume_fraction_of_meshes_in_bbox, wrap_mesh_centroid_to_box,
 };
+use crate::geometry::spatial::{SpatialGrid, estimate_cell_size};
 use crate::io::{load_folder_stls, load_stl, save_stl};
+use crate::pipeline::rotation::{parse_rotation_mode, sample_rotation_axis, RotationMode};
 use crate::pipeline::{create_progress_bar, Pipeline};
 use crate::types::{BoundingBox, Vec3};
-use indicatif::ProgressBar;
 use parry3d_f64::shape::TriMesh;
 use rand::seq::index::sample;
 use rand::Rng;
@@ -19,68 +20,11 @@ use rayon::ThreadPoolBuilder;
 use std::f64::consts::PI;
 use std::fs;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub struct OptimizePipeline {
     pub config: OptimizationConfig,
-}
-
-enum RotationMode {
-    None,
-    Axis(Vec3),
-    Any,
-}
-
-fn parse_rotation_mode(mode: Option<&str>, axis_vec: Option<&Vec<f64>>) -> Result<RotationMode> {
-    // Purpose: Parse rotation mode and optional axis vector from config.
-    // Inputs: optional mode string and optional axis vector values.
-    // Outputs: parsed rotation mode.
-    let raw = mode.unwrap_or("any").trim().to_ascii_lowercase();
-    match raw.as_str() {
-        "none" => Ok(RotationMode::None),
-        "x" => Ok(RotationMode::Axis(Vec3::new(1.0, 0.0, 0.0))),
-        "y" => Ok(RotationMode::Axis(Vec3::new(0.0, 1.0, 0.0))),
-        "z" => Ok(RotationMode::Axis(Vec3::new(0.0, 0.0, 1.0))),
-        "vector" => {
-            let v = axis_vec.ok_or_else(|| {
-                RustMsptError::InvalidConfig(
-                    "optimization.rotation_axis_vector is required when rotation_mode='vector'"
-                        .to_string(),
-                )
-            })?;
-            if v.len() != 3 {
-                return Err(RustMsptError::InvalidConfig(
-                    "optimization.rotation_axis_vector must have length 3".to_string(),
-                ));
-            }
-            let axis = Vec3::new(v[0], v[1], v[2]);
-            if vec_norm(axis) <= 1e-12 {
-                return Err(RustMsptError::InvalidConfig(
-                    "optimization.rotation_axis_vector must be non-zero".to_string(),
-                ));
-            }
-            Ok(RotationMode::Axis(axis))
-        }
-        "any" => Ok(RotationMode::Any),
-        other => Err(RustMsptError::InvalidConfig(format!(
-            "optimization.rotation_mode must be one of: none, x, y, z, vector, any (got '{other}')"
-        ))),
-    }
-}
-
-fn sample_rotation_axis(rng: &mut rand::rngs::ThreadRng, mode: &RotationMode) -> Option<Vec3> {
-    // Purpose: Sample or select rotation axis according to configured mode.
-    // Inputs: random generator and parsed rotation mode.
-    // Outputs: optional axis vector (None means no rotation).
-    match mode {
-        RotationMode::None => None,
-        RotationMode::Axis(axis) => Some(*axis),
-        RotationMode::Any => Some(Vec3::new(
-            rng.gen_range(-1.0..1.0),
-            rng.gen_range(-1.0..1.0),
-            rng.gen_range(-1.0..1.0),
-        )),
-    }
 }
 
 #[derive(Clone)]
@@ -88,6 +32,20 @@ struct ParticlePrepared {
     mesh: crate::types::Mesh,
     bbox: Option<BoundingBox>,
     shape: Option<TriMesh>,
+}
+
+#[allow(dead_code)]
+struct IslandResult {
+    best_particles: Vec<crate::types::Mesh>,
+    best_loss: f64,
+    best_s2: Vec<f64>,
+    s2_time: Duration,
+    collision_time: Duration,
+}
+
+struct GlobalBest {
+    loss: f64,
+    particles: Vec<crate::types::Mesh>,
 }
 
 fn prepare_particle(mesh: crate::types::Mesh) -> ParticlePrepared {
@@ -135,6 +93,7 @@ fn selective_prune_to_target_vf(
     s2_method: &str,
     voxel_pitch: f64,
     thread_pool: &ThreadPool,
+    history_log: &mut Vec<String>,
 ) {
     // Purpose: Remove particles before annealing to approach target VF while limiting S2 loss.
     // Inputs: particle set, target, optimization params, S2 settings, and thread pool.
@@ -179,6 +138,10 @@ fn selective_prune_to_target_vf(
     println!(
         "[Info] Pruning stage: initial VF {current_vf:.6}, target VF {target_vf:.6}"
     );
+    history_log.push(format!(
+        "Pruning Start: particles {} | VF {current_vf:.6} -> target {target_vf:.6} | Loss {current_loss:.6}",
+        particles.len(),
+    ));
 
     let total_rounds = max_rounds as u64;
     let progress = create_progress_bar(
@@ -294,6 +257,10 @@ fn selective_prune_to_target_vf(
                 particles.len(),
             );
         }
+        history_log.push(format!(
+            "Pruning Round {rounds}: particles {} | VF {current_vf:.6} | Loss {current_loss:.6}",
+            particles.len(),
+        ));
     }
 
     progress.finish_with_message("Pruning stage completed");
@@ -302,13 +269,495 @@ fn selective_prune_to_target_vf(
         "[Info] Pruning completed: rounds {rounds}, particles {}, VF {current_vf:.6}, Loss {current_loss:.6}",
         particles.len(),
     );
+    history_log.push(format!(
+        "Pruning Completed: rounds {rounds} | particles {} | VF {current_vf:.6} | Loss {current_loss:.6}",
+        particles.len(),
+    ));
+}
+
+
+#[allow(clippy::too_many_arguments)]
+fn run_sa_island(
+    island_id: usize,
+    num_islands: usize,
+    prepared_init: Vec<ParticlePrepared>,
+    target: &[f64],
+    params: &crate::config::OptimizationParams,
+    box_bounds: BoundingBox,
+    mode: u8,
+    d1: f64,
+    d2: f64,
+    min_neighbor: f64,
+    rotation_mode: &RotationMode,
+    thread_pool: &ThreadPool,
+    global_best: Option<&Arc<Mutex<GlobalBest>>>,
+    migration_interval: usize,
+    history_log: &mut Vec<String>,
+) -> IslandResult {
+    let s2_method = params.mc_method.as_str();
+    let mut rng = rand::thread_rng();
+    let mut temperature = params.initial_temperature.max(1e-8);
+    let cooling_rate = params.cooling_rate.clamp(0.8, 0.99999);
+    let adaptive_window = params
+        .adaptive_temp_window
+        .unwrap_or((params.max_iterations / 40).clamp(20, 100))
+        .max(5);
+    let target_accept_low = params.target_acceptance_low.unwrap_or(0.20).clamp(0.0, 1.0);
+    let mut target_accept_high = params.target_acceptance_high.unwrap_or(0.45).clamp(0.0, 1.0);
+    if target_accept_high <= target_accept_low {
+        target_accept_high = (target_accept_low + 0.05).clamp(0.0, 1.0);
+    }
+    let heat_factor = params.adaptive_heat_factor.unwrap_or(1.08).max(1.0);
+    let cool_factor = params.adaptive_cool_factor.unwrap_or(0.94).clamp(0.01, 1.0);
+    let temp_ceiling_factor = params.adaptive_temp_ceiling_factor.unwrap_or(5.0).max(1.0);
+    let temp_floor = 1e-9;
+    let temp_ceiling = params.initial_temperature.max(1e-8) * temp_ceiling_factor;
+    let mut window_trials = 0usize;
+    let mut window_accepts = 0usize;
+
+    let mut prepared = prepared_init;
+    let mut merged = merge_meshes(
+        &prepared
+            .iter()
+            .map(|p| p.mesh.clone())
+            .collect::<Vec<_>>(),
+    );
+    let mut current_s2 = thread_pool.install(|| {
+        calculate_s2(
+            &merged,
+            box_bounds,
+            params.r_max,
+            params.voxel_pitch,
+            s2_method,
+            params.mc_samples.max(2000),
+        )
+    });
+    let mut current_loss = l2_norm(&current_s2, target);
+    push_history_s2(history_log, "Post-Pruning S2", &current_s2);
+    history_log.push(format!("Post-Pruning Loss: {current_loss:.6}"));
+
+    let mut best_particles = prepared.iter().map(|p| p.mesh.clone()).collect::<Vec<_>>();
+    let mut best_loss = current_loss;
+    let mut best_s2 = current_s2.clone();
+    let mut accepted_moves = 0usize;
+
+    let mut s2_time = Duration::ZERO;
+    let mut collision_time = Duration::ZERO;
+
+    let bboxes_for_grid: Vec<(usize, BoundingBox)> = prepared
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| p.bbox.map(|b| (i, b)))
+        .collect();
+    let cell_size = estimate_cell_size(&bboxes_for_grid.iter().map(|&(_, b)| b).collect::<Vec<_>>());
+    let mut grid = SpatialGrid::build(&bboxes_for_grid, box_bounds, cell_size);
+
+    if num_islands > 1 {
+        println!("[Info] Island {island_id}: starting with {} particles, initial loss {current_loss:.6}", prepared.len());
+    } else {
+        println!("[Info] Starting optimization with {} particles.", prepared.len());
+        println!("[Info] Initial loss: {current_loss:.6}");
+    }
+
+    let total_iters = params.max_iterations.max(1) as u64;
+    let progress = create_progress_bar(
+        total_iters,
+        "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>5}/{len:5} {msg}",
+        "##-",
+    );
+    progress.set_message(format!(
+        "Loss {current_loss:.6} | Best {best_loss:.6} | Temp {temperature:.6} | Acc 0"
+    ));
+
+    for iter in 0..params.max_iterations {
+        let idx = rng.gen_range(0..prepared.len());
+        let original = prepared[idx].mesh.clone();
+        let mut candidate = original.clone();
+
+        let scale = (temperature / params.initial_temperature.max(1e-8)).clamp(0.05, 1.0);
+        let move_roll: f64 = rng.gen_range(0.0..1.0);
+
+        if move_roll < 0.6 {
+            let trans = Vec3::new(
+                rng.gen_range(-params.max_translation..params.max_translation) * scale,
+                rng.gen_range(-params.max_translation..params.max_translation) * scale,
+                rng.gen_range(-params.max_translation..params.max_translation) * scale,
+            );
+            let center = mesh_centroid(&candidate);
+            move_mesh_to_target_center(&mut candidate, center.add(trans));
+
+            let rot_limit = params.max_rotation_deg.to_radians() * scale;
+            if rot_limit > 1e-6 {
+                if let Some(axis) = sample_rotation_axis(&mut rng, rotation_mode) {
+                    let angle = rng.gen_range(-rot_limit..rot_limit);
+                    rotate_mesh_around_center(&mut candidate, axis, angle);
+                }
+            }
+        } else if move_roll < 0.9 {
+            let target_idx = rng.gen_range(0..prepared.len());
+            if target_idx != idx {
+                let c0 = mesh_centroid(&candidate);
+                let c1 = mesh_centroid(&prepared[target_idx].mesh);
+                let direction = c1.sub(c0);
+                let dist = vec_norm(direction);
+                if dist > 1e-12 {
+                    let step = (dist * 0.3).min(params.max_translation * scale * 2.0);
+                    let move_vec = direction.scale(step / dist);
+                    move_mesh_to_target_center(&mut candidate, c0.add(move_vec));
+                }
+            }
+            if let Some(axis) = sample_rotation_axis(&mut rng, rotation_mode) {
+                let angle =
+                    rng.gen_range(-10.0f64.to_radians() * scale..10.0f64.to_radians() * scale);
+                rotate_mesh_around_center(&mut candidate, axis, angle);
+            }
+        } else {
+            let random_pos = Vec3::new(
+                rng.gen_range(box_bounds.min.x..box_bounds.max.x),
+                rng.gen_range(box_bounds.min.y..box_bounds.max.y),
+                rng.gen_range(box_bounds.min.z..box_bounds.max.z),
+            );
+            move_mesh_to_target_center(&mut candidate, random_pos);
+
+            if let Some(axis) = sample_rotation_axis(&mut rng, rotation_mode) {
+                let angle = rng.gen_range(0.0..(2.0 * PI));
+                rotate_mesh_around_center(&mut candidate, axis, angle);
+            }
+        }
+
+        if mode == 3 {
+            wrap_mesh_centroid_to_box(&mut candidate, box_bounds);
+        }
+
+        let candidate_bbox = mesh_bbox(&candidate);
+        let candidate_shape = to_parry_trimesh(&candidate);
+
+        let collision_start = Instant::now();
+        if !check_boundary_constraints_mode(&candidate, box_bounds, mode, d1, d2) {
+            temperature = (temperature * cooling_rate).max(temp_floor);
+            window_trials += 1;
+            if window_trials >= adaptive_window {
+                let accept_rate = window_accepts as f64 / window_trials as f64;
+                if accept_rate < target_accept_low {
+                    temperature = (temperature * heat_factor).min(temp_ceiling);
+                } else if accept_rate > target_accept_high {
+                    temperature = (temperature * cool_factor).max(temp_floor);
+                }
+                window_trials = 0;
+                window_accepts = 0;
+            }
+            progress.set_position((iter + 1) as u64);
+            let acc = (accepted_moves as f64 / (iter + 1) as f64) * 100.0;
+            progress.set_message(format!(
+                "Loss {current_loss:.6} | Best {best_loss:.6} | Temp {temperature:.6} | Acc {acc:.1}%"
+            ));
+            collision_time += collision_start.elapsed();
+            continue;
+        }
+
+        let mut blocked = false;
+        {
+            let mut neighbors = if let Some(cb) = candidate_bbox {
+                grid.query_neighbors_with_margin(cb, min_neighbor, idx)
+            } else {
+                (0..prepared.len()).filter(|&j| j != idx).collect()
+            };
+            for (j, other) in prepared.iter().enumerate() {
+                if j != idx && other.bbox.is_none() && !neighbors.contains(&j) {
+                    neighbors.push(j);
+                }
+            }
+
+            for j in neighbors {
+                let other = &prepared[j];
+
+                let mut bbox_gap: Option<f64> = None;
+                if let (Some(cb), Some(ob)) = (candidate_bbox, other.bbox) {
+                    let bd = bbox_distance(cb, ob);
+                    bbox_gap = Some(bd);
+                    if min_neighbor > 0.0 {
+                        if bd >= min_neighbor {
+                            continue;
+                        }
+                    } else if bd > 0.0 {
+                        continue;
+                    }
+                }
+
+                let overlap = mesh_collision_exact_prepared(
+                    candidate_bbox,
+                    candidate_shape.as_ref(),
+                    other.bbox,
+                    other.shape.as_ref(),
+                );
+                if overlap {
+                    blocked = true;
+                    break;
+                }
+
+                if min_neighbor > 0.0 {
+                    let need_exact_distance = match bbox_gap {
+                        Some(bd) => bd < min_neighbor,
+                        None => true,
+                    };
+                    if need_exact_distance {
+                        let d = mesh_distance_exact_prepared(
+                            candidate_bbox,
+                            candidate_shape.as_ref(),
+                            other.bbox,
+                            other.shape.as_ref(),
+                        );
+                        if d < min_neighbor {
+                            blocked = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if blocked {
+            temperature = (temperature * cooling_rate).max(temp_floor);
+            window_trials += 1;
+            if window_trials >= adaptive_window {
+                let accept_rate = window_accepts as f64 / window_trials as f64;
+                if accept_rate < target_accept_low {
+                    temperature = (temperature * heat_factor).min(temp_ceiling);
+                } else if accept_rate > target_accept_high {
+                    temperature = (temperature * cool_factor).max(temp_floor);
+                }
+                window_trials = 0;
+                window_accepts = 0;
+            }
+            progress.set_position((iter + 1) as u64);
+            let acc = (accepted_moves as f64 / (iter + 1) as f64) * 100.0;
+            progress.set_message(format!(
+                "Loss {current_loss:.6} | Best {best_loss:.6} | Temp {temperature:.6} | Acc {acc:.1}%"
+            ));
+            collision_time += collision_start.elapsed();
+            continue;
+        }
+
+        if mode == 3 {
+            let candidate_ghosts = generate_periodic_ghosts(&candidate, box_bounds);
+            let mut ghost_blocked = false;
+            for g in &candidate_ghosts {
+                let g_bbox = mesh_bbox(g);
+                let g_shape = to_parry_trimesh(g);
+                let mut ghost_neighbors = if let Some(gb) = g_bbox {
+                    grid.query_neighbors_with_margin(gb, min_neighbor, idx)
+                } else {
+                    (0..prepared.len()).filter(|&j| j != idx).collect()
+                };
+                for (j, other) in prepared.iter().enumerate() {
+                    if j != idx && other.bbox.is_none() && !ghost_neighbors.contains(&j) {
+                        ghost_neighbors.push(j);
+                    }
+                }
+                for j in ghost_neighbors {
+                    let other = &prepared[j];
+
+                    let mut bbox_gap: Option<f64> = None;
+                    if let (Some(gb), Some(ob)) = (g_bbox, other.bbox) {
+                        let bd = bbox_distance(gb, ob);
+                        bbox_gap = Some(bd);
+                        if min_neighbor > 0.0 {
+                            if bd >= min_neighbor {
+                                continue;
+                            }
+                        } else if bd > 0.0 {
+                            continue;
+                        }
+                    }
+
+                    if mesh_collision_exact_prepared(
+                        g_bbox,
+                        g_shape.as_ref(),
+                        other.bbox,
+                        other.shape.as_ref(),
+                    ) {
+                        ghost_blocked = true;
+                        break;
+                    }
+                    if min_neighbor > 0.0 {
+                        let need_exact_distance = match bbox_gap {
+                            Some(bd) => bd < min_neighbor,
+                            None => true,
+                        };
+                        if need_exact_distance {
+                            let d = mesh_distance_exact_prepared(
+                                g_bbox,
+                                g_shape.as_ref(),
+                                other.bbox,
+                                other.shape.as_ref(),
+                            );
+                            if d < min_neighbor {
+                                ghost_blocked = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if ghost_blocked {
+                    break;
+                }
+            }
+            if ghost_blocked {
+                temperature = (temperature * cooling_rate).max(temp_floor);
+                window_trials += 1;
+                if window_trials >= adaptive_window {
+                    let accept_rate = window_accepts as f64 / window_trials as f64;
+                    if accept_rate < target_accept_low {
+                        temperature = (temperature * heat_factor).min(temp_ceiling);
+                    } else if accept_rate > target_accept_high {
+                        temperature = (temperature * cool_factor).max(temp_floor);
+                    }
+                    window_trials = 0;
+                    window_accepts = 0;
+                }
+                progress.set_position((iter + 1) as u64);
+                let acc = (accepted_moves as f64 / (iter + 1) as f64) * 100.0;
+                progress.set_message(format!(
+                    "Loss {current_loss:.6} | Best {best_loss:.6} | Temp {temperature:.6} | Acc {acc:.1}%"
+                ));
+                collision_time += collision_start.elapsed();
+                continue;
+            }
+        }
+        collision_time += collision_start.elapsed();
+
+        prepared[idx] = prepare_particle(candidate);
+        {
+            let bboxes_for_rebuild: Vec<(usize, BoundingBox)> = prepared.iter().enumerate()
+                .filter_map(|(i, p)| p.bbox.map(|b| (i, b)))
+                .collect();
+            grid = SpatialGrid::build(&bboxes_for_rebuild, box_bounds, cell_size);
+        }
+        merged = merge_meshes(
+            &prepared
+                .iter()
+                .map(|p| p.mesh.clone())
+                .collect::<Vec<_>>(),
+        );
+        let adaptive_samples = ((params.mc_samples as f64) * (0.3 + 0.7 * scale)).round() as usize;
+        let iter_samples = adaptive_samples.clamp(1000, params.mc_samples.max(1000));
+        let s2_start = Instant::now();
+        let candidate_s2 = thread_pool.install(|| {
+            calculate_s2(
+                &merged,
+                box_bounds,
+                params.r_max,
+                params.voxel_pitch,
+                s2_method,
+                iter_samples,
+            )
+        });
+        s2_time += s2_start.elapsed();
+        let candidate_loss = l2_norm(&candidate_s2, target);
+        let delta = candidate_loss - current_loss;
+
+        let accept = if delta <= 0.0 {
+            true
+        } else {
+            let threshold = (-delta / temperature).exp();
+            rng.gen_bool(threshold.clamp(0.0, 1.0))
+        };
+
+        if accept {
+            accepted_moves += 1;
+            current_s2 = candidate_s2;
+            current_loss = candidate_loss;
+            if current_loss < best_loss {
+                best_loss = current_loss;
+                best_particles = prepared.iter().map(|p| p.mesh.clone()).collect::<Vec<_>>();
+                best_s2 = current_s2.clone();
+                history_log.push(format!(
+                    "Iter {iter}: Loss {best_loss:.6} | S2 {}",
+                    format_s2_series(&best_s2)
+                ));
+            }
+        } else {
+            prepared[idx] = prepare_particle(original);
+            let bboxes_for_rebuild: Vec<(usize, BoundingBox)> = prepared.iter().enumerate()
+                .filter_map(|(i, p)| p.bbox.map(|b| (i, b)))
+                .collect();
+            grid = SpatialGrid::build(&bboxes_for_rebuild, box_bounds, cell_size);
+        }
+
+        temperature = (temperature * cooling_rate).max(temp_floor);
+        window_trials += 1;
+        if accept {
+            window_accepts += 1;
+        }
+        if window_trials >= adaptive_window {
+            let accept_rate = window_accepts as f64 / window_trials as f64;
+            if accept_rate < target_accept_low {
+                temperature = (temperature * heat_factor).min(temp_ceiling);
+            } else if accept_rate > target_accept_high {
+                temperature = (temperature * cool_factor).max(temp_floor);
+            }
+            window_trials = 0;
+            window_accepts = 0;
+        }
+
+        if let Some(gb) = global_best {
+            if migration_interval > 0 && (iter + 1) % migration_interval == 0 {
+                let mut gb_lock = gb.lock().unwrap();
+                if best_loss < gb_lock.loss {
+                    gb_lock.loss = best_loss;
+                    gb_lock.particles = best_particles.clone();
+                } else if gb_lock.loss < best_loss {
+                    let incoming = gb_lock.particles.clone();
+                    let incoming_loss = gb_lock.loss;
+                    drop(gb_lock);
+                    best_particles = incoming;
+                    best_loss = incoming_loss;
+                    prepared = best_particles.iter().map(|m| prepare_particle(m.clone())).collect();
+                    merged = merge_meshes(&best_particles);
+                    let bboxes_for_rebuild: Vec<(usize, BoundingBox)> = prepared.iter().enumerate()
+                        .filter_map(|(i, p)| p.bbox.map(|b| (i, b)))
+                        .collect();
+                    grid = SpatialGrid::build(&bboxes_for_rebuild, box_bounds, cell_size);
+                    current_s2 = thread_pool.install(|| {
+                        calculate_s2(
+                            &merged,
+                            box_bounds,
+                            params.r_max,
+                            params.voxel_pitch,
+                            s2_method,
+                            params.mc_samples.max(2000),
+                        )
+                    });
+                    current_loss = l2_norm(&current_s2, target);
+                    history_log.push(format!(
+                        "Island {island_id} Iter {iter}: migrated best loss {best_loss:.6}"
+                    ));
+                }
+            }
+        }
+
+        progress.set_position((iter + 1) as u64);
+        let acc = (accepted_moves as f64 / (iter + 1) as f64) * 100.0;
+        progress.set_message(format!(
+            "Loss {current_loss:.6} | Best {best_loss:.6} | Temp {temperature:.6} | Acc {acc:.1}%"
+        ));
+        if temperature < 1e-9 {
+            break;
+        }
+    }
+
+    progress.finish_with_message("Optimization loop completed");
+
+    IslandResult {
+        best_particles,
+        best_loss,
+        best_s2,
+        s2_time,
+        collision_time,
+    }
 }
 
 impl Pipeline for OptimizePipeline {
     fn run(&self) -> Result<()> {
-        // Purpose: Execute full optimization workflow (load, prune, anneal, save).
-        // Inputs: optimization config and STL inputs.
-        // Outputs: optimized structure STL and history logs.
         let run_start = Instant::now();
         let params = &self.config.optimization;
         let box_bounds = parse_box_dimensions(&self.config.r#box.dimensions)?;
@@ -317,6 +766,7 @@ impl Pipeline for OptimizePipeline {
         let d2 = params.min_cross_boundary_depth.unwrap_or(0.0);
         let min_neighbor = params.min_neighbor_distance.unwrap_or(0.0);
         let rotation_mode = parse_rotation_mode(
+            "optimization",
             params.rotation_mode.as_deref(),
             params.rotation_axis_vector.as_ref(),
         )?;
@@ -416,45 +866,6 @@ impl Pipeline for OptimizePipeline {
         };
 
         let mut history_log: Vec<String> = Vec::new();
-
-        let mut rng = rand::thread_rng();
-        let mut temperature = params.initial_temperature.max(1e-8);
-        let cooling_rate = params.cooling_rate.clamp(0.8, 0.99999);
-        let adaptive_window = params
-            .adaptive_temp_window
-            .unwrap_or((params.max_iterations / 40).clamp(20, 100))
-            .max(5);
-        let target_accept_low = params.target_acceptance_low.unwrap_or(0.20).clamp(0.0, 1.0);
-        let mut target_accept_high = params.target_acceptance_high.unwrap_or(0.45).clamp(0.0, 1.0);
-        if target_accept_high <= target_accept_low {
-            target_accept_high = (target_accept_low + 0.05).clamp(0.0, 1.0);
-        }
-        let heat_factor = params.adaptive_heat_factor.unwrap_or(1.08).max(1.0);
-        let cool_factor = params.adaptive_cool_factor.unwrap_or(0.94).clamp(0.01, 1.0);
-        let temp_ceiling_factor = params.adaptive_temp_ceiling_factor.unwrap_or(5.0).max(1.0);
-        let temp_floor = 1e-9;
-        let temp_ceiling = params.initial_temperature.max(1e-8) * temp_ceiling_factor;
-        let mut window_trials = 0usize;
-        let mut window_accepts = 0usize;
-
-        let mut apply_temperature_step = |accepted_this_iter: bool, temperature: &mut f64| {
-            *temperature = (*temperature * cooling_rate).max(temp_floor);
-            window_trials += 1;
-            if accepted_this_iter {
-                window_accepts += 1;
-            }
-
-            if window_trials >= adaptive_window {
-                let accept_rate = window_accepts as f64 / window_trials as f64;
-                if accept_rate < target_accept_low {
-                    *temperature = (*temperature * heat_factor).min(temp_ceiling);
-                } else if accept_rate > target_accept_high {
-                    *temperature = (*temperature * cool_factor).max(temp_floor);
-                }
-                window_trials = 0;
-                window_accepts = 0;
-            }
-        };
         let s2_method = params.mc_method.as_str();
         println!(
             "[Info] S2 config: method={}, r_max={}, mc_samples={}, voxel_pitch={:.6}",
@@ -462,16 +873,6 @@ impl Pipeline for OptimizePipeline {
             params.r_max,
             params.mc_samples,
             params.voxel_pitch
-        );
-        println!(
-            "[Info] SA temperature schedule: base_cooling={:.5}, adaptive_window={}, target_acceptance=[{:.2},{:.2}], heat_factor={:.3}, cool_factor={:.3}, ceiling_factor={:.2}",
-            cooling_rate,
-            adaptive_window,
-            target_accept_low,
-            target_accept_high,
-            heat_factor,
-            cool_factor,
-            temp_ceiling_factor
         );
 
         let merged_input = merge_meshes(&particles);
@@ -503,318 +904,105 @@ impl Pipeline for OptimizePipeline {
             s2_method,
             params.voxel_pitch,
             &thread_pool,
+            &mut history_log,
         );
 
-        let mut prepared: Vec<ParticlePrepared> = particles
+        let prepared: Vec<ParticlePrepared> = particles
             .into_iter()
             .map(prepare_particle)
             .collect();
 
-        let mut merged = merge_meshes(
-            &prepared
-                .iter()
-                .map(|p| p.mesh.clone())
-                .collect::<Vec<_>>(),
-        );
-        let mut current_s2 = thread_pool.install(|| {
-            calculate_s2(
-                &merged,
+        let num_islands = params.islands.unwrap_or(1).max(1);
+        let migration_interval = params.migration_interval.unwrap_or(100).max(1);
+
+        let (best_particles, best_loss, best_s2, s2_time, collision_time) = if num_islands <= 1 {
+            let mut island_history: Vec<String> = Vec::new();
+            let result = run_sa_island(
+                0,
+                1,
+                prepared,
+                &target,
+                params,
                 box_bounds,
-                params.r_max,
-                params.voxel_pitch,
-                s2_method,
-                params.mc_samples.max(2000),
-            )
-        });
-        let mut current_loss = l2_norm(&current_s2, &target);
-        push_history_s2(&mut history_log, "Post-Pruning S2", &current_s2);
-        history_log.push(format!("Post-Pruning Loss: {current_loss:.6}"));
+                mode,
+                d1,
+                d2,
+                min_neighbor,
+                &rotation_mode,
+                &thread_pool,
+                None,
+                migration_interval,
+                &mut island_history,
+            );
+            history_log.extend(island_history);
+            (result.best_particles, result.best_loss, result.best_s2, result.s2_time, result.collision_time)
+        } else {
+            println!("[Info] Island model: {num_islands} islands, migration every {migration_interval} iterations");
+            let threads_per_island = (thread_count / num_islands).max(1);
+            println!("[Info] Island model: {threads_per_island} threads per island");
 
-        let mut best_particles = prepared.iter().map(|p| p.mesh.clone()).collect::<Vec<_>>();
-        let mut best_loss = current_loss;
-        let mut accepted_moves = 0usize;
+            let global_best = Arc::new(Mutex::new(GlobalBest {
+                loss: f64::MAX,
+                particles: Vec::new(),
+            }));
 
-        let mut s2_time = Duration::ZERO;
-        let mut collision_time = Duration::ZERO;
+            let mut island_results: Vec<IslandResult> = Vec::new();
+            let mut island_histories: Vec<Vec<String>> = Vec::new();
 
-        println!("[Info] Starting optimization with {} particles.", prepared.len());
-        println!("[Info] Initial loss: {current_loss:.6}");
+            std::thread::scope(|s| {
+                let mut handles = Vec::new();
+                for island_id in 0..num_islands {
+                    let gb = global_best.clone();
+                    let prepared_clone = prepared.clone();
+                    let target_clone = target.clone();
+                    let rotation_mode_clone = rotation_mode.clone();
+                    let handle = s.spawn(move || {
+                        let island_pool = ThreadPoolBuilder::new()
+                            .num_threads(threads_per_island)
+                            .build()
+                            .unwrap();
+                        let mut island_history: Vec<String> = Vec::new();
+                        let result = run_sa_island(
+                            island_id,
+                            num_islands,
+                            prepared_clone,
+                            &target_clone,
+                            params,
+                            box_bounds,
+                            mode,
+                            d1,
+                            d2,
+                            min_neighbor,
+                            &rotation_mode_clone,
+                            &island_pool,
+                            Some(&gb),
+                            migration_interval,
+                            &mut island_history,
+                        );
+                        (result, island_history)
+                    });
+                    handles.push(handle);
+                }
+                for handle in handles {
+                    let (result, history) = handle.join().unwrap();
+                    island_results.push(result);
+                    island_histories.push(history);
+                }
+            });
 
-        let total_iters = params.max_iterations.max(1) as u64;
-        let progress = create_progress_bar(
-            total_iters,
-            "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>5}/{len:5} {msg}",
-            "##-",
-        );
-        progress.set_message(format!(
-            "Loss {current_loss:.6} | Best {best_loss:.6} | Temp {temperature:.6} | Acc 0"
-        ));
+            for h in island_histories {
+                history_log.extend(h);
+            }
 
-        let update_progress = |bar: &ProgressBar,
-                               iter_done: usize,
-                               current_loss: f64,
-                               best_loss: f64,
-                               temperature: f64,
-                               accepted_moves: usize| {
-            let acc = if iter_done == 0 {
-                0.0
-            } else {
-                (accepted_moves as f64 / iter_done as f64) * 100.0
-            };
-            bar.set_position(iter_done as u64);
-            bar.set_message(format!(
-                "Loss {current_loss:.6} | Best {best_loss:.6} | Temp {temperature:.6} | Acc {acc:.1}%"
-            ));
+            let best = island_results
+                .into_iter()
+                .min_by(|a, b| a.best_loss.partial_cmp(&b.best_loss).unwrap_or(std::cmp::Ordering::Equal))
+                .unwrap();
+            (best.best_particles, best.best_loss, best.best_s2, best.s2_time, best.collision_time)
         };
 
-        for iter in 0..params.max_iterations {
-            let idx = rng.gen_range(0..prepared.len());
-            let original = prepared[idx].mesh.clone();
-            let mut candidate = original.clone();
-
-            let scale = (temperature / params.initial_temperature.max(1e-8)).clamp(0.05, 1.0);
-            let move_roll: f64 = rng.gen_range(0.0..1.0);
-
-            if move_roll < 0.6 {
-                let trans = Vec3::new(
-                    rng.gen_range(-params.max_translation..params.max_translation) * scale,
-                    rng.gen_range(-params.max_translation..params.max_translation) * scale,
-                    rng.gen_range(-params.max_translation..params.max_translation) * scale,
-                );
-                let center = mesh_centroid(&candidate);
-                move_mesh_to_target_center(&mut candidate, center.add(trans));
-
-                let rot_limit = params.max_rotation_deg.to_radians() * scale;
-                if rot_limit > 1e-6 {
-                    if let Some(axis) = sample_rotation_axis(&mut rng, &rotation_mode) {
-                        let angle = rng.gen_range(-rot_limit..rot_limit);
-                        rotate_mesh_around_center(&mut candidate, axis, angle);
-                    }
-                }
-            } else if move_roll < 0.9 {
-                let target_idx = rng.gen_range(0..prepared.len());
-                if target_idx != idx {
-                    let c0 = mesh_centroid(&candidate);
-                    let c1 = mesh_centroid(&prepared[target_idx].mesh);
-                    let direction = c1.sub(c0);
-                    let dist = vec_norm(direction);
-                    if dist > 1e-12 {
-                        let step = (dist * 0.3).min(params.max_translation * scale * 2.0);
-                        let move_vec = direction.scale(step / dist);
-                        move_mesh_to_target_center(&mut candidate, c0.add(move_vec));
-                    }
-                }
-                if let Some(axis) = sample_rotation_axis(&mut rng, &rotation_mode) {
-                    let angle =
-                        rng.gen_range(-10.0f64.to_radians() * scale..10.0f64.to_radians() * scale);
-                    rotate_mesh_around_center(&mut candidate, axis, angle);
-                }
-            } else {
-                let random_pos = Vec3::new(
-                    rng.gen_range(box_bounds.min.x..box_bounds.max.x),
-                    rng.gen_range(box_bounds.min.y..box_bounds.max.y),
-                    rng.gen_range(box_bounds.min.z..box_bounds.max.z),
-                );
-                move_mesh_to_target_center(&mut candidate, random_pos);
-
-                if let Some(axis) = sample_rotation_axis(&mut rng, &rotation_mode) {
-                    let angle = rng.gen_range(0.0..(2.0 * PI));
-                    rotate_mesh_around_center(&mut candidate, axis, angle);
-                }
-            }
-
-            if mode == 3 {
-                wrap_mesh_centroid_to_box(&mut candidate, box_bounds);
-            }
-
-            let candidate_bbox = mesh_bbox(&candidate);
-            let candidate_shape = to_parry_trimesh(&candidate);
-
-            let collision_start = Instant::now();
-            if !check_boundary_constraints_mode(&candidate, box_bounds, mode, d1, d2) {
-                apply_temperature_step(false, &mut temperature);
-                update_progress(&progress, iter + 1, current_loss, best_loss, temperature, accepted_moves);
-                collision_time += collision_start.elapsed();
-                continue;
-            }
-
-            let mut blocked = false;
-            for (j, other) in prepared.iter().enumerate() {
-                if j == idx {
-                    continue;
-                }
-
-                let mut bbox_gap: Option<f64> = None;
-                if let (Some(cb), Some(ob)) = (candidate_bbox, other.bbox) {
-                    let bd = bbox_distance(cb, ob);
-                    bbox_gap = Some(bd);
-                    if min_neighbor > 0.0 {
-                        if bd >= min_neighbor {
-                            continue;
-                        }
-                    } else if bd > 0.0 {
-                        continue;
-                    }
-                }
-
-                let overlap = mesh_collision_exact_prepared(
-                    candidate_bbox,
-                    candidate_shape.as_ref(),
-                    other.bbox,
-                    other.shape.as_ref(),
-                );
-                if overlap {
-                    blocked = true;
-                    break;
-                }
-
-                if min_neighbor > 0.0 {
-                    let need_exact_distance = match bbox_gap {
-                        Some(bd) => bd < min_neighbor,
-                        None => true,
-                    };
-                    if need_exact_distance {
-                        let d = mesh_distance_exact_prepared(
-                            candidate_bbox,
-                            candidate_shape.as_ref(),
-                            other.bbox,
-                            other.shape.as_ref(),
-                        );
-                        if d < min_neighbor {
-                            blocked = true;
-                            break;
-                        }
-                    }
-                }
-            }
-            if blocked {
-                apply_temperature_step(false, &mut temperature);
-                update_progress(&progress, iter + 1, current_loss, best_loss, temperature, accepted_moves);
-                collision_time += collision_start.elapsed();
-                continue;
-            }
-
-            if mode == 3 {
-                let candidate_ghosts = generate_periodic_ghosts(&candidate, box_bounds);
-                let mut ghost_blocked = false;
-                for g in &candidate_ghosts {
-                    let g_bbox = mesh_bbox(g);
-                    let g_shape = to_parry_trimesh(g);
-                    for (j, other) in prepared.iter().enumerate() {
-                        if j == idx {
-                            continue;
-                        }
-
-                        let mut bbox_gap: Option<f64> = None;
-                        if let (Some(gb), Some(ob)) = (g_bbox, other.bbox) {
-                            let bd = bbox_distance(gb, ob);
-                            bbox_gap = Some(bd);
-                            if min_neighbor > 0.0 {
-                                if bd >= min_neighbor {
-                                    continue;
-                                }
-                            } else if bd > 0.0 {
-                                continue;
-                            }
-                        }
-
-                        if mesh_collision_exact_prepared(
-                            g_bbox,
-                            g_shape.as_ref(),
-                            other.bbox,
-                            other.shape.as_ref(),
-                        ) {
-                            ghost_blocked = true;
-                            break;
-                        }
-                        if min_neighbor > 0.0 {
-                            let need_exact_distance = match bbox_gap {
-                                Some(bd) => bd < min_neighbor,
-                                None => true,
-                            };
-                            if need_exact_distance {
-                                let d = mesh_distance_exact_prepared(
-                                    g_bbox,
-                                    g_shape.as_ref(),
-                                    other.bbox,
-                                    other.shape.as_ref(),
-                                );
-                                if d < min_neighbor {
-                                    ghost_blocked = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    if ghost_blocked {
-                        break;
-                    }
-                }
-                if ghost_blocked {
-                    apply_temperature_step(false, &mut temperature);
-                    update_progress(&progress, iter + 1, current_loss, best_loss, temperature, accepted_moves);
-                    collision_time += collision_start.elapsed();
-                    continue;
-                }
-            }
-            collision_time += collision_start.elapsed();
-
-            prepared[idx] = prepare_particle(candidate);
-            merged = merge_meshes(
-                &prepared
-                    .iter()
-                    .map(|p| p.mesh.clone())
-                    .collect::<Vec<_>>(),
-            );
-            let adaptive_samples = ((params.mc_samples as f64) * (0.3 + 0.7 * scale)).round() as usize;
-            let iter_samples = adaptive_samples.clamp(1000, params.mc_samples.max(1000));
-            let s2_start = Instant::now();
-            let candidate_s2 = thread_pool.install(|| {
-                calculate_s2(
-                    &merged,
-                    box_bounds,
-                    params.r_max,
-                    params.voxel_pitch,
-                    s2_method,
-                    iter_samples,
-                )
-            });
-            s2_time += s2_start.elapsed();
-            let candidate_loss = l2_norm(&candidate_s2, &target);
-            let delta = candidate_loss - current_loss;
-
-            let accept = if delta <= 0.0 {
-                true
-            } else {
-                let threshold = (-delta / temperature).exp();
-                rng.gen_bool(threshold.clamp(0.0, 1.0))
-            };
-
-            if accept {
-                accepted_moves += 1;
-                current_s2 = candidate_s2;
-                current_loss = candidate_loss;
-                if current_loss < best_loss {
-                    best_loss = current_loss;
-                    best_particles = prepared.iter().map(|p| p.mesh.clone()).collect::<Vec<_>>();
-                    let best_s2 = current_s2.clone();
-                    history_log.push(format!(
-                        "Iter {iter}: Loss {best_loss:.6} | S2 {}",
-                        format_s2_series(&best_s2)
-                    ));
-                }
-            } else {
-                prepared[idx] = prepare_particle(original);
-            }
-
-            apply_temperature_step(accept, &mut temperature);
-            update_progress(&progress, iter + 1, current_loss, best_loss, temperature, accepted_moves);
-            if temperature < 1e-9 {
-                break;
-            }
-        }
-
-        progress.finish_with_message("Optimization loop completed");
+        push_history_s2(&mut history_log, "Final Best S2", &best_s2);
+        history_log.push(format!("Final Best Loss: {best_loss:.6}"));
 
         let enable_orient = params.orient_to_positive_volume.unwrap_or(false);
         let best_mesh = merge_meshes(&best_particles);
@@ -839,7 +1027,7 @@ impl Pipeline for OptimizePipeline {
         println!("[Info] Optimization completed.");
         println!("[Info] Best loss: {best_loss:.6}");
         println!("[Info] Final volume: {:.6}", mesh_volume(&best_mesh_oriented));
-        println!("[Info] Final S2 points: {}", current_s2.len());
+        println!("[Info] Final S2 points: {}", best_s2.len());
         println!("[Info] Orientation fix enabled: {}", enable_orient);
         if enable_orient {
             println!(

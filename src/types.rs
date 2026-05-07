@@ -129,9 +129,3 @@ impl Mesh {
         self.vertices.is_empty() || self.faces.is_empty()
     }
 }
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct MeasurementResult {
-    pub volume_fraction: f64,
-    pub s2_values: Vec<f64>,
-}

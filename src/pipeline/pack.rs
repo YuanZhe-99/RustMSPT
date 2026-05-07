@@ -7,6 +7,7 @@ use crate::geometry::{
     rotate_mesh_around_center, split_mesh_into_granules,
 };
 use crate::io::{load_stl, save_stl};
+use crate::pipeline::rotation::{parse_rotation_mode, sample_rotation_axis};
 use crate::pipeline::{create_progress_bar, Pipeline};
 use crate::types::{Mesh, Vec3};
 use indicatif::ProgressBar;
@@ -19,64 +20,6 @@ use std::path::Path;
 
 pub struct PackPipeline {
     pub config: PackingConfig,
-}
-
-enum RotationMode {
-    None,
-    Axis(Vec3),
-    Any,
-}
-
-fn parse_rotation_mode(mode: Option<&str>, axis_vec: Option<&Vec<f64>>) -> Result<RotationMode> {
-    // Purpose: Parse rotation mode and optional axis vector from config.
-    // Inputs: optional mode string and optional axis vector values.
-    // Outputs: parsed rotation mode.
-    let raw = mode.unwrap_or("any").trim().to_ascii_lowercase();
-    match raw.as_str() {
-        "none" => Ok(RotationMode::None),
-        "x" => Ok(RotationMode::Axis(Vec3::new(1.0, 0.0, 0.0))),
-        "y" => Ok(RotationMode::Axis(Vec3::new(0.0, 1.0, 0.0))),
-        "z" => Ok(RotationMode::Axis(Vec3::new(0.0, 0.0, 1.0))),
-        "vector" => {
-            let v = axis_vec.ok_or_else(|| {
-                RustMsptError::InvalidConfig(
-                    "packing.rotation_axis_vector is required when rotation_mode='vector'"
-                        .to_string(),
-                )
-            })?;
-            if v.len() != 3 {
-                return Err(RustMsptError::InvalidConfig(
-                    "packing.rotation_axis_vector must have length 3".to_string(),
-                ));
-            }
-            let axis = Vec3::new(v[0], v[1], v[2]);
-            if crate::geometry::vec_norm(axis) <= 1e-12 {
-                return Err(RustMsptError::InvalidConfig(
-                    "packing.rotation_axis_vector must be non-zero".to_string(),
-                ));
-            }
-            Ok(RotationMode::Axis(axis))
-        }
-        "any" => Ok(RotationMode::Any),
-        other => Err(RustMsptError::InvalidConfig(format!(
-            "packing.rotation_mode must be one of: none, x, y, z, vector, any (got '{other}')"
-        ))),
-    }
-}
-
-fn sample_rotation_axis(rng: &mut rand::rngs::ThreadRng, mode: &RotationMode) -> Option<Vec3> {
-    // Purpose: Sample or select rotation axis according to configured mode.
-    // Inputs: random generator and parsed rotation mode.
-    // Outputs: optional axis vector (None means no rotation).
-    match mode {
-        RotationMode::None => None,
-        RotationMode::Axis(axis) => Some(*axis),
-        RotationMode::Any => Some(Vec3::new(
-            rng.gen_range(-1.0..1.0),
-            rng.gen_range(-1.0..1.0),
-            rng.gen_range(-1.0..1.0),
-        )),
-    }
 }
 
 fn check_geometry_filters(mesh: &Mesh, config: &PackingConfig) -> bool {
@@ -179,6 +122,7 @@ impl Pipeline for PackPipeline {
         let target = self.config.packing.target_volume_fraction.clamp(0.0, 1.0);
         let min_neighbor = self.config.packing.min_neighbor_distance.unwrap_or(0.0);
         let rotation_mode = parse_rotation_mode(
+            "packing",
             self.config.packing.rotation_mode.as_deref(),
             self.config.packing.rotation_axis_vector.as_ref(),
         )?;

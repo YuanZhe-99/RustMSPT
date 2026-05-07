@@ -6,6 +6,7 @@ use crate::io::{
 };
 use crate::pipeline::Pipeline;
 use nalgebra::{Matrix3, SymmetricEigen, Vector3};
+use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::path::Path;
@@ -444,18 +445,21 @@ fn rotate_and_crop(
     let out_d = (z1 - z0 + 1).max(1) as usize;
 
     let mut data = vec![background; out_w * out_h * out_d];
+    let slice_len = out_w * out_h;
 
-    for z in 0..out_d {
+    data.par_chunks_mut(slice_len).enumerate().for_each(|(z, slab)| {
+        let z_coord = z0 as f64 + z as f64;
         for y in 0..out_h {
+            let y_coord = y0 as f64 + y as f64;
             for x in 0..out_w {
                 let local = Vector3::new(
                     x0 as f64 + x as f64,
-                    y0 as f64 + y as f64,
-                    z0 as f64 + z as f64,
+                    y_coord,
+                    z_coord,
                 );
                 let src = rot * local + centroid;
-                let out_idx = voxel_index(out_w, out_h, x, y, z);
-                data[out_idx] = match interpolation_mode {
+                let idx = y * out_w + x;
+                slab[idx] = match interpolation_mode {
                     InterpolationMode::Nearest => {
                         sample_nearest(volume, background, src.x, src.y, src.z)
                     }
@@ -465,7 +469,7 @@ fn rotate_and_crop(
                 };
             }
         }
-    }
+    });
 
     Volume3D {
         width: out_w,

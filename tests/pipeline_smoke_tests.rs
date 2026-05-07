@@ -249,6 +249,8 @@ fn optimization_pipeline_smoke() {
                 prune_eval_samples: Some(500),
                 cpu_max: Some(1),
                 orient_to_positive_volume: Some(false),
+                islands: None,
+                migration_interval: None,
             },
         },
     };
