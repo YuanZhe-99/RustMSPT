@@ -1,5 +1,10 @@
 use crate::types::{BoundingBox, Mesh};
 
+// AI-FUNC-SUMMARY:
+// Purpose: Compute the axis-aligned bounding box of a mesh.
+// Inputs: mesh reference.
+// Returns: Some(BoundingBox) enclosing all vertices, or None for empty mesh.
+// Side effects: None.
 pub fn mesh_bbox(mesh: &Mesh) -> Option<BoundingBox> {
     if mesh.vertices.is_empty() {
         return None;
@@ -19,6 +24,7 @@ pub fn mesh_bbox(mesh: &Mesh) -> Option<BoundingBox> {
     Some(BoundingBox { min, max })
 }
 
+// AI-FUNC-SUMMARY: Check whether two bounding boxes overlap on all three axes (strict overlap, not just touching); returns bool; side effects: None.
 pub fn bbox_overlaps(a: BoundingBox, b: BoundingBox) -> bool {
     a.min.x < b.max.x
         && a.max.x > b.min.x
@@ -28,6 +34,7 @@ pub fn bbox_overlaps(a: BoundingBox, b: BoundingBox) -> bool {
         && a.max.z > b.min.z
 }
 
+// AI-FUNC-SUMMARY: Compute the minimum Euclidean distance between two bounding boxes; returns 0.0 when they overlap; side effects: None.
 pub fn bbox_distance(a: BoundingBox, b: BoundingBox) -> f64 {
     let dx = if a.max.x < b.min.x {
         b.min.x - a.max.x
@@ -56,6 +63,12 @@ pub fn bbox_distance(a: BoundingBox, b: BoundingBox) -> f64 {
     (dx * dx + dy * dy + dz * dz).sqrt()
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Validate a mesh against boundary constraint mode for placement in a periodic or bounded box.
+// Inputs: mesh, box_bounds, mode (1=fully inside only, 2/3=allow periodic crossing), d1 (min boundary distance for interior particles), d2 (min cross-boundary depth).
+// Returns: true if the mesh satisfies the boundary constraints.
+// Side effects: None.
+// Notes: Mode 1 rejects any particle not fully inside. Modes 2/3 allow periodic wrapping with depth constraints.
 pub fn check_boundary_constraints_mode(
     mesh: &Mesh,
     box_bounds: BoundingBox,

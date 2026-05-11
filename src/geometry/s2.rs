@@ -7,17 +7,18 @@ use rayon::prelude::*;
 use rustfft::num_complex::Complex;
 use rustfft::FftPlanner;
 
+// AI-FUNC-SUMMARY: Convert 3D voxel index to flat array index using y/z strides; returns usize; side effects: None.
 fn index_3d_to_flat(x: usize, y: usize, z: usize, ny: usize, nz: usize) -> usize {
-    // Purpose: Convert 3D voxel index to flat array index.
-    // Inputs: x/y/z index and grid strides.
-    // Outputs: flat index.
     x * ny * nz + y * nz + z
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Moller-Trumbore ray-triangle intersection test.
+// Inputs: ray origin/direction and triangle vertices a/b/c.
+// Returns: Some(t) distance on hit, None on miss or near-parallel ray.
+// Side effects: None.
+// Notes: Returns only positive t (forward intersections).
 fn ray_intersects_triangle(origin: Vec3, dir: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<f64> {
-    // Purpose: Ray-triangle intersection using Moller-Trumbore method.
-    // Inputs: ray origin/direction and triangle vertices.
-    // Outputs: hit distance t when intersecting.
     let eps = 1e-10;
     let edge1 = b.sub(a);
     let edge2 = c.sub(a);
@@ -48,6 +49,12 @@ fn ray_intersects_triangle(origin: Vec3, dir: Vec3, a: Vec3, b: Vec3, c: Vec3) -
     }
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Determine whether a point is inside a closed mesh using ray-casting (odd-hit rule).
+// Inputs: mesh reference and query point.
+// Returns: true if point is inside the mesh volume.
+// Side effects: None.
+// Notes: Uses a fixed non-axis-aligned ray direction to reduce edge-case misses. Deduplicates near-equal hit distances.
 fn point_inside_mesh(mesh: &Mesh, point: Vec3) -> bool {
     let Some(bb) = mesh_bbox(mesh) else {
         return false;
@@ -91,6 +98,12 @@ fn point_inside_mesh(mesh: &Mesh, point: Vec3) -> bool {
     unique_hits % 2 == 1
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Voxelize a mesh inside a bounding box by ray-casting point containment tests.
+// Inputs: mesh, bounding box, voxel pitch.
+// Returns: Tuple of (occupancy boolean grid, [nx, ny, nz] grid dimensions).
+// Side effects: None.
+// Notes: Parallelizes over x-slabs via rayon. Splits mesh into granules for per-granule bbox culling.
 fn build_bbox_occupancy(mesh: &Mesh, bbox: BoundingBox, voxel_pitch: f64) -> (Vec<bool>, [usize; 3]) {
     let size = bbox.size();
     let nx = ((size.x / voxel_pitch).ceil() as usize).max(1);
@@ -157,10 +170,13 @@ fn build_bbox_occupancy(mesh: &Mesh, bbox: BoundingBox, voxel_pitch: f64) -> (Ve
     (occ, [nx, ny, nz])
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Enumerate integer voxel offsets near a spherical shell distance.
+// Inputs: shell center distance and half-width in voxel units.
+// Returns: Vec of [dx, dy, dz] offset vectors within the shell annulus.
+// Side effects: None.
+// Notes: Returns [[0,0,0]] for near-zero distance. Used by both exact and MC S2 methods.
 fn shell_offsets_for_distance(distance_vox: f64, half_width_vox: f64) -> Vec<[isize; 3]> {
-    // Purpose: Enumerate integer offsets near a voxel-space shell distance.
-    // Inputs: shell center distance and half-width in voxel units.
-    // Outputs: voxel offset vectors.
     if distance_vox <= 1e-12 {
         return vec![[0, 0, 0]];
     }
@@ -187,10 +203,13 @@ fn shell_offsets_for_distance(distance_vox: f64, half_width_vox: f64) -> Vec<[is
     offsets
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Fill unsupported S2 radii using smooth interpolation (linear for 2 points, cubic spline for 3+).
+// Inputs: mutable S2 values array, support flags per radius, and S2(0)=VF.
+// Returns: None (modifies values in place).
+// Side effects: Mutates the values slice.
+// Notes: Clamps output to [0,1]. Always sets values[0] = vf.
 fn fill_missing_s2_with_smooth_interpolation(values: &mut [f64], has_support: &[bool], vf: f64) {
-    // Purpose: Smoothly fill unsupported S2 radii using known points.
-    // Inputs: mutable S2 values, support flags per radius, and S2(0)=VF.
-    // Outputs: in-place interpolation for unsupported interior radii.
     if values.is_empty() || values.len() != has_support.len() {
         return;
     }
@@ -300,17 +319,18 @@ fn fill_missing_s2_with_smooth_interpolation(values: &mut [f64], has_support: &[
     }
 }
 
+// AI-FUNC-SUMMARY: Convert 3D FFT-grid index to flat index using y/z strides; returns usize; side effects: None.
 fn fft_index_3d(x: usize, y: usize, z: usize, ny: usize, nz: usize) -> usize {
-    // Purpose: Convert 3D FFT-grid index to flat index.
-    // Inputs: x/y/z and y/z strides.
-    // Outputs: flat index.
     x * ny * nz + y * nz + z
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Perform a separable 3D FFT (or inverse IFFT) in-place on a complex data buffer.
+// Inputs: complex data buffer, nx/ny/nz dimensions, inverse flag.
+// Returns: None (modifies data in place).
+// Side effects: Mutates the data buffer.
+// Notes: Each thread creates its own FftPlanner (Fft is not Clone). Normalizes by N on inverse.
 fn fft_3d_in_place(data: &mut [Complex<f64>], nx: usize, ny: usize, nz: usize, inverse: bool) {
-    // Purpose: Perform separable 3D FFT/IFFT in place.
-    // Inputs: complex data buffer, dimensions, inverse flag.
-    // Outputs: transformed data buffer.
     let mut planner = FftPlanner::<f64>::new();
     let fft_z = if inverse {
         planner.plan_fft_inverse(nz)
@@ -378,10 +398,13 @@ fn fft_3d_in_place(data: &mut [Complex<f64>], nx: usize, ny: usize, nz: usize, i
     }
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Compute occupancy autocorrelation counts via FFT convolution (FFT -> power spectrum -> IFFT).
+// Inputs: occupancy grid and nx/ny/nz dimensions.
+// Returns: Correlation count grid and padded FFT dimensions [fx, fy, fz].
+// Side effects: None.
+// Notes: Pads to 2N-1 per axis to avoid circular convolution artifacts.
 fn autocorrelation_counts_fft(occ: &[bool], nx: usize, ny: usize, nz: usize) -> (Vec<f64>, [usize; 3]) {
-    // Purpose: Compute occupancy autocorrelation counts via FFT convolution.
-    // Inputs: occupancy grid and dimensions.
-    // Outputs: correlation grid and padded FFT dimensions.
     let fx = (2 * nx).saturating_sub(1).max(1);
     let fy = (2 * ny).saturating_sub(1).max(1);
     let fz = (2 * nz).saturating_sub(1).max(1);
@@ -407,6 +430,12 @@ fn autocorrelation_counts_fft(occ: &[bool], nx: usize, ny: usize, nz: usize) -> 
     (corr, [fx, fy, fz])
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Compute exact S2 by direct pair enumeration per shell offset (no FFT).
+// Inputs: occupancy grid, dimensions, max radius, voxel pitch, volume fraction at r=0.
+// Returns: S2 values for r=0..r_max with smooth interpolation for unsupported radii.
+// Side effects: None.
+// Notes: Parallelizes over radii via rayon. Used as fallback when FFT grid would be too large.
 fn calculate_s2_exact_direct(
     occ: &[bool],
     nx: usize,
@@ -416,9 +445,6 @@ fn calculate_s2_exact_direct(
     voxel_pitch: f64,
     vf: f64,
 ) -> Vec<f64> {
-    // Purpose: Compute exact S2 by direct offset pair enumeration.
-    // Inputs: occupancy grid, dimensions, max radius, VF at r=0.
-    // Outputs: S2 values for r=0..r_max.
     let results: Vec<(f64, bool)> = (0..=r_max)
         .into_par_iter()
         .map(|r| {
@@ -494,6 +520,12 @@ fn calculate_s2_exact_direct(
     out
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Compute exact S2 using FFT-based autocorrelation.
+// Inputs: occupancy grid, dimensions, max radius, voxel pitch, volume fraction at r=0.
+// Returns: S2 values for r=0..r_max with smooth interpolation for unsupported radii.
+// Side effects: None.
+// Notes: Parallelizes over radii. Falls back gracefully when offsets exceed grid dimensions.
 fn calculate_s2_exact_fft(
     occ: &[bool],
     nx: usize,
@@ -503,9 +535,6 @@ fn calculate_s2_exact_fft(
     voxel_pitch: f64,
     vf: f64,
 ) -> Vec<f64> {
-    // Purpose: Compute exact S2 using FFT-based autocorrelation.
-    // Inputs: occupancy grid, dimensions, max radius, VF at r=0.
-    // Outputs: S2 values for r=0..r_max.
     let (corr, fdims) = autocorrelation_counts_fft(occ, nx, ny, nz);
     let [fx, fy, fz] = fdims;
 
@@ -570,6 +599,12 @@ fn calculate_s2_exact_fft(
     out
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Compute S2 via Monte Carlo sampling directly on the mesh (no voxelization).
+// Inputs: mesh, bounding box, max radius, sample count.
+// Returns: S2 values for r=0..r_max.
+// Side effects: None.
+// Notes: Parallelizes over radii. Uses random point pairs with random directions; discards out-of-bounds pairs.
 fn calculate_s2_monte_carlo_mesh(
     mesh: &Mesh,
     bbox: BoundingBox,
@@ -639,6 +674,12 @@ fn calculate_s2_monte_carlo_mesh(
     out
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Compute the S2 two-point correlation function by the configured method.
+// Inputs: mesh, bounding box, r_max, voxel_pitch, method name ("exact" or "monte_carlo"), sample count for MC.
+// Returns: Vec<f64> of S2 values indexed by radius (r=0..r_max).
+// Side effects: Prints warning when exact requested with invalid voxel_pitch.
+// Notes: For "exact" method, chooses FFT or direct enumeration based on grid size threshold. For other methods, uses voxelized MC sampling.
 pub fn calculate_s2(
     mesh: &Mesh,
     bbox: BoundingBox,
@@ -647,9 +688,6 @@ pub fn calculate_s2(
     method: &str,
     samples: usize,
 ) -> Vec<f64> {
-    // Purpose: Compute S2 by configured method (exact or monte_carlo).
-    // Inputs: mesh, bbox, r_max, voxel pitch, method name, sample count.
-    // Outputs: S2 values indexed by radius.
     if method != "exact" && voxel_pitch <= 0.0 {
         return calculate_s2_monte_carlo_mesh(mesh, bbox, r_max, samples);
     }
@@ -757,17 +795,13 @@ pub fn calculate_s2(
     }
 }
 
+// AI-FUNC-SUMMARY: Convenience wrapper for Monte Carlo S2 estimation with default pitch; returns S2 values; side effects: None.
 pub fn approximate_s2(mesh: &Mesh, bbox: BoundingBox, r_max: usize, samples: usize) -> Vec<f64> {
-    // Purpose: Convenience wrapper for Monte Carlo S2 estimation.
-    // Inputs: mesh, bbox, max radius, sample count.
-    // Outputs: S2 values.
     calculate_s2(mesh, bbox, r_max, 1.0, "monte_carlo", samples)
 }
 
+// AI-FUNC-SUMMARY: Compute L2 norm (Euclidean distance) between two vectors over their common length prefix; returns f64 (0.0 for empty); side effects: None.
 pub fn l2_norm(a: &[f64], b: &[f64]) -> f64 {
-    // Purpose: Compute L2 norm between two vectors over common length.
-    // Inputs: two numeric slices.
-    // Outputs: non-negative L2 distance.
     let n = a.len().min(b.len());
     if n == 0 {
         return 0.0;

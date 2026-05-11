@@ -9,6 +9,12 @@ pub enum RotationMode {
     Any,
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Parse a rotation mode string from config into a RotationMode enum.
+// Inputs: config prefix (for error messages), mode string (none/x/y/z/vector/any), optional axis vector.
+// Returns: RotationMode (None, Axis with fixed/custom vector, or Any for random axis).
+// Side effects: None.
+// Notes: Returns InvalidConfig for unknown mode or missing/invalid axis vector.
 pub fn parse_rotation_mode(prefix: &str, mode: Option<&str>, axis_vec: Option<&Vec<f64>>) -> Result<RotationMode> {
     let raw = mode.unwrap_or("any").trim().to_ascii_lowercase();
     match raw.as_str() {
@@ -42,6 +48,12 @@ pub fn parse_rotation_mode(prefix: &str, mode: Option<&str>, axis_vec: Option<&V
     }
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Sample a rotation axis based on the rotation mode.
+// Inputs: RNG and RotationMode.
+// Returns: Some(Vec3) axis for Axis/Any modes, None for None mode.
+// Side effects: None.
+// Notes: "Any" mode generates a random 3D vector (not normalized on unit sphere, but random in cube).
 pub fn sample_rotation_axis(rng: &mut rand::rngs::ThreadRng, mode: &RotationMode) -> Option<Vec3> {
     match mode {
         RotationMode::None => None,

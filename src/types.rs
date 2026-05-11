@@ -6,45 +6,33 @@ pub struct Vec3 {
 }
 
 impl Vec3 {
+    // AI-FUNC-SUMMARY: Construct a 3D vector from x/y/z components; returns Vec3; side effects: None.
     pub fn new(x: f64, y: f64, z: f64) -> Self {
-        // Purpose: Construct a 3D vector from components.
-        // Inputs: x/y/z scalar values.
-        // Outputs: Vec3 instance.
         Self { x, y, z }
     }
 
+    // AI-FUNC-SUMMARY: Compute vector addition (self + other); returns summed Vec3; side effects: None.
     pub fn add(self, other: Self) -> Self {
-        // Purpose: Compute vector addition.
-        // Inputs: self and other vector.
-        // Outputs: summed vector.
         Self::new(self.x + other.x, self.y + other.y, self.z + other.z)
     }
 
+    // AI-FUNC-SUMMARY: Compute vector subtraction (self - other); returns difference Vec3; side effects: None.
     pub fn sub(self, other: Self) -> Self {
-        // Purpose: Compute vector subtraction.
-        // Inputs: self and other vector.
-        // Outputs: difference vector.
         Self::new(self.x - other.x, self.y - other.y, self.z - other.z)
     }
 
+    // AI-FUNC-SUMMARY: Scale a vector by a scalar factor; returns scaled Vec3; side effects: None.
     pub fn scale(self, factor: f64) -> Self {
-        // Purpose: Scale a vector by a scalar factor.
-        // Inputs: vector and scalar factor.
-        // Outputs: scaled vector.
         Self::new(self.x * factor, self.y * factor, self.z * factor)
     }
 
+    // AI-FUNC-SUMMARY: Compute dot product of two vectors; returns f64 scalar; side effects: None.
     pub fn dot(self, other: Self) -> f64 {
-        // Purpose: Compute dot product between two vectors.
-        // Inputs: self and other vector.
-        // Outputs: dot product scalar.
         self.x * other.x + self.y * other.y + self.z * other.z
     }
 
+    // AI-FUNC-SUMMARY: Compute cross product of two vectors; returns orthogonal Vec3; side effects: None.
     pub fn cross(self, other: Self) -> Self {
-        // Purpose: Compute cross product between two vectors.
-        // Inputs: self and other vector.
-        // Outputs: orthogonal vector.
         Self::new(
             self.y * other.z - self.z * other.y,
             self.z * other.x - self.x * other.z,
@@ -60,35 +48,27 @@ pub struct BoundingBox {
 }
 
 impl BoundingBox {
+    // AI-FUNC-SUMMARY: Build axis-aligned box from origin to given size; returns BoundingBox [0,size]; side effects: None.
     pub fn from_size(size: Vec3) -> Self {
-        // Purpose: Build axis-aligned box from origin with given size.
-        // Inputs: size vector.
-        // Outputs: bounding box [0,size].
         Self {
             min: Vec3::new(0.0, 0.0, 0.0),
             max: size,
         }
     }
 
+    // AI-FUNC-SUMMARY: Compute side lengths of the box; returns Vec3 of dimensions; side effects: None.
     pub fn size(&self) -> Vec3 {
-        // Purpose: Get side lengths of a bounding box.
-        // Inputs: bounding box.
-        // Outputs: size vector.
         self.max.sub(self.min)
     }
 
+    // AI-FUNC-SUMMARY: Compute non-negative box volume (clamps negative extents to zero); returns f64; side effects: None.
     pub fn volume(&self) -> f64 {
-        // Purpose: Compute non-negative box volume.
-        // Inputs: bounding box.
-        // Outputs: box volume.
         let s = self.size();
         (s.x.max(0.0)) * (s.y.max(0.0)) * (s.z.max(0.0))
     }
 
+    // AI-FUNC-SUMMARY: Check whether a point lies inside or on the boundary of the box; returns bool; side effects: None.
     pub fn contains_point(&self, p: Vec3) -> bool {
-        // Purpose: Check whether a point lies inside box bounds.
-        // Inputs: bounding box and query point.
-        // Outputs: true when point is inside or on boundary.
         p.x >= self.min.x
             && p.y >= self.min.y
             && p.z >= self.min.z
@@ -112,20 +92,16 @@ pub struct Mesh {
 }
 
 impl Mesh {
+    // AI-FUNC-SUMMARY: Construct an empty mesh with no vertices or faces; returns Mesh; side effects: None.
     pub fn empty() -> Self {
-        // Purpose: Construct an empty mesh container.
-        // Inputs: none.
-        // Outputs: mesh with no vertices/faces.
         Self {
             vertices: Vec::new(),
             faces: Vec::new(),
         }
     }
 
+    // AI-FUNC-SUMMARY: Check whether the mesh lacks enough data to represent geometry; returns true when vertices or faces are empty; side effects: None.
     pub fn is_empty(&self) -> bool {
-        // Purpose: Check whether mesh has enough data to represent geometry.
-        // Inputs: mesh.
-        // Outputs: true when vertices or faces are empty.
         self.vertices.is_empty() || self.faces.is_empty()
     }
 }

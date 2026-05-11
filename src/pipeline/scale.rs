@@ -10,10 +10,13 @@ pub struct ScalePipeline {
 }
 
 impl Pipeline for ScalePipeline {
+    // AI-FUNC-SUMMARY:
+    // Purpose: Execute scaling pipeline: load STL, apply unit conversion (factor, mm_per_voxel, or voxel_per_mm), optionally orient to positive volume, and save scaled STL.
+    // Inputs: ScaleConfig with input/output, scaling type and value, and orient flag.
+    // Returns: Ok(()) or error.
+    // Side effects: Reads STL from disk; writes scaled STL to disk; prints summary to stdout.
+    // Notes: Returns InvalidConfig for non-positive mm_per_voxel or voxel_per_mm values, or unknown scaling type.
     fn run(&self) -> Result<()> {
-        // Purpose: Execute scaling pipeline and save scaled STL.
-        // Inputs: scaling config and source mesh path.
-        // Outputs: scaled mesh file and summary logs.
         let mut mesh = load_stl_or_merge_folder(Path::new(&self.config.input.stl_path))?;
         let mode = self.config.scaling.r#type.as_str();
         let value = self.config.scaling.value;

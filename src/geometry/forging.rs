@@ -1,6 +1,12 @@
 use crate::types::{BoundingBox, Mesh, Vec3};
 use super::bbox::mesh_bbox;
 
+// AI-FUNC-SUMMARY:
+// Purpose: Apply FFD-style forging deformation: compress along Z and bulge laterally around the mesh center.
+// Inputs: mesh, compression_ratio (0..1), bulge_factor (0..1 controlling lateral expansion).
+// Returns: Deformed mesh clone.
+// Side effects: None.
+// Notes: Assumes Z-axis compression. Uses axis_scale = 1 - compression_ratio, lateral_scale = (1/axis_scale)^bulge_factor.
 pub fn simulate_forging_ffd(mesh: &Mesh, compression_ratio: f64, bulge_factor: f64) -> Mesh {
     let bbox = mesh_bbox(mesh).unwrap_or(BoundingBox {
         min: Vec3::new(0.0, 0.0, 0.0),
@@ -28,6 +34,12 @@ pub fn simulate_forging_ffd(mesh: &Mesh, compression_ratio: f64, bulge_factor: f
     out
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Apply FFD forging deformation with configurable compression axis, void mesh densification, and ROI tracking.
+// Inputs: mesh, lattice_bbox (defines center), track_bbox (optional ROI to track through deformation), compression_ratio, compression_axis (0=x,1=y,2=z), bulge_factor, mesh_type ("void" triggers densification), void_densification (scaling factor).
+// Returns: Tuple of (deformed mesh, optionally tracked and transformed ROI bounding box).
+// Side effects: None.
+// Notes: Void-type meshes get a centroid-based closure scaling. ROI tracking transforms all 8 corners and recomputes the AABB.
 pub fn simulate_forging_ffd_with_tracking(
     mesh: &Mesh,
     lattice_bbox: BoundingBox,

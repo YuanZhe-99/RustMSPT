@@ -12,16 +12,16 @@ use indicatif::{ProgressBar, ProgressStyle};
 use std::io::IsTerminal;
 
 pub trait Pipeline {
-    // Purpose: Run one pipeline end-to-end.
-    // Inputs: pipeline instance state/config.
-    // Outputs: success or pipeline error.
+    // AI-FUNC-SUMMARY: Run one pipeline end-to-end; returns Ok(()) or error; side effects: varies by pipeline (reads input, writes output, prints progress).
     fn run(&self) -> Result<()>;
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Build a standardized progress bar with tty-aware visibility.
+// Inputs: total length, template string, and progress characters.
+// Returns: Configured ProgressBar (hidden when stderr is not a terminal).
+// Side effects: None.
 pub fn create_progress_bar(length: u64, template: &str, chars: &str) -> ProgressBar {
-    // Purpose: Build a standardized progress bar with tty-aware visibility and fallback style.
-    // Inputs: total length, template string, and progress characters.
-    // Outputs: configured ProgressBar.
     let bar = ProgressBar::new(length);
     if !std::io::stderr().is_terminal() {
         bar.set_draw_target(indicatif::ProgressDrawTarget::hidden());

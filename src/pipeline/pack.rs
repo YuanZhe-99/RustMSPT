@@ -22,10 +22,12 @@ pub struct PackPipeline {
     pub config: PackingConfig,
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Validate a candidate mesh against configured geometry filters (min_volume, max_aspect_ratio, max_sharpness_ratio).
+// Inputs: mesh reference and packing config.
+// Returns: true when all enabled filters pass.
+// Side effects: None.
 fn check_geometry_filters(mesh: &Mesh, config: &PackingConfig) -> bool {
-    // Purpose: Validate candidate mesh against configured geometry filters.
-    // Inputs: candidate mesh and packing config.
-    // Outputs: true when all enabled filters pass.
     if let Some(filters) = &config.packing.filters {
         if let Some(min_vol) = filters.min_volume {
             if mesh_volume(mesh) < min_vol {
@@ -62,10 +64,13 @@ fn check_geometry_filters(mesh: &Mesh, config: &PackingConfig) -> bool {
 }
 
 impl Pipeline for PackPipeline {
+    // AI-FUNC-SUMMARY:
+    // Purpose: Execute particle packing: randomly place non-overlapping particles into a box until target volume fraction or attempt limit.
+    // Inputs: PackingConfig with input/output/box/packing settings.
+    // Returns: Ok(()) or error.
+    // Side effects: Reads STL from disk; writes packed STL and report to disk; prints progress to stdout.
+    // Notes: Supports lazy directory loading for large datasets. Mode 3 adds periodic boundary ghost collision checks. Uses rayon thread pool for parallel collision detection.
     fn run(&self) -> Result<()> {
-        // Purpose: Execute particle packing until target VF or attempt limit is reached.
-        // Inputs: packing configuration and STL source.
-        // Outputs: packed STL and progress logs.
         let box_bounds = parse_box_dimensions(&self.config.r#box.dimensions)?;
         let box_volume = box_bounds.volume();
         if box_volume <= 0.0 {

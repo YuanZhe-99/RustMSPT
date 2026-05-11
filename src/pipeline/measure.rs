@@ -15,8 +15,7 @@ pub struct MeasurePipeline {
 }
 
 impl MeasurePipeline {
-    /// Parse optional bbox from config, treating empty vectors as unset.
-    /// Input: optional vector from config. Output: optional parsed bbox.
+    // AI-FUNC-SUMMARY: Parse optional bounding box from config (3-element size or 6-element min/max, empty vec treated as unset); returns Option<BoundingBox>; side effects: None.
     fn parse_optional_bbox(values: &Option<Vec<f64>>) -> Result<Option<BoundingBox>> {
         match values {
             None => Ok(None),
@@ -25,10 +24,8 @@ impl MeasurePipeline {
         }
     }
 
+    // AI-FUNC-SUMMARY: Compute L2 distance between two S2 vectors over their common length prefix; returns f64 (0.0 for empty); side effects: None.
     fn l2_error(a: &[f64], b: &[f64]) -> f64 {
-        // Purpose: Compute L2 distance between two S2 vectors.
-        // Inputs: two S2 arrays.
-        // Outputs: non-negative L2 error.
         let n = a.len().min(b.len());
         if n == 0 {
             return 0.0;
@@ -44,10 +41,13 @@ impl MeasurePipeline {
 }
 
 impl Pipeline for MeasurePipeline {
+    // AI-FUNC-SUMMARY:
+    // Purpose: Execute measurement pipeline: load STL, compute volume fraction and S2 correlation, write report.
+    // Inputs: MeasurementConfig with stl_path, bounding box, S2 method/samples/pitch, and output path.
+    // Returns: Ok(()) or error.
+    // Side effects: Reads STL from disk; writes measurement report to disk; prints summary to stdout.
+    // Notes: Supports "exact", "monte_carlo", or "both" methods. Falls back from exact to MC when voxel grid is too large (>1.5M voxels).
     fn run(&self) -> Result<()> {
-        // Purpose: Execute measurement pipeline and write VF/S2 report.
-        // Inputs: measurement config and STL input source.
-        // Outputs: report file and runtime diagnostics.
         let params = &self.config.measurement;
 
         let available_cores = std::thread::available_parallelism()

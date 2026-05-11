@@ -1,6 +1,7 @@
 use crate::types::{BoundingBox, Mesh, Triangle, Vec3};
 use std::collections::{HashMap, VecDeque};
 
+// AI-FUNC-SUMMARY: Compute the arithmetic centroid of all mesh vertices; returns Vec3 (zero for empty mesh); side effects: None.
 pub fn mesh_centroid(mesh: &Mesh) -> Vec3 {
     let mut sum = Vec3::new(0.0, 0.0, 0.0);
     let count = mesh.vertices.len() as f64;
@@ -14,10 +15,12 @@ pub fn mesh_centroid(mesh: &Mesh) -> Vec3 {
     }
 }
 
+// AI-FUNC-SUMMARY: Compute the Euclidean norm (length) of a Vec3; returns f64; side effects: None.
 pub fn vec_norm(v: Vec3) -> f64 {
     (v.x * v.x + v.y * v.y + v.z * v.z).sqrt()
 }
 
+// AI-FUNC-SUMMARY: Merge multiple meshes into one by combining vertices and remapping face indices; returns merged Mesh; side effects: None.
 pub fn merge_meshes(meshes: &[Mesh]) -> Mesh {
     let mut out = Mesh::empty();
     for m in meshes {
@@ -32,6 +35,12 @@ pub fn merge_meshes(meshes: &[Mesh]) -> Mesh {
     out
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Split a mesh into separate connected components (granules) using BFS over shared vertices.
+// Inputs: mesh reference.
+// Returns: Vec<Mesh> where each element is one connected component with remapped vertex indices.
+// Side effects: None.
+// Notes: Returns empty vec for empty mesh. Each granule has its own independent vertex buffer.
 pub fn split_mesh_into_granules(mesh: &Mesh) -> Vec<Mesh> {
     if mesh.faces.is_empty() || mesh.vertices.is_empty() {
         return Vec::new();
@@ -104,17 +113,25 @@ pub fn split_mesh_into_granules(mesh: &Mesh) -> Vec<Mesh> {
     parts
 }
 
+// AI-FUNC-SUMMARY: Translate all mesh vertices by a delta vector; mutates mesh in place; side effects: None.
 pub fn translate_mesh(mesh: &mut Mesh, delta: Vec3) {
     for v in &mut mesh.vertices {
         *v = v.add(delta);
     }
 }
 
+// AI-FUNC-SUMMARY: Move a mesh so its centroid aligns with the target position; mutates mesh in place; side effects: None.
 pub fn move_mesh_to_target_center(mesh: &mut Mesh, target: Vec3) {
     let center = mesh_centroid(mesh);
     translate_mesh(mesh, target.sub(center));
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Wrap a mesh centroid into the box using Euclidean modulo, then re-center the mesh.
+// Inputs: mutable mesh and box bounds.
+// Returns: None (mutates mesh in place).
+// Side effects: Mutates mesh vertex positions.
+// Notes: Used for periodic boundary conditions to keep particles inside the domain.
 pub fn wrap_mesh_centroid_to_box(mesh: &mut Mesh, box_bounds: BoundingBox) {
     let center = mesh_centroid(mesh);
     let size = box_bounds.size();
@@ -135,12 +152,14 @@ pub fn wrap_mesh_centroid_to_box(mesh: &mut Mesh, box_bounds: BoundingBox) {
     move_mesh_to_target_center(mesh, wrapped);
 }
 
+// AI-FUNC-SUMMARY: Scale all mesh vertices by a uniform factor (centered at origin); mutates mesh in place; side effects: None.
 pub fn scale_mesh(mesh: &mut Mesh, factor: f64) {
     for v in &mut mesh.vertices {
         *v = v.scale(factor);
     }
 }
 
+// AI-FUNC-SUMMARY: Compute the total surface area of a mesh by summing triangle areas via cross product; returns f64; side effects: None.
 pub fn mesh_surface_area(mesh: &Mesh) -> f64 {
     let mut area = 0.0;
     for f in &mesh.faces {
@@ -154,6 +173,12 @@ pub fn mesh_surface_area(mesh: &Mesh) -> f64 {
     area
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Rotate a mesh around its centroid using Rodrigues' rotation formula.
+// Inputs: mutable mesh, rotation axis (need not be normalized), angle in radians.
+// Returns: None (mutates mesh in place).
+// Side effects: Mutates mesh vertex positions.
+// Notes: No-op if axis length is near zero.
 pub fn rotate_mesh_around_center(mesh: &mut Mesh, axis: Vec3, angle: f64) {
     let axis_len = vec_norm(axis);
     if axis_len <= 1e-12 {
@@ -174,6 +199,7 @@ pub fn rotate_mesh_around_center(mesh: &mut Mesh, axis: Vec3, angle: f64) {
     }
 }
 
+// AI-FUNC-SUMMARY: Generate a triangle mesh representing a rectangular box from a BoundingBox; returns Mesh with 8 vertices and 12 triangles; side effects: None.
 pub fn box_mesh(bbox: BoundingBox) -> Mesh {
     let min = bbox.min;
     let max = bbox.max;

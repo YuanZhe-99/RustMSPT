@@ -2,6 +2,7 @@ use crate::types::{BoundingBox, Mesh, Triangle, Vec3};
 use rayon::prelude::*;
 use super::mesh_ops::{merge_meshes, split_mesh_into_granules};
 
+// AI-FUNC-SUMMARY: Compute the absolute volume of a closed mesh using the divergence theorem (sum of signed tetrahedra volumes); returns f64; side effects: None.
 pub fn mesh_volume(mesh: &Mesh) -> f64 {
     let mut total = 0.0;
     for f in &mesh.faces {
@@ -13,6 +14,7 @@ pub fn mesh_volume(mesh: &Mesh) -> f64 {
     total.abs()
 }
 
+// AI-FUNC-SUMMARY: Compute the signed volume of a closed mesh (negative for inward-facing normals); returns f64; side effects: None.
 pub fn mesh_signed_volume(mesh: &Mesh) -> f64 {
     let mut total = 0.0;
     for f in &mesh.faces {
@@ -24,6 +26,12 @@ pub fn mesh_signed_volume(mesh: &Mesh) -> f64 {
     total
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Split mesh into components and flip face winding for any component with negative signed volume.
+// Inputs: mesh reference.
+// Returns: Tuple of (oriented mesh, count of flipped components, total component count).
+// Side effects: None.
+// Notes: Used to normalize mesh orientation before volume/collision computations.
 pub fn orient_components_to_positive_volume(mesh: &Mesh) -> (Mesh, usize, usize) {
     let mut parts = split_mesh_into_granules(mesh);
     if parts.is_empty() {
@@ -43,10 +51,12 @@ pub fn orient_components_to_positive_volume(mesh: &Mesh) -> (Mesh, usize, usize)
     (merge_meshes(&parts), flipped, parts.len())
 }
 
+// AI-FUNC-SUMMARY: Compute the signed distance from point p to a plane defined by origin and normal; returns f64; side effects: None.
 fn clip_plane_signed_distance(p: Vec3, origin: Vec3, normal: Vec3) -> f64 {
     p.sub(origin).dot(normal)
 }
 
+// AI-FUNC-SUMMARY: Compute the intersection point of a line segment (a,b) with a clip plane using signed distances da, db; returns interpolated Vec3; side effects: None.
 fn clip_segment_plane_intersection(a: Vec3, b: Vec3, da: f64, db: f64) -> Vec3 {
     let denom = da - db;
     if denom.abs() <= 1e-12 {
@@ -56,6 +66,12 @@ fn clip_segment_plane_intersection(a: Vec3, b: Vec3, da: f64, db: f64) -> Vec3 {
     a.add(b.sub(a).scale(t))
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Clip a convex polygon against a half-plane defined by origin and normal using Sutherland-Hodgman algorithm.
+// Inputs: polygon vertices, plane origin, plane normal, epsilon for near-plane classification.
+// Returns: Clipped polygon vertices (may be empty if fully clipped).
+// Side effects: None.
+// Notes: Deduplicates near-coincident output vertices.
 fn clip_polygon_with_plane(poly: &[Vec3], origin: Vec3, normal: Vec3, eps: f64) -> Vec<Vec3> {
     if poly.is_empty() {
         return Vec::new();
@@ -105,6 +121,7 @@ fn clip_polygon_with_plane(poly: &[Vec3], origin: Vec3, normal: Vec3, eps: f64) 
     dedup
 }
 
+// AI-FUNC-SUMMARY: Quantize a Vec3 point to a fixed-precision integer key for deduplication; returns (i64, i64, i64); side effects: None.
 fn quantize_point_key(v: Vec3) -> (i64, i64, i64) {
     const SCALE: f64 = 1_000_000.0;
     (
@@ -114,6 +131,11 @@ fn quantize_point_key(v: Vec3) -> (i64, i64, i64) {
     )
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Extract the line segment where a triangle intersects a clip plane.
+// Inputs: triangle vertices, plane origin, plane normal, epsilon.
+// Returns: Some((point_a, point_b)) segment on the plane, or None if no intersection.
+// Side effects: None.
 fn collect_triangle_plane_segment(
     tri: [Vec3; 3],
     origin: Vec3,
@@ -149,6 +171,7 @@ fn collect_triangle_plane_segment(
     }
 }
 
+// AI-FUNC-SUMMARY: Compute an orthonormal basis (u, v) in the plane perpendicular to the given normal; returns (Vec3, Vec3); side effects: None.
 fn plane_basis(normal: Vec3) -> (Vec3, Vec3) {
     let tangent = if normal.x.abs() < 0.5 {
         Vec3::new(1.0, 0.0, 0.0)
@@ -172,6 +195,12 @@ fn plane_basis(normal: Vec3) -> (Vec3, Vec3) {
     (u, v)
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Triangulate a planar cap from a set of edge segments using ring-finding and fan triangulation.
+// Inputs: edge segments and the plane normal for orientation.
+// Returns: Mesh representing the cap surface.
+// Side effects: None.
+// Notes: Uses quantized point deduplication and angular sorting around the centroid.
 fn triangulate_cap_from_segments(segments: &[(Vec3, Vec3)], normal: Vec3) -> Mesh {
     if segments.is_empty() {
         return Mesh::empty();
@@ -307,6 +336,12 @@ fn triangulate_cap_from_segments(segments: &[(Vec3, Vec3)], normal: Vec3) -> Mes
     cap
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Clip a mesh against a single plane and cap the resulting open boundary with a triangulated surface.
+// Inputs: mesh, plane origin, plane normal.
+// Returns: Clipped and capped mesh.
+// Side effects: None.
+// Notes: Uses Sutherland-Hodgman polygon clipping per triangle, then collects cross-plane segments to form a watertight cap.
 fn clip_mesh_by_plane_with_cap(mesh: &Mesh, origin: Vec3, normal: Vec3) -> Mesh {
     let eps = 1e-9;
     let mut body = Mesh::empty();
@@ -339,6 +374,12 @@ fn clip_mesh_by_plane_with_cap(mesh: &Mesh, origin: Vec3, normal: Vec3) -> Mesh 
     }
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Clip a mesh to fit within an axis-aligned bounding box by successively clipping against all 6 face planes.
+// Inputs: mesh and bounding box.
+// Returns: Clipped mesh (may be empty if entirely outside).
+// Side effects: None.
+// Notes: Clipping is done one plane at a time, capping each open boundary to maintain watertightness.
 pub fn clip_mesh_by_bbox(mesh: &Mesh, bbox: BoundingBox) -> Mesh {
     let planes = [
         (Vec3::new(bbox.min.x, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0)),
@@ -359,15 +400,23 @@ pub fn clip_mesh_by_bbox(mesh: &Mesh, bbox: BoundingBox) -> Mesh {
     out
 }
 
+// AI-FUNC-SUMMARY: Compute the volume of a mesh clipped to a bounding box; returns f64; side effects: None.
 pub fn particle_volume_in_bbox(mesh: &Mesh, bbox: BoundingBox) -> f64 {
     let clipped = clip_mesh_by_bbox(mesh, bbox);
     mesh_volume(&clipped)
 }
 
+// AI-FUNC-SUMMARY: Compute the volume fraction of a single mesh within a bounding box; returns f64 in [0,1]; side effects: None.
 pub fn volume_fraction_in_bbox(mesh: &Mesh, bbox: BoundingBox) -> f64 {
     volume_fraction_of_meshes_in_bbox(std::slice::from_ref(mesh), bbox)
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Compute the total volume fraction of multiple meshes within a bounding box, using parallel iteration.
+// Inputs: slice of meshes and bounding box.
+// Returns: Volume fraction in [0,1] clamped.
+// Side effects: None.
+// Notes: Splits each mesh into granules before clipping for correct volume computation.
 pub fn volume_fraction_of_meshes_in_bbox(meshes: &[Mesh], bbox: BoundingBox) -> f64 {
     let box_volume = bbox.volume().max(1e-12);
 

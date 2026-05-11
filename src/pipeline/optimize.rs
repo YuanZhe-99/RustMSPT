@@ -48,19 +48,15 @@ struct GlobalBest {
     particles: Vec<crate::types::Mesh>,
 }
 
+// AI-FUNC-SUMMARY: Precompute acceleration data (bbox + parry3d shape) for one particle mesh; returns ParticlePrepared; side effects: None.
 fn prepare_particle(mesh: crate::types::Mesh) -> ParticlePrepared {
-    // Purpose: Precompute acceleration data for one particle mesh.
-    // Inputs: particle mesh.
-    // Outputs: particle with cached bbox and collision shape.
     let bbox = mesh_bbox(&mesh);
     let shape = to_parry_trimesh(&mesh);
     ParticlePrepared { mesh, bbox, shape }
 }
 
+// AI-FUNC-SUMMARY: Format an S2 array as a fixed-width space-separated decimal string; returns String; side effects: None.
 fn format_s2_series(values: &[f64]) -> String {
-    // Purpose: Convert S2 array to stable fixed-width text line.
-    // Inputs: S2 values.
-    // Outputs: whitespace-joined decimal series.
     values
         .iter()
         .map(|v| format!("{v:.6}"))
@@ -68,22 +64,24 @@ fn format_s2_series(values: &[f64]) -> String {
         .join(" ")
 }
 
+// AI-FUNC-SUMMARY: Append a labeled S2 snapshot line to the optimization history log; mutates history_log; side effects: None.
 fn push_history_s2(history_log: &mut Vec<String>, label: &str, values: &[f64]) {
-    // Purpose: Append a labeled S2 snapshot to optimization history.
-    // Inputs: mutable history log, label, and S2 values.
-    // Outputs: one history line appended.
     history_log.push(format!("{label}: {}", format_s2_series(values)));
 }
 
+// AI-FUNC-SUMMARY: Build a unified pruning progress message string with loss, VF, and particle count; returns String; side effects: None.
 fn prune_progress_message(current_loss: f64, current_vf: f64, target_vf: f64, particles: usize) -> String {
-    // Purpose: Build unified pruning progress/status message.
-    // Inputs: loss, current/target VF, and particle count.
-    // Outputs: formatted progress text.
     format!(
         "Loss {current_loss:.6} | VF {current_vf:.6}->{target_vf:.6} | particles {particles}"
     )
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Iteratively remove particles to approach the target volume fraction while minimizing S2 loss increase.
+// Inputs: mutable particles vec, box bounds, target S2, optimization params, S2 settings, thread pool, and history log.
+// Returns: None (particles vector is pruned in place).
+// Side effects: Mutates particles and history_log; prints progress; computes S2 evaluations (expensive).
+// Notes: Uses adaptive candidate sampling and S2 loss scoring to select which particles to remove. Early exits when VF is within tolerance.
 fn selective_prune_to_target_vf(
     particles: &mut Vec<crate::types::Mesh>,
     box_bounds: BoundingBox,
@@ -276,6 +274,12 @@ fn selective_prune_to_target_vf(
 }
 
 
+// AI-FUNC-SUMMARY:
+// Purpose: Run one simulated annealing island: perturb one random particle per iteration, check constraints/collisions, compute S2 loss, accept/reject via Metropolis criterion.
+// Inputs: island_id, num_islands, initial prepared particles, target S2, optimization params, box bounds, boundary mode/params, rotation mode, thread pool, optional global best for migration, migration interval, and mutable history log.
+// Returns: IslandResult with best particles, loss, S2, and timing.
+// Side effects: Mutates history_log; prints progress; optionally exchanges best solution with global_best mutex for island migration.
+// Notes: Three move types (60% local translate+rotate, 30% move toward neighbor, 10% random reposition). Rebuilds SpatialGrid after each accepted move. Adaptive temperature adjusts within acceptance window.
 #[allow(clippy::too_many_arguments)]
 fn run_sa_island(
     island_id: usize,
@@ -757,6 +761,12 @@ fn run_sa_island(
 }
 
 impl Pipeline for OptimizePipeline {
+    // AI-FUNC-SUMMARY:
+    // Purpose: Execute the full optimization pipeline: load input, compute target S2, prune to target VF, run simulated annealing (single or island model), save best result.
+    // Inputs: OptimizationConfig with input/output/target/box/optimization settings.
+    // Returns: Ok(()) or error.
+    // Side effects: Reads STL from disk; writes optimized STL and s2_history.txt; prints timing and progress to stdout.
+    // Notes: Supports multi-island parallel SA with periodic migration via Arc<Mutex<GlobalBest>>. Target S2 can come from manual_array or reference_stl.
     fn run(&self) -> Result<()> {
         let run_start = Instant::now();
         let params = &self.config.optimization;

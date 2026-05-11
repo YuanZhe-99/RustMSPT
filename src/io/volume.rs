@@ -42,9 +42,11 @@ pub struct RawFolderSpec {
     pub slice_end: isize,
 }
 
-/// Collect regular files in a folder sorted by file name.
-/// Inputs: folder path and optional extension filter.
-/// Outputs: sorted list of file paths.
+// AI-FUNC-SUMMARY:
+// Purpose: Collect regular files in a folder sorted by file name, optionally filtering by extension.
+// Inputs: folder path and optional allowed extensions.
+// Returns: Sorted Vec of file paths.
+// Side effects: Reads directory listing from disk.
 fn collect_sorted_files(folder: &Path, extensions: Option<&[&str]>) -> Result<Vec<PathBuf>> {
     let mut files: Vec<PathBuf> = fs::read_dir(folder)?
         .filter_map(|entry| entry.ok().map(|e| e.path()))
@@ -67,9 +69,12 @@ fn collect_sorted_files(folder: &Path, extensions: Option<&[&str]>) -> Result<Ve
     Ok(files)
 }
 
-/// Resolve inclusive slice range with -1 sentinel.
-/// Inputs: total file count and [start, end] request.
-/// Outputs: validated inclusive index range.
+// AI-FUNC-SUMMARY:
+// Purpose: Resolve inclusive slice range from start/end indices, treating -1 as "from beginning" or "to end".
+// Inputs: total count and [start, end] request as isize.
+// Returns: Validated inclusive (start, end) range.
+// Side effects: None.
+// Notes: Returns InvalidConfig for empty folder or invalid/overlapping range.
 fn resolve_slice_range(total: usize, start: isize, end: isize) -> Result<(usize, usize)> {
     if total == 0 {
         return Err(RustMsptError::InvalidConfig(
@@ -93,9 +98,12 @@ fn resolve_slice_range(total: usize, start: isize, end: isize) -> Result<(usize,
     Ok((s, e))
 }
 
-/// Decode one raw image slice from bytes.
-/// Inputs: raw bytes and numeric interpretation.
-/// Outputs: decoded scalar values as i64.
+// AI-FUNC-SUMMARY:
+// Purpose: Decode one raw image slice from bytes according to bit depth (8/16/32), signedness, and byte order.
+// Inputs: raw bytes and numeric interpretation parameters.
+// Returns: Decoded scalar values as Vec<i64>.
+// Side effects: None.
+// Notes: Returns InvalidConfig for unsupported bit depths or misaligned byte lengths.
 fn decode_raw_slice(bytes: &[u8], bits: u8, signed: bool, byte_order: ByteOrder) -> Result<Vec<i64>> {
     let mut out = Vec::new();
     match (bits, signed) {
@@ -188,9 +196,12 @@ fn decode_raw_slice(bytes: &[u8], bits: u8, signed: bool, byte_order: ByteOrder)
     Ok(out)
 }
 
-/// Load volume from a RAW slice folder.
-/// Inputs: RAW folder spec with dimensions, bit depth, sign, and slice range.
-/// Outputs: decoded 3D volume data.
+// AI-FUNC-SUMMARY:
+// Purpose: Load a 3D volume from a folder of raw binary slice files.
+// Inputs: RawFolderSpec with folder path, dimensions, bit depth, sign, byte order, and slice range.
+// Returns: Volume3D with decoded data.
+// Side effects: Reads all slice files from disk.
+// Notes: Validates per-slice byte size against expected dimensions. Returns InvalidConfig for size mismatches.
 pub fn load_raw_folder(spec: &RawFolderSpec) -> Result<Volume3D> {
     if spec.width == 0 || spec.height == 0 {
         return Err(RustMsptError::InvalidConfig(
@@ -251,9 +262,7 @@ pub fn load_raw_folder(spec: &RawFolderSpec) -> Result<Volume3D> {
     })
 }
 
-/// Convert one decoded TIFF image into i64 scalar buffer.
-/// Inputs: TIFF decoded result.
-/// Outputs: scalar buffer and numeric type.
+// AI-FUNC-SUMMARY: Convert a TIFF DecodingResult into a Vec<i64> buffer and its numeric type; returns (data, type); side effects: None.
 fn tiff_decoding_to_i64(decoded: DecodingResult) -> Result<(Vec<i64>, VolumeNumericType)> {
     match decoded {
         DecodingResult::U8(v) => Ok((v.into_iter().map(|x| x as i64).collect(), VolumeNumericType::U8)),
@@ -268,9 +277,12 @@ fn tiff_decoding_to_i64(decoded: DecodingResult) -> Result<(Vec<i64>, VolumeNume
     }
 }
 
-/// Load one TIFF file (single-page or multi-page) into volume with page range.
-/// Inputs: TIFF file path and inclusive page range request.
-/// Outputs: decoded volume data.
+// AI-FUNC-SUMMARY:
+// Purpose: Load a multi-page TIFF file into a Volume3D with inclusive page range.
+// Inputs: TIFF file path and [start, end] page range (-1 for begin/end).
+// Returns: Decoded Volume3D.
+// Side effects: Reads file from disk twice (once to count pages, once to decode).
+// Notes: Validates consistent dimensions and numeric type across pages.
 fn load_tiff_file_with_range(path: &Path, slice_start: isize, slice_end: isize) -> Result<Volume3D> {
     let file = fs::File::open(path)?;
     let mut decoder = Decoder::new(BufReader::new(file))?;
@@ -338,16 +350,12 @@ fn load_tiff_file_with_range(path: &Path, slice_start: isize, slice_end: isize) 
     })
 }
 
-/// Load one TIFF file (single-page or multi-page) into volume.
-/// Inputs: TIFF file path.
-/// Outputs: decoded volume data.
+// AI-FUNC-SUMMARY: Load a TIFF file (all pages) into a Volume3D; returns Volume3D; side effects: Reads from disk.
 fn load_tiff_file(path: &Path) -> Result<Volume3D> {
     load_tiff_file_with_range(path, -1, -1)
 }
 
-/// Check whether path has TIFF file extension.
-/// Inputs: target path.
-/// Outputs: true when extension is tif/tiff.
+// AI-FUNC-SUMMARY: Check whether a path has a TIFF file extension (.tif or .tiff); returns bool; side effects: None.
 fn is_tiff_path(path: &Path) -> bool {
     path.extension()
         .map(|ext| {
@@ -357,16 +365,17 @@ fn is_tiff_path(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Load TIFF from file or folder.
-/// Inputs: input path; file supports multi-page, folder supports TIFF sequence.
-/// Outputs: decoded 3D volume.
+// AI-FUNC-SUMMARY: Load a TIFF volume from file or folder (all pages/slices); returns Volume3D; side effects: Reads from disk.
 pub fn load_tiff_or_folder(path: &Path) -> Result<Volume3D> {
     load_tiff_or_folder_with_range(path, -1, -1)
 }
 
-/// Load TIFF from file or folder with inclusive slice range.
-/// Inputs: input path and [start,end] range where -1 means begin/end.
-/// Outputs: decoded 3D volume.
+// AI-FUNC-SUMMARY:
+// Purpose: Load a TIFF volume from file or folder with inclusive slice range.
+// Inputs: input path and [start,end] range where -1 means begin/end.
+// Returns: Decoded Volume3D.
+// Side effects: Reads files from disk.
+// Notes: For files, loads multi-page TIFF with page range. For folders, loads TIFF sequence with slice range.
 pub fn load_tiff_or_folder_with_range(path: &Path, slice_start: isize, slice_end: isize) -> Result<Volume3D> {
     if path.is_file() {
         return load_tiff_file_with_range(path, slice_start, slice_end);
@@ -428,9 +437,12 @@ pub fn load_tiff_or_folder_with_range(path: &Path, slice_start: isize, slice_end
     })
 }
 
-/// Write one volume slice into TIFF encoder.
-/// Inputs: encoder, dimensions, numeric type, and one slice buffer.
-/// Outputs: encoded TIFF page.
+// AI-FUNC-SUMMARY:
+// Purpose: Write one z-slice of volume data into a TIFF encoder page.
+// Inputs: encoder, dimensions, numeric type, and slice data buffer.
+// Returns: Ok(()) on success.
+// Side effects: Writes one TIFF page to the encoder stream.
+// Notes: Returns InvalidConfig if values overflow the target numeric type.
 fn write_tiff_slice(
     encoder: &mut TiffEncoder<BufWriter<fs::File>>,
     width: u32,
@@ -503,9 +515,12 @@ fn write_tiff_slice(
     Ok(())
 }
 
-/// Save volume to TIFF file (multi-page) or TIFF folder sequence.
-/// Inputs: output path and optional per-slice file prefix for folder output.
-/// Outputs: writes TIFF image(s) to disk.
+// AI-FUNC-SUMMARY:
+// Purpose: Save a Volume3D as a multi-page TIFF file or as a folder of per-slice TIFF files.
+// Inputs: volume, output path, optional file prefix for folder mode, optional file extension.
+// Returns: Ok(()) on success.
+// Side effects: Creates parent directories; writes TIFF file(s) to disk.
+// Notes: Uses .tiff extension by default. Detects file vs folder mode by output extension. Returns error for empty volume or data length mismatch.
 pub fn save_tiff_or_folder_with_ext(
     volume: &Volume3D,
     output: &Path,
@@ -567,9 +582,7 @@ pub fn save_tiff_or_folder_with_ext(
     Ok(())
 }
 
-/// Save volume to TIFF file (multi-page) or TIFF folder sequence.
-/// Inputs: output path and optional per-slice file prefix for folder output.
-/// Outputs: writes TIFF image(s) to disk.
+// AI-FUNC-SUMMARY: Save a Volume3D to TIFF file or folder sequence with default .tiff extension; returns Ok(()); side effects: Creates directories and writes TIFF files to disk.
 pub fn save_tiff_or_folder(volume: &Volume3D, output: &Path, file_prefix: Option<&str>) -> Result<()> {
     save_tiff_or_folder_with_ext(volume, output, file_prefix, Some("tiff"))
 }

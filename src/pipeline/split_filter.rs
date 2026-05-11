@@ -22,6 +22,7 @@ struct VolumeStats {
     median: f64,
 }
 
+// AI-FUNC-SUMMARY: Compute min/max/mean/median volume statistics for particles that pass the keep filter; returns Option<VolumeStats>; side effects: None.
 fn volume_stats_for_kept(volumes: &[f64], keep: &[bool]) -> Option<VolumeStats> {
     let mut vals: Vec<f64> = volumes
         .iter()
@@ -49,10 +50,12 @@ fn volume_stats_for_kept(volumes: &[f64], keep: &[bool]) -> Option<VolumeStats> 
     })
 }
 
+// AI-FUNC-SUMMARY: Count how many entries in the keep boolean vector are true; returns usize; side effects: None.
 fn count_kept(keep: &[bool]) -> usize {
     keep.iter().filter(|k| **k).count()
 }
 
+// AI-FUNC-SUMMARY: Append a filter-step summary line showing before/after/removed counts; mutates lines vec; side effects: None.
 fn report_step(lines: &mut Vec<String>, name: &str, before: usize, after: usize) {
     lines.push(format!(
         "{name}: before={before}, after={after}, removed={}",
@@ -60,6 +63,11 @@ fn report_step(lines: &mut Vec<String>, name: &str, before: usize, after: usize)
     ));
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Append a text histogram of volume values with configurable bin count.
+// Inputs: mutable report lines, title, volume values, and bin count.
+// Returns: None (appends lines).
+// Side effects: Mutates the lines vector.
 fn append_volume_histogram(lines: &mut Vec<String>, title: &str, values: &[f64], bins: usize) {
     if values.is_empty() {
         lines.push(format!("{title}: no data"));
@@ -103,6 +111,11 @@ fn append_volume_histogram(lines: &mut Vec<String>, title: &str, values: &[f64],
     }
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Append a side-by-side comparison histogram of volume distributions before and after filtering.
+// Inputs: mutable report lines, title, before/after value arrays, and bin count.
+// Returns: None (appends lines).
+// Side effects: Mutates the lines vector.
 fn append_volume_histogram_comparison(
     lines: &mut Vec<String>,
     title: &str,
@@ -185,11 +198,13 @@ fn append_volume_histogram_comparison(
     }
 }
 
+// AI-FUNC-SUMMARY: Approximate the normal CDF using the error function; returns f64 in [0,1]; side effects: None.
 fn normal_cdf(x: f64) -> f64 {
     let z = x / (2.0f64).sqrt();
     0.5 * (1.0 + erf_approx(z))
 }
 
+// AI-FUNC-SUMMARY: Approximate the error function (erf) using Abramowitz & Stegun formula 7.1.26; returns f64; side effects: None.
 fn erf_approx(x: f64) -> f64 {
     let sign = if x < 0.0 { -1.0 } else { 1.0 };
     let ax = x.abs();
@@ -202,6 +217,11 @@ fn erf_approx(x: f64) -> f64 {
     sign * y
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Rebalance kept particles by fitting their log-volumes to a lognormal distribution and removing over-represented bins.
+// Inputs: mutable keep flags, volume array, and SplitFilterVolume config with bins/over_factor.
+// Returns: None (mutates keep to mark excess particles as false).
+// Side effects: Mutates keep array; uses RNG for shuffling within over-represented bins.
 fn apply_lognormal_rebalance(keep: &mut [bool], volumes: &[f64], cfg: &SplitFilterVolume) {
     let candidates: Vec<usize> = keep
         .iter()
@@ -271,6 +291,12 @@ fn apply_lognormal_rebalance(keep: &mut [bool], volumes: &[f64], cfg: &SplitFilt
 }
 
 impl Pipeline for SplitFilterPipeline {
+    // AI-FUNC-SUMMARY:
+    // Purpose: Run the split-filter pipeline: load STL, split into connected components, apply geometric filters, save kept particles, and write report.
+    // Inputs: SplitFilterConfig with input/output/filter settings.
+    // Returns: Ok(()) or error.
+    // Side effects: Reads STL from disk; writes filtered STL files and report to disk; prints summary to stdout.
+    // Notes: Applies filters in order: max_aspect_ratio, max_sharpness_ratio, then volume filter (range or lognormal_rebalance).
     fn run(&self) -> Result<()> {
         let input = Path::new(&self.config.input.path);
         let output_folder = Path::new(&self.config.output.folder);

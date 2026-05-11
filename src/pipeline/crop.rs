@@ -21,9 +21,7 @@ enum InterpolationMode {
     Trilinear,
 }
 
-/// Parse byte order text into enum.
-/// Inputs: optional config string.
-/// Outputs: parsed byte order.
+// AI-FUNC-SUMMARY: Parse byte order config string into ByteOrder enum; returns ByteOrder; side effects: None.
 fn parse_byte_order(value: Option<&str>) -> Result<ByteOrder> {
     match value.unwrap_or("little").trim().to_ascii_lowercase().as_str() {
         "little" | "le" => Ok(ByteOrder::LittleEndian),
@@ -34,9 +32,7 @@ fn parse_byte_order(value: Option<&str>) -> Result<ByteOrder> {
     }
 }
 
-/// Parse interpolation mode text.
-/// Inputs: optional config string.
-/// Outputs: interpolation mode, defaulting to trilinear.
+// AI-FUNC-SUMMARY: Parse interpolation mode config string (nearest/trilinear); returns InterpolationMode, defaulting to trilinear; side effects: None.
 fn parse_interpolation_mode(value: Option<&str>) -> Result<InterpolationMode> {
     match value.unwrap_or("trilinear").trim().to_ascii_lowercase().as_str() {
         "nearest" => Ok(InterpolationMode::Nearest),
@@ -47,9 +43,12 @@ fn parse_interpolation_mode(value: Option<&str>) -> Result<InterpolationMode> {
     }
 }
 
-/// Read input volume according to crop input type.
-/// Inputs: crop config.
-/// Outputs: loaded 3D volume.
+// AI-FUNC-SUMMARY:
+// Purpose: Read input volume according to crop config type (raw or tiff).
+// Inputs: CropConfig with input type, path, slice range, and optional raw spec.
+// Returns: Loaded Volume3D.
+// Side effects: Reads files from disk.
+// Notes: Returns InvalidConfig for unsupported input types.
 fn load_input_volume(config: &CropConfig) -> Result<Volume3D> {
     let input = &config.input;
     let path = Path::new(&input.path);
@@ -83,16 +82,12 @@ fn load_input_volume(config: &CropConfig) -> Result<Volume3D> {
     }
 }
 
-/// Compute linear index for voxel coordinates.
-/// Inputs: volume shape and voxel indices.
-/// Outputs: linear data index.
+// AI-FUNC-SUMMARY: Compute linear data index for voxel coordinates (x, y, z) in a volume; returns usize; side effects: None.
 fn voxel_index(width: usize, height: usize, x: usize, y: usize, z: usize) -> usize {
     z * width * height + y * width + x
 }
 
-/// Sample one voxel value by integer index with background fallback.
-/// Inputs: volume, background value, and integer coordinates.
-/// Outputs: voxel value or background when out of bounds.
+// AI-FUNC-SUMMARY: Sample a voxel value at integer coordinates, returning background value when out of bounds; returns i64; side effects: None.
 fn sample_voxel_or_background(volume: &Volume3D, background: i64, x: isize, y: isize, z: isize) -> i64 {
     if x < 0
         || y < 0
@@ -107,9 +102,7 @@ fn sample_voxel_or_background(volume: &Volume3D, background: i64, x: isize, y: i
     volume.data[idx]
 }
 
-/// Sample source volume with nearest-neighbor interpolation.
-/// Inputs: source coordinates and volume context.
-/// Outputs: sampled scalar value.
+// AI-FUNC-SUMMARY: Sample source volume with nearest-neighbor interpolation at floating-point coordinates; returns i64; side effects: None.
 fn sample_nearest(volume: &Volume3D, background: i64, src_x: f64, src_y: f64, src_z: f64) -> i64 {
     let x = src_x.round() as isize;
     let y = src_y.round() as isize;
@@ -117,9 +110,7 @@ fn sample_nearest(volume: &Volume3D, background: i64, src_x: f64, src_y: f64, sr
     sample_voxel_or_background(volume, background, x, y, z)
 }
 
-/// Sample source volume with trilinear interpolation.
-/// Inputs: source coordinates and volume context.
-/// Outputs: interpolated scalar value rounded to i64.
+// AI-FUNC-SUMMARY: Sample source volume with trilinear interpolation at floating-point coordinates; returns i64 (rounded); side effects: None.
 fn sample_trilinear(volume: &Volume3D, background: i64, src_x: f64, src_y: f64, src_z: f64) -> i64 {
     let x0 = src_x.floor() as isize;
     let y0 = src_y.floor() as isize;
@@ -152,9 +143,7 @@ fn sample_trilinear(volume: &Volume3D, background: i64, src_x: f64, src_y: f64, 
     value.round() as i64
 }
 
-/// Snap near-integer floating bound to exact integer to avoid epsilon expansion.
-/// Inputs: floating value and tolerance.
-/// Outputs: stabilized bound value.
+// AI-FUNC-SUMMARY: Snap a near-integer floating point value to its exact integer to avoid epsilon expansion; returns stabilized f64; side effects: None.
 fn stabilize_bound(value: f64, eps: f64) -> f64 {
     let rounded = value.round();
     if (value - rounded).abs() <= eps {
@@ -164,9 +153,7 @@ fn stabilize_bound(value: f64, eps: f64) -> f64 {
     }
 }
 
-/// Convert floating min/max bound into inclusive integer range.
-/// Inputs: floating min/max and tolerance for near-integer stabilization.
-/// Outputs: inclusive integer [start, end].
+// AI-FUNC-SUMMARY: Convert floating-point min/max bounds to inclusive integer [start, end] range with near-integer stabilization; returns (isize, isize); side effects: None.
 fn float_bounds_to_inclusive_i64(min_v: f64, max_v: f64, eps: f64) -> (isize, isize) {
     let min_s = stabilize_bound(min_v, eps);
     let max_s = stabilize_bound(max_v, eps);
@@ -175,9 +162,11 @@ fn float_bounds_to_inclusive_i64(min_v: f64, max_v: f64, eps: f64) -> (isize, is
     (start, end)
 }
 
-/// Compute non-background ratio on boundary shell with a given thickness.
-/// Inputs: volume, background value, and shell thickness.
-/// Outputs: ratio in [0,1] where higher means stronger edge artifacts.
+// AI-FUNC-SUMMARY:
+// Purpose: Compute the ratio of non-background voxels on the boundary shell of a volume.
+// Inputs: volume, background value, and shell thickness in voxels.
+// Returns: Ratio in [0,1] where higher means stronger edge artifacts.
+// Side effects: None.
 fn boundary_non_bg_ratio(volume: &Volume3D, background: i64, thickness: usize) -> f64 {
     if thickness == 0 {
         return 0.0;
@@ -214,9 +203,11 @@ fn boundary_non_bg_ratio(volume: &Volume3D, background: i64, thickness: usize) -
     }
 }
 
-/// Infer trim pixels from boundary artifact intensity.
-/// Inputs: rotated-cropped volume and background value.
-/// Outputs: suggested trim pixels in [0,2].
+// AI-FUNC-SUMMARY:
+// Purpose: Infer how many border pixels to trim based on boundary artifact intensity.
+// Inputs: rotated-cropped volume and background value.
+// Returns: Suggested trim pixels in [0,2].
+// Side effects: None.
 fn infer_trim_pixels(volume: &Volume3D, background: i64) -> usize {
     let r1 = boundary_non_bg_ratio(volume, background, 1);
     let r2 = boundary_non_bg_ratio(volume, background, 2);
@@ -230,9 +221,11 @@ fn infer_trim_pixels(volume: &Volume3D, background: i64) -> usize {
     }
 }
 
-/// Parse trim setting from config.
-/// Inputs: optional configured trim value and current volume for auto mode.
-/// Outputs: effective trim pixels in [0,2].
+// AI-FUNC-SUMMARY:
+// Purpose: Resolve the effective edge trim pixel count from config (supports -1 for auto-detection).
+// Inputs: config value (-1=auto, 0/1/2=explicit), current volume, and background value.
+// Returns: Trim pixel count clamped to [0, min(2, volume_half_size)].
+// Side effects: None.
 fn resolve_trim_pixels(config_value: Option<i32>, volume: &Volume3D, background: i64) -> Result<usize> {
     let requested = match config_value.unwrap_or(0) {
         -1 => Ok(infer_trim_pixels(volume, background)),
@@ -251,9 +244,11 @@ fn resolve_trim_pixels(config_value: Option<i32>, volume: &Volume3D, background:
     Ok(requested.min(max_trim))
 }
 
-/// Trim border voxels on XY faces only.
-/// Inputs: source volume and trim pixels.
-/// Outputs: trimmed volume or error when resulting shape is invalid.
+// AI-FUNC-SUMMARY:
+// Purpose: Trim border voxels from XY faces of a volume by the specified pixel count.
+// Inputs: source volume and trim pixels.
+// Returns: Trimmed Volume3D or error if trim is too large for the volume shape.
+// Side effects: None.
 fn trim_volume_border(volume: &Volume3D, trim: usize) -> Result<Volume3D> {
     if trim == 0 {
         return Ok(volume.clone());
@@ -293,9 +288,11 @@ fn trim_volume_border(volume: &Volume3D, trim: usize) -> Result<Volume3D> {
     })
 }
 
-/// Detect background value from boundary voxels using mode.
-/// Inputs: volume.
-/// Outputs: detected background scalar value.
+// AI-FUNC-SUMMARY:
+// Purpose: Detect the background value of a volume by finding the most frequent value on boundary voxels.
+// Inputs: volume reference.
+// Returns: The modal boundary voxel value as i64.
+// Side effects: None.
 fn detect_background_mode(volume: &Volume3D) -> i64 {
     let mut counts: HashMap<i64, usize> = HashMap::new();
 
@@ -324,9 +321,12 @@ fn detect_background_mode(volume: &Volume3D) -> i64 {
         .unwrap_or(0)
 }
 
-/// Compute PCA rotation and foreground bounds in rotated space.
-/// Inputs: volume and detected background value.
-/// Outputs: rotation, centroid, rotated min/max, and foreground count.
+// AI-FUNC-SUMMARY:
+// Purpose: Compute PCA rotation and foreground bounding box in the rotated coordinate frame.
+// Inputs: volume and detected background value.
+// Returns: Tuple of (rotation matrix, centroid, rotated min, rotated max, foreground voxel count).
+// Side effects: None.
+// Notes: Ensures right-handed coordinate system (det > 0). Returns error if no foreground voxels found.
 fn estimate_pca_bbox(
     volume: &Volume3D,
     background: i64,
@@ -423,9 +423,12 @@ fn estimate_pca_bbox(
     Ok((rot, centroid, min_v, max_v, count))
 }
 
-/// Rotate full volume and crop to rotated foreground bounding box.
-/// Inputs: source volume, background value, and PCA geometry outputs.
-/// Outputs: cropped, axis-aligned volume.
+// AI-FUNC-SUMMARY:
+// Purpose: Rotate the full volume and crop to the rotated foreground bounding box, producing a new axis-aligned volume.
+// Inputs: source volume, background value, rotation matrix, centroid, rotated min/max bounds, and interpolation mode.
+// Returns: Cropped, axis-aligned Volume3D.
+// Side effects: None.
+// Notes: Parallelizes over z-slices via rayon. Maps each output voxel back to source coordinates using the inverse rotation.
 fn rotate_and_crop(
     volume: &Volume3D,
     background: i64,
@@ -481,10 +484,12 @@ fn rotate_and_crop(
 }
 
 impl Pipeline for CropPipeline {
+    // AI-FUNC-SUMMARY:
+    // Purpose: Execute the crop pipeline: load CT volume, detect background, PCA-align, rotate and crop, optionally trim border artifacts, and save TIFF output.
+    // Inputs: CropConfig with input type/path, output path, interpolation mode, and edge trim setting.
+    // Returns: Ok(()) or error.
+    // Side effects: Reads volume from disk; writes cropped TIFF output to disk; prints diagnostics to stdout.
     fn run(&self) -> Result<()> {
-        // Purpose: Load CT volume, detect foreground, PCA-align, crop bounding box, and save TIFF output.
-        // Inputs: crop pipeline config with source and output settings.
-        // Outputs: cropped axis-aligned TIFF volume.
         let input_volume = load_input_volume(&self.config)?;
         println!(
             "[Info] Crop input loaded: shape=({},{},{})",

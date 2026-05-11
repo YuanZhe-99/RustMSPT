@@ -10,6 +10,7 @@ pub struct SpatialGrid {
 }
 
 impl SpatialGrid {
+    // AI-FUNC-SUMMARY: Create a new SpatialGrid partitioning the given box bounds into cubic cells; returns SpatialGrid; side effects: None.
     pub fn new(box_bounds: BoundingBox, cell_size: f64) -> Self {
         let size = box_bounds.size();
         let nx = ((size.x / cell_size).ceil() as usize).max(1);
@@ -26,6 +27,7 @@ impl SpatialGrid {
         }
     }
 
+    // AI-FUNC-SUMMARY: Insert an item index into all grid cells overlapped by its bounding box; mutates grid cells; side effects: None.
     pub fn insert(&mut self, idx: usize, bbox: BoundingBox) {
         let (x0, y0, z0) = self.point_to_cell_clamped(bbox.min);
         let (x1, y1, z1) = self.point_to_cell_clamped(bbox.max);
@@ -43,6 +45,7 @@ impl SpatialGrid {
         }
     }
 
+    // AI-FUNC-SUMMARY: Build a SpatialGrid by inserting all (index, bbox) pairs; returns populated SpatialGrid; side effects: None.
     pub fn build(bboxes: &[(usize, BoundingBox)], box_bounds: BoundingBox, cell_size: f64) -> Self {
         let mut grid = Self::new(box_bounds, cell_size);
         for &(idx, bbox) in bboxes {
@@ -51,10 +54,17 @@ impl SpatialGrid {
         grid
     }
 
+    // AI-FUNC-SUMMARY: Find all item indices in grid cells overlapping the given bbox, excluding the specified index; returns Vec<usize>; side effects: None.
     pub fn query_neighbors(&self, bbox: BoundingBox, exclude: usize) -> Vec<usize> {
         self.query_neighbors_with_margin(bbox, 0.0, exclude)
     }
 
+    // AI-FUNC-SUMMARY:
+    // Purpose: Find all item indices in grid cells overlapping the given bbox plus a margin, excluding the specified index.
+    // Inputs: query bbox, margin distance (adds extra cell padding), index to exclude.
+    // Returns: Vec<usize> of neighbor indices (deduplicated).
+    // Side effects: None.
+    // Notes: Used for collision detection with min_neighbor_distance constraints.
     pub fn query_neighbors_with_margin(&self, bbox: BoundingBox, margin: f64, exclude: usize) -> Vec<usize> {
         let pad = (margin.max(0.0) * self.inv_cell).ceil() as usize + 1;
         let (x0, y0, z0) = self.point_to_cell_clamped(bbox.min);
@@ -79,11 +89,13 @@ impl SpatialGrid {
         neighbors
     }
 
+    // AI-FUNC-SUMMARY: Map a point to grid cell coordinates, clamping to valid range; returns (cx, cy, cz) clamped to grid bounds; side effects: None.
     fn point_to_cell_clamped(&self, p: Vec3) -> (usize, usize, usize) {
         let (cx, cy, cz) = self.point_to_cell(p);
         (cx.min(self.nx - 1), cy.min(self.ny - 1), cz.min(self.nz - 1))
     }
 
+    // AI-FUNC-SUMMARY: Map a point to grid cell coordinates (unclamped, may exceed grid bounds); returns (cx, cy, cz); side effects: None.
     fn point_to_cell(&self, p: Vec3) -> (usize, usize, usize) {
         let cx = (((p.x - self.origin.x) * self.inv_cell).floor() as isize).max(0) as usize;
         let cy = (((p.y - self.origin.y) * self.inv_cell).floor() as isize).max(0) as usize;
@@ -92,6 +104,7 @@ impl SpatialGrid {
     }
 }
 
+// AI-FUNC-SUMMARY: Estimate a reasonable SpatialGrid cell size as the maximum extent of any bounding box; returns f64 (min 1.0); side effects: None.
 pub fn estimate_cell_size(bboxes: &[BoundingBox]) -> f64 {
     if bboxes.is_empty() {
         return 1.0;

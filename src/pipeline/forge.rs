@@ -15,8 +15,7 @@ pub struct ForgePipeline {
 }
 
 impl ForgePipeline {
-    /// Parse ROI [min_x, min_y, min_z, max_x, max_y, max_z] if provided.
-    /// Input: optional f64 vector. Output: optional bounding box.
+    // AI-FUNC-SUMMARY: Parse an optional 6-element ROI bounding box [min_x, min_y, min_z, max_x, max_y, max_z] from config; returns Option<BoundingBox>; side effects: None.
     fn parse_roi_bbox(values: &Option<Vec<f64>>) -> Option<BoundingBox> {
         values.as_ref().and_then(|v| {
             if v.len() == 6 {
@@ -30,6 +29,12 @@ impl ForgePipeline {
         })
     }
 
+    // AI-FUNC-SUMMARY:
+    // Purpose: Parse the compression axis string into (axis_index, label) where 0=x, 1=y, 2=z.
+    // Inputs: optional axis string, defaults to "z".
+    // Returns: Tuple of (usize axis index, &'static str label).
+    // Side effects: None.
+    // Notes: Returns InvalidConfig for unrecognized axis strings.
     fn parse_compression_axis(axis: Option<&str>) -> Result<(usize, &'static str)> {
         let normalized = axis.unwrap_or("z").trim().to_ascii_lowercase();
         match normalized.as_str() {
@@ -45,10 +50,12 @@ impl ForgePipeline {
 }
 
 impl Pipeline for ForgePipeline {
+    // AI-FUNC-SUMMARY:
+    // Purpose: Execute forging pipeline: load STL, apply FFD compression along configured axis with bulge and optional void densification, translate output to align ROI, save forged STL and report.
+    // Inputs: ForgingConfig with input/output, compression ratio/axis, bulge factor, ROI bbox, mesh_type, and void_densification.
+    // Returns: Ok(()) or error.
+    // Side effects: Reads STL from disk; writes forged STL and report .txt to disk; prints diagnostics to stdout.
     fn run(&self) -> Result<()> {
-        // Purpose: Execute forging pipeline and write forged STL output.
-        // Inputs: forging config and STL input path.
-        // Outputs: forged mesh file and diagnostic logs.
         let params = &self.config.forging;
         let input = Path::new(&params.input_stl_path);
         let output = Path::new(

@@ -5,6 +5,12 @@ use parry3d_f64::math::{Isometry, Point};
 use parry3d_f64::query;
 use parry3d_f64::shape::TriMesh;
 
+// AI-FUNC-SUMMARY:
+// Purpose: Convert a Mesh into a parry3d TriMesh for collision queries.
+// Inputs: mesh reference.
+// Returns: Some(TriMesh) on success, None for empty mesh or vertex index overflow (>u32).
+// Side effects: None.
+// Notes: TriMesh::new can fail for degenerate meshes; returns None in that case.
 pub fn to_parry_trimesh(mesh: &Mesh) -> Option<TriMesh> {
     if mesh.faces.is_empty() || mesh.vertices.is_empty() {
         return None;
@@ -27,6 +33,12 @@ pub fn to_parry_trimesh(mesh: &Mesh) -> Option<TriMesh> {
     TriMesh::new(vertices, indices).ok()
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Test whether two meshes collide using pre-computed bounding boxes and parry3d shapes.
+// Inputs: bounding boxes and parry3d TriMesh references for both meshes.
+// Returns: true if meshes intersect; defaults to true if bbox or shape is missing (conservative).
+// Side effects: None.
+// Notes: Uses AABB broad-phase check before exact intersection test. Missing data implies potential collision.
 pub fn mesh_collision_exact_prepared(
     a_bbox: Option<BoundingBox>,
     a_shape: Option<&TriMesh>,
@@ -59,6 +71,12 @@ pub fn mesh_collision_exact_prepared(
     .unwrap_or(true)
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Compute the minimum Euclidean distance between two meshes using pre-computed bounding boxes and parry3d shapes.
+// Inputs: bounding boxes and parry3d TriMesh references for both meshes.
+// Returns: distance >= 0 (0.0 if overlapping); returns 0.0 as fallback when data is missing.
+// Side effects: None.
+// Notes: Uses AABB distance as fast path; falls back to exact distance only when bboxes overlap.
 pub fn mesh_distance_exact_prepared(
     a_bbox: Option<BoundingBox>,
     a_shape: Option<&TriMesh>,
@@ -103,6 +121,7 @@ pub fn mesh_distance_exact_prepared(
     0.0
 }
 
+// AI-FUNC-SUMMARY: Convenience wrapper that computes bounding boxes and shapes on-the-fly then tests collision; returns bool; side effects: None.
 pub fn mesh_collision_exact(a: &Mesh, b: &Mesh) -> bool {
     let a_bbox = mesh_bbox(a);
     let b_bbox = mesh_bbox(b);
@@ -111,6 +130,7 @@ pub fn mesh_collision_exact(a: &Mesh, b: &Mesh) -> bool {
     mesh_collision_exact_prepared(a_bbox, a_shape.as_ref(), b_bbox, b_shape.as_ref())
 }
 
+// AI-FUNC-SUMMARY: Convenience wrapper that computes bounding boxes and shapes on-the-fly then computes exact distance; returns f64; side effects: None.
 pub fn mesh_distance_exact(a: &Mesh, b: &Mesh) -> f64 {
     let a_bbox = mesh_bbox(a);
     let b_bbox = mesh_bbox(b);
@@ -119,6 +139,12 @@ pub fn mesh_distance_exact(a: &Mesh, b: &Mesh) -> f64 {
     mesh_distance_exact_prepared(a_bbox, a_shape.as_ref(), b_bbox, b_shape.as_ref())
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Generate periodic ghost copies of a mesh shifted by box dimensions to handle periodic boundary collisions.
+// Inputs: mesh reference and box bounds defining the periodic domain.
+// Returns: Vec<Mesh> of ghost meshes whose bounding boxes overlap the original box.
+// Side effects: None.
+// Notes: Only ghosts whose shifted bbox overlaps the box_bounds are included. Used for mode 3 periodic boundary conditions.
 pub fn generate_periodic_ghosts(mesh: &Mesh, box_bounds: BoundingBox) -> Vec<Mesh> {
     let mut ghosts = Vec::new();
     let Some(bounds) = mesh_bbox(mesh) else {

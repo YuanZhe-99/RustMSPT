@@ -81,24 +81,23 @@ enum Commands {
     },
 }
 
+// AI-FUNC-SUMMARY: Build the default config file path under data/input; returns PathBuf; side effects: None.
 fn default_config_path(file_name: &str) -> PathBuf {
-    // Purpose: Build the default config file path under data/input.
-    // Inputs: config file name.
-    // Outputs: resolved default path.
     Path::new("data").join("input").join(file_name)
 }
 
+// AI-FUNC-SUMMARY: Select user-provided config path or fallback to default under data/input; returns PathBuf; side effects: None.
 fn pick_config_path(config: Option<PathBuf>, file_name: &str) -> PathBuf {
-    // Purpose: Select user-provided config path or fallback default path.
-    // Inputs: optional config path and default file name.
-    // Outputs: final config path to load.
     config.unwrap_or_else(|| default_config_path(file_name))
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Parse CLI arguments, load config, and execute the selected pipeline subcommand.
+// Inputs: process CLI arguments (via clap).
+// Returns: Ok(()) on success, or pipeline/config error.
+// Side effects: Reads YAML config from disk; may write output files via pipeline execution; prints progress to stdout.
+// Notes: Invoked once as the program entry point. CLI overrides (--input/--output) mutate the loaded config before running.
 fn main() -> anyhow::Result<()> {
-    // Purpose: Parse CLI arguments, load config, and execute selected pipeline.
-    // Inputs: process CLI arguments.
-    // Outputs: success or pipeline/config error.
     let cli = Cli::parse();
 
     match cli.command {

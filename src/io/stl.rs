@@ -5,9 +5,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-/// Parse one ASCII STL vertex line.
-/// Inputs: a trimmed text line.
-/// Outputs: parsed Vec3 when line format is "vertex x y z", else None.
+// AI-FUNC-SUMMARY: Parse one ASCII STL "vertex x y z" line into a Vec3; returns Some(Vec3) on valid format, None otherwise; side effects: None.
 fn parse_ascii_vertex(line: &str) -> Option<Vec3> {
     let parts: Vec<&str> = line.split_whitespace().collect();
     if parts.len() != 4 || parts[0] != "vertex" {
@@ -19,9 +17,7 @@ fn parse_ascii_vertex(line: &str) -> Option<Vec3> {
     Some(Vec3::new(x, y, z))
 }
 
-/// Quantize a vertex for tolerant deduplication.
-/// Inputs: vertex coordinate.
-/// Outputs: integer key with fixed precision.
+// AI-FUNC-SUMMARY: Quantize a vertex to a fixed-precision integer key for tolerant deduplication; returns (i64, i64, i64); side effects: None.
 fn quantize_key(v: Vec3) -> (i64, i64, i64) {
     const SCALE: f64 = 1_000_000.0;
     (
@@ -31,9 +27,7 @@ fn quantize_key(v: Vec3) -> (i64, i64, i64) {
     )
 }
 
-/// Deduplicate a vertex in-place and return index.
-/// Inputs: mutable vertex list, key map, and candidate vertex.
-/// Outputs: index of existing or newly inserted vertex.
+// AI-FUNC-SUMMARY: Deduplicate a vertex against existing list using quantized key matching; returns index of existing or newly inserted vertex; side effects: Mutates vertices vec and map.
 fn dedup_vertex(vertices: &mut Vec<Vec3>, map: &mut HashMap<(i64, i64, i64), usize>, v: Vec3) -> usize {
     let key = quantize_key(v);
     if let Some(&idx) = map.get(&key) {
@@ -45,9 +39,12 @@ fn dedup_vertex(vertices: &mut Vec<Vec3>, map: &mut HashMap<(i64, i64, i64), usi
     idx
 }
 
-/// Parse an ASCII STL document into Mesh.
-/// Inputs: STL text and source path (for error context).
-/// Outputs: parsed Mesh with deduplicated vertices.
+// AI-FUNC-SUMMARY:
+// Purpose: Parse an ASCII STL document into a Mesh with deduplicated vertices.
+// Inputs: STL text content and source path (for error messages).
+// Returns: Parsed Mesh.
+// Side effects: None.
+// Notes: Returns InvalidMesh error if header missing or no valid triangles found.
 fn parse_ascii_stl(content: &str, path: &Path) -> Result<Mesh> {
     let trimmed = content.trim_start();
     if !trimmed.starts_with("solid") {
@@ -92,17 +89,18 @@ fn parse_ascii_stl(content: &str, path: &Path) -> Result<Mesh> {
     Ok(Mesh { vertices, faces })
 }
 
-/// Parse little-endian f32 bytes and upcast to f64.
-/// Inputs: 4-byte slice.
-/// Outputs: decoded floating-point value.
+// AI-FUNC-SUMMARY: Parse little-endian f32 bytes and upcast to f64; returns f64; side effects: None.
 fn parse_f32_le(bytes: &[u8]) -> f64 {
     let arr = [bytes[0], bytes[1], bytes[2], bytes[3]];
     f32::from_le_bytes(arr) as f64
 }
 
-/// Parse binary STL bytes into Mesh.
-/// Inputs: raw file bytes and source path (for error context).
-/// Outputs: parsed Mesh with deduplicated vertices.
+// AI-FUNC-SUMMARY:
+// Purpose: Parse binary STL bytes into a Mesh with deduplicated vertices.
+// Inputs: raw file bytes and source path (for error messages).
+// Returns: Parsed Mesh.
+// Side effects: None.
+// Notes: Returns InvalidMesh error if file too small, size mismatch, or vertex index overflow.
 fn parse_binary_stl(bytes: &[u8], path: &Path) -> Result<Mesh> {
     if bytes.len() < 84 {
         return Err(RustMsptError::InvalidMesh(format!(
@@ -164,9 +162,7 @@ fn parse_binary_stl(bytes: &[u8], path: &Path) -> Result<Mesh> {
     Ok(Mesh { vertices, faces })
 }
 
-/// Heuristically detect whether bytes likely represent ASCII STL.
-/// Inputs: raw file bytes.
-/// Outputs: true when header/text markers resemble ASCII STL.
+// AI-FUNC-SUMMARY: Heuristically detect whether bytes represent ASCII STL (checks "solid" header + "facet"/"vertex" keywords); returns bool; side effects: None.
 fn looks_ascii_stl(bytes: &[u8]) -> bool {
     if bytes.len() < 5 {
         return false;
@@ -180,9 +176,12 @@ fn looks_ascii_stl(bytes: &[u8]) -> bool {
     maybe_text.contains("facet") && maybe_text.contains("vertex")
 }
 
-/// Load STL from path with ASCII/Binary auto-detection.
-/// Inputs: file path.
-/// Outputs: Mesh parsed from STL.
+// AI-FUNC-SUMMARY:
+// Purpose: Load an STL file with automatic ASCII/binary detection and parsing.
+// Inputs: file path.
+// Returns: Parsed Mesh.
+// Side effects: Reads from disk.
+// Notes: Tries ASCII first if header matches; falls back to binary. ASCII parse failure silently falls back to binary.
 pub fn load_stl(path: &Path) -> Result<Mesh> {
     let bytes = fs::read(path)?;
 
@@ -196,9 +195,11 @@ pub fn load_stl(path: &Path) -> Result<Mesh> {
     parse_binary_stl(&bytes, path)
 }
 
-/// Load all STL files in a folder.
-/// Inputs: folder path.
-/// Outputs: vector of (file path, parsed mesh).
+// AI-FUNC-SUMMARY:
+// Purpose: Load all STL files in a folder directory.
+// Inputs: folder path.
+// Returns: Vec of (file path, parsed mesh) pairs.
+// Side effects: Reads from disk.
 pub fn load_folder_stls(folder: &Path) -> Result<Vec<(PathBuf, Mesh)>> {
     let mut out = Vec::new();
     for entry in fs::read_dir(folder)? {
@@ -216,9 +217,12 @@ pub fn load_folder_stls(folder: &Path) -> Result<Vec<(PathBuf, Mesh)>> {
     Ok(out)
 }
 
-/// Load one STL file, or merge all STL files under a directory.
-/// Inputs: file or directory path.
-/// Outputs: merged mesh for directory input, or single loaded mesh.
+// AI-FUNC-SUMMARY:
+// Purpose: Load a single STL file or merge all STLs in a directory into one mesh.
+// Inputs: file or directory path.
+// Returns: Merged mesh for directories, or single loaded mesh for files.
+// Side effects: Reads from disk.
+// Notes: Returns InvalidConfig if directory contains no STL files.
 pub fn load_stl_or_merge_folder(path: &Path) -> Result<Mesh> {
     if path.is_dir() {
         let meshes = load_folder_stls(path)?;
@@ -245,9 +249,12 @@ pub fn load_stl_or_merge_folder(path: &Path) -> Result<Mesh> {
     }
 }
 
-/// Save mesh as Binary STL.
-/// Inputs: target path, mesh, and STL header name.
-/// Outputs: writes file to disk or returns error.
+// AI-FUNC-SUMMARY:
+// Purpose: Save a mesh as a binary STL file.
+// Inputs: target path, mesh, and solid name for the 80-byte header.
+// Returns: Ok(()) on success.
+// Side effects: Creates parent directories; writes binary file to disk.
+// Notes: Returns InvalidMesh error for empty mesh. Writes zero normals (recalc not performed). Converts f64 vertices to f32 for STL format.
 pub fn save_stl(path: &Path, mesh: &Mesh, solid_name: &str) -> Result<()> {
     if mesh.is_empty() {
         return Err(RustMsptError::InvalidMesh(
