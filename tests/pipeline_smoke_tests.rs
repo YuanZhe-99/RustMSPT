@@ -72,6 +72,7 @@ fn measurement_pipeline_smoke() {
                 mc_samples: Some(2_000),
                 cpu_max: Some(-1),
                 output_path: output.to_string_lossy().to_string(),
+                acceleration: Default::default(),
             },
         },
     };
@@ -251,6 +252,7 @@ fn optimization_pipeline_smoke() {
                 orient_to_positive_volume: Some(false),
                 islands: None,
                 migration_interval: None,
+                acceleration: Default::default(),
             },
         },
     };

@@ -4,6 +4,9 @@
 # Runtime outputs
 /data/output/
 
+# Plan files
+PLAN.md
+
 # Temporary/editor files
 *.swp
 *.swo

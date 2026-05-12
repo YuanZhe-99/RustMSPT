@@ -24,6 +24,12 @@ RustMSPT is a standalone Rust toolkit for STL-based microstructure processing.
   - Bounding box clipping
   - Volume fraction computation
   - S2 (two-point correlation) with `monte_carlo`, `exact`, and `both` (measurement)
+- GPU acceleration (optional, via `gpu` feature):
+  - Monte Carlo S2 on GPU (WGSL compute shader)
+  - Exact S2 via GPU voxelization + shell pair counting
+  - Volume rotate-and-crop transform on GPU
+  - `acceleration.mode` config: `auto` | `cpu` | `gpu`
+  - Graceful CPU fallback when GPU is unavailable
 - Performance controls:
   - CPU worker cap in optimization (`cpu_max`)
   - FFT-based exact S2 path with memory-aware fallback
@@ -43,6 +49,20 @@ RustMSPT is a standalone Rust toolkit for STL-based microstructure processing.
 ```bash
 cargo check
 cargo test
+```
+
+With GPU support (requires `wgpu` and Vulkan/Metal/DX12 backend):
+
+```bash
+cargo build --features gpu
+cargo test --features gpu
+cargo clippy --features gpu
+```
+
+To use the real GPU (not software fallback on Linux):
+
+```bash
+sudo usermod -aG render $USER  # then re-login
 ```
 
 ## Build Binary
@@ -117,6 +137,7 @@ Default config files:
   - `r_max`, `voxel_pitch`
   - `mc_method` (`monte_carlo|exact|both`)
   - `mc_samples`, `cpu_max`, `output_path`
+  - `acceleration.mode` (`auto|cpu|gpu`, default `auto`)
 - `mc_method=both` runs exact + Monte Carlo and reports `L2 error [exact vs monte_carlo]`.
 
 ### Optimize pipeline (`optimize_config.yaml`)
@@ -131,6 +152,7 @@ Default config files:
   - S2 controls: `r_max`, `voxel_pitch`, `mc_method`, `mc_samples`
   - placement/constraint controls: translation, rotation, neighbor and boundary distances, `mode`
   - optional prune stage and `cpu_max`
+  - `acceleration.mode` (`auto|cpu|gpu`, default `auto`)
   - `output.path`
 
 ### Pack pipeline (`pack_config.yaml`)
@@ -193,3 +215,5 @@ aligns foreground by PCA, crops the effective cuboid, and writes TIFF.
 
 - For large voxel grids, exact S2 may fallback for memory/performance safety.
 - Keep `voxel_pitch` and `r_max` balanced against runtime and memory budget.
+- GPU acceleration (`acceleration.mode: gpu`) uses `wgpu` + WGSL compute shaders. When set to `auto`, GPU is used when available and workload exceeds the `gpu_min_voxels` threshold (default 250k).
+- Environment variables: `RUSTMSPT_GPU_DEVICE=<name|index>` to select GPU adapter.

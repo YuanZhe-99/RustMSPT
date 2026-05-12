@@ -13,6 +13,14 @@ path = "src/lib.rs"
 name = "rustmspt"
 path = "src/main.rs"
 
+[[bin]]
+name = "precision_test"
+path = "src/bin/precision_test.rs"
+
+[features]
+default = []
+gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
+
 [dependencies]
 anyhow = "1"
 clap = { version = "4.5", features = ["derive"] }
@@ -26,6 +34,9 @@ rayon = "1.10"
 rustfft = "6.2"
 tiff = "0.10"
 nalgebra = "0.33"
+wgpu = { version = "24", optional = true }
+pollster = { version = "0.4", optional = true }
+bytemuck = { version = "1", features = ["derive"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"

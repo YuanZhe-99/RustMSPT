@@ -483,6 +483,73 @@ fn rotate_and_crop(
     }
 }
 
+
+// AI-FUNC-SUMMARY:
+// Purpose: GPU-accelerated rotate-and-crop: upload volume to GPU, dispatch compute, download result.
+// Inputs: same as rotate_and_crop.
+// Returns: Ok(Volume3D) or GPU error string.
+// Side effects: Initializes GPU pipeline on first call, dispatches GPU compute.
+// Notes: Converts i64 volume data to i32 for GPU, converts back on download. Only available with feature "gpu".
+#[cfg(feature = "gpu")]
+fn rotate_and_crop_gpu(
+    volume: &Volume3D,
+    background: i64,
+    rot: &Matrix3<f64>,
+    centroid: &Vector3<f64>,
+    min_v: &Vector3<f64>,
+    max_v: &Vector3<f64>,
+    interpolation_mode: InterpolationMode,
+) -> std::result::Result<Volume3D, String> {
+    let eps = 1e-3;
+    let (x0, x1) = float_bounds_to_inclusive_i64(min_v.x, max_v.x, eps);
+    let (y0, y1) = float_bounds_to_inclusive_i64(min_v.y, max_v.y, eps);
+    let (z0, z1) = float_bounds_to_inclusive_i64(min_v.z, max_v.z, eps);
+
+    let out_w = (x1 - x0 + 1).max(1) as u32;
+    let out_h = (y1 - y0 + 1).max(1) as u32;
+    let out_d = (z1 - z0 + 1).max(1) as u32;
+
+    let t0 = std::time::Instant::now();
+
+    let mut pipeline = crate::gpu::volume_transform::GpuVolumeTransformPipeline::new()?;
+
+    let src_i32: Vec<i32> = volume.data.iter().map(|&v| v as i32).collect();
+    let bg_i32 = background as i32;
+    let interp = match interpolation_mode {
+        InterpolationMode::Nearest => 0u32,
+        InterpolationMode::Trilinear => 1u32,
+    };
+    let origin = Vector3::new(x0 as f64, y0 as f64, z0 as f64);
+
+    let out_i32 = pipeline.rotate_and_crop(
+        &src_i32,
+        volume.width as u32,
+        volume.height as u32,
+        volume.depth as u32,
+        bg_i32,
+        rot,
+        centroid,
+        &origin,
+        out_w,
+        out_h,
+        out_d,
+        interp,
+    );
+
+    let data: Vec<i64> = out_i32.iter().map(|&v| v as i64).collect();
+    let elapsed = t0.elapsed().as_secs_f64();
+    println!("[Info] GPU volume transform: {:.3}s, {}x{}x{} -> {}x{}x{}",
+        elapsed, volume.width, volume.height, volume.depth, out_w, out_h, out_d);
+
+    Ok(Volume3D {
+        width: out_w as usize,
+        height: out_h as usize,
+        depth: out_d as usize,
+        data,
+        numeric_type: volume.numeric_type,
+    })
+}
+
 impl Pipeline for CropPipeline {
     // AI-FUNC-SUMMARY:
     // Purpose: Execute the crop pipeline: load CT volume, detect background, PCA-align, rotate and crop, optionally trim border artifacts, and save TIFF output.
@@ -516,15 +583,27 @@ impl Pipeline for CropPipeline {
             x0, x1, y0, y1, z0, z1
         );
 
-        let cropped = rotate_and_crop(
-            &input_volume,
-            background,
-            &rot,
-            &centroid,
-            &min_v,
-            &max_v,
-            interpolation_mode,
-        );
+        let cropped = {
+            #[cfg(feature = "gpu")]
+            {
+                let out_total = ((x1 - x0 + 1).max(1) * (y1 - y0 + 1).max(1) * (z1 - z0 + 1).max(1)) as usize;
+                if out_total > 100_000 {
+                    match rotate_and_crop_gpu(&input_volume, background, &rot, &centroid, &min_v, &max_v, interpolation_mode) {
+                        Ok(vol) => vol,
+                        Err(e) => {
+                            println!("[Warning] GPU volume transform failed: {e}, falling back to CPU");
+                            rotate_and_crop(&input_volume, background, &rot, &centroid, &min_v, &max_v, interpolation_mode)
+                        }
+                    }
+                } else {
+                    rotate_and_crop(&input_volume, background, &rot, &centroid, &min_v, &max_v, interpolation_mode)
+                }
+            }
+            #[cfg(not(feature = "gpu"))]
+            {
+                rotate_and_crop(&input_volume, background, &rot, &centroid, &min_v, &max_v, interpolation_mode)
+            }
+        };
 
         let trim_pixels = resolve_trim_pixels(self.config.edge_trim, &cropped, background)?;
         println!("[Info] Edge trim pixels (xy): {}", trim_pixels);

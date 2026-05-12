@@ -7,3 +7,6 @@ measurement:
   mc_samples: 40_000 # Samples for Monte Carlo estimation
   cpu_max: -1 # -1 uses all available cores
   output_path: "data/output/measured_s2.txt"
+  # Acceleration: auto selects GPU when available and workload is large enough
+  acceleration:
+    mode: auto # auto | cpu | gpu

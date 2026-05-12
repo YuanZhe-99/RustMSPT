@@ -17,7 +17,9 @@ pub use mesh_ops::{
     rotate_mesh_around_center, scale_mesh, split_mesh_into_granules, translate_mesh, vec_norm,
     wrap_mesh_centroid_to_box,
 };
-pub use s2::{approximate_s2, calculate_s2, l2_norm};
+pub use s2::{approximate_s2, calculate_s2, l2_norm, point_inside_mesh, shell_offsets_for_distance};
+#[cfg(feature = "gpu")]
+pub use s2::{calculate_s2_with_gpu, calculate_s2_gpu_exact};
 pub use volume::{
     clip_mesh_by_bbox, mesh_signed_volume, mesh_volume, orient_components_to_positive_volume,
     particle_volume_in_bbox, volume_fraction_in_bbox, volume_fraction_of_meshes_in_bbox,

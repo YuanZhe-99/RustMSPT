@@ -19,6 +19,9 @@ pub enum RustMsptError {
 
     #[error("Algorithm not available yet: {0}")]
     NotAvailable(String),
+
+    #[error("GPU error: {0}")]
+    Gpu(String),
 }
 
 pub type Result<T> = std::result::Result<T, RustMsptError>;

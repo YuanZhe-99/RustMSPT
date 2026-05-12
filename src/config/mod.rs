@@ -1,3 +1,4 @@
+pub mod acceleration;
 pub mod crop;
 pub mod deserialize;
 pub mod forging;
@@ -71,6 +72,7 @@ pub fn parse_box_dimensions(dimensions: &[f64]) -> Result<crate::types::Bounding
     }
 }
 
+pub use acceleration::AccelerationConfig;
 pub use crop::{CropConfig, CropInput, CropOutput, CropRawParams};
 pub use forging::{ForgingConfig, ForgingParams};
 pub use measurement::{MeasurementConfig, MeasurementParams};

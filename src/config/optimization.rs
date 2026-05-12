@@ -1,6 +1,6 @@
 use serde::Deserialize;
 use super::deserialize::{deserialize_usize_flexible, deserialize_option_usize_flexible, deserialize_option_i32_flexible};
-use super::{BoxConfig, InputStl, OutputPath};
+use super::{BoxConfig, InputStl, OutputPath, AccelerationConfig};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TargetConfig {
@@ -49,6 +49,8 @@ pub struct OptimizationParams {
     pub islands: Option<usize>,
     #[serde(default, deserialize_with = "deserialize_option_usize_flexible")]
     pub migration_interval: Option<usize>,
+    #[serde(default)]
+    pub acceleration: AccelerationConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]

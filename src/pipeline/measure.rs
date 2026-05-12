@@ -1,8 +1,11 @@
+use crate::compute::policy::select_backend;
 use crate::config::{parse_box_dimensions, MeasurementConfig};
 use crate::error::{Result, RustMsptError};
 use crate::geometry::{
     calculate_s2, mesh_bbox, split_mesh_into_granules, volume_fraction_in_bbox,
 };
+#[cfg(feature = "gpu")]
+use crate::geometry::{calculate_s2_with_gpu, calculate_s2_gpu_exact};
 use crate::io::load_stl_or_merge_folder;
 use crate::pipeline::Pipeline;
 use crate::types::BoundingBox;
@@ -46,7 +49,7 @@ impl Pipeline for MeasurePipeline {
     // Inputs: MeasurementConfig with stl_path, bounding box, S2 method/samples/pitch, and output path.
     // Returns: Ok(()) or error.
     // Side effects: Reads STL from disk; writes measurement report to disk; prints summary to stdout.
-    // Notes: Supports "exact", "monte_carlo", or "both" methods. Falls back from exact to MC when voxel grid is too large (>1.5M voxels).
+    // Notes: Supports "exact", "monte_carlo", or "both" methods. Falls back from exact to MC when voxel grid is too large (>1.5M voxels). Reports compute backend used.
     fn run(&self) -> Result<()> {
         let params = &self.config.measurement;
 
@@ -117,27 +120,77 @@ impl Pipeline for MeasurePipeline {
         let ny = (size.y / pitch).ceil().max(1.0) as u64;
         let nz = (size.z / pitch).ceil().max(1.0) as u64;
         let voxel_count = nx.saturating_mul(ny).saturating_mul(nz);
+
+        let accel = &params.acceleration;
+        let selection = select_backend(
+            accel.mode,
+            Some(accel.gpu_min_voxels),
+            accel.gpu_memory_limit_mb,
+            voxel_count as usize,
+        );
+        println!(
+            "[Info] Acceleration: requested={}, effective={}",
+            accel.mode, selection.backend
+        );
+        if let Some(ref fb) = selection.fallback {
+            println!("[Info] Acceleration fallback: {}", fb.reason);
+        }
+
         let exact_voxel_limit: u64 = 1_500_000;
         let mut output = String::new();
         output.push_str(&format!("Volume Fraction: {vf:.6}\n"));
+        output.push_str(&format!("Compute Backend: {}\n", selection.backend));
 
         let mut summary_lines: Vec<String> = Vec::new();
+        summary_lines.push(format!("[Info] Compute backend: {}", selection.backend));
+
+        let use_gpu = selection.backend.is_gpu();
+
+        #[cfg(feature = "gpu")]
+        let mut gpu_pipeline = if use_gpu {
+            match crate::gpu::s2::GpuS2Pipeline::new(&mesh, bbox) {
+                Ok(p) => {
+                    println!("[Info] GPU S2 pipeline initialized for Monte Carlo");
+                    Some(p)
+                }
+                Err(e) => {
+                    println!("[Warning] GPU S2 pipeline init failed: {e}, falling back to CPU");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        #[cfg(not(feature = "gpu"))]
+        let mut _gpu_pipeline: Option<()> = if use_gpu {
+            println!("[Warning] GPU requested but cargo feature 'gpu' not enabled; using CPU");
+            None
+        } else {
+            None
+        };
 
         if requested_method == "both" {
             if voxel_count > exact_voxel_limit {
                 println!(
                     "[Warning] both requested but exact voxel grid too large ({voxel_count}); only monte_carlo will run."
                 );
-                let s2_monte = thread_pool.install(|| {
-                    calculate_s2(
-                        &mesh,
-                        bbox,
-                        params.r_max,
-                        params.voxel_pitch,
-                        "monte_carlo",
-                        params.mc_samples.unwrap_or(10_000),
+                #[cfg(feature = "gpu")]
+                let s2_monte = if let Some(ref mut gpu) = gpu_pipeline {
+                    calculate_s2_with_gpu(
+                        &mesh, bbox, params.r_max, params.voxel_pitch,
+                        "monte_carlo", params.mc_samples.unwrap_or(10_000), Some(gpu),
                     )
+                } else {
+                    thread_pool.install(|| {
+                        calculate_s2(&mesh, bbox, params.r_max, params.voxel_pitch, "monte_carlo", params.mc_samples.unwrap_or(10_000))
+                    })
+                };
+                #[cfg(not(feature = "gpu"))]
+                let s2_monte = thread_pool.install(|| {
+                    calculate_s2(&mesh, bbox, params.r_max, params.voxel_pitch, "monte_carlo", params.mc_samples.unwrap_or(10_000))
                 });
+
                 output.push_str("Method: monte_carlo (exact skipped by voxel limit)\n");
                 output.push_str(&format!("S2(0)-VF diff [monte_carlo]: {:.6}\n", (s2_monte[0] - vf).abs()));
                 output.push_str("S2 Values [monte_carlo]:\n");
@@ -148,26 +201,35 @@ impl Pipeline for MeasurePipeline {
                 summary_lines.push(format!("[Info] S2(0)-VF diff [monte_carlo]: {:.6}", (s2_monte[0] - vf).abs()));
                 summary_lines.push(format!("[Info] S2 points [monte_carlo]: {}", s2_monte.len()));
             } else {
+                #[cfg(feature = "gpu")]
+                let s2_exact = if use_gpu {
+                    calculate_s2_gpu_exact(&mesh, bbox, params.r_max, params.voxel_pitch)
+                } else {
+                    thread_pool.install(|| {
+                        calculate_s2(&mesh, bbox, params.r_max, params.voxel_pitch, "exact", params.mc_samples.unwrap_or(10_000))
+                    })
+                };
+                #[cfg(not(feature = "gpu"))]
                 let s2_exact = thread_pool.install(|| {
-                    calculate_s2(
-                        &mesh,
-                        bbox,
-                        params.r_max,
-                        params.voxel_pitch,
-                        "exact",
-                        params.mc_samples.unwrap_or(10_000),
-                    )
+                    calculate_s2(&mesh, bbox, params.r_max, params.voxel_pitch, "exact", params.mc_samples.unwrap_or(10_000))
                 });
+
+                #[cfg(feature = "gpu")]
+                let s2_monte = if let Some(ref mut gpu) = gpu_pipeline {
+                    calculate_s2_with_gpu(
+                        &mesh, bbox, params.r_max, params.voxel_pitch,
+                        "monte_carlo", params.mc_samples.unwrap_or(10_000), Some(gpu),
+                    )
+                } else {
+                    thread_pool.install(|| {
+                        calculate_s2(&mesh, bbox, params.r_max, params.voxel_pitch, "monte_carlo", params.mc_samples.unwrap_or(10_000))
+                    })
+                };
+                #[cfg(not(feature = "gpu"))]
                 let s2_monte = thread_pool.install(|| {
-                    calculate_s2(
-                        &mesh,
-                        bbox,
-                        params.r_max,
-                        params.voxel_pitch,
-                        "monte_carlo",
-                        params.mc_samples.unwrap_or(10_000),
-                    )
+                    calculate_s2(&mesh, bbox, params.r_max, params.voxel_pitch, "monte_carlo", params.mc_samples.unwrap_or(10_000))
                 });
+
                 let l2 = Self::l2_error(&s2_exact, &s2_monte);
 
                 output.push_str("Method: both\n");
@@ -202,15 +264,22 @@ impl Pipeline for MeasurePipeline {
                 requested_method
             };
 
-            let s2 = thread_pool.install(|| {
-                calculate_s2(
-                    &mesh,
-                    bbox,
-                    params.r_max,
-                    params.voxel_pitch,
-                    method,
-                    params.mc_samples.unwrap_or(10_000),
+            #[cfg(feature = "gpu")]
+            let s2 = if method == "monte_carlo" && gpu_pipeline.is_some() {
+                calculate_s2_with_gpu(
+                    &mesh, bbox, params.r_max, params.voxel_pitch,
+                    method, params.mc_samples.unwrap_or(10_000), gpu_pipeline.as_mut(),
                 )
+            } else if method == "exact" && use_gpu {
+                calculate_s2_gpu_exact(&mesh, bbox, params.r_max, params.voxel_pitch)
+            } else {
+                thread_pool.install(|| {
+                    calculate_s2(&mesh, bbox, params.r_max, params.voxel_pitch, method, params.mc_samples.unwrap_or(10_000))
+                })
+            };
+            #[cfg(not(feature = "gpu"))]
+            let s2 = thread_pool.install(|| {
+                calculate_s2(&mesh, bbox, params.r_max, params.voxel_pitch, method, params.mc_samples.unwrap_or(10_000))
             });
 
             output.push_str(&format!("Method: {method}\n"));

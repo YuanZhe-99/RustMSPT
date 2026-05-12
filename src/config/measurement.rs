@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use super::deserialize::{deserialize_option_i32_flexible, deserialize_option_usize_flexible};
+use super::AccelerationConfig;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct MeasurementParams {
@@ -14,6 +15,8 @@ pub struct MeasurementParams {
     #[serde(default, deserialize_with = "deserialize_option_i32_flexible")]
     pub cpu_max: Option<i32>,
     pub output_path: String,
+    #[serde(default)]
+    pub acceleration: AccelerationConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]

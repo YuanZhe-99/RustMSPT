@@ -7,6 +7,8 @@ use rayon::prelude::*;
 use rustfft::num_complex::Complex;
 use rustfft::FftPlanner;
 
+pub const RAY_DIR_GPU: (f64, f64, f64) = (0.9428090415820634, 0.2705980500730985, 0.19611613513818402);
+
 // AI-FUNC-SUMMARY: Convert 3D voxel index to flat array index using y/z strides; returns usize; side effects: None.
 fn index_3d_to_flat(x: usize, y: usize, z: usize, ny: usize, nz: usize) -> usize {
     x * ny * nz + y * nz + z
@@ -55,7 +57,7 @@ fn ray_intersects_triangle(origin: Vec3, dir: Vec3, a: Vec3, b: Vec3, c: Vec3) -
 // Returns: true if point is inside the mesh volume.
 // Side effects: None.
 // Notes: Uses a fixed non-axis-aligned ray direction to reduce edge-case misses. Deduplicates near-equal hit distances.
-fn point_inside_mesh(mesh: &Mesh, point: Vec3) -> bool {
+pub fn point_inside_mesh(mesh: &Mesh, point: Vec3) -> bool {
     let Some(bb) = mesh_bbox(mesh) else {
         return false;
     };
@@ -176,7 +178,7 @@ fn build_bbox_occupancy(mesh: &Mesh, bbox: BoundingBox, voxel_pitch: f64) -> (Ve
 // Returns: Vec of [dx, dy, dz] offset vectors within the shell annulus.
 // Side effects: None.
 // Notes: Returns [[0,0,0]] for near-zero distance. Used by both exact and MC S2 methods.
-fn shell_offsets_for_distance(distance_vox: f64, half_width_vox: f64) -> Vec<[isize; 3]> {
+pub fn shell_offsets_for_distance(distance_vox: f64, half_width_vox: f64) -> Vec<[isize; 3]> {
     if distance_vox <= 1e-12 {
         return vec![[0, 0, 0]];
     }
@@ -811,4 +813,110 @@ pub fn l2_norm(a: &[f64], b: &[f64]) -> f64 {
         d * d
     });
     sum.sum::<f64>().sqrt()
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Compute S2 with optional GPU acceleration for Monte Carlo method.
+// Inputs: mesh, bbox, r_max, voxel_pitch, method, samples, optional mutable GPU pipeline.
+// Returns: Vec<f64> of S2 values indexed by radius (r=0..r_max).
+// Side effects: Dispatches GPU compute if gpu_pipeline is Some and method is monte_carlo/both.
+// Notes: Falls back to CPU calculate_s2 when gpu_pipeline is None or method is exact. Sets r=0 to volume fraction. Only available with feature "gpu".
+#[cfg(feature = "gpu")]
+pub fn calculate_s2_with_gpu(
+    mesh: &Mesh,
+    bbox: BoundingBox,
+    r_max: usize,
+    voxel_pitch: f64,
+    method: &str,
+    samples: usize,
+    gpu_pipeline: Option<&mut crate::gpu::s2::GpuS2Pipeline>,
+) -> Vec<f64> {
+    if let Some(gpu) = gpu_pipeline {
+        if method == "monte_carlo" || method == "both" {
+            let t0 = std::time::Instant::now();
+            let mut result = gpu.calculate_s2_gpu(bbox, r_max, samples);
+            let elapsed = t0.elapsed().as_secs_f64();
+            let vf = volume_fraction_in_bbox(mesh, bbox);
+            result[0] = vf;
+            println!("[Info] GPU S2 Monte Carlo: {:.3}s, {} radii, {} samples/radius", elapsed, r_max + 1, samples);
+            return result;
+        }
+    }
+    calculate_s2(mesh, bbox, r_max, voxel_pitch, method, samples)
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Compute exact S2 using GPU voxelization + GPU shell pair counting.
+// Inputs: mesh, bbox, r_max, voxel_pitch, volume fraction.
+// Returns: Vec<f64> of S2 values for r=0..r_max.
+// Side effects: Initializes two GPU pipelines (voxel + shell), dispatches compute.
+// Notes: Uses f32 ray-casting for voxelization, then u32 shell pair counting. Only available with feature "gpu".
+#[cfg(feature = "gpu")]
+pub fn calculate_s2_gpu_exact(
+    mesh: &Mesh,
+    bbox: BoundingBox,
+    r_max: usize,
+    voxel_pitch: f64,
+) -> Vec<f64> {
+    let size = bbox.size();
+    let pitch = voxel_pitch.max(1e-9) as f32;
+    let nx = ((size.x / voxel_pitch).ceil() as u32).max(1);
+    let ny = ((size.y / voxel_pitch).ceil() as u32).max(1);
+    let nz = ((size.z / voxel_pitch).ceil() as u32).max(1);
+    let total_vox = (nx * ny * nz) as usize;
+
+    let t0 = std::time::Instant::now();
+
+    let mut vox_pipeline = match crate::gpu::voxel::GpuVoxelPipeline::new(mesh, bbox) {
+        Ok(p) => p,
+        Err(e) => {
+            println!("[Warning] GPU voxel pipeline init failed: {e}, falling back to CPU");
+            return calculate_s2(mesh, bbox, r_max, voxel_pitch, "exact", 10000);
+        }
+    };
+    let occ = vox_pipeline.voxelize(nx, ny, nz, pitch);
+    let occupied: u32 = occ.iter().sum();
+    let vf = occupied as f64 / total_vox as f64;
+
+    if occupied == 0 {
+        return vec![0.0; r_max + 1];
+    }
+
+    let pitch_f64 = voxel_pitch.max(1e-9);
+    let half_width = 0.5 / pitch_f64;
+    let mut all_offsets: Vec<(u32, [isize; 3])> = Vec::new();
+    for r in 1..=r_max {
+        let r_vox = r as f64 / pitch_f64;
+        let offsets = shell_offsets_for_distance(r_vox, half_width);
+        for off in offsets {
+            all_offsets.push((r as u32, off));
+        }
+    }
+
+    let mut shell_pipeline = match crate::gpu::s2_shell::GpuShellS2Pipeline::new() {
+        Ok(p) => p,
+        Err(e) => {
+            println!("[Warning] GPU shell pipeline init failed: {e}, falling back to CPU");
+            return calculate_s2(mesh, bbox, r_max, voxel_pitch, "exact", 10000);
+        }
+    };
+
+    let mut result = shell_pipeline.compute_s2_shell(&occ, nx, ny, nz, &all_offsets, r_max, pitch_f64, vf);
+
+    let mut has_support = vec![false; r_max + 1];
+    has_support[0] = true;
+    for r in 1..=r_max {
+        let r_vox = r as f64 / pitch_f64;
+        let offsets = shell_offsets_for_distance(r_vox, 0.5 / pitch_f64);
+        if !offsets.is_empty() {
+            has_support[r] = true;
+        }
+    }
+    fill_missing_s2_with_smooth_interpolation(&mut result, &has_support, vf);
+    result[0] = vf;
+
+    let elapsed = t0.elapsed().as_secs_f64();
+    println!("[Info] GPU exact S2: {:.3}s, {}x{}x{} grid, {} offsets, {} radii",
+        elapsed, nx, ny, nz, all_offsets.len(), r_max + 1);
+    result
 }

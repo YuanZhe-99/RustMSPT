@@ -112,6 +112,10 @@ optimization:
   # Orientation fix before final output (can be expensive)
   # false by default to skip; set true to enforce positive signed volume orientation.
   orient_to_positive_volume: false
-  
+
+  # Acceleration: auto selects GPU when available and workload is large enough
+  acceleration:
+    mode: auto # auto | cpu | gpu
+
 output:
   path: "data/output/optimized_structure.stl"

@@ -4,6 +4,8 @@
 
 RustMSPT (Rust Microstructure Processing Toolbox) is a standalone Rust toolkit for STL-based microstructure processing. It provides end-to-end pipelines for splitting, packing, optimizing, forging, scaling, measuring, and cropping microstructural geometries.
 
+`PLAN.md` tracks the roadmap for adding portable GPU acceleration alongside the existing CPU implementation. The current codebase has no GPU backend yet; CPU `rayon`/`rustfft`/`parry3d-f64` paths remain the reference implementation.
+
 ## Build & Run
 
 ```bash
@@ -35,6 +37,22 @@ cargo clippy
 cargo build --release
 ```
 
+### 2b. GPU Feature Build & Test
+```bash
+cargo build --features gpu          # compile with wgpu backend
+cargo test --features gpu           # run all tests including GPU adapter detection
+cargo clippy --features gpu         # lint with GPU feature active
+```
+
+To use the real Intel/AMD/NVIDIA GPU (not software fallback), ensure the user has DRI access:
+```bash
+sudo usermod -aG render $USER       # then re-login
+```
+
+Environment variables for GPU selection:
+- `RUSTMSPT_GPU_DEVICE=<name or index>` — filter adapter by name substring or index
+- `RUSTMSPT_ACCELERATION=cpu|gpu|auto` — override config acceleration mode
+
 ### 3. Data Pipeline Validation (requires `data/input/` files)
 
 Pipelines must be run in dependency order (pack depends on split-filter output; optimize depends on pack output; measure/forge/scale depend on optimize output):
@@ -64,6 +82,7 @@ src/
 
   config/              YAML config deserialization
     mod.rs             Re-exports all config structs
+    acceleration.rs    AccelerationConfig (mode, gpu_min_voxels, gpu_memory_limit_mb, etc.)
     deserialize.rs     Helper deserializers for flexible usize/i32 parsing
     crop.rs            CropConfig, CropInput, CropOutput, CropRawParams
     forging.rs         ForgingConfig, ForgingParams
@@ -72,6 +91,24 @@ src/
     packing.rs         PackingConfig, PackingParams, PackingFilters
     scale.rs           ScaleConfig, ScalingParams
     split_filter.rs    SplitFilterConfig, SplitFilterOutput, SplitFilterRules
+
+  compute/             Compute backend abstraction (always compiled)
+    mod.rs             Re-exports, unit tests for backend selection
+    backend.rs         AccelerationMode enum, ComputeBackend enum, BackendCaps struct
+    policy.rs          select_backend(): auto/cpu/gpu dispatch with workload threshold and memory guard
+
+  gpu/                 GPU implementation (feature-gated: cargo feature "gpu")
+    mod.rs             Re-exports
+    context.rs         GpuContext, try_init_gpu(): wgpu adapter/device init with env-var device filter
+    s2.rs              GpuS2Pipeline: wgpu compute pipeline for Monte Carlo S2 (with update_mesh for SA reuse)
+    s2_shell.rs        GpuShellS2Pipeline: wgpu compute pipeline for direct shell pair S2
+    voxel.rs           GpuVoxelPipeline: wgpu compute pipeline for mesh voxelization
+    volume_transform.rs GpuVolumeTransformPipeline: wgpu compute pipeline for volume rotate-and-crop
+    shaders/
+      s2_monte_carlo.wgsl  WGSL compute shader for MC S2 (ray-casting point containment)
+      voxelize.wgsl        WGSL compute shader for voxelization (ray-casting per voxel)
+      s2_shell_pairs.wgsl  WGSL compute shader for direct shell pair counting
+      volume_transform.wgsl WGSL compute shader for volume rotate-and-crop transform
 
   geometry/            Geometry and computation kernels
     mod.rs             Re-exports public API
@@ -107,6 +144,8 @@ tests/
 data/
   input/               Default YAML configs and sample input files
   output/              Pipeline outputs (gitignored)
+
+PLAN.md                Portable GPU/CPU co-execution roadmap and implementation plan
 ```
 
 ## Architecture
@@ -123,6 +162,11 @@ All pipelines implement `src/pipeline/mod.rs::Pipeline` with a single `fn run(&s
 - **Optimize collision**: Uses `SpatialGrid` for O(k) neighbor queries instead of O(N) full scan.
 - **Island model**: When `optimization.islands > 1`, multiple independent SA instances run in parallel via `std::thread::scope`, sharing `Arc<Mutex<GlobalBest>>` for periodic migration.
 
+### GPU Acceleration Roadmap
+Portable GPU acceleration is planned in `PLAN.md`. The preferred direction is a feature-gated `wgpu`/WGSL backend behind a compute abstraction, with CPU fallback and CPU reference tests. CUDA must not be used as the primary acceleration path because portability is a project requirement.
+
+The `AccelerationMode` enum (`auto`/`cpu`/`gpu`) and `select_backend()` in `src/compute/policy.rs` handle runtime dispatch. The `measure` and `optimize` pipelines now report the effective backend used and any fallback reason. The config field `acceleration.mode` (default `auto`) is supported in `MeasurementParams` and `OptimizationParams`.
+
 ### Key Dependencies
 | Crate | Purpose |
 |-------|---------|
@@ -135,11 +179,15 @@ All pipelines implement `src/pipeline/mod.rs::Pipeline` with a single `fn run(&s
 | `clap` | CLI argument parsing |
 | `serde` + `serde_yaml` | YAML config deserialization |
 | `indicatif` | Progress bars |
+| `wgpu` | GPU compute abstraction (optional, feature `gpu`) |
+| `pollster` | Async-to-sync bridge for wgpu init (optional, feature `gpu`) |
+| `bytemuck` | Zero-cost POD casting for GPU buffer uploads (optional, feature `gpu`) |
 
 ## Code Conventions
 
 - No comments in code unless explicitly requested.
 - **AI-FUNC-SUMMARY comments are the exception**: every function must have an `AI-FUNC-SUMMARY` comment (see Function Reading Policy below).
+- Program comments, configuration-file comments, and all `AI-FUNC-SUMMARY` text must be written in English.
 - Follow existing patterns: use `crate::types::{Mesh, Vec3, BoundingBox}` for core types.
 - Geometry functions live in `src/geometry/`, pipeline logic in `src/pipeline/`, config in `src/config/`.
 - Public API is re-exported through `mod.rs` files in each module.
@@ -148,6 +196,7 @@ All pipelines implement `src/pipeline/mod.rs::Pipeline` with a single `fn run(&s
 - Config fields use `serde` deserialization with optional `deserialize_with` for flexible numeric parsing.
 - **Every code modification must update `AGENTS.md`** to reflect any changes to architecture, file structure, testing steps, conventions, or pitfalls.
 - **If `PLAN.md` exists, every code modification must also update `PLAN.md`** to reflect current progress, decisions, and next steps.
+- GPU-related changes must keep CPU fallback behavior intact and update `PLAN.md` with implementation progress, test coverage, and any changed architectural decisions.
 
 ## Function Reading Policy for AI Agents
 
@@ -184,3 +233,8 @@ When inspecting code:
 - `Volume3D.data` stores voxel values as `i64`. The `numeric_type` field tracks original bit depth.
 - `split_mesh_into_granules` returns an owned `Vec<Mesh>`; each granule is a connected component.
 - SA optimization state (temperature, acceptance window) is per-island; do not share mutable SA state across threads.
+- wgpu's `enumerate_adapters()` returns a `Vec`, not an iterator — do not call `.collect()` on it.
+- `wgpu::Limits::max_storage_buffer_binding_size` is `u32`; cast to `u64` when comparing with `BackendCaps`.
+- When `gpu` feature is disabled, `ComputeBackend::Gpu` variant does not exist — use `#[cfg(feature = "gpu")]` guards in match arms and `is_gpu()` instead of `matches!`.
+- The `acceleration` config field uses `#[serde(default)]` so existing YAML configs without it continue to work. Tests constructing config structs manually must include `acceleration: Default::default()`.
+- `Volume3D` uses z-major indexing: `idx = z * width * height + y * width + x`. GPU shaders must match this layout, not x-major.

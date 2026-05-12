@@ -1,3 +1,4 @@
+use crate::compute::policy::select_backend;
 use crate::config::{parse_box_dimensions, OptimizationConfig};
 use crate::error::{Result, RustMsptError};
 use crate::geometry::{
@@ -297,6 +298,8 @@ fn run_sa_island(
     global_best: Option<&Arc<Mutex<GlobalBest>>>,
     migration_interval: usize,
     history_log: &mut Vec<String>,
+    #[cfg(feature = "gpu")]
+    mut gpu_pipeline: Option<crate::gpu::s2::GpuS2Pipeline>,
 ) -> IslandResult {
     let s2_method = params.mc_method.as_str();
     let mut rng = rand::thread_rng();
@@ -326,16 +329,28 @@ fn run_sa_island(
             .map(|p| p.mesh.clone())
             .collect::<Vec<_>>(),
     );
-    let mut current_s2 = thread_pool.install(|| {
-        calculate_s2(
-            &merged,
-            box_bounds,
-            params.r_max,
-            params.voxel_pitch,
-            s2_method,
-            params.mc_samples.max(2000),
-        )
-    });
+    let mut current_s2 = {
+        #[cfg(feature = "gpu")]
+        {
+            if let Some(ref mut gpu) = gpu_pipeline {
+                gpu.update_mesh(&merged, box_bounds);
+                let mut s2 = gpu.calculate_s2_gpu(box_bounds, params.r_max, params.mc_samples.max(2000));
+                let vf = volume_fraction_of_meshes_in_bbox(&prepared.iter().map(|p| p.mesh.clone()).collect::<Vec<_>>(), box_bounds);
+                s2[0] = vf;
+                s2
+            } else {
+                thread_pool.install(|| {
+                    calculate_s2(&merged, box_bounds, params.r_max, params.voxel_pitch, s2_method, params.mc_samples.max(2000))
+                })
+            }
+        }
+        #[cfg(not(feature = "gpu"))]
+        {
+            thread_pool.install(|| {
+                calculate_s2(&merged, box_bounds, params.r_max, params.voxel_pitch, s2_method, params.mc_samples.max(2000))
+            })
+        }
+    };
     let mut current_loss = l2_norm(&current_s2, target);
     push_history_s2(history_log, "Post-Pruning S2", &current_s2);
     history_log.push(format!("Post-Pruning Loss: {current_loss:.6}"));
@@ -645,16 +660,28 @@ fn run_sa_island(
         let adaptive_samples = ((params.mc_samples as f64) * (0.3 + 0.7 * scale)).round() as usize;
         let iter_samples = adaptive_samples.clamp(1000, params.mc_samples.max(1000));
         let s2_start = Instant::now();
-        let candidate_s2 = thread_pool.install(|| {
-            calculate_s2(
-                &merged,
-                box_bounds,
-                params.r_max,
-                params.voxel_pitch,
-                s2_method,
-                iter_samples,
-            )
-        });
+        let candidate_s2 = {
+            #[cfg(feature = "gpu")]
+            {
+                if let Some(ref mut gpu) = gpu_pipeline {
+                    gpu.update_mesh(&merged, box_bounds);
+                    let mut s2 = gpu.calculate_s2_gpu(box_bounds, params.r_max, iter_samples);
+                    let vf = volume_fraction_of_meshes_in_bbox(&prepared.iter().map(|p| p.mesh.clone()).collect::<Vec<_>>(), box_bounds);
+                    s2[0] = vf;
+                    s2
+                } else {
+                    thread_pool.install(|| {
+                        calculate_s2(&merged, box_bounds, params.r_max, params.voxel_pitch, s2_method, iter_samples)
+                    })
+                }
+            }
+            #[cfg(not(feature = "gpu"))]
+            {
+                thread_pool.install(|| {
+                    calculate_s2(&merged, box_bounds, params.r_max, params.voxel_pitch, s2_method, iter_samples)
+                })
+            }
+        };
         s2_time += s2_start.elapsed();
         let candidate_loss = l2_norm(&candidate_s2, target);
         let delta = candidate_loss - current_loss;
@@ -808,6 +835,27 @@ impl Pipeline for OptimizePipeline {
             params.rotation_mode.as_deref().unwrap_or("any")
         );
 
+        let accel = &params.acceleration;
+        let size = box_bounds.size();
+        let pitch = if params.voxel_pitch <= 0.0 { 1.0 } else { params.voxel_pitch };
+        let est_nx = (size.x / pitch).ceil().max(1.0) as usize;
+        let est_ny = (size.y / pitch).ceil().max(1.0) as usize;
+        let est_nz = (size.z / pitch).ceil().max(1.0) as usize;
+        let est_voxels = est_nx.saturating_mul(est_ny).saturating_mul(est_nz);
+        let selection = select_backend(
+            accel.mode,
+            Some(accel.gpu_min_voxels),
+            accel.gpu_memory_limit_mb,
+            est_voxels,
+        );
+        println!(
+            "[Info] Acceleration: requested={}, effective={}",
+            accel.mode, selection.backend
+        );
+        if let Some(ref fb) = selection.fallback {
+            println!("[Info] Acceleration fallback: {}", fb.reason);
+        }
+
         let input_path = Path::new(&self.config.input.stl_path);
         let mut particles: Vec<crate::types::Mesh> = Vec::new();
         if input_path.is_dir() {
@@ -927,6 +975,29 @@ impl Pipeline for OptimizePipeline {
 
         let (best_particles, best_loss, best_s2, s2_time, collision_time) = if num_islands <= 1 {
             let mut island_history: Vec<String> = Vec::new();
+
+            #[cfg(feature = "gpu")]
+            let gpu_pipe = {
+                let accel = &params.acceleration;
+                if accel.mode != crate::compute::backend::AccelerationMode::Cpu {
+                    let merged_for_init = merge_meshes(&prepared.iter().map(|p| p.mesh.clone()).collect::<Vec<_>>());
+                    match crate::gpu::s2::GpuS2Pipeline::new(&merged_for_init, box_bounds) {
+                        Ok(p) => {
+                            println!("[Info] GPU S2 pipeline initialized for optimizer (persistent)");
+                            Some(p)
+                        }
+                        Err(e) => {
+                            println!("[Warning] GPU S2 pipeline init failed: {e}, using CPU");
+                            None
+                        }
+                    }
+                } else {
+                    None
+                }
+            };
+            #[cfg(not(feature = "gpu"))]
+            let _gpu_pipe = None::<()>;
+
             let result = run_sa_island(
                 0,
                 1,
@@ -943,6 +1014,8 @@ impl Pipeline for OptimizePipeline {
                 None,
                 migration_interval,
                 &mut island_history,
+                #[cfg(feature = "gpu")]
+                gpu_pipe,
             );
             history_log.extend(island_history);
             (result.best_particles, result.best_loss, result.best_s2, result.s2_time, result.collision_time)
@@ -972,6 +1045,15 @@ impl Pipeline for OptimizePipeline {
                             .build()
                             .unwrap();
                         let mut island_history: Vec<String> = Vec::new();
+
+                        #[cfg(feature = "gpu")]
+                        let island_gpu = {
+                            let merged_for_init = merge_meshes(&prepared_clone.iter().map(|p| p.mesh.clone()).collect::<Vec<_>>());
+                            crate::gpu::s2::GpuS2Pipeline::new(&merged_for_init, box_bounds).ok()
+                        };
+                        #[cfg(not(feature = "gpu"))]
+                        let _island_gpu = None::<()>;
+
                         let result = run_sa_island(
                             island_id,
                             num_islands,
@@ -988,6 +1070,8 @@ impl Pipeline for OptimizePipeline {
                             Some(&gb),
                             migration_interval,
                             &mut island_history,
+                            #[cfg(feature = "gpu")]
+                            island_gpu,
                         );
                         (result, island_history)
                     });
