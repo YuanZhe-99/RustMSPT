@@ -11,12 +11,12 @@ output:
 
 # Box dimensions (The container)
 box:
-  dimensions: [50.0, 50.0, 50.0] # X, Y, Z size
+  dimensions: [100.0, 100.0, 100.0] # X, Y, Z size
 
 # Packing algorithm settings
 packing:
   # Target Volume Fraction (0.0 to 1.0). E.g., 0.3 means 30% filled.
-  target_volume_fraction: 0.1
+  target_volume_fraction: 0.02
   
   # Mode 1: Strict (No boundary crossing)
   # Mode 2: Loose (Boundary crossing allowed, ignore walls)
@@ -48,7 +48,18 @@ packing:
   # false by default to skip; set true to enforce positive signed volume orientation.
   orient_to_positive_volume: false
 
-  # Geometry Filters (Particles failing these are discarded BEFORE packing)
+  # Optional target void diameter count-frequency CSV (unitless, matching STL units).
+  # Columns: bin (left edge), right, frequency. Frequencies are normalized and sum to 1.
+  # Also writes <output_stem>_diameter_distribution.csv beside the packed STL.
+  # Remove or comment this field to disable target-driven void scaling.
+  target_diameter_distribution_csv: "data/input/gu2019_fig7b_pore_distribution.csv"
+
+  # Optional soft target for the count-weighted arithmetic mean sphericity of placed voids.
+  # Uniform diameter scaling preserves sphericity. Packing still prioritizes target_volume_fraction.
+  # target_mean_sphericity: 0.82
+  # mean_sphericity_tolerance: 0.02
+
+  # Geometry filters. With a target diameter CSV, min_volume is checked after scaling.
   filters:
     min_volume: 15.0
     max_aspect_ratio: 3.0    # Longest side / Shortest side

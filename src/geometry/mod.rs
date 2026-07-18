@@ -2,6 +2,7 @@ pub mod bbox;
 pub mod collision;
 pub mod forging;
 pub mod mesh_ops;
+pub mod metrics;
 pub mod s2;
 pub mod spatial;
 pub mod volume;
@@ -17,6 +18,7 @@ pub use mesh_ops::{
     rotate_mesh_around_center, scale_mesh, split_mesh_into_granules, translate_mesh, vec_norm,
     wrap_mesh_centroid_to_box,
 };
+pub use metrics::{mesh_metrics, scale_mesh_to_equivalent_diameter, MeshMetrics};
 pub use s2::{approximate_s2, calculate_s2, l2_norm, point_inside_mesh, shell_offsets_for_distance};
 #[cfg(feature = "gpu")]
 pub use s2::{calculate_s2_with_gpu, calculate_s2_gpu_exact};

@@ -2,6 +2,7 @@ pub mod forge;
 pub mod measure;
 pub mod optimize;
 pub mod pack;
+pub mod pack_targets;
 pub mod crop;
 pub mod rotation;
 pub mod scale;

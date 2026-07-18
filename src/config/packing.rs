@@ -23,6 +23,9 @@ pub struct PackingParams {
     pub orient_to_positive_volume: Option<bool>,
     pub rotation_mode: Option<String>,
     pub rotation_axis_vector: Option<Vec<f64>>,
+    pub target_diameter_distribution_csv: Option<String>,
+    pub target_mean_sphericity: Option<f64>,
+    pub mean_sphericity_tolerance: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -32,4 +35,3 @@ pub struct PackingConfig {
     pub r#box: BoxConfig,
     pub packing: PackingParams,
 }
-
