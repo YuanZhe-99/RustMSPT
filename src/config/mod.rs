@@ -5,6 +5,7 @@ pub mod forging;
 pub mod measurement;
 pub mod optimization;
 pub mod packing;
+pub mod render;
 pub mod scale;
 pub mod split_filter;
 
@@ -78,5 +79,6 @@ pub use forging::{ForgingConfig, ForgingParams};
 pub use measurement::{MeasurementConfig, MeasurementParams};
 pub use optimization::{OptimizationConfig, OptimizationParams, TargetConfig};
 pub use packing::{PackingConfig, PackingFilters, PackingParams};
+pub use render::{RenderConfig, RenderParams};
 pub use scale::{ScaleConfig, ScalingParams};
 pub use split_filter::{SplitFilterConfig, SplitFilterOutput, SplitFilterRules, SplitFilterVolume};

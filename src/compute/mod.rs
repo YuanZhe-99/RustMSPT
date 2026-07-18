@@ -2,7 +2,7 @@ pub mod backend;
 pub mod policy;
 
 pub use backend::{AccelerationMode, BackendCaps, ComputeBackend};
-pub use policy::select_backend;
+pub use policy::{select_backend, select_backend_for_workload};
 
 #[cfg(test)]
 mod tests {

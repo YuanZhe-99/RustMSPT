@@ -2,7 +2,7 @@
 
 This guide scopes the `docs/zh-cn/` translation. It is a process document, not itself part of the English or Chinese content — it lives here at the top of `docs/`, beside `en-us/` and `zh-cn/`, rather than inside either.
 
-**Status: `docs/zh-cn/` is complete.** It mirrors `docs/en-us/` at all 28 relative paths (`README.md` + 11 files in `reference/` including `function-index.md` + 7 files in `algorithms/` + 8 files in `examples/`). This guide remains the terminology baseline and convention reference for maintaining that translation as `docs/en-us/` evolves — per the `AGENTS.md` documentation-sync requirement, any future change to `docs/en-us/` must be mirrored here (or explicitly flagged as pending translation) in the same change.
+**Status: `docs/zh-cn/` mirrors `docs/en-us/`, including the render algorithm and walkthrough.** Detailed render additions inside existing reference pages are explicitly flagged pending translation and link to the English contracts.
 
 ## Required mirrored file list
 
@@ -32,6 +32,7 @@ docs/zh-cn/
     pca-volume-alignment-crop.md
     spatial-grid-collision.md
     mesh-clipping-volume-fraction.md
+    stl-rendering.md
   examples/
     forge.md
     measure.md
@@ -41,9 +42,10 @@ docs/zh-cn/
     optimize.md
     pack.md
     pack-target-distribution.md
+    render.md
 ```
 
-27 files total (matching `docs/en-us/`'s 27: 1 README + 11 reference incl. function-index + 7 algorithms + 8 examples).
+29 files total (1 README + 11 reference files + 8 algorithm files + 9 example files).
 
 ## What to translate vs. what to keep in English
 

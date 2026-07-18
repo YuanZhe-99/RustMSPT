@@ -4,7 +4,7 @@
 
 > **Anchor note:** headings in this file use the bare `Struct::method` form (e.g. `#### GpuS2Pipeline::new`). Depending on the Markdown renderer, the auto-generated anchor for such a heading may come out as `#gpus2pipeline-new` or similar (renderers slugify `::` inconsistently). If a cross-link from another doc does not resolve, search this page for the heading text rather than relying on the anchor punctuation.
 
-This module implements GPU-accelerated compute pipelines built on [`wgpu`](https://wgpu.rs/) and WGSL compute shaders. It provides four independent pipelines — Monte Carlo S2 correlation, exact shell-pair S2 correlation, mesh voxelization, and volume rotate-and-crop — plus a shared adapter/device bootstrap (`context.rs`) used by the compute backend selection policy.
+This module implements wgpu compute pipelines plus offscreen STL rasterization, with shared adapter/device selection and CPU fallback at pipeline call sites.
 
 ## Index
 
@@ -15,6 +15,10 @@ This module implements GPU-accelerated compute pipelines built on [`wgpu`](https
 | `GpuInitError` | `src/gpu/context.rs:22` | Error type wrapping a GPU initialization failure message. |
 | `GpuInitError` (`Display` impl) | `src/gpu/context.rs:24` | Formats the error message. |
 | `try_init_gpu` | `src/gpu/context.rs:38` | Probes for a wgpu adapter/device and returns a `GpuContext`; used by `compute::policy::select_backend`. |
+| `request_adapter_device` | `src/gpu/context.rs` | Shared filtered adapter/device request used by rendering. |
+| `GpuRenderPipeline` | `src/gpu/render.rs` | Offscreen STL rasterization pipeline. |
+| `GpuRenderPipeline::new` | `src/gpu/render.rs` | Compiles `render.wgsl` and creates render state. |
+| `GpuRenderPipeline::render` | `src/gpu/render.rs` | Rasterizes and reads back top-row-first RGBA8. |
 | `GpuS2Pipeline` | `src/gpu/s2.rs:10` | GPU pipeline state for Monte Carlo S2 two-point correlation. |
 | `build_triangle_buffer` (s2.rs) | `src/gpu/s2.rs:27` | Builds a normalized `f32` triangle position buffer for the S2 Monte Carlo pipeline. |
 | `pack_params` | `src/gpu/s2.rs:48` | Packs Monte Carlo S2 shader parameters into a byte buffer matching the WGSL `Params` layout. |
@@ -469,3 +473,11 @@ Module-level constant: `WORKGROUP_SIZE: u32 = 64` (applied along the output X di
 - **Blocking GPU readback:** every dispatch-and-read method (`calculate_s2_gpu`, `compute_s2_shell`, `voxelize`, `rotate_and_crop`) uses `map_async` followed by `device.poll(wgpu::Maintain::Wait)`, which blocks the calling thread until the GPU work and buffer mapping complete. None of these pipelines expose an async or non-blocking API.
 - **Growable, never-shrinking buffers:** buffer-reuse fields (`triangle_buffer`, `out_hits_buffer`, `occupancy_buffer`, `src_buffer`/`out_buffer`, etc.) are only reallocated when a new call's data exceeds current capacity; they are never downsized, so a pipeline instance's peak GPU memory footprint is the maximum footprint across all calls made against it in its lifetime.
 - **`f32` on GPU, `f64` on CPU:** all four pipelines narrow `f64`/`isize` CPU-side geometry to `f32`/`i32` for GPU upload and widen results back to `f64`/`i32` on readback, matching each WGSL shader's use of 32-bit types throughout.
+
+## `render.rs` — `GpuRenderPipeline`
+
+`request_adapter_device(label)` performs a blocking adapter/device request honoring `RUSTMSPT_GPU_DEVICE`; it returns `(Device, Queue)` or an error string.
+
+`GpuRenderPipeline::new() -> Result<Self, String>` compiles `render.wgsl`, creates a uniform bind-group layout, and builds a two-sided triangle-list pipeline targeting `Rgba8Unorm` with `Depth32Float` depth.
+
+`GpuRenderPipeline::render(&mut self, mesh, camera, width, height, settings) -> Result<RenderedImage, String>` expands each face to three position/flat-normal vertices, uploads the shared view-projection and appearance values, renders offscreen, copies color to a mapped staging buffer, strips 256-byte row padding, and returns RGBA8. Empty geometry returns a background image. Private helpers `build_render_vertices` and `to_wgsl_mat4` prepare flat vertices and column-major f32 matrices.

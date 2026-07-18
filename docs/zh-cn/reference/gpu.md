@@ -1,5 +1,7 @@
 # GPU Module (`src/gpu/`)
 
+> **待翻译：** `request_adapter_device` 与 `GpuRenderPipeline` 的详细契约见[英文 GPU 参考](../../en-us/reference/gpu.md#renderrs--gpurenderpipeline)。
+
 > **特性门控：** 整个 `src/gpu/` 模块需要 `cargo build --features gpu`。以下文档中记录的所有函数和类型在默认（仅 CPU）构建中均不可用。
 
 > **锚点说明：** 本文件中的标题使用裸 `Struct::method` 形式（例如 `#### GpuS2Pipeline::new`）。根据所用的 Markdown 渲染器不同，此类标题自动生成的锚点可能是 `#gpus2pipeline-new` 或类似形式（渲染器对 `::` 的转义规则并不一致）。如果来自其他文档的交叉链接无法解析，请在本页中搜索标题文本，而不要依赖锚点标点符号。

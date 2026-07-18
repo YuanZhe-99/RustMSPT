@@ -48,6 +48,7 @@ Shared sub-config embedded in `MeasurementParams` and `OptimizationParams` to co
 | `backend` | `String` | `backend` | `"wgpu"` | Name of the GPU backend to use. |
 | `cpu_fallback` | `bool` | `cpu_fallback` | `true` | Whether to fall back to CPU execution if GPU acceleration is unavailable or fails. |
 | `gpu_min_voxels` | `usize` | `gpu_min_voxels` | `250_000` | Minimum voxel-grid size below which GPU acceleration is not worth the overhead (used by the `auto` mode heuristic). |
+| `gpu_min_pixels` | `usize` | `gpu_min_pixels` | `250_000` | Minimum render pixel count below which `auto` uses CPU. |
 | `gpu_memory_limit_mb` | `Option<u64>` | `gpu_memory_limit_mb` | `None` | Optional cap on GPU memory usage, in megabytes. |
 | `gpu_prefer_power` | `bool` | `gpu_prefer_power` | `false` | Whether to prefer a high-power (discrete) GPU adapter over a low-power/integrated one during device selection. |
 | `gpu_precision` | `String` | `gpu_precision` | `"f32"` | Floating point precision requested for GPU compute shaders. |
@@ -63,6 +64,9 @@ Shared sub-config embedded in `MeasurementParams` and `OptimizationParams` to co
 #### default_gpu_min_voxels
 `fn default_gpu_min_voxels() -> usize` — `src/config/acceleration.rs:29`. Serde default for `gpu_min_voxels`: returns `250_000`. No side effects.
 
+#### default_gpu_min_pixels
+`fn default_gpu_min_pixels() -> usize` — serde default for `gpu_min_pixels`: returns `250_000`. No side effects.
+
 #### default_gpu_precision
 `fn default_gpu_precision() -> String` — `src/config/acceleration.rs:33`. Serde default for `gpu_precision`: returns `"f32"`. No side effects.
 
@@ -72,6 +76,14 @@ Shared sub-config embedded in `MeasurementParams` and `OptimizationParams` to co
 - **Purpose:** Rust-level (non-serde) default matching the same values as the `#[serde(default = ...)]` helper functions above, so `AccelerationConfig::default()` is usable outside deserialization (e.g. in tests constructing config structs manually).
 - **Returns:** `AccelerationConfig` with `mode: Auto`, `backend: "wgpu"`, `cpu_fallback: true`, `gpu_min_voxels: 250_000`, `gpu_memory_limit_mb: None`, `gpu_prefer_power: false`, `gpu_precision: "f32"`.
 - **Side effects:** None.
+
+## `render.rs`
+
+### RenderConfig / RenderParams
+
+`RenderConfig { render: RenderParams }` is the top-level `render` YAML object. `RenderParams` requires `stl_path`, `focus_point`, and `view_direction`; `output_path` defaults to `data/output/rendered.png`. Optional/defaulted fields are `up_vector`, `projection = "orthographic"`, `perspective_fov_degrees = 45`, `camera_distance`, `fit_padding = 0.05`, `width = height = 1024`, `cpu_max`, and shared `acceleration`.
+
+Private defaults `default_output_path`, `default_projection`, `default_fov_degrees`, `default_fit_padding`, and `default_resolution` return those values without side effects.
 
 ## `crop.rs`
 

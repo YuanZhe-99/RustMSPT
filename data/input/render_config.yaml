@@ -1,0 +1,21 @@
+render:
+  stl_path: "data/input/particles.stl"
+  output_path: "data/output/rendered.png"
+
+  # Camera: focus_point is the image-center target; view_direction points from the camera toward it.
+  focus_point: [140.0, 642.0, 1238.0]
+  view_direction: [1.0, 1.0, -1.0]
+  up_vector: [0.0, 0.0, 1.0] # Optional; defaults to [0, 0, 1], auto-fallback when parallel to the view direction
+
+  projection: orthographic # orthographic | perspective
+  perspective_fov_degrees: 45.0 # Perspective only
+  camera_distance: null # null = auto-fit the mesh bounding box to the view
+  fit_padding: 0.05 # Extra margin fraction around the auto-fitted frame
+
+  width: 1024
+  height: 1024
+  cpu_max: -1 # -1 uses all available cores
+
+  # Acceleration: auto selects GPU when available and pixel count clears gpu_min_pixels
+  acceleration:
+    mode: auto # auto | cpu | gpu

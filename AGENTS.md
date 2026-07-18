@@ -44,7 +44,7 @@ Documentation lives in three tiers, each answering a different question:
 | Function-level contract | `docs/en-us/reference/*.md` (11 files + `function-index.md`) | What exactly does *this function* take, return, and mutate? |
 | Implementation | `src/*.rs`, with inline `// AI-FUNC-SUMMARY` comments above almost every function | What does the code actually do, line by line? |
 
-**Master lookup table:** [`docs/en-us/reference/function-index.md`](docs/en-us/reference/function-index.md) lists every documented function, struct, enum, and constant (246 rows) with its source location and a one-line summary, compiled from the `## Index` table at the top of each reference doc. If you know a function's name but not which file documents it, search this file first.
+**Master lookup table:** [`docs/en-us/reference/function-index.md`](docs/en-us/reference/function-index.md) lists every documented function, struct, enum, and constant (287 rows) with its source location and a one-line summary, compiled from the `## Index` table at the top of each reference doc. If you know a function's name but not which file documents it, search this file first.
 
 **Topic → doc mapping.** If you don't know the function name either, start from what you're trying to understand:
 
@@ -58,6 +58,7 @@ Documentation lives in three tiers, each answering a different question:
 | Spatial grid / collision detection / periodic ghosts | `algorithms/spatial-grid-collision.md` | `reference/geometry-core.md`, `reference/geometry-volume-collision.md` |
 | Mesh clipping / volume-fraction accounting | `algorithms/mesh-clipping-volume-fraction.md` | `reference/geometry-volume-collision.md` |
 | GPU compute pipelines (wgpu/WGSL) | (covered within each algorithm doc's own GPU section) | `reference/gpu.md` |
+| Mesh rendering / STL-to-image | `algorithms/stl-rendering.md` | `reference/geometry-core.md` (render section), `reference/gpu.md`, `reference/pipeline-core.md` |
 | Config / YAML deserialization | — | `reference/config.md` |
 | STL / TIFF / RAW I/O | — | `reference/io.md` |
 | CLI entry point, core types, compute backend selection | — | `reference/core-and-compute.md` |
@@ -87,6 +88,10 @@ S2(r) is the probability that two points a distance `r` apart both land in solid
 ### FFD Forging
 
 Forging in RustMSPT is a closed-form kinematic approximation of axial-compression forging — no material model, plasticity, stress/strain field, or FEA — implemented as a per-vertex affine scaling around a chosen center point, with an extra radial-scaling pass for "void" meshes. `simulate_forging_ffd_with_tracking` generalizes this with a configurable compression axis, a deformation center taken from a caller-supplied lattice bbox (not the mesh's own bbox), void densification (extra centroid-ward pull modeling pore collapse), and optional region-of-interest bounding-box tracking through the same transform. `bulge_factor` interpolates the lateral scale between "no bulge" (height only shrinks) and "volume-conserving bulge." It powers the `forge` pipeline (`ForgePipeline::run`), which also reports volume fraction inside the ROI before/after compression. [Full doc](docs/en-us/algorithms/ffd-forging.md)
+
+### Mesh Rendering (CPU Ray Casting and GPU Offscreen Rasterization)
+
+The `render` pipeline turns an STL mesh into an RGBA image from a configured viewpoint. The camera is defined by a focus point (the image-center target) and a view direction (from the camera toward the focus), with an optional up vector (default `[0,0,1]`, automatic fallback when nearly parallel to the view direction) and auto-fitted framing from the mesh bounding box: orthographic mode fits the bbox extents in the camera plane (aspect-corrected), perspective mode places the camera so the bbox bounding sphere fits the vertical FOV. The CPU path (`render_mesh_cpu`) casts one ray per pixel through parry3d's QBVH-backed `TriMesh::cast_local_ray_and_get_normal` (nearest hit, two-sided Lambert headlight shading), parallelized over rows with rayon; the feature-gated GPU path (`GpuRenderPipeline`) rasterizes expanded triangles to an offscreen `Rgba8Unorm` texture with a `Depth32Float` buffer — no window or surface — and reads pixels back through a 256-byte-aligned staging buffer. Both paths share `RenderCamera`/`RenderSettings` so their outputs match within ~1 LSB per channel and ~1px at triangle edges; GPU failures fall back to CPU. [Full doc](docs/en-us/algorithms/stl-rendering.md)
 
 ### Packing Target Diameter Distribution
 
@@ -120,7 +125,7 @@ cargo run --release -- <subcommand> [--config <path>] [--input <path>] [--output
 ./target/release/rustmspt <subcommand> --config data/input/<subcommand>_config.yaml
 ```
 
-Available subcommands: `split-filter`, `pack`, `optimize`, `measure`, `forge`, `scale`, `crop`
+Available subcommands: `split-filter`, `pack`, `optimize`, `measure`, `forge`, `scale`, `crop`, `render`
 
 ## 5. Testing
 
@@ -163,11 +168,13 @@ Pipelines must be run in dependency order (pack depends on split-filter output; 
 ./target/release/rustmspt forge --config data/input/forge_config.yaml
 ./target/release/rustmspt scale --config data/input/scale_config.yaml
 ./target/release/rustmspt crop --config data/input/crop_config.yaml
+./target/release/rustmspt render --config data/input/render_config.yaml
 ```
 
 After running, verify key outputs:
 - `data/output/s2_history.txt` must contain entries: `Pruning Start:`, `Pruning Round`, `Pruning Completed:`, `Post-Pruning S2:`, `Final Best S2:`
 - `data/output/measured_s2.txt` must have non-zero exact S2 values
+- `data/output/rendered.png` must be a valid PNG with visible shaded particles on the background
 
 ## 6. File Structure
 
@@ -187,6 +194,7 @@ src/
     measurement.rs     MeasurementConfig, MeasurementParams
     optimization.rs    OptimizationConfig, OptimizationParams, TargetConfig
     packing.rs         PackingConfig, PackingParams, PackingFilters
+    render.rs          RenderConfig and camera/image parameters
     scale.rs           ScaleConfig, ScalingParams
     split_filter.rs    SplitFilterConfig, SplitFilterOutput, SplitFilterRules
 
@@ -202,11 +210,13 @@ src/
     s2_shell.rs        GpuShellS2Pipeline: wgpu compute pipeline for direct shell pair S2
     voxel.rs           GpuVoxelPipeline: wgpu compute pipeline for mesh voxelization
     volume_transform.rs GpuVolumeTransformPipeline: wgpu compute pipeline for volume rotate-and-crop
+    render.rs           GpuRenderPipeline: offscreen triangle rasterization and RGBA readback
     shaders/
       s2_monte_carlo.wgsl  WGSL compute shader for MC S2 (ray-casting point containment)
       voxelize.wgsl        WGSL compute shader for voxelization (ray-casting per voxel)
       s2_shell_pairs.wgsl  WGSL compute shader for direct shell pair counting
       volume_transform.wgsl WGSL compute shader for volume rotate-and-crop transform
+      render.wgsl           WGSL vertex/fragment shader for STL rendering
 
   geometry/            Geometry and computation kernels
     mod.rs             Re-exports public API
@@ -215,11 +225,13 @@ src/
     forging.rs         FFD forging simulation: simulate_forging_ffd, simulate_forging_ffd_with_tracking
     mesh_ops.rs        Mesh utilities: split_mesh_into_granules, merge_meshes, mesh_centroid, rotate_mesh_around_center, move_mesh_to_target_center, scale_mesh, translate_mesh, wrap_mesh_centroid_to_box, box_mesh, mesh_surface_area, vec_norm
     metrics.rs         Unified closed-mesh metrics: volume, surface area, equivalent-volume diameter, sphericity, target-diameter scaling
+    render.rs          Shared camera model and CPU QBVH ray-cast renderer
     s2.rs              S2 (two-point correlation): calculate_s2, approximate_s2, l2_norm, build_bbox_occupancy, FFT-based exact S2, Monte Carlo S2
     spatial.rs         SpatialGrid for O(k) neighbor queries in collision detection
     volume.rs          Volume ops: mesh_volume, mesh_signed_volume, clip_mesh_by_bbox, particle_volume_in_bbox, volume_fraction_in_bbox, volume_fraction_of_meshes_in_bbox, orient_components_to_positive_volume
 
   io/                  File I/O
+    image.rs           PNG output for validated RGBA render buffers
     mod.rs             Re-exports: load_stl, save_stl, load_folder_stls, load_tiff_or_folder_with_range, save_tiff_or_folder_with_ext, load_raw_folder, Volume3D, ByteOrder, RawFolderSpec
     stl.rs             STL ASCII/binary load and binary save
     volume.rs          TIFF and RAW volume I/O
@@ -232,6 +244,7 @@ src/
     optimize.rs        OptimizePipeline: simulated annealing with island model
     pack.rs            PackPipeline: sequential particle placement with optional target diameter distribution and mean-sphericity steering
     pack_targets.rs    Packing target CSV parser, diameter-bin debt controller, sphericity scoring, and distribution summaries
+    render.rs          RenderPipeline: STL viewpoint rendering to PNG
     rotation.rs        Shared: RotationMode, parse_rotation_mode, sample_rotation_axis
     scale.rs           ScalePipeline: unit conversion / factor scaling
     split_filter.rs    SplitFilterPipeline: connected-component split + geometric filtering
@@ -240,7 +253,8 @@ tests/
   core_tests.rs        Unit tests for geometry kernels
   io_tests.rs          I/O roundtrip tests (STL, TIFF, RAW)
   pack_target_tests.rs Packing target CSV, diameter-bin controller, and sphericity scoring tests
-  pipeline_smoke_tests.rs  Integration tests: all 7 pipelines with synthetic data
+  pipeline_smoke_tests.rs  Integration tests for the pre-render pipelines with synthetic data
+  render_tests.rs      Camera, CPU/GPU rendering, PNG, and render-pipeline tests
 
 data/
   input/               Default YAML configs, sample inputs, and gu2019_fig7b_pore_distribution.csv
@@ -294,6 +308,7 @@ See [Algorithm Overview](#3-algorithm-overview) above (each algorithm doc has it
 | `rayon` | Data parallelism |
 | `rand` | Random number generation for SA and Monte Carlo |
 | `tiff` | TIFF image I/O |
+| `image` | PNG encoding/decoding for rendered RGBA images |
 | `clap` | CLI argument parsing |
 | `csv` | Target pore-diameter distribution parsing |
 | `serde` + `serde_yaml` | YAML config deserialization |
@@ -362,3 +377,6 @@ When inspecting code:
 - Equivalent-volume diameter and sphericity require a closed mesh with positive finite volume and surface area; malformed/open candidates are skipped when target controls are active.
 - Packing diameter frequencies are count frequencies over successfully placed full components, not volume-weighted frequencies. Failed placement attempts must never update bin or sphericity state.
 - Tests constructing `PackingParams` directly must include `target_diameter_distribution_csv`, `target_mean_sphericity`, and `mean_sphericity_tolerance`.
+- `RenderedImage.rgba` is top-row-first RGBA8 and must contain exactly `width * height * 4` bytes.
+- wgpu texture readback rows must be padded to `COPY_BYTES_PER_ROW_ALIGNMENT` (256 bytes) and unpadded before PNG encoding.
+- CPU/GPU render tests must use tolerance at triangle edges; parry3d uses f64 QBVH ray casting while wgpu rasterization uses f32.

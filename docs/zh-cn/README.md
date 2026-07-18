@@ -1,6 +1,6 @@
 # RustMSPT 文档（简体中文）
 
-RustMSPT（Rust Microstructure Processing Toolbox，Rust 微结构处理工具箱）是一个用于 STL/CT 体数据微结构处理的 Rust 工具包，提供七条流水线——`split-filter`、`pack`、`optimize`、`measure`、`forge`、`scale`、`crop`——构建在共享的几何、I/O 以及（可选 GPU 加速的）计算内核模块之上。
+RustMSPT（Rust Microstructure Processing Toolbox，Rust 微结构处理工具箱）是一个用于 STL/CT 体数据微结构处理的 Rust 工具包，提供八条流水线——`split-filter`、`pack`、`optimize`、`measure`、`forge`、`scale`、`crop`、`render`——构建在共享的几何、I/O 以及（可选 GPU 加速的）计算内核模块之上。
 
 本目录在函数级别记录了代码库，从概念上解释了其核心算法，并结合真实的、实际捕获的输出逐一介绍每条流水线。它与 `src/` 中几乎每个函数上已经存在的 `// AI-FUNC-SUMMARY` 注释相辅相成，并基于同一份源材料编写——该约定及其定义的“函数阅读策略”（Function Reading Policy）参见 [AGENTS.md](../../AGENTS.md)。
 
@@ -18,12 +18,12 @@ RustMSPT（Rust Microstructure Processing Toolbox，Rust 微结构处理工具�
 |---|---|
 | [core-and-compute.md](reference/core-and-compute.md) | `main.rs`、`lib.rs`、`error.rs`、`types.rs`、`bin/precision_test.rs`、`compute/*` |
 | [config.md](reference/config.md) | `config/*` —— YAML 配置结构体与反序列化辅助函数 |
-| [geometry-core.md](reference/geometry-core.md) | `geometry/{mod,bbox,mesh_ops,spatial}.rs` |
+| [geometry-core.md](reference/geometry-core.md) | `geometry/{mod,bbox,mesh_ops,spatial,render}.rs` |
 | [geometry-volume-collision.md](reference/geometry-volume-collision.md) | `geometry/{volume,collision,forging}.rs` |
 | [geometry-analysis.md](reference/geometry-analysis.md) | `geometry/{metrics,s2}.rs` |
 | [gpu.md](reference/gpu.md) | `gpu/*`（需要 `cargo build --features gpu`） |
-| [io.md](reference/io.md) | `io/{stl,volume}.rs` |
-| [pipeline-core.md](reference/pipeline-core.md) | `pipeline/{mod,rotation,scale,forge,measure}.rs` |
+| [io.md](reference/io.md) | `io/{image,stl,volume}.rs` |
+| [pipeline-core.md](reference/pipeline-core.md) | `pipeline/{mod,rotation,scale,forge,measure,render}.rs` |
 | [pipeline-crop-and-splitfilter.md](reference/pipeline-crop-and-splitfilter.md) | `pipeline/{crop,split_filter}.rs` |
 | [pipeline-packing.md](reference/pipeline-packing.md) | `pipeline/{pack,pack_targets}.rs` |
 | [pipeline-optimize.md](reference/pipeline-optimize.md) | `pipeline/optimize.rs` |
@@ -41,6 +41,7 @@ RustMSPT（Rust Microstructure Processing Toolbox，Rust 微结构处理工具�
 | [pca-volume-alignment-crop.md](algorithms/pca-volume-alignment-crop.md) | `crop` 流水线基于 PCA 的取向估计与旋转/裁剪 |
 | [spatial-grid-collision.md](algorithms/spatial-grid-collision.md) | 邻域查询加速以及精确/周期性碰撞检测 |
 | [mesh-clipping-volume-fraction.md](algorithms/mesh-clipping-volume-fraction.md) | Sutherland-Hodgman 网格裁剪与体积分数统计 |
+| [stl-rendering.md](algorithms/stl-rendering.md) | 共享相机取景、CPU 光线投射与 GPU 离屏光栅化 |
 
 ## 示例（各流水线走查）
 
@@ -56,6 +57,7 @@ RustMSPT（Rust Microstructure Processing Toolbox，Rust 微结构处理工具�
 | [optimize.md](examples/optimize.md) | `optimize` |
 | [pack.md](examples/pack.md) | `pack`（普通体积分数堆积） |
 | [pack-target-distribution.md](examples/pack-target-distribution.md) | `pack`（带目标粒径分布导向） |
+| [render.md](examples/render.md) | `render` |
 
 ## 全文使用的约定
 

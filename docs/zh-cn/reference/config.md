@@ -1,5 +1,7 @@
 # 配置参考（`src/config/`）
 
+> **待翻译：** `RenderConfig`/`RenderParams`、`gpu_min_pixels` 及 render 默认值的详细契约见[英文配置参考](../../en-us/reference/config.md#renderrs)。
+
 本模块定义了每个 RustMSPT 流水线所使用的、可从 YAML 反序列化的配置结构体。每个流水线（forging、scaling、measurement、optimization、packing、crop、split/filter）都拥有自己的顶层 `*Config` 结构体，该结构体组合了一个 `input`、一个 `output`，以及一个承载流水线专属参数的 `*Params` 结构体。所有结构体都派生了 `serde::Deserialize`，并通过 `load_yaml` 从 YAML 加载（参见[函数](#函数)）。少数字段使用了 `deserialize.rs` 中定义的自定义 `deserialize_with` 辅助函数，以便整数字段能同时接受数值和字符串两种 YAML 表示形式（例如 `"1_000_000"` 或 `1000000`）。
 
 以下按源文件对结构体定义进行分组，顺序与任务分配中列出的一致。字段表中标注了 Rust 类型、（当与字段名不同时的）YAML 键（通过 `r#type`/`r#box` 原始标识符或 `#[serde(rename)]`）、`#[serde(default = ...)]` 生效时的默认值，以及基于该字段在代码库其他地方如何被使用而给出的简短含义描述。

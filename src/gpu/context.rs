@@ -93,3 +93,59 @@ pub fn try_init_gpu() -> Result<GpuContext, GpuInitError> {
         max_storage_buffer_binding_size: limits.max_storage_buffer_binding_size as u64,
     })
 }
+
+// AI-FUNC-SUMMARY:
+// Purpose: Shared adapter/device request for GPU pipelines, honoring the RUSTMSPT_GPU_DEVICE filter.
+// Inputs: device label used for debugging/profiling tools.
+// Returns: Ok((Device, Queue)) on success, Err(message) describing the failure.
+// Side effects: Blocking wgpu adapter enumeration and device request (heavy first call).
+// Notes: RUSTMSPT_GPU_DEVICE selects an adapter by index (numeric) or name substring; unset uses
+// the default power preference. Requests empty features and default limits.
+pub(crate) fn request_adapter_device(label: &str) -> Result<(wgpu::Device, wgpu::Queue), String> {
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::all(),
+        ..Default::default()
+    });
+
+    let device_filter = std::env::var("RUSTMSPT_GPU_DEVICE").ok();
+
+    let adapter = pollster::block_on(async {
+        if let Some(ref filter) = device_filter {
+            let adapters = instance.enumerate_adapters(wgpu::Backends::all());
+            if let Ok(idx) = filter.parse::<usize>() {
+                let count = adapters.len();
+                return adapters
+                    .into_iter()
+                    .nth(idx)
+                    .ok_or_else(|| format!("RUSTMSPT_GPU_DEVICE index {idx} out of range ({count} adapters found)"));
+            }
+            adapters
+                .into_iter()
+                .find(|a| a.get_info().name.contains(filter.as_str()))
+                .ok_or_else(|| format!("no adapter matching '{filter}'"))
+        } else {
+            instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::default(),
+                    compatible_surface: None,
+                    force_fallback_adapter: false,
+                })
+                .await
+                .ok_or_else(|| "no suitable GPU adapter".to_string())
+        }
+    })?;
+
+    let (device, queue) = pollster::block_on(async {
+        adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some(label),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                ..Default::default()
+            }, None)
+            .await
+            .map_err(|e| format!("device request failed: {e}"))
+    })?;
+
+    Ok((device, queue))
+}

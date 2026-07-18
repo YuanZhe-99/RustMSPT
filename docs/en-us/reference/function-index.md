@@ -16,10 +16,10 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `default_gpu_min_voxels` | Config | `src/config/acceleration.rs:29` | Serde default for `gpu_min_voxels`: `250_000`. |
 | `default_gpu_precision` | Config | `src/config/acceleration.rs:33` | Serde default for `gpu_precision`: `"f32"`. |
 | `AccelerationConfig::default` | Config | `src/config/acceleration.rs:38` | Rust-level `Default` impl matching the serde defaults. |
-| `RustMsptError` | Core & Compute | `src/error.rs:4` | Crate-wide error enum covering I/O, YAML, TIFF, config, mesh, and GPU failures. |
+| `RustMsptError` | Core & Compute | `src/error.rs:4` | Crate-wide error enum including image encoding failures. |
 | `Result` | Core & Compute | `src/error.rs:27` | Type alias `Result<T> = std::result::Result<T, RustMsptError>` used throughout the crate. |
 | `Cli` | Core & Compute | `src/main.rs:19` | Top-level clap CLI struct wrapping a `Commands` subcommand. |
-| `Commands` | Core & Compute | `src/main.rs:25` | Enum of the 7 CLI subcommands (Forge/Measure/Optimize/Pack/Scale/Crop/SplitFilter). |
+| `Commands` | Core & Compute | `src/main.rs:25` | Enum of the 8 CLI subcommands, including Render. |
 | `default_config_path` | Core & Compute | `src/main.rs:85` | Builds the default config path under `data/input/`. |
 | `pick_config_path` | Core & Compute | `src/main.rs:90` | Chooses a user-supplied config path or falls back to the default. |
 | `main` (main.rs) | Core & Compute | `src/main.rs:100` | CLI entry point: parses args, loads config, applies overrides, runs the selected pipeline. |
@@ -250,12 +250,53 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `write_distribution_comparison_csv` | Pipeline — Packing | `src/pipeline/pack_targets.rs:495` | Writes the `<output_stem>_diameter_distribution.csv` target-vs-actual report. |
 | `parse_csv_f64` | Pipeline — Packing | `src/pipeline/pack_targets.rs:564` | Parses a required finite CSV float cell with row/column error context. |
 | `parse_optional_csv_f64` | Pipeline — Packing | `src/pipeline/pack_targets.rs:587` | Parses an optional CSV float cell where a blank means "absent". |
+| `default_gpu_min_pixels` | Config | `src/config/acceleration.rs` | Serde default for render GPU pixel threshold. |
+| `RenderParams` | Config | `src/config/render.rs` | Render paths, camera, resolution, CPU, and acceleration settings. |
+| `RenderConfig` | Config | `src/config/render.rs` | Top-level render YAML wrapper. |
+| `default_output_path` (render) | Config | `src/config/render.rs` | Defaults output to `data/output/rendered.png`. |
+| `default_projection` | Config | `src/config/render.rs` | Defaults projection to orthographic. |
+| `default_fov_degrees` | Config | `src/config/render.rs` | Defaults perspective FOV to 45 degrees. |
+| `default_fit_padding` | Config | `src/config/render.rs` | Defaults framing padding to 0.05. |
+| `default_resolution` | Config | `src/config/render.rs` | Defaults one image dimension to 1024. |
+| `RenderedImage` | Core & Compute | `src/types.rs` | Top-row-first RGBA8 image container. |
+| `RenderedImage::new` | Core & Compute | `src/types.rs` | Constructs an image from RGBA bytes. |
+| `RenderedImage::filled` | Core & Compute | `src/types.rs` | Allocates a solid-color image. |
+| `select_backend_for_workload` | Core & Compute | `src/compute/policy.rs` | Unit-aware CPU/GPU/Auto selector. |
+| `select_gpu_backend` | Core & Compute | `src/compute/policy.rs` | Shared GPU probe/memory guard. |
+| `RenderProjection` | Geometry — Core | `src/geometry/render.rs` | Orthographic/perspective projection enum. |
+| `RenderCameraSpec` | Geometry — Core | `src/geometry/render.rs` | Unvalidated camera/framing inputs. |
+| `RenderCamera` | Geometry — Core | `src/geometry/render.rs` | Validated camera basis/projection data. |
+| `RenderSettings` | Geometry — Core | `src/geometry/render.rs` | Shared appearance settings. |
+| `RenderSettings::default` | Geometry — Core | `src/geometry/render.rs` | White background, steel-blue surface, 0.25 ambient. |
+| `parse_render_vec3` | Geometry — Core | `src/geometry/render.rs` | Validates a finite three-element vector. |
+| `parse_render_projection` | Geometry — Core | `src/geometry/render.rs` | Parses orthographic/perspective aliases. |
+| `normalize_or_err` | Geometry — Core | `src/geometry/render.rs` | Normalizes a nonzero config vector. |
+| `build_camera_basis` | Geometry — Core | `src/geometry/render.rs` | Builds orthonormal forward/right/up axes. |
+| `build_render_camera` | Geometry — Core | `src/geometry/render.rs` | Validates and auto-frames the camera. |
+| `bbox_corners` (render) | Geometry — Core | `src/geometry/render.rs` | Returns the eight bbox corners. |
+| `RenderCamera::ray_for_pixel` | Geometry — Core | `src/geometry/render.rs` | Generates a pixel-center world ray. |
+| `RenderCamera::view_proj_matrix` | Geometry — Core | `src/geometry/render.rs` | Builds the wgpu-compatible camera matrix. |
+| `mat4_mul` (render) | Geometry — Core | `src/geometry/render.rs` | Multiplies row-major 4x4 matrices. |
+| `shade_intensity` | Geometry — Core | `src/geometry/render.rs` | Computes ambient/diffuse headlight intensity. |
+| `shade_channel` | Geometry — Core | `src/geometry/render.rs` | Applies intensity to one u8 channel. |
+| `render_mesh_cpu` | Geometry — Core | `src/geometry/render.rs` | Parallel QBVH ray-cast renderer. |
+| `save_image` | I/O | `src/io/image.rs` | Validates and writes RGBA8 PNG. |
+| `request_adapter_device` | GPU | `src/gpu/context.rs` | Shared filtered wgpu device request. |
+| `RenderVertex` | GPU | `src/gpu/render.rs` | Packed position/flat-normal vertex. |
+| `RenderUniforms` | GPU | `src/gpu/render.rs` | Camera/appearance uniform layout. |
+| `GpuRenderPipeline` | GPU | `src/gpu/render.rs` | Offscreen render state. |
+| `build_render_vertices` | GPU | `src/gpu/render.rs` | Expands mesh faces for rasterization. |
+| `to_wgsl_mat4` | GPU | `src/gpu/render.rs` | Converts matrix layout/precision for WGSL. |
+| `GpuRenderPipeline::new` | GPU | `src/gpu/render.rs` | Creates the offscreen render pipeline. |
+| `GpuRenderPipeline::render` | GPU | `src/gpu/render.rs` | Rasterizes and reads back RGBA8. |
+| `RenderPipeline` | Pipeline — Core | `src/pipeline/render.rs` | Holds `RenderConfig`. |
+| `RenderPipeline::run` | Pipeline — Core | `src/pipeline/render.rs` | Executes STL-to-PNG rendering with fallback. |
 
-**Total: 246 documented items** (functions, methods, structs, enums, and constants) across 11 reference documents, covering all 45 `src/*.rs` files.
+**Total: 287 documented items** (functions, methods, structs, enums, and constants) across 11 reference documents, covering all 50 Rust source files under `src/`.
 
 ## Notes on counts
 
-- A raw `grep` for `fn ` declarations in `src/` finds 151 functions. This index lists 246 items because it also includes documented structs, enums, and constants (e.g. `MeshMetrics`, `RotationMode`, `RAY_DIR_GPU`) alongside their associated methods — not functions alone.
+- The index includes functions plus documented structs, enums, constants, and associated methods, not functions alone.
 - Test-only functions inside `#[cfg(test)] mod tests` blocks (e.g. the 6 unit tests in `src/compute/mod.rs`) are intentionally excluded — this index covers production code only.
 - The two `main` functions (`src/main.rs` and `src/bin/precision_test.rs`) are listed separately since they belong to different binary targets (`rustmspt` and `precision_test`).
 - Two `build_triangle_buffer` functions appear (`src/gpu/s2.rs` and `src/gpu/voxel.rs`) — these are separate, independently-defined private helpers with the same name in different modules, not duplicates.
@@ -266,12 +307,12 @@ Master index of every documented function, struct, enum, and constant across `sr
 |---|---|
 | [core-and-compute.md](core-and-compute.md) | `main.rs`, `lib.rs`, `error.rs`, `types.rs`, `bin/precision_test.rs`, `compute/*` |
 | [config.md](config.md) | `config/*` — YAML config structs and deserialization helpers |
-| [geometry-core.md](geometry-core.md) | `geometry/{mod,bbox,mesh_ops,spatial}.rs` |
+| [geometry-core.md](geometry-core.md) | `geometry/{mod,bbox,mesh_ops,spatial,render}.rs` |
 | [geometry-volume-collision.md](geometry-volume-collision.md) | `geometry/{volume,collision,forging}.rs` |
 | [geometry-analysis.md](geometry-analysis.md) | `geometry/{metrics,s2}.rs` |
 | [gpu.md](gpu.md) | `gpu/*` (feature-gated) |
-| [io.md](io.md) | `io/{stl,volume}.rs` |
-| [pipeline-core.md](pipeline-core.md) | `pipeline/{mod,rotation,scale,forge,measure}.rs` |
+| [io.md](io.md) | `io/{image,stl,volume}.rs` |
+| [pipeline-core.md](pipeline-core.md) | `pipeline/{mod,rotation,scale,forge,measure,render}.rs` |
 | [pipeline-crop-and-splitfilter.md](pipeline-crop-and-splitfilter.md) | `pipeline/{crop,split_filter}.rs` |
 | [pipeline-packing.md](pipeline-packing.md) | `pipeline/{pack,pack_targets}.rs` |
 | [pipeline-optimize.md](pipeline-optimize.md) | `pipeline/optimize.rs` |

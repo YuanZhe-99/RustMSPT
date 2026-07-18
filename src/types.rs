@@ -105,3 +105,36 @@ impl Mesh {
         self.vertices.is_empty() || self.faces.is_empty()
     }
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RenderedImage {
+    pub width: usize,
+    pub height: usize,
+    pub rgba: Vec<u8>,
+}
+
+impl RenderedImage {
+    // AI-FUNC-SUMMARY: Construct an RGBA8 image buffer; returns RenderedImage; side effects: None.
+    // Notes: rgba must hold exactly width * height * 4 bytes, row-major from the top row.
+    pub fn new(width: usize, height: usize, rgba: Vec<u8>) -> Self {
+        debug_assert_eq!(rgba.len(), width * height * 4);
+        Self {
+            width,
+            height,
+            rgba,
+        }
+    }
+
+    // AI-FUNC-SUMMARY: Construct a solid-color RGBA8 image; returns RenderedImage; side effects: allocates width*height*4 bytes.
+    pub fn filled(width: usize, height: usize, color: [u8; 4]) -> Self {
+        let mut rgba = vec![0u8; width * height * 4];
+        for px in rgba.chunks_exact_mut(4) {
+            px.copy_from_slice(&color);
+        }
+        Self {
+            width,
+            height,
+            rgba,
+        }
+    }
+}

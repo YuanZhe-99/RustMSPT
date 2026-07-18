@@ -9,7 +9,7 @@ This page documents the crate root and entry points (`src/lib.rs`, `src/main.rs`
 | `RustMsptError` | `src/error.rs:4` | Crate-wide error enum covering I/O, YAML, TIFF, config, mesh, and GPU failures. |
 | `Result` | `src/error.rs:27` | Type alias `Result<T> = std::result::Result<T, RustMsptError>` used throughout the crate. |
 | `Cli` | `src/main.rs:19` | Top-level clap CLI struct wrapping a `Commands` subcommand. |
-| `Commands` | `src/main.rs:25` | Enum of the 7 CLI subcommands (Forge/Measure/Optimize/Pack/Scale/Crop/SplitFilter). |
+| `Commands` | `src/main.rs:25` | Enum of the 8 CLI subcommands, including Render. |
 | `default_config_path` | `src/main.rs:85` | Builds the default config path under `data/input/`. |
 | `pick_config_path` | `src/main.rs:90` | Chooses a user-supplied config path or falls back to the default. |
 | `main` (main.rs) | `src/main.rs:100` | CLI entry point: parses args, loads config, applies overrides, runs the selected pipeline. |
@@ -30,6 +30,9 @@ This page documents the crate root and entry points (`src/lib.rs`, `src/main.rs`
 | `Mesh` | `src/types.rs:89` | Vertex/face container: `vertices: Vec<Vec3>`, `faces: Vec<Triangle>`. |
 | `Mesh::empty` | `src/types.rs:96` | Constructs an empty mesh. |
 | `Mesh::is_empty` | `src/types.rs:104` | True if the mesh has no vertices or no faces. |
+| `RenderedImage` | `src/types.rs` | Top-row-first RGBA8 image buffer. |
+| `RenderedImage::new` | `src/types.rs` | Constructs an RGBA8 image from bytes. |
+| `RenderedImage::filled` | `src/types.rs` | Allocates a solid-color RGBA8 image. |
 | `AccelerationMode` | `src/compute/backend.rs:5` | Enum of requested compute modes: `Auto` (default), `Cpu`, `Gpu`. |
 | `AccelerationMode::fmt` (Display) | `src/compute/backend.rs:12` | Formats the mode as `"auto"`/`"cpu"`/`"gpu"`. |
 | `BackendCaps` | `src/compute/backend.rs:23` | Reported capabilities of a selected backend (name, GPU support, buffer size limits). |
@@ -41,6 +44,7 @@ This page documents the crate root and entry points (`src/lib.rs`, `src/main.rs`
 | `FallbackReason` | `src/compute/policy.rs:4` | Records why a requested backend could not be honored and what was requested instead. |
 | `BackendSelection` | `src/compute/policy.rs:10` | Result of backend selection: chosen `ComputeBackend` plus optional `FallbackReason`. |
 | `select_backend` | `src/compute/policy.rs:21` | Central CPU/GPU/Auto dispatch policy used by compute-heavy pipelines. |
+| `select_backend_for_workload` | `src/compute/policy.rs` | Unit-aware backend selection for pixels or other work items. |
 
 ## Module role: `lib.rs`
 
@@ -50,7 +54,7 @@ This page documents the crate root and entry points (`src/lib.rs`, `src/main.rs`
 
 `src/error.rs` defines the crate-wide error type used by (almost) every fallible function in the library.
 
-- **`RustMsptError`** (`src/error.rs:4`) — a `thiserror`-derived enum with variants: `Io` (wraps `std::io::Error`, via `#[from]`), `Yaml` (wraps `serde_yaml::Error`, via `#[from]`), `Tiff` (wraps `tiff::TiffError`, via `#[from]`), `InvalidConfig(String)`, `InvalidMesh(String)`, `NotAvailable(String)`, and `Gpu(String)`. The `#[from]` variants let `?` auto-convert `io::Error`/`serde_yaml::Error`/`tiff::TiffError` into `RustMsptError` at call sites.
+- **`RustMsptError`** (`src/error.rs:4`) — a `thiserror`-derived enum with I/O, YAML, TIFF, image, config, mesh, availability, and GPU variants. `Image` wraps `image::ImageError` via `#[from]`.
 - **`Result<T>`** (`src/error.rs:27`) — alias for `std::result::Result<T, RustMsptError>`, used as the return type across config loading, geometry, I/O, and pipeline code.
 
 Neither item is a function, so no per-function entry is given per this page's documentation scope.
@@ -61,7 +65,7 @@ Neither item is a function, so no per-function entry is given per this page's do
 
 ### CLI structure
 
-`Cli` (`src/main.rs:19`) is the top-level `#[derive(Parser)]` struct; it holds a single `command: Commands` field. `Commands` (`src/main.rs:25`) is a `#[derive(Subcommand)]` enum with seven variants, each carrying the same three optional arguments:
+`Cli` holds a single `command: Commands` field. `Commands` has eight variants, each carrying the same three optional arguments:
 
 | Subcommand | Config struct loaded | Default config file |
 |---|---|---|
@@ -72,6 +76,7 @@ Neither item is a function, so no per-function entry is given per this page's do
 | `Scale` | `ScaleConfig` | `scale_config.yaml` |
 | `Crop` | `CropConfig` | `crop_config.yaml` |
 | `SplitFilter` | `SplitFilterConfig` | `split_filter_config.yaml` |
+| `Render` | `RenderConfig` | `render_config.yaml` |
 
 Each variant accepts `--config <PathBuf>`, `--input <PathBuf>`, and `--output <PathBuf>`, all optional. `--config` selects which YAML file to load (see `pick_config_path`); `--input`/`--output`, when present, overwrite the corresponding path field(s) on the loaded config object before the pipeline runs.
 
@@ -318,3 +323,10 @@ This is the central CPU/GPU/Auto dispatch policy for the crate. Any pipeline sta
   - `requested == Auto`: first compares `workload_voxels` against `gpu_min_voxels.unwrap_or(250_000)`; if below threshold, immediately returns CPU with a fallback reason citing the voxel counts, without attempting GPU init at all. Otherwise, follows the same GPU-init/memory-limit logic as the `Gpu` arm (with `requested: Auto` in any resulting `FallbackReason`).
 - **Side effects:** When the `gpu` feature is enabled and `requested` is `Gpu` or `Auto` with a workload at or above the voxel threshold, calls `crate::gpu::try_init_gpu()`, which may initialize a wgpu adapter — documented elsewhere as a potentially heavy first call (adapter/device enumeration and creation).
 - **Notes:** `Auto` mode's threshold check happens *before* any GPU probing, so small workloads never pay the GPU-init cost even if a GPU is available. When the `gpu` feature is not compiled in, both the `Gpu` and `Auto` arms always resolve to `Cpu` with a fallback reason of `"cargo feature 'gpu' is not enabled"`, regardless of `workload_voxels` (for `Gpu`) or after the threshold check (for `Auto`). The `gpu_memory_limit_mb` check only triggers when `max_storage_buffer_binding_size > 0`, avoiding a false-positive fallback on adapters that report `0` for this field.
+
+#### select_backend_for_workload
+
+- **Signature:** `pub fn select_backend_for_workload(requested: AccelerationMode, gpu_min_workload: Option<usize>, gpu_memory_limit_mb: Option<u64>, workload: usize, workload_unit: &str) -> BackendSelection`
+- **Purpose:** Generalizes backend selection beyond voxels. `Auto` checks the supplied threshold before probing; fallback text uses `workload_unit` (render passes `pixels`). `select_backend` remains the voxel wrapper.
+
+`RenderedImage` stores `width`, `height`, and top-row-first RGBA8 bytes. `new` constructs from bytes and `filled` allocates a solid image. `RustMsptError::Image` wraps image-encoder failures. `Commands` now includes `Render`, whose CLI arm loads `render_config.yaml` and applies input/output overrides.

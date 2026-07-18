@@ -1,5 +1,7 @@
 # 核心与计算参考
 
+> **待翻译：** `RenderedImage`、`select_backend_for_workload`、`RustMsptError::Image` 和 `Render` CLI 的详细契约见[英文参考](../../en-us/reference/core-and-compute.md)。
+
 本页文档记录了 crate 根与入口点（`src/lib.rs`、`src/main.rs`、`src/error.rs`、`src/types.rs`）、独立诊断二进制文件 `src/bin/precision_test.rs`，以及 `src/compute/` 中的 CPU/GPU 后端选择层（`mod.rs`、`backend.rs`、`policy.rs`）。
 
 ## 索引

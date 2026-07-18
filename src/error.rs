@@ -11,6 +11,9 @@ pub enum RustMsptError {
     #[error("TIFF error: {0}")]
     Tiff(#[from] tiff::TiffError),
 
+    #[error("Image error: {0}")]
+    Image(#[from] image::ImageError),
+
     #[error("Invalid config: {0}")]
     InvalidConfig(String),
 

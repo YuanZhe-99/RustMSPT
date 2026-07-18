@@ -3,6 +3,7 @@ pub mod collision;
 pub mod forging;
 pub mod mesh_ops;
 pub mod metrics;
+pub mod render;
 pub mod s2;
 pub mod spatial;
 pub mod volume;
@@ -19,6 +20,10 @@ pub use mesh_ops::{
     wrap_mesh_centroid_to_box,
 };
 pub use metrics::{mesh_metrics, scale_mesh_to_equivalent_diameter, MeshMetrics};
+pub use render::{
+    build_render_camera, parse_render_projection, parse_render_vec3, render_mesh_cpu,
+    RenderCamera, RenderCameraSpec, RenderProjection, RenderSettings,
+};
 pub use s2::{approximate_s2, calculate_s2, l2_norm, point_inside_mesh, shell_offsets_for_distance};
 #[cfg(feature = "gpu")]
 pub use s2::{calculate_s2_with_gpu, calculate_s2_gpu_exact};

@@ -1,5 +1,7 @@
 # 函数索引
 
+> **待翻译：** 新增 render 配置、相机、CPU/GPU 渲染、PNG I/O、`RenderedImage` 和 `RenderPipeline` 的完整索引见[英文函数索引](../../en-us/reference/function-index.md)。
+
 `src/` 中每个已记录的函数、结构体、枚举和常量的主索引，编译自每份[参考文档](.)顶部的 `## Index` 表格。每一行都链接到该条目的完整说明。
 
 | 条目 | 模块 | 源码位置 | 概述 |

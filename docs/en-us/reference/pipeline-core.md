@@ -1,6 +1,6 @@
 # Pipeline Core Reference
 
-Covers the `Pipeline` trait infrastructure and four of the simpler/support pipelines: `rotation`, `scale`, `forge`, and `measure`. The `pack`, `optimize`, `crop`, and `split_filter` pipelines are documented elsewhere.
+Covers the `Pipeline` trait infrastructure and the simpler/support pipelines: `rotation`, `scale`, `forge`, `measure`, and `render`. The `pack`, `optimize`, `crop`, and `split_filter` pipelines are documented elsewhere.
 
 ## Index
 
@@ -21,6 +21,8 @@ Covers the `Pipeline` trait infrastructure and four of the simpler/support pipel
 | `MeasurePipeline::parse_optional_bbox` | `src/pipeline/measure.rs:22` | Parses an optional bounding box (3-element size or 6-element min/max) from config. |
 | `MeasurePipeline::l2_error` | `src/pipeline/measure.rs:31` | Computes the L2 distance between two S2 value vectors over their common prefix length. |
 | `MeasurePipeline::run` | `src/pipeline/measure.rs:53` | Loads an STL, computes volume fraction and S2 correlation (exact/MC/both, CPU or GPU), writes a report. |
+| `RenderPipeline` | `src/pipeline/render.rs` | Holds `RenderConfig`. |
+| `RenderPipeline::run` | `src/pipeline/render.rs` | Loads STL, builds camera, selects CPU/GPU, and writes PNG. |
 
 ---
 
@@ -34,7 +36,7 @@ Covers the `Pipeline` trait infrastructure and four of the simpler/support pipel
 - **Parameters:** `&self` — the concrete pipeline struct's own config.
 - **Returns:** `Ok(())` on success, or a `RustMsptError` on failure.
 - **Side effects:** Varies entirely by implementer — typically reads an input STL, performs geometry work, writes output file(s), and prints `[Info]`/`[Warning]` progress lines to stdout/stderr.
-- **Notes:** Implemented by all 7 pipeline structs in this crate: `CropPipeline`, `ForgePipeline`, `MeasurePipeline`, `OptimizePipeline`, `PackPipeline`, `ScalePipeline`, and `SplitFilterPipeline`. `main.rs` constructs the pipeline corresponding to the requested subcommand/config and calls `.run()` on it exactly once per invocation; there is no built-in chaining or looping over pipelines within a single process run.
+- **Notes:** Implemented by all 8 pipeline structs in this crate, including `RenderPipeline`. `main.rs` constructs the selected pipeline and calls `.run()` once per invocation.
 - **See also:** `src/main.rs` for pipeline dispatch.
 
 #### create_progress_bar
@@ -204,3 +206,12 @@ Shared rotation-axis utilities used by the `pack` and `optimize` pipelines when 
   - `method = "exact"` (alone or as part of `"both"`) is automatically downgraded to `"monte_carlo"` when the voxel grid exceeds `exact_voxel_limit = 1_500_000` voxels, with a `[Warning]` printed; for `"both"` this means only the Monte Carlo branch runs and the report notes "(exact skipped by voxel limit)".
   - GPU code paths are entirely absent when the crate is built without the `gpu` feature (`#[cfg(not(feature = "gpu"))]` branches use the CPU thread pool unconditionally); a runtime warning is printed if GPU acceleration was requested but the feature isn't compiled in.
 - **See also:** [../algorithms/s2-two-point-correlation.md](../algorithms/s2-two-point-correlation.md), [gpu.md](gpu.md)
+
+## `pipeline/render.rs`
+
+#### RenderPipeline::run
+
+- **Signature:** `fn run(&self) -> Result<()>`
+- **Purpose:** Build the configured rayon pool, load STL, parse camera values, select a pixel-workload backend, render, and call `save_image`.
+- **Side effects:** Reads STL, may initialize wgpu, writes PNG, and prints diagnostics.
+- **Notes:** GPU failures fall back to CPU. See [STL Rendering](../algorithms/stl-rendering.md).

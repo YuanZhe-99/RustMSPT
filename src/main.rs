@@ -1,13 +1,14 @@
 use clap::{Parser, Subcommand};
 use rustmspt::config::{
     load_yaml, CropConfig, ForgingConfig, MeasurementConfig, OptimizationConfig, PackingConfig,
-    ScaleConfig, SplitFilterConfig,
+    RenderConfig, ScaleConfig, SplitFilterConfig,
 };
 use rustmspt::pipeline::crop::CropPipeline;
 use rustmspt::pipeline::forge::ForgePipeline;
 use rustmspt::pipeline::measure::MeasurePipeline;
 use rustmspt::pipeline::optimize::OptimizePipeline;
 use rustmspt::pipeline::pack::PackPipeline;
+use rustmspt::pipeline::render::RenderPipeline;
 use rustmspt::pipeline::scale::ScalePipeline;
 use rustmspt::pipeline::split_filter::SplitFilterPipeline;
 use rustmspt::pipeline::Pipeline;
@@ -48,6 +49,14 @@ enum Commands {
         output: Option<PathBuf>,
     },
     Pack {
+        #[arg(long)]
+        config: Option<PathBuf>,
+        #[arg(long)]
+        input: Option<PathBuf>,
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    Render {
         #[arg(long)]
         config: Option<PathBuf>,
         #[arg(long)]
@@ -160,6 +169,21 @@ fn main() -> anyhow::Result<()> {
                 conf.output.path = output.to_string_lossy().to_string();
             }
             PackPipeline { config: conf }.run()?;
+        }
+        Commands::Render {
+            config,
+            input,
+            output,
+        } => {
+            let path = pick_config_path(config, "render_config.yaml");
+            let mut conf: RenderConfig = load_yaml(&path)?;
+            if let Some(input) = input {
+                conf.render.stl_path = input.to_string_lossy().to_string();
+            }
+            if let Some(output) = output {
+                conf.render.output_path = output.to_string_lossy().to_string();
+            }
+            RenderPipeline { config: conf }.run()?;
         }
         Commands::Scale {
             config,

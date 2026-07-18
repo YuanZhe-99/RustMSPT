@@ -12,6 +12,7 @@ RustMSPT is a standalone Rust toolkit for STL-based microstructure processing.
   - `scale`
   - `crop`
   - `split-filter`
+  - `render`
 - STL I/O:
   - Load ASCII and Binary STL (auto-detect)
   - Save Binary STL by default
@@ -28,6 +29,7 @@ RustMSPT is a standalone Rust toolkit for STL-based microstructure processing.
   - Monte Carlo S2 on GPU (WGSL compute shader)
   - Exact S2 via GPU voxelization + shell pair counting
   - Volume rotate-and-crop transform on GPU
+  - Offscreen STL rendering with depth-buffered rasterization
   - `acceleration.mode` config: `auto` | `cpu` | `gpu`
   - Graceful CPU fallback when GPU is unavailable
 - Performance controls:
@@ -92,6 +94,7 @@ cargo run -- pack
 cargo run -- scale
 cargo run -- crop
 cargo run -- split-filter
+cargo run -- render
 ```
 
 Override config path:

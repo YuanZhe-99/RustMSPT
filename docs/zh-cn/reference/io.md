@@ -1,5 +1,7 @@
 # I/O 参考文档
 
+> **待翻译：** `save_image` 的详细契约见[英文 I/O 参考](../../en-us/reference/io.md#imagers)。
+
 本页记录 `src/io/mod.rs`（`io` 包的模块枢纽）、`src/io/stl.rs`（ASCII/二进制 STL 网格的读写）以及 `src/io/volume.rs`（TIFF 与 RAW 体数据的读写）。
 
 ## 索引

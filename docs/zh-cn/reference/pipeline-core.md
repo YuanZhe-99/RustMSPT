@@ -1,5 +1,7 @@
 # 流水线核心参考
 
+> **待翻译：** `RenderPipeline::run` 的详细契约见[英文流水线参考](../../en-us/reference/pipeline-core.md#pipelinerenderrs)。
+
 涵盖 `Pipeline` trait 基础设施以及四个较简单/辅助性的流水线：`rotation`、`scale`、`forge` 和 `measure`。`pack`、`optimize`、`crop` 和 `split_filter` 流水线在其他文档中说明。
 
 ## 索引

@@ -6,6 +6,16 @@ This page documents the core geometry primitives in `src/geometry/`: axis-aligne
 
 | Function | Location | Summary |
 |---|---|---|
+| `RenderProjection` | `src/geometry/render.rs` | Orthographic or perspective projection. |
+| `RenderCameraSpec` | `src/geometry/render.rs` | User camera/framing inputs. |
+| `RenderCamera` | `src/geometry/render.rs` | Validated camera basis, projection, and clipping data. |
+| `RenderSettings` | `src/geometry/render.rs` | Shared CPU/GPU appearance settings. |
+| `parse_render_vec3` | `src/geometry/render.rs` | Validates a finite three-element config vector. |
+| `parse_render_projection` | `src/geometry/render.rs` | Parses orthographic/perspective projection names. |
+| `build_render_camera` | `src/geometry/render.rs` | Builds and auto-frames a validated camera. |
+| `RenderCamera::ray_for_pixel` | `src/geometry/render.rs` | Generates a world-space pixel-center ray. |
+| `RenderCamera::view_proj_matrix` | `src/geometry/render.rs` | Builds a wgpu-compatible view-projection matrix. |
+| `render_mesh_cpu` | `src/geometry/render.rs` | Rayon-parallel QBVH nearest-hit renderer. |
 | `mesh_bbox` | `src/geometry/bbox.rs:8` | Axis-aligned bounding box of a mesh. |
 | `bbox_overlaps` | `src/geometry/bbox.rs:28` | Strict overlap test between two bounding boxes. |
 | `bbox_distance` | `src/geometry/bbox.rs:38` | Minimum Euclidean distance between two bounding boxes. |
@@ -33,6 +43,14 @@ This page documents the core geometry primitives in `src/geometry/`: axis-aligne
 ## Module role: `geometry/mod.rs`
 
 `src/geometry/mod.rs` declares the submodules of the `geometry` package (`bbox`, `collision`, `forging`, `mesh_ops`, `metrics`, `s2`, `spatial`, `volume`) and re-exports their public items at the `geometry::` path. It contains no functions of its own — it exists purely so callers can write `crate::geometry::mesh_bbox` etc. instead of reaching into individual submodules. The `gpu` feature gate also conditionally re-exports GPU-accelerated `s2` variants here.
+
+## render.rs
+
+`RenderProjection` selects orthographic or perspective projection. `RenderCameraSpec` carries focus/view/up, projection/FOV/distance, padding, and resolution; `build_render_camera(mesh, spec)` validates it, derives an orthonormal basis, auto-frames the mesh bbox, and returns `RenderCamera`. `parse_render_vec3` and `parse_render_projection` convert YAML values with `InvalidConfig` errors.
+
+`RenderCamera::ray_for_pixel` samples top-row-first pixel centers. `view_proj_matrix` returns a row-major right-handed matrix with wgpu's `[0,1]` depth convention. `render_mesh_cpu` converts the mesh to parry3d `TriMesh`, casts the nearest QBVH ray per pixel in rayon row tasks, applies two-sided headlight shading, and returns `RenderedImage`. Private helpers normalize vectors, choose fallback up axes, enumerate bbox corners, multiply matrices, and shade channels without side effects.
+
+See [STL Rendering](../algorithms/stl-rendering.md).
 
 ## bbox.rs
 

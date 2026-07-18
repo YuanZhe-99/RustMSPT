@@ -4,6 +4,7 @@ pub mod optimize;
 pub mod pack;
 pub mod pack_targets;
 pub mod crop;
+pub mod render;
 pub mod rotation;
 pub mod scale;
 pub mod split_filter;

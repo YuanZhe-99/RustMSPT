@@ -1,5 +1,7 @@
 # Geometry Core Reference
 
+> **待翻译：** `src/geometry/render.rs` 的相机、投影和 CPU 渲染契约见[英文参考](../../en-us/reference/geometry-core.md#renderrs)。
+
 本页记录 `src/geometry/` 中的核心几何图元：轴对齐包围盒与堆积边界检查（`bbox.rs`）、网格操作工具（`mesh_ops.rs`），以及用于邻居查询的均匀空间网格（`spatial.rs`）。本页还涵盖 `src/geometry/mod.rs`，它仅作为更大的 `geometry` 包的模块中枢。
 
 ## 索引
