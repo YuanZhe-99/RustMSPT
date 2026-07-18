@@ -1,0 +1,368 @@
+# 流水线：裁剪与拆分-过滤参考
+
+涵盖 `crop` 流水线（`src/pipeline/crop.rs`）——背景检测、PCA 对齐、旋转+裁剪、CT 体数据的边缘伪影裁剪——以及 `split_filter` 流水线（`src/pipeline/split_filter.rs`）——连通分量拆分加几何/统计颗粒过滤。
+
+## 索引
+
+| 条目 | 位置 | 摘要 |
+|---|---|---|
+| `CropPipeline`（结构体） | `src/pipeline/crop.rs:14` | 持有裁剪流水线所用的 `CropConfig`。 |
+| `InterpolationMode`（枚举） | `src/pipeline/crop.rs:19` | 旋转+裁剪期间使用的最近邻与三线性重采样模式。 |
+| `parse_byte_order` | `src/pipeline/crop.rs:25` | 将 `little`/`big`（或 `le`/`be`）解析为 `ByteOrder`。 |
+| `parse_interpolation_mode` | `src/pipeline/crop.rs:36` | 将 `nearest`/`trilinear` 解析为 `InterpolationMode`，默认为三线性。 |
+| `load_input_volume` | `src/pipeline/crop.rs:52` | 根据配置从原始文件夹或 TIFF/TIFF 文件夹加载输入 CT 体数据。 |
+| `voxel_index` | `src/pipeline/crop.rs:86` | 计算 `(x, y, z)` 体素坐标对应的扁平数据索引。 |
+| `sample_voxel_or_background` | `src/pipeline/crop.rs:91` | 在整数坐标处读取体素，越界时返回背景值。 |
+| `sample_nearest` | `src/pipeline/crop.rs:106` | 在小数源坐标处进行最近邻采样。 |
+| `sample_trilinear` | `src/pipeline/crop.rs:114` | 在小数源坐标处进行三线性插值采样。 |
+| `stabilize_bound` | `src/pipeline/crop.rs:147` | 将接近整数的浮点数在误差范围内吸附到其精确整数值。 |
+| `float_bounds_to_inclusive_i64` | `src/pipeline/crop.rs:157` | 将浮点最小/最大边界转换为闭区间整数 `[start, end]` 范围。 |
+| `boundary_non_bg_ratio` | `src/pipeline/crop.rs:170` | 给定厚度的边界壳层中非背景体素所占的比例。 |
+| `infer_trim_pixels` | `src/pipeline/crop.rs:211` | 根据边界伪影强度启发式地推断需裁剪的 0/1/2 像素。 |
+| `resolve_trim_pixels` | `src/pipeline/crop.rs:229` | 从配置中解析出有效的边缘裁剪像素数，支持 `-1` 表示自动。 |
+| `trim_volume_border` | `src/pipeline/crop.rs:252` | 从体数据的 XY 面裁剪固定数量的边界体素。 |
+| `detect_background_mode` | `src/pipeline/crop.rs:296` | 将体数据边界上的众数体素值检测为背景值。 |
+| `estimate_pca_bbox` | `src/pipeline/crop.rs:330` | 计算 PCA 旋转、质心以及旋转坐标系下的前景包围盒。 |
+| `rotate_and_crop` | `src/pipeline/crop.rs:432` | CPU 上、基于 rayon 并行的旋转+裁剪，将体数据重采样为轴对齐输出。 |
+| `rotate_and_crop_gpu` | `src/pipeline/crop.rs:494` | 通过 `GpuVolumeTransformPipeline` 实现的 GPU 加速旋转+裁剪（`gpu` 特性）。 |
+| `CropPipeline::run` | `src/pipeline/crop.rs:559` | 编排加载 → 背景检测 → PCA 包围盒 → 旋转+裁剪（GPU 或 CPU）→ 边缘裁剪 → 保存 TIFF。 |
+| `SplitFilterPipeline`（结构体） | `src/pipeline/split_filter.rs:13` | 持有拆分-过滤流水线所用的 `SplitFilterConfig`。 |
+| `VolumeStats`（结构体） | `src/pipeline/split_filter.rs:18` | 保留颗粒体积的最小/最大/均值/中位数汇总。 |
+| `volume_stats_for_kept` | `src/pipeline/split_filter.rs:26` | 在 `keep` 标志为真的颗粒上计算 `VolumeStats`。 |
+| `count_kept` | `src/pipeline/split_filter.rs:54` | 统计 `keep` 布尔切片中 `true` 的条目数。 |
+| `report_step` | `src/pipeline/split_filter.rs:59` | 为某一过滤步骤追加一行前/后/移除数量的汇总。 |
+| `append_volume_histogram` | `src/pipeline/split_filter.rs:71` | 追加一份体积值的单一文本直方图。 |
+| `append_volume_histogram_comparison` | `src/pipeline/split_filter.rs:119` | 追加一份并排显示的前/后体积值文本直方图对比。 |
+| `normal_cdf` | `src/pipeline/split_filter.rs:202` | 标准正态分布 CDF，通过 `erf_approx` 计算。 |
+| `erf_approx` | `src/pipeline/split_filter.rs:208` | Abramowitz & Stegun 7.1.26 误差函数近似。 |
+| `apply_lognormal_rebalance` | `src/pipeline/split_filter.rs:225` | 相对于拟合的对数正态分布，从代表过多的对数体积区间中剔除多余颗粒。 |
+| `SplitFilterPipeline::run` | `src/pipeline/split_filter.rs:300` | 编排拆分 → 长宽比/尖锐度/体积过滤 → 保存 STL → 报告生成。 |
+
+---
+
+## `pipeline/crop.rs`
+
+CT 体数据裁剪流水线。加载体数据、检测背景强度、计算基于 PCA 的旋转以将前景主轴与坐标轴对齐、将体数据重采样到该旋转+裁剪后的坐标系中、可选地裁剪残留的边界伪影，并将结果保存为 TIFF。
+
+### 公开条目
+
+#### CropPipeline (struct)
+
+- **源码位置：** `src/pipeline/crop.rs:14`
+- **用途：** 封装一个 `CropConfig` 并为 crop 子命令实现 `Pipeline`。
+- **字段：** `config: CropConfig`。
+
+#### InterpolationMode (enum)
+
+- **源码位置：** `src/pipeline/crop.rs:19`
+- **用途：** 选择将输出体素映射回源坐标时所用的重采样方案。
+- **变体：** `Nearest`、`Trilinear`。
+- **说明：** `Debug, Clone, Copy, PartialEq, Eq`。配置中未设置时默认为 `Trilinear`（参见 `parse_interpolation_mode`）。
+
+#### CropPipeline::run
+
+- **签名：** `fn run(&self) -> Result<()>`
+- **源码位置：** `src/pipeline/crop.rs:559`
+- **用途：** 端到端执行完整的裁剪流水线：加载 CT 体数据、检测其背景值、对前景进行 PCA 对齐、旋转并裁剪到一个轴对齐包围盒、可选地裁剪边缘伪影，并保存结果。
+- **参数：** 读取 `self.config: CropConfig`——输入类型/路径（原始数据或 TIFF，含可选的切片范围与原始布局说明）、`interpolation` 模式字符串、`edge_trim`（-1/0/1/2），以及输出路径/文件夹前缀/文件夹扩展名。
+- **返回值：** 成功时返回 `Ok(())`；配置值有误或裁剪量过大时返回 `RustMsptError::InvalidConfig`；透传 I/O 及网格/体数据错误。
+- **副作用：** 从磁盘读取输入体数据（`load_input_volume`）；在 `gpu` 特性下，可能初始化 GPU 流水线并派发一次计算通道；通过 `save_tiff_or_folder_with_ext` 将裁剪后的体数据写为 TIFF（或 TIFF 文件夹）；在每个阶段向标准输出打印 `[Info]`/`[Warning]` 进度行（输入形状、检测到的背景值、插值模式、前景体素数量、旋转后包围盒、整数包围盒、边缘裁剪像素数、输出形状、输出路径）。
+- **说明：** 流水线阶段，按顺序：
+  1. `load_input_volume`——加载原始数据或 TIFF 输入。
+  2. `detect_background_mode`——找出众数边界体素值。
+  3. `parse_interpolation_mode`——从配置解析最近邻或三线性模式。
+  4. `estimate_pca_bbox`——计算 PCA 旋转、质心以及旋转坐标系下的前景边界。
+  5. 旋转+裁剪：当使用 `--features gpu` 编译**且**输出体素数（`(x1-x0+1)*(y1-y0+1)*(z1-z0+1)`）超过 100,000 时，调用 `rotate_and_crop_gpu`；GPU 失败时打印 `[Warning]` 并回退到 CPU 路径（`rotate_and_crop`）。低于 10 万体素阈值，或未启用 `gpu` 特性时，始终使用 CPU 路径。
+  6. `resolve_trim_pixels` + `trim_volume_border`——可选的边缘伪影裁剪（当 `edge_trim == -1` 时自动检测）。
+  7. `save_tiff_or_folder_with_ext`——写出输出结果。
+- **另请参阅：** `estimate_pca_bbox`、`rotate_and_crop`、`rotate_and_crop_gpu`；算法细节见 [../algorithms/pca-volume-alignment-crop.md](../algorithms/pca-volume-alignment-crop.md)；GPU 派发细节见 [gpu.md](gpu.md)。
+
+> **算法：** 完整的 PCA 对齐与裁剪算法描述见 [../algorithms/pca-volume-alignment-crop.md](../algorithms/pca-volume-alignment-crop.md)（涵盖 `estimate_pca_bbox`、`rotate_and_crop`，以及 `CropPipeline::run` 如何组合它们）。
+
+### 私有辅助函数
+
+#### parse_byte_order
+
+- **签名：** `fn parse_byte_order(value: Option<&str>) -> Result<ByteOrder>`
+- **源码位置：** `src/pipeline/crop.rs:25`
+- **用途：** 将原始体数据的字节序配置字符串解析为 `io::ByteOrder`。
+- **参数：** `value`——`"little"`/`"le"` 或 `"big"`/`"be"`（不区分大小写，自动去除空白）；为 `None` 时默认为 `"little"`。
+- **返回值：** `Ok(ByteOrder::LittleEndian)`、`Ok(ByteOrder::BigEndian)`，或对其他任何字符串返回 `Err(InvalidConfig)`。
+- **副作用：** 无。
+
+#### parse_interpolation_mode
+
+- **签名：** `fn parse_interpolation_mode(value: Option<&str>) -> Result<InterpolationMode>`
+- **源码位置：** `src/pipeline/crop.rs:36`
+- **用途：** 解析裁剪配置中的插值模式字符串。
+- **参数：** `value`——`"nearest"` 或 `"trilinear"`（不区分大小写，自动去除空白）；为 `None` 时默认为 `"trilinear"`。
+- **返回值：** `Ok(InterpolationMode)`，或对无法识别的字符串返回 `Err(InvalidConfig)`。
+- **副作用：** 无。
+
+#### load_input_volume
+
+- **签名：** `fn load_input_volume(config: &CropConfig) -> Result<Volume3D>`
+- **源码位置：** `src/pipeline/crop.rs:52`
+- **用途：** 根据 `config.input.type` 加载裁剪流水线的输入体数据。
+- **参数：** `config`——完整的 `CropConfig`；读取 `input.type`（`"raw"` 或 `"tiff"`/`"tif"`）、`input.path`、`input.slice_start`/`slice_end`（默认为 -1，表示“不限制”），以及针对原始输入的 `input.raw`（宽/高/位深/是否有符号/字节序）。
+- **返回值：** 一个已加载的 `Volume3D`。
+- **副作用：** 从磁盘读取文件（原始切片文件夹，或 TIFF 文件/文件夹）。
+- **说明：** 若 `input.type=raw` 但缺少 `input.raw`，或 `input.type` 既非 `raw` 也非 `tiff`/`tif`，则返回 `RustMsptError::InvalidConfig`。
+
+#### voxel_index
+
+- **简明形式：** `fn voxel_index(width: usize, height: usize, x: usize, y: usize, z: usize) -> usize` —— `src/pipeline/crop.rs:86`。为 `Volume3D` 的行主序/切片主序布局返回扁平数据索引 `z*width*height + y*width + x`。纯函数，无副作用。
+
+#### sample_voxel_or_background
+
+- **签名：** `fn sample_voxel_or_background(volume: &Volume3D, background: i64, x: isize, y: isize, z: isize) -> i64`
+- **源码位置：** `src/pipeline/crop.rs:91`
+- **用途：** 在整数坐标处读取单个体素，将任何越界坐标视为背景。
+- **参数：** `volume`、`background`（填充值）、`x`/`y`/`z`（有符号，可能为负或超出体数据范围）。
+- **返回值：** 体素值；若任一坐标为负或 `>=` 对应维度，则返回 `background`。
+- **副作用：** 无。
+
+#### sample_nearest
+
+- **签名：** `fn sample_nearest(volume: &Volume3D, background: i64, src_x: f64, src_y: f64, src_z: f64) -> i64`
+- **源码位置：** `src/pipeline/crop.rs:106`
+- **用途：** 在小数源坐标处进行最近邻重采样。
+- **参数：** 源体数据空间中的小数坐标 `src_x/src_y/src_z`。
+- **返回值：** 将每个坐标四舍五入到最近整数后委托给 `sample_voxel_or_background`。
+- **副作用：** 无。
+
+#### sample_trilinear
+
+- **签名：** `fn sample_trilinear(volume: &Volume3D, background: i64, src_x: f64, src_y: f64, src_z: f64) -> i64`
+- **源码位置：** `src/pipeline/crop.rs:114`
+- **用途：** 在小数源坐标处进行三线性插值重采样。
+- **参数：** 小数坐标 `src_x/src_y/src_z`。
+- **返回值：** 周围 8 个体素（每个体素在越界时经 `sample_voxel_or_background` 单独回退为 `background`）的三线性混合值，四舍五入为 `i64`。
+- **副作用：** 无。
+- **说明：** 标准三线性公式：先沿 x 方向对 4 条边分别插值，再沿 y 方向对得到的 2 个值插值，最后沿 z 方向插值。
+
+#### stabilize_bound
+
+- **简明形式：** `fn stabilize_bound(value: f64, eps: f64) -> f64` —— `src/pipeline/crop.rs:147`。当 `value` 与 `value.round()` 之差不超过 `eps` 时，将其吸附到 `value.round()`；否则原样返回 `value`。用于抵消 PCA 旋转后包围盒坐标（概念上应为整数）的浮点漂移。纯函数。
+
+#### float_bounds_to_inclusive_i64
+
+- **签名：** `fn float_bounds_to_inclusive_i64(min_v: f64, max_v: f64, eps: f64) -> (isize, isize)`
+- **源码位置：** `src/pipeline/crop.rs:157`
+- **用途：** 将浮点 `[min_v, max_v]` 边界转换为闭区间整数体素范围。
+- **参数：** `min_v`/`max_v`——浮点边界（例如来自 `estimate_pca_bbox`）；`eps`——传给 `stabilize_bound` 的吸附容差。
+- **返回值：** `(start, end)`，其中 `start = floor(stabilize(min_v))`，`end = ceil(stabilize(max_v))`。
+- **副作用：** 无。
+- **说明：** 该模块中始终以 `eps = 1e-3` 调用。
+
+#### boundary_non_bg_ratio
+
+- **签名：** `fn boundary_non_bg_ratio(volume: &Volume3D, background: i64, thickness: usize) -> f64`
+- **源码位置：** `src/pipeline/crop.rs:170`
+- **用途：** 衡量体数据外壳（给定厚度）中有多少比例为非背景体素——作为遗留旋转/重采样边缘伪影的代理指标。
+- **参数：** `volume`、`background`、`thickness`——从每个面算起的壳层厚度（体素为单位）。
+- **返回值：** `[0, 1]` 范围内的比例；若 `thickness == 0` 或体数据没有壳层体素，则为 `0.0`。
+- **副作用：** 无。遍历体数据中的每个体素，将其分类为若位于任一 6 个面的 `thickness` 范围内则属于“壳层”。
+- **说明：** 未做并行化；`infer_trim_pixels` 每次对每个体数据调用两次（厚度分别为 1 和 2），因此每次调用的开销为 O(体数据大小)。
+
+#### infer_trim_pixels
+
+- **签名：** `fn infer_trim_pixels(volume: &Volume3D, background: i64) -> usize`
+- **源码位置：** `src/pipeline/crop.rs:211`
+- **用途：** 基于边界壳层伪影强度启发式地决定需裁剪多少像素的 XY 边界。
+- **参数：** `volume`（通常为旋转+裁剪后的输出）、`background`。
+- **返回值：** 若 `r1 > 0.08 && r2 > 0.04` 则为 `2`；否则若 `r1 > 0.03` 则为 `1`；否则为 `0`，其中 `r1`/`r2` 分别为厚度 1 和 2 时的 `boundary_non_bg_ratio`。
+- **副作用：** 无。
+- **说明：** 这是配置中 `edge_trim` 的 `-1`（“自动”）行为，由 `resolve_trim_pixels` 消费。
+
+#### resolve_trim_pixels
+
+- **签名：** `fn resolve_trim_pixels(config_value: Option<i32>, volume: &Volume3D, background: i64) -> Result<usize>`
+- **源码位置：** `src/pipeline/crop.rs:229`
+- **用途：** 从 `edge_trim` 配置值解析出有效的边缘裁剪像素数，支持自动检测。
+- **参数：** `config_value`——`-1`（通过 `infer_trim_pixels` 自动）、`0`、`1` 或 `2`；为 `None` 时默认为 `0`。`volume`/`background`——同时用于自动推断和限幅。
+- **返回值：** `Ok(usize)`，限幅为 `min(requested, min(width-1, height-1)/2, 2)`；对 `{-1, 0, 1, 2}` 之外的任何值返回 `Err(InvalidConfig)`。
+- **副作用：** 无。
+- **说明：** 该限幅确保 `trim_volume_border` 永远不会收到一个会消除整个 XY 范围的裁剪值。
+
+#### trim_volume_border
+
+- **签名：** `fn trim_volume_border(volume: &Volume3D, trim: usize) -> Result<Volume3D>`
+- **源码位置：** `src/pipeline/crop.rs:252`
+- **用途：** 从体数据的四条 XY 面边界（不包括 Z/深度面）剥离 `trim` 个体素。
+- **参数：** `volume`、`trim`——从四个 X/Y 边各自移除的像素数。
+- **返回值：** 当 `trim == 0` 时返回 `Ok(volume.clone())` 不变；否则返回一个更小的新 `Volume3D`，`width -= 2*trim`、`height -= 2*trim`，`depth` 不变；若 `width <= 2*trim || height <= 2*trim` 则返回 `Err(InvalidConfig)`。
+- **副作用：** 无（会分配一个新的数据缓冲区）。
+- **说明：** 深度（Z）方向永不裁剪——仅裁剪 X/Y（面内）边界，这与该流水线中的边缘伪影源于 XY 旋转/重采样、而非切片截断这一事实相符。
+
+#### detect_background_mode
+
+- **签名：** `fn detect_background_mode(volume: &Volume3D) -> i64`
+- **源码位置：** `src/pipeline/crop.rs:296`
+- **用途：** 将 CT 体数据边界面上出现频率最高的体素值检测为背景强度。
+- **参数：** `volume`。
+- **返回值：** 众数边界体素值；若体数据没有边界体素（退化/空体数据）则为 `0`。
+- **副作用：** 无。对所有边界体素（`x==0 || y==0 || z==0` 或位于对面）构建一个 `HashMap<i64, usize>`（值 → 计数），然后取计数最大者。
+- **说明：** 假定背景在边界上占主导——对于标本不触及体数据边缘的 CT 扫描而言是合理假设。并列情况通过 `max_by_key` 依 `HashMap` 迭代顺序任意打破。
+
+#### estimate_pca_bbox
+
+- **签名：** `fn estimate_pca_bbox(volume: &Volume3D, background: i64) -> Result<(Matrix3<f64>, Vector3<f64>, Vector3<f64>, Vector3<f64>, usize)>`
+- **源码位置：** `src/pipeline/crop.rs:330`
+- **用途：** 计算一个主成分旋转，将前景的主轴与坐标轴对齐，并求出该旋转坐标系下前景的包围盒。
+- **参数：** `volume`、`background`——要排除为背景的值。
+- **返回值：** `Ok((rot, centroid, min_v, max_v, count))`：
+  - `rot: Matrix3<f64>`——正交旋转矩阵（各列为前景体素协方差的特征向量，按特征值降序排序，并强制为右手系）。
+  - `centroid: Vector3<f64>`——前景体素的平均位置。
+  - `min_v`/`max_v: Vector3<f64>`——旋转坐标系下的前景包围盒（即对每个前景体素 `p`，计算 `rot^T * (p - centroid)`）。
+  - `count: usize`——前景体素数量。
+  - 若未找到前景体素（所有体素均等于 `background`），则返回 `Err(InvalidConfig)`。
+- **副作用：** 无。对体数据进行三次完整遍历：(1) 累加质心，(2) 累加关于质心的协方差，(3) 将每个前景体素投影到旋转坐标系以求出 `min_v`/`max_v`。
+- **说明：** 协方差通过 `nalgebra::SymmetricEigen` 进行特征分解；特征值按降序排序，对应的特征向量列重新组装为 `rot`。若 `det(rot) < 0`（反射而非旋转），则对第三列取负以强制为右手系。未做并行化；O(体数据大小)，需三次完整遍历，此处未使用 rayon（与并行的 `rotate_and_crop` 形成对比）。
+- **另请参阅：** 算法说明见 [../algorithms/pca-volume-alignment-crop.md](../algorithms/pca-volume-alignment-crop.md)。
+
+> **算法：** 见 [../algorithms/pca-volume-alignment-crop.md](../algorithms/pca-volume-alignment-crop.md)。
+
+#### rotate_and_crop
+
+- **签名：** `fn rotate_and_crop(volume: &Volume3D, background: i64, rot: &Matrix3<f64>, centroid: &Vector3<f64>, min_v: &Vector3<f64>, max_v: &Vector3<f64>, interpolation_mode: InterpolationMode) -> Volume3D`
+- **源码位置：** `src/pipeline/crop.rs:432`
+- **用途：** CPU 旋转+裁剪：将源体数据重采样为一个新的轴对齐体数据，恰好覆盖旋转坐标系下的前景包围盒。
+- **参数：** `volume`、`background`；来自 `estimate_pca_bbox` 的 `rot`/`centroid`；旋转坐标系边界 `min_v`/`max_v`；`interpolation_mode`（`Nearest` 或 `Trilinear`）。
+- **返回值：** 一个大小为 `(x1-x0+1, y1-y0+1, z1-z0+1)`（每个维度至少取 1）的新 `Volume3D`，初始化为 `background`，通过对每个输出体素做反向映射到源空间来填充。
+- **副作用：** 无（纯计算）。使用 `float_bounds_to_inclusive_i64`（`eps = 1e-3`）确定整数输出范围。
+- **说明：** 通过 rayon 的 `par_chunks_mut` 在扁平输出缓冲区上按 Z 切片并行化（每个输出切片一个分块）。对于旋转局部坐标系中的每个输出体素 `(x, y, z)`，对应的源空间坐标为 `rot * local + centroid`，根据 `interpolation_mode` 通过 `sample_nearest` 或 `sample_trilinear` 采样。
+- **另请参阅：** `rotate_and_crop_gpu`（GPU 对应实现，`gpu` 特性）；[../algorithms/pca-volume-alignment-crop.md](../algorithms/pca-volume-alignment-crop.md)。
+
+> **算法：** 见 [../algorithms/pca-volume-alignment-crop.md](../algorithms/pca-volume-alignment-crop.md)。
+
+#### rotate_and_crop_gpu
+
+> **特性门控：** 仅在使用 `--features gpu`（`#[cfg(feature = "gpu")]`）编译时启用。
+
+- **签名：** `fn rotate_and_crop_gpu(volume: &Volume3D, background: i64, rot: &Matrix3<f64>, centroid: &Vector3<f64>, min_v: &Vector3<f64>, max_v: &Vector3<f64>, interpolation_mode: InterpolationMode) -> std::result::Result<Volume3D, String>`
+- **源码位置：** `src/pipeline/crop.rs:494`
+- **用途：** `rotate_and_crop` 的 GPU 加速等价实现，通过 `GpuVolumeTransformPipeline` 派发一个 WGSL 计算着色器。
+- **参数：** 与 `rotate_and_crop` 相同。
+- **返回值：** `Ok(Volume3D)`，形状/语义与 CPU 路径相同；或 `Err(String)` 描述 GPU 初始化/派发失败。
+- **副作用：** 初始化一个 `crate::gpu::volume_transform::GpuVolumeTransformPipeline`（首次使用时创建 `wgpu` 设备/队列），将体数据以 `i32`（由 `i64` 转换而来）形式上传，派发计算着色器，下载 `i32` 结果并转换回 `i64`。向标准输出打印一行 `[Info]` 计时信息（`"[Info] GPU volume transform: {elapsed}s, {w}x{h}x{d} -> {w}x{h}x{d}"`）。
+- **说明：** 数据以 `i32` 而非 `i64` 往返传输——这是一次窄化转换，假定 CT 强度值落在 `i32` 范围内（对所有支持的位深都成立，但值得了解这是一个潜在的精度边界）。插值模式作为 `u32` 标志传给着色器（`0` = 最近邻，`1` = 三线性）。传给着色器的原点为浮点转闭区间整数边界转换得到的 `(x0, y0, z0)`，即着色器接收到与 CPU 路径相同的坐标系。
+- **另请参阅：** `GpuVolumeTransformPipeline` 及底层 WGSL 计算着色器见 [gpu.md](gpu.md)；CPU 回退路径见 `rotate_and_crop`；GPU/CPU 选择逻辑与失败回退行为见 `CropPipeline::run`。
+
+---
+
+## `pipeline/split_filter.rs`
+
+连通分量拆分与几何/统计过滤流水线。将一个或多个输入 STL 网格拆分为互不相交的颗粒（“granule”）网格，然后应用一系列可选过滤器（长宽比、尖锐度、体积范围或对数正态重平衡），将幸存颗粒保存为独立的 STL 文件并附带一份文本报告。
+
+### 公开条目
+
+#### SplitFilterPipeline (struct)
+
+- **源码位置：** `src/pipeline/split_filter.rs:13`
+- **用途：** 封装一个 `SplitFilterConfig` 并为 split_filter 子命令实现 `Pipeline`。
+- **字段：** `config: SplitFilterConfig`。
+
+#### SplitFilterPipeline::run
+
+- **签名：** `fn run(&self) -> Result<()>`
+- **源码位置：** `src/pipeline/split_filter.rs:300`
+- **用途：** 运行完整的拆分-过滤流水线：加载输入网格、拆分为连通分量颗粒、应用配置的过滤链、将保留下来的颗粒保存为 STL 文件，并写出文本报告。
+- **参数：** 读取 `self.config: SplitFilterConfig`——`input.path`（单个 STL 文件或 STL 目录）、`output.folder`/`output.prefix`/`output.report_path`（报告路径默认为 `<output.folder 的父目录>/split_filter_report.txt`），以及可选的 `filter` 部分（`enabled`、`max_aspect_ratio`、`max_sharpness_ratio`、带有 `mode: "range" | "lognormal_rebalance" | "none"` 的 `volume` 子配置）。
+- **返回值：** 成功时返回 `Ok(())`；若 `output.prefix` 为空则返回 `RustMsptError::InvalidConfig`；若拆分结果为零个颗粒，或所有颗粒都被过滤掉，则返回 `RustMsptError::InvalidMesh`；透传网格/STL 加载与保存过程中的 I/O 错误。
+- **副作用：** 从磁盘读取 STL 文件（`load_stl` 或 `load_folder_stls`）；如缺失则创建 `output.folder`（及报告的父目录）；为每个保留颗粒写出一个 STL 文件（命名为 `{prefix}{rank+1}.stl`，按保留顺序从 1 开始编号）；将文本报告写入 `report_path`；向标准输出打印 `[Info]` 汇总行（颗粒数量、输出文件夹/前缀、报告路径）。
+- **说明：** 过滤链按顺序应用，每个阶段仅影响仍标记为 `keep` 的颗粒：
+  1. **拆分：** 对每个输入网格，`split_mesh_into_granules` 将其分解为连通分量子网格（“颗粒”）。所有输入文件产生的全部颗粒汇集到一个 `Vec<Mesh>` 中。
+  2. **长宽比**（`filter.max_aspect_ratio`，可选）：按颗粒从 `mesh_bbox` 计算为 `max_extent / min_extent.max(1e-12)`；超过阈值的颗粒被丢弃。
+  3. **尖锐度比**（`filter.max_sharpness_ratio`，可选）：`sharpness = area^3 / (36 * PI * volume^2)`（一种等周不等式风格的形状比；完美球体为 1.0，细长/尖刺形状更大）。`volume <= 1e-12` 的颗粒直接被丢弃（退化网格）；其余超过阈值的颗粒被丢弃。
+  4. **体积过滤**（`filter.volume`，可选）：`mode = "range"` 会丢弃体积落在 `[min, max]` 之外的颗粒（任一边界为负数/未设置时跳过该边界）；`mode = "lognormal_rebalance"` 委托给 `apply_lognormal_rebalance`；`mode = "none"`（或任何其他值）跳过该阶段。
+  每个阶段都会向报告追加一行 `report_step`（`before=N, after=M, removed=K`），若该阶段的配置缺失则追加一行 `"skipped"`。若 `filter` 本身为 `None`，或 `filter.enabled == Some(false)`，则完全跳过所有过滤，保留全部颗粒。
+  报告中还包含保留颗粒的体积统计（`volume_stats_for_kept`）以及两份文本直方图（`append_volume_histogram`、`append_volume_histogram_comparison`，均固定为 10 个区间）。
+- **另请参阅：** `apply_lognormal_rebalance`；`crate::geometry::split_mesh_into_granules`、`mesh_bbox`、`mesh_surface_area`、`mesh_volume`（参见 [geometry-analysis.md](geometry-analysis.md) / [geometry-core.md](geometry-core.md)）。
+
+### 私有辅助函数
+
+#### VolumeStats (struct)
+
+- **源码位置：** `src/pipeline/split_filter.rs:18`
+- **用途：** 为报告持有保留颗粒体积的最小/最大/均值/中位数汇总统计。
+- **字段：** `min: f64`、`max: f64`、`mean: f64`、`median: f64`。
+- **说明：** `Clone, Copy`。
+
+#### volume_stats_for_kept
+
+- **签名：** `fn volume_stats_for_kept(volumes: &[f64], keep: &[bool]) -> Option<VolumeStats>`
+- **源码位置：** `src/pipeline/split_filter.rs:26`
+- **用途：** 在 `volumes` 中与 `keep` 并行的条目为 `true` 的子集上计算 `VolumeStats`。
+- **参数：** `volumes`——按颗粒的体积数组；`keep`——并行的布尔保留掩码。
+- **返回值：** 若没有颗粒被保留则为 `None`；否则为 `Some(VolumeStats)`，`min`/`max` 取自排序后的两端极值，`mean` 为算术平均值，`median` 由排序后的仅保留值计算得出（偶数个元素时取中间两个元素的平均）。
+- **副作用：** 无（对保留值的本地副本进行排序）。
+
+#### count_kept
+
+- **简明形式：** `fn count_kept(keep: &[bool]) -> usize` —— `src/pipeline/split_filter.rs:54`。返回 `keep` 中 `true` 条目的数量。纯函数。
+
+#### report_step
+
+- **签名：** `fn report_step(lines: &mut Vec<String>, name: &str, before: usize, after: usize)`
+- **源码位置：** `src/pipeline/split_filter.rs:59`
+- **用途：** 追加一行报告，汇总某个过滤步骤对颗粒数量的影响。
+- **参数：** `lines`——要追加的报告缓冲区；`name`——步骤标签；`before`/`after`——该步骤前后的保留颗粒数量。
+- **返回值：** 无返回值；就地修改 `lines`。
+- **副作用：** 推入一行 `"{name}: before={before}, after={after}, removed={before-after}"`（`removed` 通过 `saturating_sub` 计算，因此不会下溢）。
+
+#### append_volume_histogram
+
+- **签名：** `fn append_volume_histogram(lines: &mut Vec<String>, title: &str, values: &[f64], bins: usize)`
+- **源码位置：** `src/pipeline/split_filter.rs:71`
+- **用途：** 向报告追加一份 `values` 的单一 ASCII 条形文本直方图。
+- **参数：** `lines`——报告缓冲区；`title`——标题行；`values`——要制作直方图的数据；`bins`——请求的区间数，限幅到 `[4, 32]`。
+- **返回值：** 无返回值；就地修改 `lines`。
+- **副作用：** 若 `values` 为空，追加一行 `"{title}: no data"` 并返回。若所有值相等（范围 `< 1e-12`），则追加一行汇总信息而非完整直方图。否则将值分箱到跨 `[min, max]` 的等宽桶中，并为每个区间追加一行，条形以 `#` 重复表示，最大宽度缩放为 30 个字符（由于 `.max(1)`，即使是空区间条形长度也至少为 1）。
+- **说明：** 越界限幅（`b < 0` → `0`，`b >= bins` → `bins-1`）用于防范恰好落在最大值处的浮点边界情况。
+
+#### append_volume_histogram_comparison
+
+- **签名：** `fn append_volume_histogram_comparison(lines: &mut Vec<String>, title: &str, before_values: &[f64], after_values: &[f64], bins: usize)`
+- **源码位置：** `src/pipeline/split_filter.rs:119`
+- **用途：** 追加一份并排的“前后对比” ASCII 条形直方图，用 `before_values` 的范围为两组数据定义区间边界。
+- **参数：** `lines`、`title`；`before_values`/`after_values`——两组数据集（通常为全部体积与保留体积）；`bins`——限幅到 `[4, 32]`。
+- **返回值：** 无返回值；就地修改 `lines`。
+- **副作用：** 若 `before_values` 为空，追加一行 `"no data"` 并返回。区间边界（`min_v`/`max_v`）始终仅由 `before_values` 推导，因此若 `after_values` 中有值超出该范围，会通过与 `append_volume_histogram` 相同的限幅逻辑落入边界区间。两组条形各自独立缩放（`max_before`、`max_after`），最大宽度各为 16 个字符。
+- **说明：** 由于在该流水线的实际用法中 `after_values` 始终是 `before_values` 的子集（保留 ⊆ 全部），其范围实际上永远不会超出 `before_values` 的范围。
+
+#### normal_cdf
+
+- **签名：** `fn normal_cdf(x: f64) -> f64`
+- **源码位置：** `src/pipeline/split_filter.rs:202`
+- **用途：** 标准正态分布（均值 0，方差 1）累积分布函数。
+- **参数：** `x`——标准正态尺度下的输入。
+- **返回值：** `0.5 * (1 + erf(x / sqrt(2)))`，位于 `[0, 1]`。
+- **副作用：** 无。委托给 `erf_approx`。
+
+#### erf_approx
+
+- **签名：** `fn erf_approx(x: f64) -> f64`
+- **源码位置：** `src/pipeline/split_filter.rs:208`
+- **用途：** 近似计算高斯误差函数 `erf(x)`。
+- **参数：** `x`。
+- **返回值：** `erf(x)` 的 `f64` 近似值，精度约为 `1.5e-7`（底层公式的既定误差上限）。
+- **副作用：** 无。
+- **说明：** 实现 Abramowitz & Stegun 公式 7.1.26，一种有理多项式近似，使用 `t = 1/(1 + 0.3275911*|x|)` 以及一个固定的 5 项 `t` 多项式，结合 `exp(-x^2)` 和 `x` 的符号。这是一种闭式数值近似，而非精确的特殊函数求值——对该流水线的重平衡启发式而言足够，但与真正的 erf 实现并非逐位一致。
+
+#### apply_lognormal_rebalance
+
+- **签名：** `fn apply_lognormal_rebalance(keep: &mut [bool], volumes: &[f64], cfg: &SplitFilterVolume)`
+- **源码位置：** `src/pipeline/split_filter.rs:225`
+- **用途：** 通过从相对于拟合模型代表过多的区间中随机剔除颗粒，使保留颗粒群体的体积分布更接近拟合的对数正态分布。
+- **参数：** `keep`——就地更新的可变保留掩码；`volumes`——按颗粒的体积数组（与 `keep` 并行）；`cfg: &SplitFilterVolume`——读取 `cfg.bins`（默认 12，限幅到 `[4, 64]`）与 `cfg.over_factor`（默认 1.25，下限为 1.0）。
+- **返回值：** 无返回值；就地修改 `keep`（将多余条目设为 `false`）。
+- **副作用：** 使用 `rand::thread_rng()` 在丢弃前对代表过多的区间内部进行洗牌，因此具体丢弃哪些颗粒在多次运行之间是不确定的（未设种子）。
+- **说明：** 算法：
+  1. 收集当前保留且 `volume > 0.0` 的颗粒作为候选。若候选数少于 4 个，则直接跳出（不做任何操作）——数据不足以拟合分布。
+  2. 对每个候选取 `log_vals = ln(volume)`；拟合 `mu`（均值）与 `sigma`（总体标准差，下限为 `1e-9`）——即对体积做最大似然对数正态拟合。
+  3. 若对数体积范围退化（`< 1e-12`），则跳出。
+  4. 将候选按其 `ln(volume)` 分箱到跨 `[min_log, max_log]` 的 `bins` 个等宽区间中。
+  5. 对每个区间，计算若使用 `(mu, sigma)` 的正态分布，理论上会落入该区间对数体积范围内的总体*期望*占比（`normal_cdf(hi) - normal_cdf(lo)`），乘以候选总数得到期望数量，再计算 `allowed = ceil(expected * over_factor)`。
+  6. 若某区间内的候选数超过 `allowed`，则对该区间的索引洗牌，并将除前 `allowed` 个之外的其余标记为 `keep[idx] = false`。
+- **说明（配置语义）：** `over_factor` 是在开始剔除之前、允许超出理论对数正态隐含数量的宽裕度——`over_factor = 1.0` 会将每个区间精确剔减到拟合模型的期望值；更大的值则允许更多的代表过多情况后才开始丢弃颗粒。这是一种启发式的重平衡工具，而非真正的重采样/拒绝采样算法——它从不向代表不足的区间*添加*颗粒，只从代表过多的区间中移除。
