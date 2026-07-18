@@ -165,7 +165,27 @@ Default config files:
   - `packing.target_volume_fraction`, `mode`, `max_attempts`
   - geometric constraints: `min_neighbor_distance`, `min_boundary_dist`, `min_cross_boundary_depth`
   - optional `packing.filters` (`min_volume`, `max_aspect_ratio`, `max_sharpness_ratio`)
+  - optional `packing.target_diameter_distribution_csv` for count-frequency target void scaling
+  - optional `packing.target_mean_sphericity` and `mean_sphericity_tolerance` as a soft shape target
   - `packing.cpu_max`
+
+`target_diameter_distribution_csv` uses unitless diameters in STL units:
+
+```csv
+bin,right,frequency
+5,6,0.12328767
+6,7,0.12924360
+```
+
+`bin` is the interval left edge and `frequency` is a normalized count frequency. Missing `right` values are inferred from the next row, and the final width is inferred from the previous row. A single-row CSV requires an explicit `right`. Packing uses equivalent-volume diameter and scales a selected shape to the target interval midpoint when needed. If a target bin repeatedly cannot be placed, Packing may fall back to other bins to prioritize reaching `target_volume_fraction`; the final report prints target/actual bin counts, distribution error, scale statistics, and any relaxation warning.
+
+When a target distribution is enabled, Packing also writes `<output_stem>_diameter_distribution.csv` beside the output STL. The comparison contains target/actual frequency and count, signed errors, and placement attempts for every bin.
+
+When target diameter scaling is enabled, `filters.min_volume` is evaluated on the final scaled candidate. Aspect-ratio and sharpness filters are applied to source candidates and rechecked after scaling.
+
+`target_mean_sphericity` compares the running arithmetic mean of successfully placed void sphericities with the target. It softly selects among a small random candidate window but never rejects a valid placement solely for sphericity, so an infeasible shape target does not block the volume-fraction target.
+
+`data/input/gu2019_fig7b_pore_distribution.csv` is the converted example used by `pack_config.yaml`. It retains the digitized Figure 7b interval edges as unitless values and converts `frequency_normalized_pct` to fractional frequencies by dividing by 100.
 
 ### Scale pipeline (`scale_config.yaml`)
 
