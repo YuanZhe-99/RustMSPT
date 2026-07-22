@@ -5,6 +5,7 @@ pub mod mesh_ops;
 pub mod metrics;
 pub mod render;
 pub mod s2;
+pub mod scene_render;
 pub mod spatial;
 pub mod volume;
 
@@ -25,6 +26,7 @@ pub use render::{
     RenderCamera, RenderCameraSpec, RenderProjection, RenderSettings,
 };
 pub use s2::{approximate_s2, calculate_s2, l2_norm, point_inside_mesh, shell_offsets_for_distance};
+pub use scene_render::{named_view, render_scene_cpu, SceneRenderSettings};
 #[cfg(feature = "gpu")]
 pub use s2::{calculate_s2_with_gpu, calculate_s2_gpu_exact};
 pub use volume::{

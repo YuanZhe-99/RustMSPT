@@ -1,8 +1,10 @@
 pub mod image;
 pub mod stl;
 pub mod volume;
+pub mod vtu;
 
 pub use image::save_image;
+pub use vtu::{load_vtu, save_vtu, ArrayData, DataArray, VtuDoc, VtuEncoding};
 pub use stl::{
     load_folder_stls, load_stl, load_stl_or_merge_folder, save_stl,
 };

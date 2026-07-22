@@ -1,5 +1,6 @@
 pub mod forge;
 pub mod measure;
+pub mod mesh_render;
 pub mod optimize;
 pub mod pack;
 pub mod pack_targets;

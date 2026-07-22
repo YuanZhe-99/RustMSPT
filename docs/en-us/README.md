@@ -27,6 +27,7 @@ Mirrors the `src/` module layout. Each document opens with an `## Index` table (
 | [pipeline-crop-and-splitfilter.md](reference/pipeline-crop-and-splitfilter.md) | `pipeline/{crop,split_filter}.rs` |
 | [pipeline-packing.md](reference/pipeline-packing.md) | `pipeline/{pack,pack_targets}.rs` |
 | [pipeline-optimize.md](reference/pipeline-optimize.md) | `pipeline/optimize.rs` |
+| [mesh-render-and-vtu.md](reference/mesh-render-and-vtu.md) | `io/vtu.rs`, `meshgen/render_scene.rs`, `geometry/scene_render.rs`, `pipeline/mesh_render.rs`, `config/mesh_render.rs` |
 
 ## Algorithms (conceptual explanations)
 
@@ -58,6 +59,7 @@ Each walkthrough shows a realistic config, the exact CLI command, and output cap
 | [pack.md](examples/pack.md) | `pack` (plain volume-fraction packing) |
 | [pack-target-distribution.md](examples/pack-target-distribution.md) | `pack` with target diameter distribution steering |
 | [render.md](examples/render.md) | `render` |
+| [mesh-render.md](examples/mesh-render.md) | `mesh-render` (VTU volume-mesh renderer) |
 
 ## Conventions used throughout
 

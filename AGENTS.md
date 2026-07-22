@@ -59,6 +59,7 @@ Documentation lives in three tiers, each answering a different question:
 | Mesh clipping / volume-fraction accounting | `algorithms/mesh-clipping-volume-fraction.md` | `reference/geometry-volume-collision.md` |
 | GPU compute pipelines (wgpu/WGSL) | (covered within each algorithm doc's own GPU section) | `reference/gpu.md` |
 | Mesh rendering / STL-to-image | `algorithms/stl-rendering.md` | `reference/geometry-core.md` (render section), `reference/gpu.md`, `reference/pipeline-core.md` |
+| VTU I/O / volume-mesh rendering (`mesh-render`) | (design: `PLAN_mesh_generation.md` §7/§9) | `reference/mesh-render-and-vtu.md` |
 | Config / YAML deserialization | — | `reference/config.md` |
 | STL / TIFF / RAW I/O | — | `reference/io.md` |
 | CLI entry point, core types, compute backend selection | — | `reference/core-and-compute.md` |
@@ -125,7 +126,7 @@ cargo run --release -- <subcommand> [--config <path>] [--input <path>] [--output
 ./target/release/rustmspt <subcommand> --config data/input/<subcommand>_config.yaml
 ```
 
-Available subcommands: `split-filter`, `pack`, `optimize`, `measure`, `forge`, `scale`, `crop`, `render`
+Available subcommands: `split-filter`, `pack`, `optimize`, `measure`, `forge`, `scale`, `crop`, `render`, `mesh-render`
 
 ## 5. Testing
 
@@ -195,6 +196,7 @@ src/
     optimization.rs    OptimizationConfig, OptimizationParams, TargetConfig
     packing.rs         PackingConfig, PackingParams, PackingFilters
     render.rs          RenderConfig and camera/image parameters
+    mesh_render.rs     MeshRenderConfig: views, filters, coloring, opacities for mesh-render
     scale.rs           ScaleConfig, ScalingParams
     split_filter.rs    SplitFilterConfig, SplitFilterOutput, SplitFilterRules
 
@@ -226,21 +228,28 @@ src/
     mesh_ops.rs        Mesh utilities: split_mesh_into_granules, merge_meshes, mesh_centroid, rotate_mesh_around_center, move_mesh_to_target_center, scale_mesh, translate_mesh, wrap_mesh_centroid_to_box, box_mesh, mesh_surface_area, vec_norm
     metrics.rs         Unified closed-mesh metrics: volume, surface area, equivalent-volume diameter, sphericity, target-diameter scaling
     render.rs          Shared camera model and CPU QBVH ray-cast renderer
+    scene_render.rs    CPU scene renderer: all-hits transparency compositing, line overlays, markers, named view presets
     s2.rs              S2 (two-point correlation): calculate_s2, approximate_s2, l2_norm, build_bbox_occupancy, FFT-based exact S2, Monte Carlo S2
     spatial.rs         SpatialGrid for O(k) neighbor queries in collision detection
     volume.rs          Volume ops: mesh_volume, mesh_signed_volume, clip_mesh_by_bbox, particle_volume_in_bbox, volume_fraction_in_bbox, volume_fraction_of_meshes_in_bbox, orient_components_to_positive_volume
 
   io/                  File I/O
     image.rs           PNG output for validated RGBA render buffers
-    mod.rs             Re-exports: load_stl, save_stl, load_folder_stls, load_tiff_or_folder_with_range, save_tiff_or_folder_with_ext, load_raw_folder, Volume3D, ByteOrder, RawFolderSpec
+    mod.rs             Re-exports: load_stl, save_stl, load_folder_stls, load_tiff_or_folder_with_range, save_tiff_or_folder_with_ext, load_raw_folder, Volume3D, ByteOrder, RawFolderSpec, load_vtu, save_vtu, VtuDoc
     stl.rs             STL ASCII/binary load and binary save
     volume.rs          TIFF and RAW volume I/O
+    vtu.rs             Contract VTU (VTK XML UnstructuredGrid) writer + subset reader (PLAN_mesh_generation.md §7)
+
+  meshgen/             Mesh-generation module (tooling phase GA implemented; pipeline stages pending)
+    mod.rs             Re-exports
+    render_scene.rs    VTU -> RenderScene extraction: AND-composed filters, boundary-face extraction, colormaps
 
   pipeline/            Pipeline implementations (all implement Pipeline trait)
     mod.rs             Pipeline trait, create_progress_bar helper
     crop.rs            CropPipeline: CT volume PCA-alignment and crop
     forge.rs           ForgePipeline: FFD-based mesh deformation
     measure.rs         MeasurePipeline: S2 measurement of STL
+    mesh_render.rs     MeshRenderPipeline: VTU volume-mesh multi-view renderer (mesh-render subcommand)
     optimize.rs        OptimizePipeline: simulated annealing with island model
     pack.rs            PackPipeline: sequential particle placement with optional target diameter distribution and mean-sphericity steering
     pack_targets.rs    Packing target CSV parser, diameter-bin debt controller, sphericity scoring, and distribution summaries
@@ -255,6 +264,7 @@ tests/
   pack_target_tests.rs Packing target CSV, diameter-bin controller, and sphericity scoring tests
   pipeline_smoke_tests.rs  Integration tests for the pre-render pipelines with synthetic data
   render_tests.rs      Camera, CPU/GPU rendering, PNG, and render-pipeline tests
+  mesh_render_tests.rs VTU round-trip, scene extraction/filters, transparency compositing, mesh-render pipeline tests
 
 data/
   input/               Default YAML configs, sample inputs, and gu2019_fig7b_pore_distribution.csv
@@ -271,6 +281,7 @@ docs/
   zh-cn/                Chinese mirror of en-us/, structurally identical (see TRANSLATION_GUIDE.md)
 
 PLAN.md                Portable GPU/CPU co-execution roadmap and implementation plan
+PLAN_mesh_generation.md  GPU-accelerated mesh-generation module design (rev 2) + implementation status
 ```
 
 ## 7. Architecture
@@ -380,3 +391,7 @@ When inspecting code:
 - `RenderedImage.rgba` is top-row-first RGBA8 and must contain exactly `width * height * 4` bytes.
 - wgpu texture readback rows must be padded to `COPY_BYTES_PER_ROW_ALIGNMENT` (256 bytes) and unpadded before PNG encoding.
 - CPU/GPU render tests must use tolerance at triangle edges; parry3d uses f64 QBVH ray casting while wgpu rasterization uses f32.
+- `io/vtu.rs` appended-raw arrays must be collected in EMISSION order (FieldData, Points, Cells, PointData, CellData) — appended offsets are assigned by a running index during tag emission; any order mismatch corrupts every offset after the first out-of-order array.
+- The contract `cell_kind` cell array (0 tet / 1 face / 2 curve / 3 voxel) is distinct from VTK cell type codes (10/5/4/11); `SceneFilter::CellKind` filters on the semantic array, falling back to mapping VTK types only when the array is absent.
+- `build_scene` frames the camera from the FULL document bbox, not the filtered subset — deliberate, so all views/filters of one input frame identically.
+- `mesh-render` is CPU-only (exact all-hits transparency compositing); the GPU preview path is PLAN_mesh_generation.md GA-3c, still pending. Scene transparency needs all-hits enumeration (`RayIntersectionsVisitor` over `TriMesh::qbvh()`); `cast_local_ray_and_get_normal` returns only the nearest hit.

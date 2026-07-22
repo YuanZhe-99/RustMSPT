@@ -317,6 +317,30 @@ Master index of every documented function, struct, enum, and constant across `sr
 | [pipeline-packing.md](pipeline-packing.md) | `pipeline/{pack,pack_targets}.rs` |
 | [pipeline-optimize.md](pipeline-optimize.md) | `pipeline/optimize.rs` |
 
+| `ArrayData` | Mesh Tooling | `src/io/vtu.rs:14` | Typed VTU DataArray storage (U8/I32/I64/U32/U64/F32/F64) with widening accessors. |
+| `DataArray` | Mesh Tooling | `src/io/vtu.rs:118` | Named VTU array with component count; `scalar` convenience constructor. |
+| `VtuDoc` | Mesh Tooling | `src/io/vtu.rs:138` | In-memory contract VTU (shared points, mixed cells, point/cell/field data). |
+| `VtuDoc::validate` | Mesh Tooling | `src/io/vtu.rs:181` | Structural validation of offsets, indices, per-type node counts, array lengths. |
+| `VtuEncoding` | Mesh Tooling | `src/io/vtu.rs:255` | VTU output encoding: Ascii or AppendedRaw (LittleEndian, UInt64 headers). |
+| `save_vtu` | Mesh Tooling | `src/io/vtu.rs:273` | Write a VtuDoc as VTK XML UnstructuredGrid (ascii or appended raw). |
+| `load_vtu` | Mesh Tooling | `src/io/vtu.rs:479` | Read the contract VTU subset; rejects compressed/base64 files explicitly. |
+| `SetKind` | Mesh Tooling | `src/meshgen/render_scene.rs:8` | Render-set membership; Face outranks Volume in coincident-hit dedup. |
+| `RenderScene` | Mesh Tooling | `src/meshgen/render_scene.rs:43` | Extraction result: triangles, segments, markers, framing bbox. |
+| `SceneFilter` | Mesh Tooling | `src/meshgen/render_scene.rs:52` | AND-composed cell filters (kind/component/region/partition/regime/background/range/bbox/clip). |
+| `ColorMode` | Mesh Tooling | `src/meshgen/render_scene.rs:67` | Uniform, categorical (integer arrays), or scalar-viridis (float arrays) coloring. |
+| `SceneSpec` | Mesh Tooling | `src/meshgen/render_scene.rs:77` | Full extraction specification (filters, colors, opacities, overlays, highlights). |
+| `categorical_color` | Mesh Tooling | `src/meshgen/render_scene.rs:132` | 12-color categorical palette lookup; sentinel values map to grey. |
+| `scalar_color` | Mesh Tooling | `src/meshgen/render_scene.rs:141` | Compact viridis ramp over a clamped scalar range. |
+| `build_scene` | Mesh Tooling | `src/meshgen/render_scene.rs:358` | VtuDoc + SceneSpec -> RenderScene (boundary-face extraction, tagged faces, curves, wireframe). |
+| `SceneRenderSettings` | Mesh Tooling | `src/geometry/scene_render.rs:12` | Scene render appearance; RGBA background with real alpha support. |
+| `render_scene_cpu` | Mesh Tooling | `src/geometry/scene_render.rs:95` | CPU all-hits renderer with front-to-back transparency compositing, line overlays, markers. |
+| `named_view` | Mesh Tooling | `src/geometry/scene_render.rs:287` | Resolve a named view preset to (view_direction, up_vector). |
+| `ViewSpec` | Mesh Tooling | `src/config/mesh_render.rs:7` | YAML view: named preset or custom camera block (untagged enum). |
+| `FilterSpec` | Mesh Tooling | `src/config/mesh_render.rs:22` | YAML kind-tagged filter mapped onto SceneFilter. |
+| `MeshRenderParams` | Mesh Tooling | `src/config/mesh_render.rs:38` | mesh_render: YAML block (input, views, image, coloring, filters, overlays). |
+| `MeshRenderConfig` | Mesh Tooling | `src/config/mesh_render.rs:88` | Top-level YAML document for the mesh-render subcommand. |
+| `MeshRenderPipeline::run` | Mesh Tooling | `src/pipeline/mesh_render.rs:16` | mesh-render subcommand: load VTU, extract scene, render one PNG per view. |
+
 ## See also
 
 - [Algorithm docs](../algorithms/) — conceptual explanations of S2 correlation, simulated annealing, FFD forging, packing target distribution, PCA volume alignment, spatial-grid collision, and mesh clipping/volume fraction.

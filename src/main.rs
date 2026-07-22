@@ -1,11 +1,12 @@
 use clap::{Parser, Subcommand};
 use rustmspt::config::{
-    load_yaml, CropConfig, ForgingConfig, MeasurementConfig, OptimizationConfig, PackingConfig,
-    RenderConfig, ScaleConfig, SplitFilterConfig,
+    load_yaml, CropConfig, ForgingConfig, MeasurementConfig, MeshRenderConfig, OptimizationConfig,
+    PackingConfig, RenderConfig, ScaleConfig, SplitFilterConfig,
 };
 use rustmspt::pipeline::crop::CropPipeline;
 use rustmspt::pipeline::forge::ForgePipeline;
 use rustmspt::pipeline::measure::MeasurePipeline;
+use rustmspt::pipeline::mesh_render::MeshRenderPipeline;
 use rustmspt::pipeline::optimize::OptimizePipeline;
 use rustmspt::pipeline::pack::PackPipeline;
 use rustmspt::pipeline::render::RenderPipeline;
@@ -57,6 +58,14 @@ enum Commands {
         output: Option<PathBuf>,
     },
     Render {
+        #[arg(long)]
+        config: Option<PathBuf>,
+        #[arg(long)]
+        input: Option<PathBuf>,
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    MeshRender {
         #[arg(long)]
         config: Option<PathBuf>,
         #[arg(long)]
@@ -184,6 +193,21 @@ fn main() -> anyhow::Result<()> {
                 conf.render.output_path = output.to_string_lossy().to_string();
             }
             RenderPipeline { config: conf }.run()?;
+        }
+        Commands::MeshRender {
+            config,
+            input,
+            output,
+        } => {
+            let path = pick_config_path(config, "mesh_render_config.yaml");
+            let mut conf: MeshRenderConfig = load_yaml(&path)?;
+            if let Some(input) = input {
+                conf.mesh_render.input = input.to_string_lossy().to_string();
+            }
+            if let Some(output) = output {
+                conf.mesh_render.output_dir = output.to_string_lossy().to_string();
+            }
+            MeshRenderPipeline { config: conf }.run()?;
         }
         Commands::Scale {
             config,
