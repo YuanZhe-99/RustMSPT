@@ -438,6 +438,74 @@ pub struct FaceCutState {
 }
 
 // AI-FUNC-SUMMARY:
+// Purpose: Check one face's triangulation against `SPEC_meshgen_geometry.md` §7.3's cache, so a
+//   disagreement between the two cells sharing it is caught here instead of surfacing as a crack.
+// Inputs: the cache and its conflict counter, the face's boundary walk, the parent-node cutoff, the
+//   key table, the face's crossing record, and the triangles this cell produced for it.
+// Returns: nothing.
+// Side effects: Inserts on first sight of a face; increments the counter on disagreement.
+// Notes: A free function rather than an inline block because the face loop leaves by three
+//   different routes - the doubly-cut band rule, the curve-node hub fan, and the ordinary match -
+//   and a check that covered only the last would be blind to exactly the crease-carrying paths the
+//   cache exists for. The key is the face's three parent corners and the fingerprint is the
+//   components crossing it, both pure functions of the face (invariant J1).
+#[allow(clippy::too_many_arguments)]
+fn check_face_cache(
+    cache: &mut crate::meshgen::facecache::FaceTriCache,
+    conflicts: &mut usize,
+    loop_nodes: &[u32],
+    n_parent_nodes: u32,
+    keys: &[NodeKey],
+    crossed: Option<&CrossedFace>,
+    mine: &[[u32; 3]],
+) {
+    if mine.is_empty() || loop_nodes.is_empty() {
+        return;
+    }
+    let mut corners = [loop_nodes[0]; 3];
+    let mut slot = 0usize;
+    for node in loop_nodes {
+        if (*node as usize) < n_parent_nodes as usize && slot < 3 {
+            corners[slot] = *node;
+            slot += 1;
+        }
+    }
+    if slot != 3 {
+        return;
+    }
+    corners.sort_by_key(|node| keys[*node as usize]);
+    let mut fingerprint: Vec<i64> = crossed
+        .map(|face| face.components.iter().map(|x| *x as i64).collect())
+        .unwrap_or_default();
+    fingerprint.sort_unstable();
+    fingerprint.dedup();
+    let sorted = |tris: &[[u32; 3]]| -> Vec<[u32; 3]> {
+        let mut out: Vec<[u32; 3]> = tris
+            .iter()
+            .map(|t| {
+                let mut k = *t;
+                k.sort_unstable();
+                k
+            })
+            .collect();
+        out.sort_unstable();
+        out
+    };
+    let key = crate::meshgen::facecache::face_key(corners, keys);
+    let owned = mine.to_vec();
+    match cache.get_or_insert(key, fingerprint, || owned.clone()) {
+        Ok(cached) => {
+            if sorted(cached) != sorted(mine) {
+                *conflicts += 1;
+            }
+        }
+        // §7.3's hard error: the two cells disagree about what crosses the face they share.
+        // Counted rather than raised, because nothing depends on the cache yet.
+        Err(_) => *conflicts += 1,
+    }
+}
+
+// AI-FUNC-SUMMARY:
 // Purpose: The frozen §5.2 face-split table - how one parent face is triangulated after the cut.
 // Inputs: the face's cut state in the canonical frame, and the key table for Rule SNK.
 // Returns: the sub-triangles, or None for an illegal state (a dangling cut end).
@@ -1393,6 +1461,15 @@ pub fn cut_lattice(
                 if let Some((split, _)) = band_face_split(loop_nodes, n_parent_nodes, &keys) {
                     mesh.stats.n_doubly_cut_faces += 1;
                     boundary.extend(split.into_iter().map(|(_, triangle)| triangle));
+                    check_face_cache(
+                        &mut face_cache,
+                        &mut face_cache_conflicts,
+                        loop_nodes,
+                        n_parent_nodes,
+                        &keys,
+                        crossed.as_ref(),
+                        &boundary[face_begin..],
+                    );
                     continue;
                 }
                 match face_mesh(state.as_ref(), loop_nodes, &keys, crossed.as_ref()) {
@@ -1508,6 +1585,15 @@ pub fn cut_lattice(
                                 meeting_nodes.push((hub_id, [*component, *component]));
                             }
                             boundary.extend(fan);
+                            check_face_cache(
+                                &mut face_cache,
+                                &mut face_cache_conflicts,
+                                &loop_nodes,
+                                n_parent_nodes,
+                                &keys,
+                                crossed.as_ref(),
+                                &boundary[face_begin..],
+                            );
                             continue;
                         }
                         let id = match face_steiner.get(&corners) {
@@ -1543,56 +1629,15 @@ pub fn cut_lattice(
                         boundary.extend(loop_fan(&loop_nodes, id));
                     }
                 }
-                // §7.3's cache, consulted but not yet obeyed. The key is the face's three parent
-                // corners' `NodeKey`s and the fingerprint is the components crossing it — both
-                // derived from the face alone, so the two cells sharing it look up the same entry.
-                // The first cell to reach a face inserts its triangles; the second compares. A
-                // difference is a J1 violation that today would surface far away as a crack, and
-                // counting them is what says whether the cache can take over the computation.
-                {
-                    let mut corners = [loop_nodes[0]; 3];
-                    let mut slot = 0usize;
-                    for node in loop_nodes.iter() {
-                        if (*node as usize) < n_parent_nodes as usize && slot < 3 {
-                            corners[slot] = *node;
-                            slot += 1;
-                        }
-                    }
-                    if slot == 3 {
-                        corners.sort_by_key(|node| keys[*node as usize]);
-                        let mut fingerprint: Vec<i64> = crossed
-                            .as_ref()
-                            .map(|face| face.components.iter().map(|x| *x as i64).collect())
-                            .unwrap_or_default();
-                        fingerprint.sort_unstable();
-                        fingerprint.dedup();
-                        let mine: Vec<[u32; 3]> = boundary[face_begin..].to_vec();
-                        let key = crate::meshgen::facecache::face_key(corners, &keys);
-                        let sorted = |tris: &[[u32; 3]]| -> Vec<[u32; 3]> {
-                            let mut out: Vec<[u32; 3]> = tris
-                                .iter()
-                                .map(|t| {
-                                    let mut k = *t;
-                                    k.sort_unstable();
-                                    k
-                                })
-                                .collect();
-                            out.sort_unstable();
-                            out
-                        };
-                        match face_cache.get_or_insert(key, fingerprint, || mine.clone()) {
-                            Ok(cached) => {
-                                if sorted(cached) != sorted(&mine) {
-                                    face_cache_conflicts += 1;
-                                }
-                            }
-                            // A fingerprint mismatch is §7.3's hard error: the two cells disagree
-                            // about what crosses the face they share. Counted here rather than
-                            // raised, because nothing depends on the cache yet.
-                            Err(_) => face_cache_conflicts += 1,
-                        }
-                    }
-                }
+                check_face_cache(
+                    &mut face_cache,
+                    &mut face_cache_conflicts,
+                    loop_nodes,
+                    n_parent_nodes,
+                    &keys,
+                    crossed.as_ref(),
+                    &boundary[face_begin..],
+                );
             }
             // G7-1: a cell whose two walls sandwich a thin gap is *not* one blob. If
             // the doubly-cut face rule covers all four of its faces, it splits into
