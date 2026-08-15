@@ -372,11 +372,13 @@ mod tests {
             Vec3::new(0.5, 1.0, 0.0),
             Vec3::new(0.0, 0.5, 0.0),
         ];
-        let keys = keys_for(&points);
         let walk = vec![0u32, 4, 1, 5, 2, 6, 3, 7];
-        // The pierce point, interned per face by the caller.
-        let mut points = points;
-        points.push(Vec3::new(0.5, 0.5, 0.0));
+        // The pierce point, interned per face by the caller — node 8.
+        let points = {
+            let mut with_hub = points;
+            with_hub.push(Vec3::new(0.5, 0.5, 0.0));
+            with_hub
+        };
         let keys = keys_for(&points);
         let hub = 8u32;
         let tris = triangulate_face(&walk, &[], Some(hub), &keys).expect("triangulates");
@@ -439,6 +441,107 @@ mod tests {
             }),
             "a fingerprint mismatch is a hard error, never a recompute"
         );
+    }
+
+    // **Invariant J2, the frozen spec's own test obligation (T-J2).**
+    //
+    // > The generic constrained face triangulator MUST reproduce §5.2's tables exactly on the
+    // > inputs those tables cover. There is one shared routine; the kirigami tables are its
+    // > closed-form values, not a parallel implementation.
+    //
+    // This decides whether the face cache can be wired in at all. Integration replaces per-cell
+    // face meshing with the cache, so `triangulate_face` takes over from §5.2's table on **every**
+    // ordinary face, not only creased ones — and §5.2 is verified at zero violations over 4,800
+    // randomised cuts. A disagreement anywhere means the integration is dead on arrival, and it is
+    // very much cheaper to learn that here than from a8's boundary leaks.
+    //
+    // Compared as triangle *sets* with each triangle's nodes sorted: §5.2 re-orients its output to
+    // the calling cell's winding, so winding is the caller's business and not the table's identity.
+    #[test]
+    fn j2_reproduces_the_frozen_face_split_table() {
+        use crate::meshgen::cut::{face_split, FaceCutState};
+
+        // a, b, c are the parent corners in canonical (key) order; 3..6 are cut nodes on the
+        // edges (a,b), (b,c), (c,a); 6 is an interior rim point.
+        let points = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.5, 0.0, 0.0),
+            Vec3::new(0.5, 0.5, 0.0),
+            Vec3::new(0.0, 0.5, 0.0),
+            Vec3::new(0.25, 0.25, 0.0),
+        ];
+        let keys = keys_for(&points);
+        let (a, b, c) = (0u32, 1, 2);
+        let (m_ab, m_bc, m_ca, rim) = (3u32, 4, 5, 6);
+
+        // The face's boundary walk with each present cut node inserted on its edge — the same
+        // loop both incident cells derive from the face.
+        let walk_of = |cut: [Option<u32>; 3]| -> Vec<u32> {
+            let nodes = [a, b, c];
+            let mut walk = Vec::new();
+            for edge in 0..3 {
+                walk.push(nodes[edge]);
+                if let Some(node) = cut[edge] {
+                    walk.push(node);
+                }
+            }
+            walk
+        };
+        let normalise = |tris: Vec<[u32; 3]>| {
+            let mut out: Vec<[u32; 3]> = tris
+                .into_iter()
+                .map(|mut t| {
+                    t.sort_unstable();
+                    t
+                })
+                .collect();
+            out.sort_unstable();
+            out
+        };
+
+        // (name, cut nodes per edge, on-cut vertices, rim, the constraint chords, the hub)
+        let cases: Vec<(&str, [Option<u32>; 3], [bool; 3], Option<u32>, Vec<[u32; 2]>, Option<u32>)> = vec![
+            ("uncut", [None, None, None], [false; 3], None, vec![], None),
+            // split_2: one cut edge, the opposite vertex on the patch. The constraint runs from
+            // the cut node to that vertex.
+            ("split_2", [Some(m_ab), None, None], [false, false, true], None, vec![[m_ab, c]], None),
+            // split_3: two cut edges; the constraint is the chord between the two cut nodes.
+            ("split_3", [Some(m_ab), Some(m_bc), None], [false; 3], None, vec![[m_ab, m_bc]], None),
+            // split_4: the medial split, three cut edges and three chords.
+            (
+                "split_4",
+                [Some(m_ab), Some(m_bc), Some(m_ca)],
+                [false; 3],
+                None,
+                vec![[m_ab, m_bc], [m_bc, m_ca], [m_ca, m_ab]],
+                None,
+            ),
+            // split_R: the cut front ends at an interior point of the face, which is a shared
+            // node of both cells — a hub, exactly as the crease case needs.
+            ("split_R", [Some(m_ab), None, None], [false; 3], Some(rim), vec![], Some(rim)),
+        ];
+
+        for (name, cut, on_cut, rim_node, chords, hub) in cases {
+            let state = FaceCutState {
+                nodes: [a, b, c],
+                cut,
+                on_cut,
+                rim: rim_node,
+            };
+            let frozen = face_split(&state, &keys)
+                .unwrap_or_else(|| panic!("{name}: §5.2 must accept this state"));
+            let walk = walk_of(cut);
+            let generic = triangulate_face(&walk, &chords, hub, &keys)
+                .unwrap_or_else(|| panic!("{name}: the generic triangulator must accept it too"));
+
+            assert_eq!(
+                normalise(frozen.to_vec()),
+                normalise(generic),
+                "J2 violated on {name}: the generic triangulator disagrees with §5.2's frozen table"
+            );
+        }
     }
 
     // Chord order is the caller's accident; the triangulation may not depend on it.
