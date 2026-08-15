@@ -14,6 +14,8 @@ RustMSPT is a standalone Rust toolkit for STL-based microstructure processing.
   - `split-filter`
   - `render`
   - `mesh-render`
+  - `mesh-verify`
+  - `mesh`
 - STL I/O:
   - Load ASCII and Binary STL (auto-detect)
   - Save Binary STL by default

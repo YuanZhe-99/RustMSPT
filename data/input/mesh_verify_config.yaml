@@ -1,0 +1,34 @@
+# Configuration for the mesh-verify subcommand (mesh verification catalog).
+# Contract: SPEC_meshgen_contracts.md §4 (checks, severities, gates) and §4.1 (JSON schema).
+mesh_verify:
+  # Contract VTU, snapshot VTU, or an external tet-only VTU (geometry-only mode).
+  input: data/output/mesh.vtu
+  # Optional outputs; the human log always goes to stdout as well.
+  report: data/output/mesh_verification.log
+  json: data/output/mesh_verification.json
+  # Copy of the mesh carrying the [V4] quality arrays and the verify_flags bitmask,
+  # which `mesh-render` can filter and colour by.
+  # annotate: data/output/mesh_annotated.vtu
+
+  # Input surfaces the mesh should follow. Supplying them turns [V5] geometric conformance
+  # on; omitting them leaves it SKIPPED. Each entry is a bare path or {stl, priority}, and
+  # the priority MUST mirror the meshgen.inputs priority the mesh was built with — [V5]'s
+  # expected volume is the priority-resolved one, so a mismatch makes it mask a body the
+  # mesher never overrode. Defaults to 0, the same default meshgen.inputs uses.
+  # surfaces:
+  #   - data/input/particles.stl
+  #   - { stl: data/input/coating.stl, priority: 1 }
+
+  # Gate overrides. Every length tolerance is a fraction of the mesh bounding-box
+  # diagonal, so gates are scale-invariant. Omit a field to keep the contract default.
+  verify:
+    max_ar_warn: 20.0            # [V4] aspect ratio R/(3 r_in) warning threshold
+    min_dihedral_deg: 5.0        # [V4] hard floor; elements below it are reported
+    low_dihedral_deg: 10.0       # [V4] "low" band used for the share gate
+    low_dihedral_share: 1.0e-4   # [V4] max fraction of tets allowed below that band
+    duplicate_node_tol_frac: 1.0e-6  # [V2] coincident-node quantization step
+    plane_tol_frac: 1.0e-9       # [V3] domain-plane membership tolerance
+    hanging_tol_frac: 1.0e-9     # [V3] node-on-face tolerance
+    max_items_per_section: 50    # report item cap per check
+    # expected_partitions: 2     # [V8] gate; omit to only report the count
+    warn_is_fatal: false         # true makes any WARN a nonzero exit

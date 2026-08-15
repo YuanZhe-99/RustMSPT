@@ -33,7 +33,7 @@ pub enum FilterSpec {
 
 // AI-FUNC-SUMMARY:
 // Purpose: YAML parameters for the mesh-render subcommand (input VTU, views, image, coloring, opacities, filters, overlays).
-// Notes: `color_by` = "uniform" or a cell-array name; integer arrays render categorically, float arrays through the scalar colormap. `background` accepts RGB or RGBA (alpha 0 = transparent PNG background). `opacity_overrides` keys are region_key integers (as YAML strings).
+// Notes: `color_by` = "uniform", a cell-array name, or a point-array name (`separation_t`, `sizing_h`); integer arrays render categorically, float arrays through the scalar colormap, and a point array colors each cell by the mean of its non-sentinel point values. `background` accepts RGB or RGBA (alpha 0 = transparent PNG background). `opacity_overrides` keys are region_key integers (as YAML strings).
 #[derive(Debug, Clone, Deserialize)]
 pub struct MeshRenderParams {
     pub input: String,
@@ -51,6 +51,10 @@ pub struct MeshRenderParams {
     pub ambient: f64,
     #[serde(default = "default_color_by")]
     pub color_by: String,
+    /// "cpu" (default, the transparency reference), "gpu" (opaque preview), or
+    /// "auto" (GPU when available, silently falling back to CPU).
+    #[serde(default = "default_backend")]
+    pub backend: String,
     #[serde(default)]
     pub uniform_color: Option<Vec<u8>>,
     #[serde(default)]
@@ -99,9 +103,13 @@ fn default_views() -> Vec<ViewSpec> {
     vec![ViewSpec::Named("iso_ne".to_string())]
 }
 
-// AI-FUNC-SUMMARY: Default image width or height; returns 1024; side effects: none.
+// AI-FUNC-SUMMARY: Default image width or height; returns 2048; side effects: none.
+// Notes: 1024 was too coarse to see the failure mode `[V5]`'s misattribution metric counts - a
+//   ragged edge where elements at a body's edges and corners carry the background label reads as a
+//   clean silhouette at 1024 and as a sawtooth at 2048. Raised after A-6a's limb was reported as
+//   visibly notched and the render at the old default did not show it.
 fn default_resolution() -> usize {
-    1024
+    2048
 }
 
 // AI-FUNC-SUMMARY: Default background color (opaque white RGBA); returns vec![255,255,255,255]; side effects: none.
@@ -115,6 +123,11 @@ fn default_ambient() -> f64 {
 }
 
 // AI-FUNC-SUMMARY: Default coloring array; returns "region_key"; side effects: none.
+// AI-FUNC-SUMMARY: Serde default for mesh_render.backend: "cpu" (the exact-transparency reference); side effects: none.
+fn default_backend() -> String {
+    "cpu".to_string()
+}
+
 fn default_color_by() -> String {
     "region_key".to_string()
 }

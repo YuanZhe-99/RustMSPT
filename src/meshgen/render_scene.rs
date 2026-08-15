@@ -1,5 +1,5 @@
 use crate::error::{Result, RustMsptError};
-use crate::io::vtu::{VtuDoc, VTK_POLY_LINE, VTK_TETRA, VTK_TRIANGLE};
+use crate::io::vtu::{VtuDoc, VTK_POLY_LINE, VTK_TETRA, VTK_TRIANGLE, VTK_VOXEL};
 use crate::types::{BoundingBox, Vec3};
 use std::collections::HashMap;
 
@@ -39,12 +39,17 @@ pub struct SceneMarker {
 // AI-FUNC-SUMMARY:
 // Purpose: Renderer-ready extraction of a contract VTU: shaded triangles, overlay segments, markers, and the framing bbox.
 // Notes: `bbox` is the FULL document bbox (not the filtered subset) so camera framing stays stable across filter changes.
+// `wireframe_edges_total` vs `wireframe_edges_emitted` report the budget: when they differ the frame is
+// a uniform stride sample of the real one, and the caller MUST say so - a silently partial wireframe
+// reads as a hole in the mesh.
 #[derive(Clone, Debug, Default)]
 pub struct RenderScene {
     pub tris: Vec<SceneTri>,
     pub segments: Vec<SceneSegment>,
     pub markers: Vec<SceneMarker>,
     pub bbox: Option<BoundingBox>,
+    pub wireframe_edges_total: usize,
+    pub wireframe_edges_emitted: usize,
 }
 
 // AI-FUNC-SUMMARY: AND-composed cell filters per PLAN §9.4; attribute filters skip cells where the attribute is inapplicable (sentinel −1); side effects: none.
@@ -66,8 +71,14 @@ pub enum SceneFilter {
 #[derive(Clone, Debug)]
 pub enum ColorMode {
     Uniform([u8; 3]),
-    Categorical { array: String },
-    Scalar { array: String, min: Option<f64>, max: Option<f64> },
+    Categorical {
+        array: String,
+    },
+    Scalar {
+        array: String,
+        min: Option<f64>,
+        max: Option<f64>,
+    },
 }
 
 // AI-FUNC-SUMMARY:
@@ -91,18 +102,23 @@ impl Default for SceneSpec {
     fn default() -> Self {
         SceneSpec {
             filters: Vec::new(),
-            color_mode: ColorMode::Categorical { array: "region_key".to_string() },
+            color_mode: ColorMode::Categorical {
+                array: "region_key".to_string(),
+            },
             volume_opacity: 1.0,
             face_opacity: 1.0,
             opacity_overrides: HashMap::new(),
             show_faces: true,
             show_curves: true,
             wireframe: false,
-            max_wireframe_edges: 200_000,
+            max_wireframe_edges: DEFAULT_MAX_WIREFRAME_EDGES,
             highlight_points: Vec::new(),
         }
     }
 }
+
+// AI-FUNC-SUMMARY: Default ceiling on emitted wireframe segments; past it the frame is stride-thinned, never cut short.
+pub const DEFAULT_MAX_WIREFRAME_EDGES: usize = 4_000_000;
 
 const CATEGORICAL_PALETTE: [[u8; 3]; 12] = [
     [77, 121, 168],
@@ -122,10 +138,10 @@ const CATEGORICAL_PALETTE: [[u8; 3]; 12] = [
 const SENTINEL_COLOR: [u8; 3] = [128, 128, 128];
 
 const CURVE_KIND_COLORS: [[u8; 3]; 4] = [
-    [255, 140, 0],  // sharp
-    [220, 20, 60],  // rim
-    [199, 21, 133], // intersection
-    [105, 105, 105],// box
+    [255, 140, 0],   // sharp
+    [220, 20, 60],   // rim
+    [199, 21, 133],  // intersection
+    [105, 105, 105], // box
 ];
 
 // AI-FUNC-SUMMARY: Map a categorical integer to a palette color (negative/sentinel -> grey); returns [u8;3]; side effects: none.
@@ -147,7 +163,11 @@ pub fn scalar_color(value: f64, min: f64, max: f64) -> [u8; 3] {
         [253.0, 231.0, 37.0],
         [253.0, 231.0, 37.0],
     ];
-    let t = if max > min { ((value - min) / (max - min)).clamp(0.0, 1.0) } else { 0.0 };
+    let t = if max > min {
+        ((value - min) / (max - min)).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     let x = t * (STOPS.len() - 2) as f64;
     let i = (x as usize).min(STOPS.len() - 2);
     let f = x - i as f64;
@@ -196,7 +216,11 @@ impl<'a> DocIndex<'a> {
         if key < 0 || key as usize >= offsets.len() {
             return None;
         }
-        let start = if key == 0 { 0 } else { offsets[key as usize - 1] as usize };
+        let start = if key == 0 {
+            0
+        } else {
+            offsets[key as usize - 1] as usize
+        };
         let end = offsets[key as usize] as usize;
         comps.get(start..end)
     }
@@ -233,13 +257,40 @@ impl<'a> DocIndex<'a> {
                 if id < 0 || id as usize >= o.data.len() {
                     return None;
                 }
-                let start = if id == 0 { 0 } else { o.data.get_i64(id as usize - 1) as usize };
+                let start = if id == 0 {
+                    0
+                } else {
+                    o.data.get_i64(id as usize - 1) as usize
+                };
                 let end = o.data.get_i64(id as usize) as usize;
                 Some((start..end).map(|k| c.data.get_i64(k)).collect())
             }
             _ => None,
         }
     }
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Reduce a point-data array to one value per cell for coloring (mean over the cell's points).
+// Inputs: document, point array, cell index.
+// Returns: Some(mean) over the cell's non-sentinel point values, None when every value is the
+//   contract's "not applicable" sentinel (-1 for signed/float arrays).
+// Side effects: None.
+// Notes: This is what lets a stage field written on points - `separation_t` (S3), `sizing_h` (S4) -
+//   drive the same colormaps as a cell array, in `mesh-render` and in the CPU/GPU scenes alike.
+fn point_array_cell_value(doc: &VtuDoc, array: &crate::io::vtu::DataArray, i: usize) -> Option<f64> {
+    let nodes = doc.cell(i);
+    let mut sum = 0.0;
+    let mut count = 0usize;
+    for &node in nodes {
+        let value = array.data.get_f64(node as usize);
+        if value == -1.0 || !value.is_finite() {
+            continue;
+        }
+        sum += value;
+        count += 1;
+    }
+    (count > 0).then(|| sum / count as f64)
 }
 
 fn require_array<'a>(
@@ -320,10 +371,15 @@ fn cell_passes(idx: &DocIndex, filter: &SceneFilter, i: usize) -> Result<bool> {
             }
         }
         SceneFilter::ArrayRange { array, min, max } => {
-            if kind != VTK_TETRA {
+            // Tets normally carry the filtered array; on a surface-stage snapshot
+            // (s00-s03, no volume cells) the face cells do, so the filter applies
+            // to them instead - same rule as the colour modes.
+            let surface_stage = !idx.doc.types.iter().any(|kind| *kind == VTK_TETRA);
+            if kind != VTK_TETRA && !(surface_stage && kind == VTK_TRIANGLE) {
                 true
             } else {
-                let arr = require_array(idx.doc, array, "mesh generation or mesh-verify --annotate")?;
+                let arr =
+                    require_array(idx.doc, array, "mesh generation or mesh-verify --annotate")?;
                 let v = arr.data.get_f64(i);
                 v >= *min && v <= *max
             }
@@ -335,7 +391,22 @@ fn cell_passes(idx: &DocIndex, filter: &SceneFilter, i: usize) -> Result<bool> {
     })
 }
 
-fn tet_color(idx: &DocIndex, mode: &ColorMode, i: usize, scalar_range: (f64, f64)) -> Result<[u8; 3]> {
+/// The six quad faces of a `VTK_VOXEL`, in its own node order (x fastest, then y, then z).
+const VOXEL_FACES: [[usize; 4]; 6] = [
+    [0, 2, 6, 4],
+    [1, 3, 7, 5],
+    [0, 1, 5, 4],
+    [2, 3, 7, 6],
+    [0, 1, 3, 2],
+    [4, 5, 7, 6],
+];
+
+fn tet_color(
+    idx: &DocIndex,
+    mode: &ColorMode,
+    i: usize,
+    scalar_range: (f64, f64),
+) -> Result<[u8; 3]> {
     Ok(match mode {
         ColorMode::Uniform(c) => *c,
         ColorMode::Categorical { array } => {
@@ -343,8 +414,16 @@ fn tet_color(idx: &DocIndex, mode: &ColorMode, i: usize, scalar_range: (f64, f64
             categorical_color(arr.data.get_i64(i))
         }
         ColorMode::Scalar { array, .. } => {
-            let arr = require_array(idx.doc, array, "mesh generation or mesh-verify --annotate")?;
-            scalar_color(arr.data.get_f64(i), scalar_range.0, scalar_range.1)
+            if let Some(points) = idx.doc.point_array(array) {
+                match point_array_cell_value(idx.doc, points, i) {
+                    Some(value) => scalar_color(value, scalar_range.0, scalar_range.1),
+                    None => SENTINEL_COLOR,
+                }
+            } else {
+                let arr =
+                    require_array(idx.doc, array, "mesh generation or mesh-verify --annotate")?;
+                scalar_color(arr.data.get_f64(i), scalar_range.0, scalar_range.1)
+            }
         }
     })
 }
@@ -354,7 +433,7 @@ fn tet_color(idx: &DocIndex, mode: &ColorMode, i: usize, scalar_range: (f64, f64
 // Inputs: doc (contract VTU), spec (filters, coloring, opacities, toggles).
 // Returns: RenderScene, or InvalidConfig naming the missing array when a filter/color mode needs one the file lacks.
 // Side effects: None.
-// Notes: Boundary faces are faces referenced by exactly one SELECTED tet, so bbox/clip filters expose interior faces automatically. The scene bbox is the full document bbox for stable framing.
+// Notes: Boundary faces are faces referenced by exactly one SELECTED tet, so bbox/clip filters expose interior faces automatically. Boundary faces and wireframe edges are sorted before emission for deterministic rendering. The scene bbox is the full document bbox for stable framing. The whole wireframe edge set is built first and thinned by a uniform stride only if it exceeds `max_wireframe_edges`; the counts land in `wireframe_edges_total`/`wireframe_edges_emitted` for the caller to report.
 pub fn build_scene(doc: &VtuDoc, spec: &SceneSpec) -> Result<RenderScene> {
     doc.validate()?;
     let idx = DocIndex::new(doc);
@@ -370,14 +449,28 @@ pub fn build_scene(doc: &VtuDoc, spec: &SceneSpec) -> Result<RenderScene> {
     }
 
     let scalar_range = if let ColorMode::Scalar { array, min, max } = &spec.color_mode {
-        let arr = require_array(doc, array, "mesh generation or mesh-verify --annotate")?;
         let mut lo = f64::INFINITY;
         let mut hi = f64::NEG_INFINITY;
-        for i in 0..n {
-            if doc.types[i] == VTK_TETRA {
-                let v = arr.data.get_f64(i);
-                lo = lo.min(v);
-                hi = hi.max(v);
+        if let Some(points) = doc.point_array(array) {
+            // Surface-stage snapshots (s00-s03) have no tets, so a point field's range
+            // is taken over every cell that carries a value.
+            for i in 0..n {
+                if let Some(value) = point_array_cell_value(doc, points, i) {
+                    lo = lo.min(value);
+                    hi = hi.max(value);
+                }
+            }
+        } else {
+            let arr = require_array(doc, array, "mesh generation or mesh-verify --annotate")?;
+            let any_tet = doc.types.iter().any(|kind| *kind == VTK_TETRA);
+            for i in 0..n {
+                if doc.types[i] == VTK_TETRA
+                    || (!any_tet && matches!(doc.types[i], VTK_TRIANGLE | VTK_VOXEL))
+                {
+                    let v = arr.data.get_f64(i);
+                    lo = lo.min(v);
+                    hi = hi.max(v);
+                }
             }
         }
         (min.unwrap_or(lo), max.unwrap_or(hi))
@@ -402,41 +495,123 @@ pub fn build_scene(doc: &VtuDoc, spec: &SceneSpec) -> Result<RenderScene> {
     }
 
     let mut wire_edges: HashMap<[i64; 2], ()> = HashMap::new();
-    for (key, (count, owner)) in &face_count {
-        if *count == 1 {
-            let color = tet_color(&idx, &spec.color_mode, *owner, scalar_range)?;
-            let alpha = if let Some(rk) = idx.region_key {
-                let k = rk.data.get_i64(*owner);
-                *spec.opacity_overrides.get(&k).unwrap_or(&spec.volume_opacity)
-            } else {
-                spec.volume_opacity
-            };
-            scene.tris.push(SceneTri {
-                a: doc.points[key[0] as usize],
-                b: doc.points[key[1] as usize],
-                c: doc.points[key[2] as usize],
-                color,
-                alpha,
-                set: SetKind::Volume,
-            });
-            if spec.wireframe && wire_edges.len() < spec.max_wireframe_edges {
-                for (u, v) in [(0, 1), (1, 2), (0, 2)] {
-                    let mut ek = [key[u], key[v]];
-                    ek.sort_unstable();
-                    wire_edges.entry(ek).or_insert(());
-                }
+    let mut boundary_faces: Vec<([i64; 3], u32, usize)> = face_count
+        .iter()
+        .filter_map(|(key, (count, owner))| (*count == 1).then_some((*key, *count, *owner)))
+        .collect();
+    boundary_faces.sort_by_key(|(key, _, owner)| (*key, *owner));
+    for (key, _, owner) in boundary_faces {
+        let color = tet_color(&idx, &spec.color_mode, owner, scalar_range)?;
+        let alpha = if let Some(rk) = idx.region_key {
+            let k = rk.data.get_i64(owner);
+            *spec
+                .opacity_overrides
+                .get(&k)
+                .unwrap_or(&spec.volume_opacity)
+        } else {
+            spec.volume_opacity
+        };
+        scene.tris.push(SceneTri {
+            a: doc.points[key[0] as usize],
+            b: doc.points[key[1] as usize],
+            c: doc.points[key[2] as usize],
+            color,
+            alpha,
+            set: SetKind::Volume,
+        });
+        if spec.wireframe {
+            for (u, v) in [(0, 1), (1, 2), (0, 2)] {
+                let mut ek = [key[u], key[v]];
+                ek.sort_unstable();
+                wire_edges.entry(ek).or_insert(());
             }
         }
     }
+
+    // Lattice-preview voxels (`cell_kind = 3`, the s04/s05 snapshots) get the same
+    // crinkle-clip treatment as tets: a quad face referenced by exactly one selected
+    // voxel is a boundary of the selected subset, so a bbox or clip filter cuts into
+    // the octree and exposes the interior level jumps instead of hiding them.
+    let mut voxel_faces: HashMap<[i64; 4], (u32, usize, [i64; 4])> = HashMap::new();
+    for (i, sel) in selected.iter().enumerate() {
+        if doc.types[i] == VTK_VOXEL && *sel {
+            let c = doc.cell(i);
+            for f in VOXEL_FACES {
+                let cycle = [c[f[0]], c[f[1]], c[f[2]], c[f[3]]];
+                let mut key = cycle;
+                key.sort_unstable();
+                let e = voxel_faces.entry(key).or_insert((0, i, cycle));
+                e.0 += 1;
+            }
+        }
+    }
+    let mut boundary_voxel_faces: Vec<([i64; 4], usize, [i64; 4])> = voxel_faces
+        .iter()
+        .filter_map(|(key, (count, owner, cycle))| {
+            (*count == 1).then_some((*key, *owner, *cycle))
+        })
+        .collect();
+    boundary_voxel_faces.sort_by_key(|(key, owner, _)| (*key, *owner));
+    for (_, owner, cycle) in boundary_voxel_faces {
+        let color = tet_color(&idx, &spec.color_mode, owner, scalar_range)?;
+        // `cycle` is the quad in the cell's own winding, so (0,2) is its diagonal and
+        // these two triangles tile it whatever order the file numbers its points in.
+        for tri in [[0usize, 1, 2], [0, 2, 3]] {
+            scene.tris.push(SceneTri {
+                a: doc.points[cycle[tri[0]] as usize],
+                b: doc.points[cycle[tri[1]] as usize],
+                c: doc.points[cycle[tri[2]] as usize],
+                color,
+                alpha: spec.volume_opacity,
+                set: SetKind::Volume,
+            });
+        }
+        if spec.wireframe {
+            for (u, v) in [(0, 1), (1, 2), (2, 3), (3, 0)] {
+                let mut ek = [cycle[u], cycle[v]];
+                ek.sort_unstable();
+                wire_edges.entry(ek).or_insert(());
+            }
+        }
+    }
+
+    // On a surface-stage snapshot (s00-s03) the tagged faces ARE the mesh, so a
+    // named cell array colours them directly. A document with volume cells keeps the
+    // face-tag categorical rule, where the named array belongs to the tets.
+    let surface_stage = !doc.types.iter().any(|kind| *kind == VTK_TETRA);
 
     if spec.show_faces {
         for (i, sel) in selected.iter().enumerate() {
             if doc.types[i] == VTK_TRIANGLE && *sel {
                 let c = doc.cell(i);
-                let color = match (&spec.color_mode, idx.face_tag_key) {
-                    (ColorMode::Uniform(u), _) => *u,
-                    (_, Some(ft)) => categorical_color(ft.data.get_i64(i)),
-                    (_, None) => SENTINEL_COLOR,
+                let face_cell_color = if surface_stage {
+                    match &spec.color_mode {
+                        ColorMode::Categorical { array } => doc
+                            .cell_array(array)
+                            .map(|values| categorical_color(values.data.get_i64(i))),
+                        ColorMode::Scalar { array, .. } => doc.cell_array(array).map(|values| {
+                            scalar_color(values.data.get_f64(i), scalar_range.0, scalar_range.1)
+                        }),
+                        ColorMode::Uniform(_) => None,
+                    }
+                } else {
+                    None
+                };
+                let point_scalar = match &spec.color_mode {
+                    ColorMode::Scalar { array, .. } => doc
+                        .point_array(array)
+                        .map(|points| point_array_cell_value(doc, points, i)),
+                    _ => None,
+                };
+                let color = match (point_scalar, face_cell_color, &spec.color_mode, idx.face_tag_key) {
+                    (Some(Some(value)), _, _, _) => {
+                        scalar_color(value, scalar_range.0, scalar_range.1)
+                    }
+                    (Some(None), _, _, _) => SENTINEL_COLOR,
+                    (None, Some(color), _, _) => color,
+                    (None, None, ColorMode::Uniform(u), _) => *u,
+                    (None, None, _, Some(ft)) => categorical_color(ft.data.get_i64(i)),
+                    (None, None, _, None) => SENTINEL_COLOR,
                 };
                 scene.tris.push(SceneTri {
                     a: doc.points[c[0] as usize],
@@ -458,8 +633,8 @@ pub fn build_scene(doc: &VtuDoc, spec: &SceneSpec) -> Result<RenderScene> {
                     (Some(cid), Some(kinds)) => {
                         let id = cid.data.get_i64(i);
                         if id >= 0 && (id as usize) < kinds.len() {
-                            CURVE_KIND_COLORS[(kinds[id as usize].max(0) as usize)
-                                % CURVE_KIND_COLORS.len()]
+                            CURVE_KIND_COLORS
+                                [(kinds[id as usize].max(0) as usize) % CURVE_KIND_COLORS.len()]
                         } else {
                             CURVE_KIND_COLORS[3]
                         }
@@ -477,16 +652,32 @@ pub fn build_scene(doc: &VtuDoc, spec: &SceneSpec) -> Result<RenderScene> {
         }
     }
 
-    for ek in wire_edges.keys() {
-        scene.segments.push(SceneSegment {
-            a: doc.points[ek[0] as usize],
-            b: doc.points[ek[1] as usize],
-            color: [40, 40, 40],
-        });
+    let mut sorted_wire_edges: Vec<[i64; 2]> = wire_edges.keys().copied().collect();
+    sorted_wire_edges.sort_unstable();
+    scene.wireframe_edges_total = sorted_wire_edges.len();
+    // Over budget, thin by a uniform stride rather than stopping at the cap: the edge list is
+    // sorted by node key, so a prefix cut amputates whole contiguous patches (they read as holes)
+    // while a stride leaves an even, obviously-sparse frame over the entire surface.
+    if spec.max_wireframe_edges > 0 {
+        let stride = sorted_wire_edges
+            .len()
+            .div_ceil(spec.max_wireframe_edges)
+            .max(1);
+        for ek in sorted_wire_edges.iter().step_by(stride) {
+            scene.segments.push(SceneSegment {
+                a: doc.points[ek[0] as usize],
+                b: doc.points[ek[1] as usize],
+                color: [40, 40, 40],
+            });
+            scene.wireframe_edges_emitted += 1;
+        }
     }
 
     for p in &spec.highlight_points {
-        scene.markers.push(SceneMarker { p: *p, color: [255, 0, 0] });
+        scene.markers.push(SceneMarker {
+            p: *p,
+            color: [255, 0, 0],
+        });
     }
 
     if !doc.points.is_empty() {

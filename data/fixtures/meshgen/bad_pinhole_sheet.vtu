@@ -1,0 +1,54 @@
+<VTKFile type="UnstructuredGrid" version="1.0" byte_order="LittleEndian" header_type="UInt64">
+  <UnstructuredGrid>
+    <FieldData>
+      <DataArray type="Int64" Name="RegionSetOffsets" NumberOfTuples="2" format="ascii">1 2</DataArray>
+      <DataArray type="Int32" Name="RegionSetComponents" NumberOfTuples="2" format="ascii">0 1</DataArray>
+      <DataArray type="UInt32" Name="RegionSetPriority" NumberOfTuples="2" format="ascii">4294967295 1</DataArray>
+      <DataArray type="Int64" Name="NIdSetOffsets" NumberOfTuples="2" format="ascii">1 3</DataArray>
+      <DataArray type="Int32" Name="NIdSetComponents" NumberOfTuples="3" format="ascii">0 0 1</DataArray>
+      <DataArray type="Int64" Name="FaceTagOffsets" NumberOfTuples="1" format="ascii">1</DataArray>
+      <DataArray type="Int32" Name="FaceTagComponents" NumberOfTuples="1" format="ascii">1</DataArray>
+      <DataArray type="UInt8" Name="FaceTagKind" NumberOfTuples="1" format="ascii">1</DataArray>
+      <DataArray type="Int32" Name="FaceTagSideElems" NumberOfComponents="2" NumberOfTuples="2" format="ascii">3 2 4 1</DataArray>
+      <DataArray type="Int32" Name="ComponentX" NumberOfTuples="1" format="ascii">1</DataArray>
+      <DataArray type="UInt32" Name="ComponentY" NumberOfTuples="1" format="ascii">1</DataArray>
+      <DataArray type="UInt8" Name="ComponentKind" NumberOfTuples="1" format="ascii">0</DataArray>
+      <DataArray type="UInt8" Name="ComponentClosed" NumberOfTuples="1" format="ascii">1</DataArray>
+      <DataArray type="UInt8" Name="CurveKind" NumberOfTuples="1" format="ascii">3</DataArray>
+      <DataArray type="Int64" Name="CurveCompOffsets" NumberOfTuples="1" format="ascii">1</DataArray>
+      <DataArray type="Int32" Name="CurveCompComponents" NumberOfTuples="1" format="ascii">1</DataArray>
+      <DataArray type="Int32" Name="CurveRadialPatches" NumberOfTuples="1" format="ascii">2</DataArray>
+      <DataArray type="Int32" Name="SchemaVersion" NumberOfTuples="1" format="ascii">1</DataArray>
+      <DataArray type="Int32" Name="StageIndex" NumberOfTuples="1" format="ascii">11</DataArray>
+      <DataArray type="Int32" Name="GeneratorVersion" NumberOfTuples="3" format="ascii">0 1 0</DataArray>
+      <DataArray type="UInt64" Name="ConfigHash" NumberOfTuples="1" format="ascii">0</DataArray>
+      <DataArray type="Float64" Name="DomainMin" NumberOfComponents="3" NumberOfTuples="1" format="ascii">0 0 0</DataArray>
+      <DataArray type="Float64" Name="DomainMax" NumberOfComponents="3" NumberOfTuples="1" format="ascii">1 1 1</DataArray>
+      <DataArray type="Int64" Name="Counts" NumberOfTuples="4" format="ascii">8 6 1 1</DataArray>
+      <DataArray type="UInt8" Name="DeterminismMode" NumberOfTuples="1" format="ascii">0</DataArray>
+    </FieldData>
+    <Piece NumberOfPoints="8" NumberOfCells="8">
+      <Points>
+        <DataArray type="Float64" Name="Points" NumberOfComponents="3" format="ascii">0 0 0 1 0 0 0 1 0 1 1 0 0 0 1 1 0 1 0 1 1 1 1 1</DataArray>
+      </Points>
+      <Cells>
+        <DataArray type="Int64" Name="connectivity" format="ascii">0 1 3 7 0 1 7 5 0 2 7 3 0 2 6 7 0 4 5 7 0 4 7 6 0 2 7 0 2 6</DataArray>
+        <DataArray type="Int64" Name="offsets" format="ascii">4 8 12 16 20 24 27 30</DataArray>
+        <DataArray type="UInt8" Name="types" format="ascii">10 10 10 10 10 10 5 4</DataArray>
+      </Cells>
+      <PointData>
+        <DataArray type="Int32" Name="n_id_key" format="ascii">1 0 1 0 1 1 1 1</DataArray>
+        <DataArray type="UInt8" Name="constraint_kind" format="ascii">2 0 2 0 0 1 2 1</DataArray>
+        <DataArray type="Int32" Name="constraint_ref" format="ascii">0 -1 0 -1 -1 1 0 1</DataArray>
+      </PointData>
+      <CellData>
+        <DataArray type="UInt8" Name="cell_kind" format="ascii">0 0 0 0 0 0 1 2</DataArray>
+        <DataArray type="Int32" Name="region_key" format="ascii">0 0 0 1 1 1 -1 -1</DataArray>
+        <DataArray type="Int32" Name="partition_id" format="ascii">0 0 0 0 0 0 -1 -1</DataArray>
+        <DataArray type="UInt8" Name="regime" format="ascii">0 0 0 0 0 0 255 255</DataArray>
+        <DataArray type="Int32" Name="face_tag_key" format="ascii">-1 -1 -1 -1 -1 -1 0 -1</DataArray>
+        <DataArray type="Int32" Name="curve_id" format="ascii">-1 -1 -1 -1 -1 -1 -1 0</DataArray>
+      </CellData>
+    </Piece>
+  </UnstructuredGrid>
+</VTKFile>

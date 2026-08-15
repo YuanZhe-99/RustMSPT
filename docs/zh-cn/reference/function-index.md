@@ -252,34 +252,264 @@
 | `write_distribution_comparison_csv` | Pipeline — Packing | `src/pipeline/pack_targets.rs:495` | 写出 `<output_stem>_diameter_distribution.csv` 目标-实际对比报告。 |
 | `parse_csv_f64` | Pipeline — Packing | `src/pipeline/pack_targets.rs:564` | 解析一个必需的有限 CSV 浮点数单元格，附带行/列错误上下文。 |
 | `parse_optional_csv_f64` | Pipeline — Packing | `src/pipeline/pack_targets.rs:587` | 解析一个可选的 CSV 浮点数单元格，空白表示“缺失”。 |
+| `orient2d_3d` | 网格工具 | `src/meshgen/predicates.rs:28` | 最佳条件 2D 投影下的符号精确三角形定向；用于 S0 退化检查。 |
+| `ProjectionAxis` / `best_projection_axis` | 网格工具 | `src/meshgen/predicates.rs:54/61` | 最佳条件平面投影所丢弃的轴及其选择器。 |
+| `project_to_2d` / `orient2d_axis` / 值与 DD 辅助函数 | 网格工具 | `src/meshgen/predicates.rs:74/83/92/178` | 按指定轴投影并计算精确、f64 permanent 与 DD `orient2d` 值。 |
+| `two_sum` / `two_prod` | 网格工具 | `src/meshgen/predicates.rs:111/118` | DD 算术使用的冻结无误差 f64 和/积原语。 |
+| `DoubleDouble` 及算术方法 | 网格工具 | `src/meshgen/predicates.rs:125-172` | 仅加/减/乘的 DD 值；精确提升、取负、折叠与零测试。 |
+| `DeterminantRatio` 及排序方法 | 网格工具 | `src/meshgen/predicates.rs:192-224` | 用于源边排序的规范 DD 分子/分母比值。 |
+| `PrecisionTier` / `EdgeTriPoint` / `CoplanarSegmentPoint` / `ConstructionOutcome` | 网格工具 | `src/meshgen/predicates.rs:229/236/244/254` | 构造精度溯源、C1/C3 结果与已解析/延迟结果枚举。 |
+| `orient3d_value_permanent` | 网格工具 | `src/meshgen/predicates.rs:266` | Shewchuk 顺序 f64 行列式及匹配 permanent。 |
+| `orient3d_filtered` | 网格工具 | `src/meshgen/predicates.rs:286` | 带精确 robust 回退的认证静态过滤符号。 |
+| `orient3d_dd_value` | 网格工具 | `src/meshgen/predicates.rs:296` | 项目符号约定下的 DD orient3d 行列式。 |
+| `construct_edge_triangle_intersection` | 网格工具 | `src/meshgen/predicates.rs:320` | 冻结 C1 行列式比值构造，含 f64/DD 升级与 DD 下限延迟。 |
+| `construct_coplanar_segment_intersection` | 网格工具 | `src/meshgen/predicates.rs:384` | 冻结 C3 仿射构造；检查并保留两条定义边的 DD 排序比值。 |
+| `construct_three_triangle_intersection` | 网格工具 | `src/meshgen/predicates.rs:492` | 冻结局部坐标 C2 Cramer 构造，升级时以 DD 完整重建。 |
+| `orient3d` | 网格工具 | `src/meshgen/predicates.rs:698` | 符号精确四面体定向；全项目唯一对 robust 相反约定取负之处。 |
+| `tet_signed_volume` / `orient3d_sign_test` | 网格工具 | `src/meshgen/predicates.rs:708/713` | 有符号四面体体积与单位四面体约定夹具。 |
+| `TetQuality` / `tet_quality` | 网格工具 | `src/meshgen/predicates.rs:729/748` | [V4] 体积、纵横比/半径比、二面角、缩放雅可比与高度指标。 |
+| `node_key` | 网格工具 | `src/meshgen/predicates.rs:867` | 量化整数节点键；键相同代表一个网格尺度节点。 |
+| `RepairActionType` | 网格工具 | `src/meshgen/surface.rs:18` | S0 修复动作类型（焊接、退化丢弃、重复合并、针孔、定向、补洞）。 |
+| `RepairAction` / `RepairLog` | 网格工具 | `src/meshgen/surface.rs:43/55` | 结构化修复记录与有序 [V12] 回显日志。 |
+| `ConditionedSurface` / `ConditionStats` | 网格工具 | `src/meshgen/surface.rs:88/116` | 带持久源 ID、临时构件、修复日志与计数的 S0 几何。 |
+| `SurfaceComponent` | 网格工具 | `src/meshgen/surface.rs:99` | 共享 schema-v1 构件元数据行（X、Y、类型、闭合）。 |
+| `condition_surface` | 网格工具 | `src/meshgen/surface.rs:135` | S0 焊接/去重/修复；保留跨输入重合身份及修复归属。 |
+| `condition_surface_to_doc` / `condition_surface_to_doc_with_components` | 网格工具 | `src/meshgen/surface.rs:301/307` | 以推断或给定构件元数据构建完整 schema-v1 s00 文档。 |
+| `default_surface_components` / `source_component_is_closed` | 网格工具 | `src/meshgen/surface.rs:315/332` | 推断确定性元数据并测试精确组合闭合性。 |
+| `surface_stage_to_doc` | 网格工具 | `src/meshgen/surface.rs:351` | s00-s03 面/曲线文档的共享全必备数组 schema-v1 构建器。 |
+| `FeatureEdgeKind` / `FeatureCurve` / `FeatureSet` | 网格工具 | `src/meshgen/features.rs:19/27/40` | 按构件隔离的 S1 边类型、链接特征折线、交汇点与角点。 |
+| `detect_features` | 网格工具 | `src/meshgen/features.rs:54` | 确定性按构件检测并链接锐边/边缘/非流形边。 |
+| `features_to_doc` / `features_to_doc_with_components` | 网格工具 | `src/meshgen/features.rs:290/296` | 以推断或给定构件元数据构建完整 schema-v1 s01 文档。 |
+| `TriId` / `EdgeId::new` / `IsectProv` / `SegKey::new` | 网格工具 | `src/meshgen/arrange.rs:25/29-33/44/52-61` | 稳定三角形 ID 与规范 EdgeTri/EdgeEdge/TriTriTri/线段溯源键。 |
+| `CoincidenceCase` 及策略方法 / `CoincidenceEntity` / `CoincidenceEvent` | 网格工具 | `src/meshgen/arrange.rs:73/88/97/105/112` | 冻结 C1-C10 分类、精确拒绝/警告语义与排序参与者。 |
+| `DegradedReason` / `DegradedNeighborhood` / `ArrangedPointFeature` | 网格工具 | `src/meshgen/arrange.rs:120/130/140` | 类型化持久回退记录与焊接 C5/C6 点特征。 |
+| `ArrangeComponent` / `ArrangeOptions` 及构造方法 | 网格工具 | `src/meshgen/arrange.rs:69/149/159/175` | 共享构件元数据及 G2-1..G2-3 区域、epsilon、重合策略选项。 |
+| `RegistryVertex` / `RegistrySegment` / `IntersectionRegistry` | 网格工具 | `src/meshgen/arrange.rs:183/195/204` | 符号优先注册实体；提交顶点保留全部兼容溯源别名。 |
+| `ArrangedCurveKind` / `ArrangedCurve` | 网格工具 | `src/meshgen/arrange.rs:211/219` | 带构件关联和循环子面顺序的锐边/边缘/相交曲线。 |
+| `ArrangedFace` / `ArrangementStats` / `ArrangedSurface` | 网格工具 | `src/meshgen/arrange.rs:228/240/256` | 原子多源/多标签面、接触、事件、警告、降级路由与诊断。 |
+| `arrange_surface` | 网格工具 | `src/meshgen/arrange.rs:426` | 确定性 CPU G2-1..G2-3 注册/CDT/覆盖/策略/回退/校验路径。 |
+| `arranged_surface_to_doc` | 网格工具 | `src/meshgen/arrange.rs:761` | 含集合标签与 FaceTagOrientation 的诊断 schema-v1 编码；尚非 live s02。 |
+| `triangulate_parent` | 网格工具 | `src/meshgen/arrange.rs:3385` | 受限预注册 Spade CDT，传播插入/约束错误并校验铺满。 |
+| `clip_arranged_to_box` | 网格工具 | `src/meshgen/arrange.rs:4634` | G2-5b 盒裁剪：对 6 个域平面进行 Sutherland-Hodgman；实体封顶（box 标签）、片体开放、曲线裁剪。 |
+| `ComponentClassification` / `ClosureDefect` / `RebuiltTopology` | 网格工具 | `src/meshgen/topo.rs:13/21/31` | G2-4 裁剪后拓扑重建结果类型：构件分类、缺陷报告与完整重建输出。 |
+| `rebuild_topology` | 网格工具 | `src/meshgen/topo.rs:43` | 从裁剪后排布面重新推导构件、闭合状态与 GWN 回退。 |
+| `generalized_winding_number` / `gwn_margin_band` | 网格工具 | `src/meshgen/topo.rs:233/255` | 查询点处的 GWN（两两归约、S 累积）与 f32 边际带证书。 |
+| `Severity` | 网格工具 | `src/meshgen/verify.rs:21` | 验证发现项严重级别（Info < Warn < Fail）。 |
+| `CheckStatus` | 网格工具 | `src/meshgen/verify.rs:40` | 单节结论 PASS/WARN/FAIL/SKIPPED。 |
+| `VerifyItem` | 网格工具 | `src/meshgen/verify.rs:63` | 单条发现：稳定代码、消息、点/单元编号与坐标。 |
+| `VerifySection` | 网格工具 | `src/meshgen/verify.rs:88` | 单个目录条目：状态、指标、限长条目列表。 |
+| `VerifyGates` | 网格工具 | `src/meshgen/verify.rs:145` | 目录的可配置、与尺度无关的门限。 |
+| `VerifyReport` | 网格工具 | `src/meshgen/verify.rs:179` | 完整验证结果；passed、exit_code、fired_codes、section。 |
+| `verify` | 网格工具 | `src/meshgen/verify.rs:430` | 对契约 VTU 或外部 VTU 运行检查目录。 |
+| `report_to_json` | 网格工具 | `src/meshgen/verify.rs:1510` | 序列化冻结的 JSON 报告（手写，无 JSON 依赖）。 |
+| `report_to_log` | 网格工具 | `src/meshgen/verify.rs:1619` | 分节人读报告，每项检查一行状态。 |
+| `annotate` | 网格工具 | `src/meshgen/verify.rs:1681` | 附带质量数组与 verify_flags 位掩码的网格副本。 |
+| `VerifyGateParams` | 网格工具 | `src/config/mesh_verify.rs:8` | 验证目录的 YAML 门限覆盖。 |
+| `MeshVerifyParams` | 网格工具 | `src/config/mesh_verify.rs:36` | mesh_verify: YAML 块（输入、report/json/annotate、门限）。 |
+| `MeshVerifySurface` | 网格工具 | `src/config/mesh_verify.rs` | 单个 [V5] 输入曲面：裸路径，或在网格以显式优先级生成时使用 `{stl, priority}`。 |
+| `MeshVerifySurface::resolved_priority` | 网格工具 | `src/config/mesh_verify.rs` | [V5] 曲面的有效优先级：显式取值，否则为 0——必须与生成该网格时 `meshgen.inputs` 的优先级一致。 |
+| `MeshVerifyConfig` | 网格工具 | `src/config/mesh_verify.rs:50` | mesh-verify 子命令的顶层 YAML 文档。 |
+| `gates_from_config` | 网格工具 | `src/pipeline/mesh_verify.rs:18` | 将 YAML 覆盖项叠加到契约默认门限。 |
+| `verify_file` | 网格工具 | `src/pipeline/mesh_verify.rs:42` | 加载、校验、验证并写出日志/JSON/带注解 VTU。 |
+| `MeshVerifyPipeline::run` | 网格工具 | `src/pipeline/mesh_verify.rs:9` | mesh-verify 子命令；门限不通过时退出码非零。 |
+| `InputKind` | 网格工具 | `src/config/meshgen.rs:10` | 单个输入的面角色覆盖：auto / solid / sheet。 |
+| `RepairLevel` | 网格工具 | `src/config/meshgen.rs:20` | S0 修复激进度：strict / conservative / permissive。 |
+| `CoincidencePolicy` | 网格工具 | `src/config/meshgen.rs:30` | G2-2 重合面策略：merge / reject / warn。 |
+| `FemProfile` | 网格工具 | `src/config/meshgen.rs:40` | 控制薄层/薄片处理的目标求解器配置：implicit / explicit / none。 |
+| `DeterminismMode` | 网格工具 | `src/config/meshgen.rs:50` | 运行可复现性契约：strict（按位）/ fast。 |
+| `UnmappedPolicy` | 网格工具 | `src/config/meshgen.rs:59` | INP 导出对未映射区域的行为：error / elset-only。 |
+| `SnapshotMode` | 网格工具 | `src/config/meshgen.rs:68` | 契约快照产出级别：none / key / all。 |
+| `MeshGenInput` | 网格工具 | `src/config/meshgen.rs:80` | 单个 STL 输入：stl 路径、可选 priority、kind。 |
+| `MeshGenDomain` | 网格工具 | `src/config/meshgen.rs:90` | 轴对齐生成区域（min/max，3 分量，min < max）。 |
+| `MeshGenSizing` | 网格工具 | `src/config/meshgen.rs:99` | 作为包围盒对角线分数的尺寸场上下限。 |
+| `MeshGenGaps` | 网格工具 | `src/config/meshgen.rs:114` | 间隙场厚度因子与置信度下限。 |
+| `MeshGenEnvelope` | 网格工具 | `src/config/meshgen.rs:125` | 作为包围盒对角线分数的数值包络厚度。 |
+| `MeshGenRepair` | 网格工具 | `src/config/meshgen.rs:132` | S0 修复配置（level）。 |
+| `MeshGenMaterials` | 网格工具 | `src/config/meshgen.rs:143` | INP 导出的材料分配；by_component 保留重复键。 |
+| `MeshGenOutput` | 网格工具 | `src/config/meshgen.rs:154` | 输出目的地：必填 vtu，可选 abaqus/report。 |
+| `MeshGenParams` | 网格工具 | `src/config/meshgen.rs:168` | meshgen: YAML 块；加载后须调用 validate()。 |
+| `MeshGenConfig` | 网格工具 | `src/config/meshgen.rs:198` | 顶层 YAML 包装（meshgen:）。 |
+| `MeshGenInput::resolved_priority` | 网格工具 | `src/config/meshgen.rs:204` | 有效优先级（显式覆盖或文件索引）。 |
+| `MeshGenParams::validate` | 网格工具 | `src/config/meshgen.rs:218` | 强制 PLAN §6.3 解析期拒绝；Ok 或 InvalidConfig。 |
+| `deserialize_component_map` | 网格工具 | `src/config/meshgen.rs:352` | 将 by_component 反序列化为保留重复键的有序对列表。 |
+| `MeshGenPipeline::run` | 网格工具 | `src/pipeline/meshgen.rs:158` | S0 前归一化，运行 S0/S1/G2-1..G2-3，扣留部分 s02，并对 G2-4/G2-5 及后续阶段返回 NotAvailable。 |
+| `SampleKind` / `PairClass` | 网格生成 | `src/meshgen/gapfield.rs:48/57` | S3 采样来源与冻结的配对类别（intra / inter / solid-sheet / sheet-sheet / surface-box）。 |
+| `GapPairing` / `GapSample` / `GapSample::passes_battery` | 网格生成 | `src/meshgen/gapfield.rs:68/81/100` | 单条 S3 对应关系、单个采样（侧、方向、t_raw/t/t_exact、校验位）与"全部适用检查通过"判据。 |
+| `GapGroup` / `GapFieldStats` / `GapField` | 网格生成 | `src/meshgen/gapfield.rs:110/122/137` | 带置信度与 t_r 的临时（构件, 侧, 对侧面片）分组、S3 计数器与整体分离场。 |
+| `GapFieldOptions` | 网格生成 | `src/meshgen/gapfield.rs:152` | S3 输入：区域、epsilon、引导 h、间隙因子、置信度下限、虚拟壁、加密、平滑。 |
+| `FLAG_MUTUAL` / `FLAG_OPPOSITE_PATCH` / `FLAG_CONTINUITY` / `FLAG_NO_CROSSING` / `FLAG_ORIENTATION` / `FLAGS_ALL` | 网格生成 | `src/meshgen/gapfield.rs:28-38` | 五项配对校验位及其并集。 |
+| `compute_gap_field` | 网格生成 | `src/meshgen/gapfield.rs:345` | 在裁剪且拓扑重建后的排布面上运行 S3（射线 + 最近点对扫掠 + 校验组 + 置信度）。 |
+| `gapfield_to_doc` | 网格生成 | `src/meshgen/gapfield.rs:1655` | 构建 s03_gapfield 文档：排布面加 separation_t 点场（-1 表示无配对）。 |
+| `point_array_cell_value` | 网格工具 | `src/meshgen/render_scene.rs:273` | 将点数组归约为每单元一个值（非哨兵点值的均值）以供着色。 |
+| `Regime` / `SkipReason` / `MidSurfaceDefect` | 网格生成 | `src/meshgen/gapfield.rs:166/177/190` | 三种薄特征状态、[THIN-SKIP] 分类与中面校验缺陷。 |
+| `MidSurface` / `MidSurface::is_valid` / `ThinRegion` | 网格生成 | `src/meshgen/gapfield.rs:204/216/227` | 带源节点与缺陷的中点面片，以及一个分割后的薄区域。 |
+| `validate_mid_surface` | 网格生成 | `src/meshgen/gapfield.rs:2436` | 对候选中面执行 the reference thin-feature design §3.4 检查并记录全部缺陷。 |
+| `CouplingOptions` / `LockReason` / `CouplingReport` / `CouplingReport::locked_for` | 网格生成 | `src/meshgen/sizing.rs:35/66/80/94` | S3<->S4 耦合输入、锁定原因、运行报告与按原因查询。 |
+| `regime_for` | 网格生成 | `src/meshgen/sizing.rs:113` | 以 0.9/1.1 滞回死区分类单个区域。 |
+| `couple_gap_and_sizing` | 网格生成 | `src/meshgen/sizing.rs:159` | 运行 S3<->S4 不动点；违反 G-8 排序断言时返回错误。 |
+| `SizingCriterion` / `SizingSource` | 网格生成 | `src/meshgen/sizing.rs:335/351` | 产出该尺寸约束的 §10.6 准则，以及约束本身（位置 + 允许的最大单元）。 |
+| `SizingOptions` / `SizingOptions::beta` / `SizingOptions::lfs_floor` | 网格生成 | `src/meshgen/sizing.rs:363/410/429` | 尺寸场输入；Lipschitz 常数 `grading - 1`；低于该分离量的间隙归薄特征机制而非尺寸场。 |
+| `curvature_sources` | 网格生成 | `src/meshgen/sizing.rs:504` | 在条件化输入曲面的光滑内部边上产出弦差曲率源。 |
+| `feature_sources` | 网格生成 | `src/meshgen/sizing.rs:605` | 特征曲线转折源，外加每个 S1 角点/交汇点一个（最短关联段）。 |
+| `collect_geometry_sources` | 网格生成 | `src/meshgen/sizing.rs:677` | 曲率源与特征源合为一个规范有序列表。 |
+| `gap_sources` | 网格生成 | `src/meshgen/sizing.rs:712` | 状态相关的局部特征尺寸源：对每个保持体网格的 S3 采样取 `t / gap_cells`。 |
+| `SizingLookup` / `SizingLookup::build` / `eval` / `eval_box` | 网格生成 | `src/meshgen/sizing.rs:969/987/1067/1083` | 由构造即 Lipschitz 的梯度场 `min_s (h_s + beta*dist)`；点求值与盒上精确最小值。 |
+| `SizingLeaf` / `SizingStats` / `SizingField` | 网格生成 | `src/meshgen/sizing.rs:1156/1164/1182` | 单个八叉树叶子、构建的预算/范围报告，以及背景八叉树本身。 |
+| `SizingField::locate` / `SizingField::sample` | 网格生成 | `src/meshgen/sizing.rs:1220/1248` | 定位包含某点的叶子（每层一次二分查找）并读取其尺寸。 |
+| `build_sizing_field` | 网格生成 | `src/meshgen/sizing.rs:1265` | 每层一趟并行细化背景八叉树，直至每个叶子都解析其内部的场。 |
+| `SizingConstraint` / `SizingConstraint::new` / `evaluate` / `binding_region` | 网格生成 | `src/meshgen/sizing.rs:1407/1421/1468/1498` | 供耦合驱动使用的 `C(R)`，以及绑定它的区域与项。 |
+| `sizing_to_doc` | 网格生成 | `src/meshgen/sizing.rs:1540` | 将尺寸场编码为携带 `sizing_h` 点数组的 `s04_sizing` 体素预览 VTU。 |
+| `FREUDENTHAL` / `CellTemplate` | 网格生成 | `src/meshgen/lattice.rs:54/493` | 冻结的 6-tet Kuhn 表，以及叶子采用了哪类模板。 |
+| `balance_octree` / `balance_violation` | 网格生成 | `src/meshgen/lattice.rs:156/286` | 将八叉树细化到强（面+边+顶点）2:1 平衡；并可直接检验该性质。 |
+| `Lattice` / `LatticeStats` / `LatticeOptions` | 网格生成 | `src/meshgen/lattice.rs:520/502/531` | 四面体化的背景晶格、其构建报告与四面体预算。 |
+| `build_lattice` / `build_lattice_with_splits` | 网格生成 | `src/meshgen/lattice.rs:611/616` | 以 Freudenthal 与形心扇形模板对平衡八叉树作四面体化。 |
+| `lattice_to_doc` | 网格生成 | `src/meshgen/lattice.rs:833` | 将晶格编码为 `s05_lattice` 快照 VTU（四面体而非体素——见修订说明）。 |
+| `Side` / `Provenance` / `OwnershipRecord` | 网格生成 | `src/meshgen/classify.rs:60/68/82` | 四面体相对构件的内外侧（缺省即外部，`Ambiguous` 表示由切割裁定）、条目来源，以及稀疏记录本身。 |
+| `resolve` | 网格生成 | `src/meshgen/classify.rs:171` | 冻结的标签规则：内部集合取优先级最小者；集合为空时为 `{0}`。 |
+| `RAY_DIRECTIONS` | 网格生成 | `src/meshgen/classify.rs:42` | 射线恰好穿过边或顶点时的冻结重发射序列（ARB-9）。 |
+| `Classification` / `ClassifyStats` / `ClassifyOptions` | 网格生成 | `src/meshgen/classify.rs:140/112/457` | 逐顶点归属、播种记录、区域键、活跃面片掩码，以及各判定的达成方式。 |
+| `classify_lattice` | 网格生成 | `src/meshgen/classify.rs:493` | S6：按晶格顶点 x 实体构件的精确奇偶分类、记录播种与活跃面片过滤。 |
+| `classified_to_doc` | 网格生成 | `src/meshgen/classify.rs:810` | 将分类后的晶格编码为 `s06_classified` 快照 VTU。 |
+| `SNAP_MOTION_CAP` / `SNAP_RECHECK_LOW` / `SNAP_RECHECK_HIGH` | 网格生成 | `src/meshgen/snap.rs:43/48/50` | 30% 位移上限（ARB-11），以及 97.5/2.5% 复核带——近端点交点改为提升端点而非切割。 |
+| `WEIGHT_CORNER` / `WEIGHT_CURVE` / `WEIGHT_SURFACE` | 网格生成 | `src/meshgen/snap.rs:58/60/62` | `1e7`/`1e4`/`1e0`——冻结的吸附目标优先级的数值写法。 |
+| `ALTERNATING_PROJECTION_PASSES` | 网格生成 | `src/meshgen/snap.rs:54` | 退化排布邻域曲线目标的固定交替投影趟数（ARB-2）。 |
+| `TargetKind` | 网格生成 | `src/meshgen/snap.rs:68` | 节点被约束到何处，采用契约的 `constraint_kind` 编码：自由/曲面/折线/角点/盒面。 |
+| `EdgeCrossing` | 网格生成 | `src/meshgen/snap.rs:90` | 一个精确的边—面片交点：边、面、构件、参数与构造点——S8 将在此切割。 |
+| `Snapped` / `SnapStats` / `SnapOptions` | 网格生成 | `src/meshgen/snap.rs:138/105/161` | S7 移动后的节点、逐节点约束、交点与在切面上的节点集；其诊断；以及域盒与焊接容差。 |
+| `snap_lattice` | 网格生成 | `src/meshgen/snap.rs` | S7：捕获角点与特征曲线、提升近端点交点、复核，并给出最终交点表。 |
+| `unique_edges` | 网格生成 | `src/meshgen/snap.rs` | 晶格的去重边集合，每条以升序节点对表示。 |
+| `move_preserves_orientation` | 网格生成 | `src/meshgen/snap.rs` | ARB-10 的精确判据：移动某节点后其所有相邻四面体是否仍为正定向。 |
+| `snapped_to_doc` | 网格生成 | `src/meshgen/snap.rs` | 将吸附后的晶格编码为 `s07_snapped` 快照 VTU。 |
+| `CUT_VOLUME_TOLERANCE` / `CUT_MIN_DIHEDRAL_DEG` | 网格生成 | `src/meshgen/cut.rs:33/36` | 受保护试运行的 1% 体积容差，以及 §4.4 运行期 8 度二面角下限。 |
+| `NodeSide` / `Escalation` | 网格生成 | `src/meshgen/cut.rs:43/54` | 母节点相对面片的位置，以及单元无法走 §6 路径的原因。 |
+| `InterfaceFace` | 网格生成 | `src/meshgen/cut.rs:70` | 一个带标签的切割三角形及其 `(内侧, 外侧)` 单元对——预留的导出契约。 |
+| `CutMesh` / `CutStats` / `CutOptions` | 网格生成 | `src/meshgen/cut.rs` | S8 的节点、四面体、记录、界面与升级清单；其诊断；其容差。 |
+| `snk_split_quad` / `snk_diagonal_is_02` | 网格生成 | `src/meshgen/cut.rs` | SNK 规则（§4.1）：四边形的对角线取过其最小 `NodeKey` 顶点的那条。 |
+| `prism_tets` / `prism_tets_with_diagonals` | 网格生成 | `src/meshgen/cut.rs` | 冻结的六模式棱柱表（§4.3）；仅对定理 T2 判为不可达的两组循环对角线返回 `None`。 |
+| `FaceCutState` / `face_split` | 网格生成 | `src/meshgen/cut.rs` | §5.2 剪纸式面剖分表（含 `split_R`）；悬空切割状态返回 `None`。 |
+| `CellCut` / `cut_tet` | 网格生成 | `src/meshgen/cut.rs` | §6 单面片四面体情形表——碎片、其侧别与界面三角形。 |
+| `orient_positively` / `guarded_dry_run` | 网格生成 | `src/meshgen/cut.rs` | 规范定向修正，以及 §6 的受保护试运行（ARB-15）。 |
+| `cut_lattice` / `cut_to_doc` | 网格生成 | `src/meshgen/cut.rs` | S8：切割所有被穿越单元、派生界面索引、升级其余单元；并编码 `s08_cut`。 |
+| `FaceMesh` / `face_mesh` / `loop_fan` / `face_centroid` | 网格生成 | `src/meshgen/junction.rs` | 升级单元的面如何三角化——冻结表适用处用表，否则用面质心扇形。 |
+| `FannedCell` / `fan_cell` / `cell_centroid` / `TET_FACES` | 网格生成 | `src/meshgen/junction.rs` | 重新划分升级单元的协调质心扇形（G6-0 采纳的回退方案）。 |
+| `Stage` | 网格工具 | `src/meshgen/snapshot.rs:18` | 冻结的阶段枚举（0..=11）；亦为快照索引。 |
+| `Stage::from_path` | 网格工具 | `src/meshgen/snapshot.rs:74` | 从快照文件名的 sNN 标记解析阶段。 |
+| `should_emit` | 网格工具 | `src/meshgen/snapshot.rs:99` | 在 none/key/all 下是否产出某阶段。 |
+| `snapshot_path` | 网格工具 | `src/meshgen/snapshot.rs:118` | <stem>.debug/<stem>_sNN_<name>.vtu 路径（Quality 带 _r<N>）。 |
+| `SnapshotMeta` | 网格工具 | `src/meshgen/snapshot.rs:132` | stamp_metadata/emit_snapshot 的打标输入集合。 |
+| `stamp_metadata` | 网格工具 | `src/meshgen/snapshot.rs:166` | 将完整 §2.4 元数据块打标到快照文档。 |
+| `emit_snapshot` | 网格工具 | `src/meshgen/snapshot.rs:215` | 打标元数据并写出快照 VTU；返回路径。 |
+| `warn_if_large` | 网格工具 | `src/meshgen/snapshot.rs:246` | 尺寸 WARN：snapshots=all + 估计 >5 M 四面体。 |
+| `VerifyOptions` | 网格工具 | `src/meshgen/verify.rs:410` | 文档之外的验证器输入（expected_stage 用于 [V12] 交叉校验）。 |
+| `verify_with_options` | 网格工具 | `src/meshgen/verify.rs:441` | 带阶段上下文的验证；s00-s03 跳过仅体网格 [V7]/[V8]。 |
+| `GpuClipPlane` | 网格工具 | `src/gpu/scene_render.rs:45` | GPU 场景预览的可选半空间裁剪（平滑切割）。 |
+| `GpuSceneOptions` | 网格工具 | `src/gpu/scene_render.rs:52` | GPU 专用开关：裁剪平面、叠加线段、标记。 |
+| `GpuScenePipeline` | 网格工具 | `src/gpu/scene_render.rs:70` | 离屏 GPU 场景预览：带颜色的 TriangleList + LineList 叠加，均支持裁剪平面丢弃。 |
+| `GpuScenePipeline::render` | 网格工具 | `src/gpu/scene_render.rs:310` | 以不透明预览方式渲染单相机单场景。 |
+| `GpuScenePipeline::render_views` | 网格工具 | `src/gpu/scene_render.rs:330` | 批量视图：几何数据仅上传一次，供所有相机复用。 |
 
-**总计：246 个已记录条目**（函数、方法、结构体、枚举和常量），分布在 11 份参考文档中，覆盖全部 45 个 `src/*.rs` 文件。
+**总计：358 个已记录行**（函数、方法、结构体、枚举、常量以及紧密相关 API 组合行）。
 
 ## 关于数量的说明
 
-- 对 `src/` 中 `fn ` 声明的原始 `grep` 搜索找到 151 个函数。本索引列出了 246 个条目，是因为它还包含了已记录的结构体、枚举和常量（例如 `MeshMetrics`、`RotationMode`、`RAY_DIR_GPU`）及其关联方法——而不仅仅是函数。
-- `#[cfg(test)] mod tests` 代码块内的仅测试用函数（例如 `src/compute/mod.rs` 中的 6 个单元测试）被有意排除在外——本索引仅覆盖生产代码。
-- 两个 `main` 函数（`src/main.rs` 和 `src/bin/precision_test.rs`）分别列出，因为它们属于不同的二进制目标（`rustmspt` 和 `precision_test`）。
-- 出现了两个 `build_triangle_buffer` 函数（`src/gpu/s2.rs` 和 `src/gpu/voxel.rs`）——这是不同模块中两个独立定义、同名的私有辅助函数，并非重复项。
+- 仅测试函数有意排除；本索引覆盖生产代码。
+- 紧密耦合的 API（如 DD 算术与排布记录类型）合并在同一行。
+- 不同模块中的同名辅助函数是独立定义，并非重复项。
 
 ## 参考文档
 
 | 文档 | 覆盖范围 |
 |---|---|
-| [core-and-compute.md](core-and-compute.md) | `main.rs`、`lib.rs`、`error.rs`、`types.rs`、`bin/precision_test.rs`、`compute/*` |
-| [config.md](config.md) | `config/*` —— YAML 配置结构体与反序列化辅助函数 |
-| [geometry-core.md](geometry-core.md) | `geometry/{mod,bbox,mesh_ops,spatial}.rs` |
-| [geometry-volume-collision.md](geometry-volume-collision.md) | `geometry/{volume,collision,forging}.rs` |
-| [geometry-analysis.md](geometry-analysis.md) | `geometry/{metrics,s2}.rs` |
-| [gpu.md](gpu.md) | `gpu/*`（特性门控） |
-| [io.md](io.md) | `io/{stl,volume}.rs` |
-| [pipeline-core.md](pipeline-core.md) | `pipeline/{mod,rotation,scale,forge,measure}.rs` |
-| [pipeline-crop-and-splitfilter.md](pipeline-crop-and-splitfilter.md) | `pipeline/{crop,split_filter}.rs` |
-| [pipeline-packing.md](pipeline-packing.md) | `pipeline/{pack,pack_targets}.rs` |
-| [pipeline-optimize.md](pipeline-optimize.md) | `pipeline/optimize.rs` |
+| [core-and-compute.md](core-and-compute.md) | 入口、核心类型、计算策略 |
+| [config.md](config.md) | YAML 配置与反序列化辅助函数 |
+| [geometry-core.md](geometry-core.md) | 核心几何、空间网格、STL 渲染 |
+| [geometry-volume-collision.md](geometry-volume-collision.md) | 体积、碰撞、锻造 |
+| [geometry-analysis.md](geometry-analysis.md) | 指标与 S2 |
+| [gpu.md](gpu.md) | 特性门控 GPU 路径 |
+| [io.md](io.md) | STL/TIFF/RAW I/O |
+| [mesh-render-and-vtu.md](mesh-render-and-vtu.md) | 契约 VTU 与体网格渲染 |
+| [mesh-verify.md](mesh-verify.md) | 验证目录与报告 |
+| [meshgen.md](meshgen.md) | mesh 配置及 S0/S1/G2-1..G2-3 |
+| 流水线参考页 | 按主题划分的流水线实现 |
 
 ## 另请参阅
 
-- [算法文档](../algorithms/) —— S2 相关函数、模拟退火、自由变形锻造、堆积目标分布、PCA 体数据对齐、空间网格碰撞以及网格裁剪/体积分数的概念性说明。
-- [示例文档](../examples/) —— 附带真实捕获输出的各流水线走查。
-- [AGENTS.md](../../../AGENTS.md) —— 这些文档所依据的 `AI-FUNC-SUMMARY` 注释约定，以及保持两者同步的要求。
+| `BandPair` | 网格生成 | `src/meshgen/thin.rs:71` | 一对匹配的壁面顶点，塌缩后携带其边缘节点（SPEC §8.1 不变式 B1）。 |
+| `BandTemplate` | 网格生成 | `src/meshgen/thin.rs:102` | 单元取用了冻结 §8.2 条带表的哪一行，以及其 `regime` 单元数组编码。 |
+| `BandFailure` | 网格生成 | `src/meshgen/thin.rs:138` | 条带单元无法按其表行剖分的原因。 |
+| `BandCellMesh` | 网格生成 | `src/meshgen/thin.rs:155` | 一个已剖分的条带单元：四面体、模板、阶梯级别、质量与体积误差。 |
+| `snk_cell_diagonals` | 网格生成 | `src/meshgen/thin.rs` | Rule SNK 在条带单元三条对边四边形上的对角线选择。 |
+| `band_cell_boundary` | 网格生成 | `src/meshgen/thin.rs` | 条带单元的闭合边界三角化——所有模板的推导来源。 |
+| `enclosed_volume` | 网格生成 | `src/meshgen/thin.rs` | 一致定向闭合三角化所围的体积（条带试运行的比较目标）。 |
+| `band_cell_table` | 网格生成 | `src/meshgen/thin.rs` | 冻结的 SPEC §8.2 条带表，以塌缩点对数为索引。 |
+| `mesh_band_cell` | 网格生成 | `src/meshgen/thin.rs` | 在给定对角线下按表剖分一个条带单元，并做定向、二面角与体积校验。 |
+| `steiner_band_cell` | 网格生成 | `src/meshgen/thin.rs` | §4.4 阶梯的末级：把单元自身边界锥化到 Steiner 顶点。 |
+| `band_cell_centroid` | 网格生成 | `src/meshgen/thin.rs` | 条带回退所锥化的 Steiner 点——单元形心。 |
+| `mesh_band_layer` | 网格生成 | `src/meshgen/thin.rs` | 剖分整个条带层：先查表，再成对协商翻转，再 Steiner，最后区域降级。 |
+| `predict_band_quality` | 网格生成 | `src/meshgen/thin.rs` | 剖分之前，用 SPEC §8.2 标称单元预测条带的单元质量。 |
+| `band_ladder` | 网格生成 | `src/meshgen/thin.rs` | 针对单个薄区域的 PLAN §10.11 五级 FEM 感知阶梯。 |
+| `ThinOptions` | 网格生成 | `src/meshgen/thin.rs` | S8b 的可调项：二面角与长宽比门限、FEM 剖面、高度下限与降级占比。 |
+| `MeshGenThin` | 网格工具 | `src/config/meshgen.rs` | `meshgen.thin` 配置块：条带门限、高度下限、降级占比与体元回退策略。 |
+
+| `Slab` | 网格生成 | `src/meshgen/thin.rs` | 条带单元的边界三角形属于哪一层：近侧、间隙、远侧。 |
+| `BandDecline` | 网格生成 | `src/meshgen/thin.rs` | 单元为何不属于双切规则覆盖的夹层情形；逐次运行计数并报告。 |
+| `BandCellPlan` | 网格生成 | `src/meshgen/thin.rs` | 已切分的夹层单元：三个闭合层，以及间隙层的三对匹配点对。 |
+| `band_face_split` | 网格生成 | `src/meshgen/thin.rs` | 双切面剖分规则：把每条被切边带两个切点的面剖分为角部／条带／剩余三部分。 |
+| `close_open_surface` | 网格生成 | `src/meshgen/thin.rs` | 用未配对有向边所构成的环把开放的定向三角化封闭。 |
+| `split_band_cell` | 网格生成 | `src/meshgen/thin.rs` | 把夹层单元切分为三个闭合层，并给出间隙层的匹配点对。 |
+| `ThinContext` / `ThinRegime` | 网格生成 | `src/meshgen/thin.rs` | S3->S8b 的桥接：按排布面索引的薄区编号、生效薄区制式、配对类别编码、`t_sheet`，以及 `collapse_sheets` 是否开启。 |
+| `thin_context` | 网格生成 | `src/meshgen/gapfield.rs` | 把 S3 的薄区归约为按排布面查表的形式，并映射每个薄区的**两侧**壁面。 |
+| `pair_class_code` | 网格生成 | `src/meshgen/gapfield.rs` | 某个 `PairClass` 对应的 `ThinRegionPairClass` 编码（SPEC contracts §2.3）。 |
+| `FACE_TAG_INTERFACE` / `FACE_TAG_SHEET` / `FACE_TAG_BOX_CAP` | 网格生成 | `src/meshgen/cut.rs` | S8 写出的 `FaceTagKind` 取值；此前切割阶段一直硬编码为 `0`。 |
+| `face_is_single_patch` | 网格生成 | `src/meshgen/cut.rs` | 切割某个面的各组件是否描述同一张曲面（逐边切割节点映射完全相同），从而可套用 §5.2 的表。 |
+| `collapsed_sheet_rim` | 网格生成 | `src/meshgen/cut.rs` | 塌缩薄片的边缘曲线——两端点均位于塌缩区域终止处的边界边。 |
+| `CURVE_KIND_RIM` | 网格生成 | `src/meshgen/cut.rs` | 边缘对应的 `CurveKind` 取值（SPEC contracts §2.3）。 |
+| `nodes_on_rim` | 网格生成 | `src/meshgen/cut.rs` | 位于排布边缘曲线容差范围内的网格节点——开放薄片允许终止的位置。 |
+| `expected_volume` | 网格生成 | `src/meshgen/verify.rs` | 在更高优先级实体取走各自份额后，某组件应得的体积，采用分层采样估计。 |
+| `TriIndex::contains` | 网格生成 | `src/meshgen/verify.rs` | 用广义绕数判定点是否位于三角形集合内部——射线奇偶性在自相交曲面上无定义。 |
+| `connected_shells` | 网格生成 | `src/meshgen/verify.rs` | 按共享顶点位置把三角形集合划分为若干壳，使并集的每个组成部分可以各自定界。 |
+| `sampled_volume` | 网格生成 | `src/meshgen/verify.rs` | 并集正确的体积估计：在每个壳自身的包围盒内采样，并把每个采样点计入第一个包含它的壳。 |
+| `ChildTets` | 网格生成 | `src/meshgen/cut.rs` | 单个单元按 §6 表格行生成的子单元；最大的一行（情形 D）为 8 个。 |
+| `volume_only` | 输入输出 | `src/io/vtu.rs` | 混合单元文档的仅四面体 `_volume` 伴随文件，逐单元数组同步筛选，并带回主文件编号的 `GlobalPointId`。 |
+| `ArrayData::select_tuples` | 输入输出 | `src/io/vtu.rs` | 仅保留索引通过保留掩码的元组，生成新数组。 |
+| `emit_snapshot_with_companion` | 网格生成 | `src/meshgen/snapshot.rs` | 写出快照；当 `output.split_volume` 开启时，同时写出其仅四面体伴随文件。 |
+| `polygon_soup_centroid` | 网格生成 | `src/meshgen/cut.rs` | 闭合三角形集合的形心——各层扇形锥化所用的顶点。 |
+| `KEY_ORDER_REFINEMENT` | 网格生成 | `src/meshgen/cut.rs` | S8 的排序键比焊接网格细多少（SPEC §1.2 Rule K-O）。 |
+| `REGIME_NORMAL` | 网格生成 | `src/meshgen/cut.rs` | 普通单元的 `regime` 单元数组编码。 |
+
+- [算法文档](../algorithms/) —— 概念性算法说明。
+- [示例文档](../examples/) —— 各流水线走查。
+- [AGENTS.md](../../../AGENTS.md) —— `AI-FUNC-SUMMARY` 与文档同步规则。
+
+| `PointClassifier` | `src/meshgen/classify.rs:487` | S6 用于判定的逐实体分量几何，与 S8 共享，使得在晶格没有顶点的位置也能对碎片采样（SPEC §7.5）。 |
+| `classify_lattice_with` | `src/meshgen/classify.rs:680` | 针对调用方已构建的 `PointClassifier` 运行 `classify_lattice`，投影网格只构建一次。 |
+| `seed_record` | `src/meshgen/cut.rs:1452` | 以内部采样确定升级单元碎片的归属，而非继承父单元尚未裁决的记录。 |
+| `curve_sources` | `src/meshgen/sizing.rs:699` | 沿每条锁定曲线加密，使单元至多跨越一条曲线；这是两条弦高准则无法表达的邻近性准则。 |
+| `curve_coverage` | `src/meshgen/snap.rs` | 有多少锁定曲线线段真正被网格边链覆盖；`[SNAP-CURVE]` 背后的测量。 |
+| `split_soup_by_surface` | `src/meshgen/junction.rs` | 按单张曲面划分升级单元的边界三角汤，并报告它留下的**每一个**封盖环（SPEC §7.6）；三个角点全部落在曲面上的三角形交由调用方的形心判别。 |
+| `open_boundary_loops` | `src/meshgen/junction.rs` | 将三角汤中只被使用一次的边按孔洞串成环；对夹断或分叉的孔洞予以拒绝。按无向计数，因为三角汤没有一致的绕向。 |
+| `split_soup_components` | `src/meshgen/junction.rs` | 将三角汤拆分为按边连通的各块，并以最小节点号排序——两道壁面会把外侧留成两块互不相连的实体。 |
+| `curve_pierce_points` | `src/meshgen/cut.rs` | 门 G6-0：按晶格面给出锁定曲线刺穿该面的位置，以该面自身角点为键。 |
+| `curve_mesh_edges` | `src/meshgen/cut.rs` | 按锁定曲线给出沿其分布的网格棱——两端点与中点都须落在曲线上；每条棱只发一个单元。 |
+| `nodes_on_curve` | `src/meshgen/cut.rs` | 门 G6-0：已经落在锁定曲线上的网格节点——严格取内部的刺穿判定对这种情形不会报告任何结果。 |
+| `fan_from_walk_node` | `src/meshgen/cut.rs` | 以边界走线自身的某个节点为扇心三角化该面；任一三角形退化时返回 None。 |
+| `segment_pierces_triangle` | `src/meshgen/cut.rs` | 线段严格穿过三角形内部的位置——排除仅触及边界与共面的情形。 |
+| `curve_segments` | `src/pipeline/meshgen.rs` | 门 G6-0 的输入：排布中全部锁定曲线的折线段。 |
+| `locked_curves` | `src/pipeline/meshgen.rs` | 同一批曲线的完整形式——种类、分量集合、径向面片数与折线——供 VTU 曲线表与 `[V9]` 使用。 |
+| `soup_volume` | `src/meshgen/cut.rs` | 闭合三角汤所围体积，对任意形状均精确：先以广度优先遍历定向，再作带符号求和。 |
+| `fan_is_sound` | `src/meshgen/cut.rs` | 三角汤的每个三角形与其自身形心是否构成非退化四面体——即 `orient_positively` 丢弃时所问的精确问题。 |
+| `cell_fan_is_conforming` | `src/meshgen/cut.rs` | §7.6 各碎片扇形化后得到的四面体彼此之间是否协调——即在单元提交之前先对它自己提出 `[V3]` 的两项检查。 |
+| `fan_is_simple` | `src/meshgen/cut.rs` | 多边形的扇形化是否恰好覆盖它一次：每个三角形非退化且绕向一致。 |
+| `fan_cap` | `src/meshgen/cut.rs` | 从盖多边形自身顶点中选一个能干净三角剖分的作扇形化；若无则返回 None。 |
+| `fan_swallows_vertex` | `src/meshgen/cut.rs` | 扇形化的任一条边是否穿过了不属于该三角形的多边形顶点。 |
+| `split_escalated_cell` | `src/meshgen/cut.rs` | 对每个穿越分量施加 §7.6，由孔洞拓扑与扇形体积检查守护；失败时回退到整体扇形。 |
+| `crossed_face` | `src/meshgen/cut.rs` | 描述被面片穿过的面：每两个切割节点给出一条弦，同一分量留下四个节点时给出两条嵌套弦，两条弦互相穿插时给出相遇点。 |
+| `ACTIVE_FACE_PROBE` | `src/meshgen/classify.rs` | 判断某个面是否埋在其自身自相交分量内部时，向两侧偏移的探测距离。 |
+| `crossed_face_mesh` | `src/meshgen/junction.rs` | 以两条弦为边三角化该面：相交时分四个扇区，不相交时分三块多边形。 |
+| `chord_meeting_point` | `src/meshgen/junction.rs` | 一个面上两条弦的相遇点——S2 交线穿刺该面之处。 |
+| `fan_polygon` | `src/meshgen/junction.rs` | 从最小键顶点扇形化面的一个凸子多边形。 |
+| `fan_volume` | `src/meshgen/cut.rs` | 闭合多边形三角汤所围的体积，以内部锥点上的无符号和计算。 |
+| `declare_contact_components` | `src/meshgen/cut.rs` | 为落在重合排布面片上的每个网格面声明该面片所属的全部分量。 |
+| `point_on_triangle` | `src/meshgen/cut.rs` | 判断一点是否落在三角形的 `eps` 之内（平面距离加重心坐标包含性）。 |
+| `contact_patches` | `src/pipeline/meshgen.rs` | S2 的多标记排布面，作为三角形与其分量集合的配对——排布阶段的重合信息进入 S8 的唯一通道。 |
+| `DEFAULT_MAX_WIREFRAME_EDGES` | `src/meshgen/render_scene.rs` | 输出线框线段数的默认上限；超出后按步长细化，绝不截断。 |

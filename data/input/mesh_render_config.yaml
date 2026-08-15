@@ -11,9 +11,13 @@ mesh_render:
   # RGB or RGBA; alpha 0 renders a transparent PNG background.
   background: [255, 255, 255, 255]
   ambient: 0.25
-  # "uniform" or a cell-array name; integer arrays -> categorical palette,
-  # float arrays -> sequential (viridis) colormap.
+  # "uniform", a cell-array name, or a point-array name (separation_t, sizing_h);
+  # integer arrays -> categorical palette, float arrays -> sequential (viridis)
+  # colormap. A point array colours each cell by the mean of its point values.
   color_by: region_key
+  # cpu (default, exact transparency), gpu (opaque preview, errors if unavailable),
+  # or auto (GPU when present, silently falling back to CPU).
+  backend: cpu
   volume_opacity: 1.0
   face_opacity: 1.0
   # region_key (integer, as string) -> opacity, e.g. make background see-through:

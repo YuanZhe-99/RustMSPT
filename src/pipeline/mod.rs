@@ -1,10 +1,12 @@
+pub mod crop;
 pub mod forge;
 pub mod measure;
 pub mod mesh_render;
+pub mod mesh_verify;
+pub mod meshgen;
 pub mod optimize;
 pub mod pack;
 pub mod pack_targets;
-pub mod crop;
 pub mod render;
 pub mod rotation;
 pub mod scale;

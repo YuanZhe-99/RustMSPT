@@ -1,12 +1,15 @@
 use clap::{Parser, Subcommand};
 use rustmspt::config::{
-    load_yaml, CropConfig, ForgingConfig, MeasurementConfig, MeshRenderConfig, OptimizationConfig,
-    PackingConfig, RenderConfig, ScaleConfig, SplitFilterConfig,
+    load_yaml, CropConfig, ForgingConfig, MeasurementConfig, MeshGenConfig, MeshRenderConfig,
+    MeshVerifyConfig, OptimizationConfig, PackingConfig, RenderConfig, ScaleConfig,
+    SplitFilterConfig,
 };
 use rustmspt::pipeline::crop::CropPipeline;
 use rustmspt::pipeline::forge::ForgePipeline;
 use rustmspt::pipeline::measure::MeasurePipeline;
 use rustmspt::pipeline::mesh_render::MeshRenderPipeline;
+use rustmspt::pipeline::mesh_verify::MeshVerifyPipeline;
+use rustmspt::pipeline::meshgen::MeshGenPipeline;
 use rustmspt::pipeline::optimize::OptimizePipeline;
 use rustmspt::pipeline::pack::PackPipeline;
 use rustmspt::pipeline::render::RenderPipeline;
@@ -72,6 +75,33 @@ enum Commands {
         input: Option<PathBuf>,
         #[arg(long)]
         output: Option<PathBuf>,
+    },
+    /// Generate a tetrahedral volume mesh from input STL surfaces (S0/S1/G2-1..G2-5; S3-S11 pending).
+    Mesh {
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Replace `meshgen.inputs` with a single STL.
+        #[arg(long)]
+        input: Option<PathBuf>,
+        /// Replace `meshgen.output.vtu`.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    /// Verify a contract or external tetrahedral VTU against the check catalog.
+    MeshVerify {
+        #[arg(long)]
+        config: Option<PathBuf>,
+        #[arg(long)]
+        input: Option<PathBuf>,
+        /// Human-readable report destination (also printed to stdout).
+        #[arg(long)]
+        report: Option<PathBuf>,
+        /// JSON report destination (SPEC_meshgen_contracts §4.1).
+        #[arg(long)]
+        json: Option<PathBuf>,
+        /// Write a copy of the mesh carrying the quality arrays and `verify_flags`.
+        #[arg(long)]
+        annotate: Option<PathBuf>,
     },
     Scale {
         #[arg(long)]
@@ -208,6 +238,48 @@ fn main() -> anyhow::Result<()> {
                 conf.mesh_render.output_dir = output.to_string_lossy().to_string();
             }
             MeshRenderPipeline { config: conf }.run()?;
+        }
+        Commands::Mesh {
+            config,
+            input,
+            output,
+        } => {
+            let path = pick_config_path(config, "meshgen_config.yaml");
+            let mut conf: MeshGenConfig = load_yaml(&path)?;
+            if let Some(input) = input {
+                conf.meshgen.inputs = vec![rustmspt::config::meshgen::MeshGenInput {
+                    stl: input.to_string_lossy().to_string(),
+                    priority: None,
+                    kind: rustmspt::config::meshgen::InputKind::default(),
+                }];
+            }
+            if let Some(output) = output {
+                conf.meshgen.output.vtu = output.to_string_lossy().to_string();
+            }
+            MeshGenPipeline { config: conf }.run()?;
+        }
+        Commands::MeshVerify {
+            config,
+            input,
+            report,
+            json,
+            annotate,
+        } => {
+            let path = pick_config_path(config, "mesh_verify_config.yaml");
+            let mut conf: MeshVerifyConfig = load_yaml(&path)?;
+            if let Some(input) = input {
+                conf.mesh_verify.input = input.to_string_lossy().to_string();
+            }
+            if let Some(report) = report {
+                conf.mesh_verify.report = Some(report.to_string_lossy().to_string());
+            }
+            if let Some(json) = json {
+                conf.mesh_verify.json = Some(json.to_string_lossy().to_string());
+            }
+            if let Some(annotate) = annotate {
+                conf.mesh_verify.annotate = Some(annotate.to_string_lossy().to_string());
+            }
+            MeshVerifyPipeline { config: conf }.run()?;
         }
         Commands::Scale {
             config,

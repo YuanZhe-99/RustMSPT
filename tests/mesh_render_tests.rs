@@ -130,7 +130,10 @@ fn missing_array_filter_reports_array_name() {
         ..SceneSpec::default()
     };
     let err = build_scene(&doc, &spec).unwrap_err().to_string();
-    assert!(err.contains("aspect_ratio"), "error should name the array: {err}");
+    assert!(
+        err.contains("aspect_ratio"),
+        "error should name the array: {err}"
+    );
 }
 
 #[test]
@@ -150,8 +153,22 @@ fn quad(x: f64, color: [u8; 3], alpha: f64, set: SetKind) -> Vec<SceneTri> {
     let (lo, hi) = (-5.0, 5.0);
     let p = |y: f64, z: f64| Vec3::new(x, y, z);
     vec![
-        SceneTri { a: p(lo, lo), b: p(hi, lo), c: p(hi, hi), color, alpha, set },
-        SceneTri { a: p(lo, lo), b: p(hi, hi), c: p(lo, hi), color, alpha, set },
+        SceneTri {
+            a: p(lo, lo),
+            b: p(hi, lo),
+            c: p(hi, hi),
+            color,
+            alpha,
+            set,
+        },
+        SceneTri {
+            a: p(lo, lo),
+            b: p(hi, hi),
+            c: p(lo, hi),
+            color,
+            alpha,
+            set,
+        },
     ]
 }
 
@@ -180,11 +197,18 @@ fn transparency_compositing_matches_analytic_result() {
     // Quad normals are parallel to the ray, so headlight intensity is exactly 1.
     // Expected center pixel: 0.5*red + 0.5*green.
     let mut scene = RenderScene::default();
-    scene.tris.extend(quad(1.0, [200, 0, 0], 0.5, SetKind::Volume));
-    scene.tris.extend(quad(2.0, [0, 100, 0], 1.0, SetKind::Volume));
+    scene
+        .tris
+        .extend(quad(1.0, [200, 0, 0], 0.5, SetKind::Volume));
+    scene
+        .tris
+        .extend(quad(2.0, [0, 100, 0], 1.0, SetKind::Volume));
     let (w, h) = (64, 64);
     let camera = ortho_camera_along_x(w, h);
-    let settings = SceneRenderSettings { background: [0, 0, 255, 255], ambient: 0.25 };
+    let settings = SceneRenderSettings {
+        background: [0, 0, 255, 255],
+        ambient: 0.25,
+    };
     let image = render_scene_cpu(&scene, &camera, w, h, &settings);
     let center = ((h / 2) * w + w / 2) * 4;
     let px = &image.rgba[center..center + 4];
@@ -199,11 +223,18 @@ fn coincident_face_set_wins_over_volume_set() {
     // A Face-set triangle pair coincident with a Volume-set pair: the face color
     // must win and compositing must not double-count the coincident geometry.
     let mut scene = RenderScene::default();
-    scene.tris.extend(quad(1.0, [10, 10, 10], 1.0, SetKind::Volume));
-    scene.tris.extend(quad(1.0, [0, 200, 200], 1.0, SetKind::Face));
+    scene
+        .tris
+        .extend(quad(1.0, [10, 10, 10], 1.0, SetKind::Volume));
+    scene
+        .tris
+        .extend(quad(1.0, [0, 200, 200], 1.0, SetKind::Face));
     let (w, h) = (32, 32);
     let camera = ortho_camera_along_x(w, h);
-    let settings = SceneRenderSettings { background: [255, 255, 255, 255], ambient: 0.25 };
+    let settings = SceneRenderSettings {
+        background: [255, 255, 255, 255],
+        ambient: 0.25,
+    };
     let image = render_scene_cpu(&scene, &camera, w, h, &settings);
     let center = ((h / 2) * w + w / 2) * 4;
     let px = &image.rgba[center..center + 4];
@@ -215,7 +246,10 @@ fn transparent_background_alpha_is_preserved() {
     let scene = RenderScene::default();
     let (w, h) = (16, 16);
     let camera = ortho_camera_along_x(w, h);
-    let settings = SceneRenderSettings { background: [0, 0, 0, 0], ambient: 0.25 };
+    let settings = SceneRenderSettings {
+        background: [0, 0, 0, 0],
+        ambient: 0.25,
+    };
     let image = render_scene_cpu(&scene, &camera, w, h, &settings);
     assert!(image.rgba.chunks(4).all(|p| p[3] == 0));
 }
@@ -259,8 +293,14 @@ mesh_render:
         assert_eq!((rgba.width(), rgba.height()), (96, 80));
         let colored = rgba.pixels().filter(|p| p.0[3] > 0).count();
         let transparent = rgba.pixels().filter(|p| p.0[3] == 0).count();
-        assert!(colored > 50, "{view}: expected visible geometry, got {colored} px");
-        assert!(transparent > 50, "{view}: expected transparent background, got {transparent} px");
+        assert!(
+            colored > 50,
+            "{view}: expected visible geometry, got {colored} px"
+        );
+        assert!(
+            transparent > 50,
+            "{view}: expected transparent background, got {transparent} px"
+        );
     }
 }
 
@@ -276,5 +316,397 @@ fn mesh_render_pipeline_rejects_unknown_view() {
     );
     let config: MeshRenderConfig = serde_yaml::from_str(&yaml).unwrap();
     let err = MeshRenderPipeline { config }.run().unwrap_err().to_string();
-    assert!(err.contains("sideways"), "error should name the bad view: {err}");
+    assert!(
+        err.contains("sideways"),
+        "error should name the bad view: {err}"
+    );
+}
+
+// ---------------------------------------------------------------- GA-3c: GPU preview
+//
+// The GPU path is an *opaque* preview by design (PLAN §9.5): exact transparency lives in
+// the CPU reference. These tests therefore compare on opaque scenes, and check the GPU-only
+// features (per-vertex colour, LineList overlay, clip-plane discard, batch views) directly.
+
+#[cfg(feature = "gpu")]
+fn opaque_scene() -> RenderScene {
+    // two axis-aligned quads at different depths, distinct colours, fully opaque
+    let mut tris = quad(0.0, [220, 60, 40], 1.0, SetKind::Volume);
+    tris.extend(quad(2.0, [40, 90, 220], 1.0, SetKind::Face));
+    RenderScene {
+        tris,
+        segments: Vec::new(),
+        markers: Vec::new(),
+        bbox: Some(rustmspt::types::BoundingBox {
+            min: Vec3::new(0.0, -5.0, -5.0),
+            max: Vec3::new(2.0, 5.0, 5.0),
+        }),
+    }
+}
+
+#[cfg(feature = "gpu")]
+fn box_scene() -> RenderScene {
+    // closed axis-aligned box, one colour per face pair, so every named view shows
+    // something and no two views coincide
+    let (lo, hi) = (Vec3::new(0.0, 0.0, 0.0), Vec3::new(2.0, 1.0, 1.5));
+    let v = |i: usize| {
+        Vec3::new(
+            if i & 1 == 0 { lo.x } else { hi.x },
+            if i & 2 == 0 { lo.y } else { hi.y },
+            if i & 4 == 0 { lo.z } else { hi.z },
+        )
+    };
+    let faces: [([usize; 4], [u8; 3]); 6] = [
+        ([0, 2, 6, 4], [220, 60, 40]),
+        ([1, 5, 7, 3], [40, 90, 220]),
+        ([0, 4, 5, 1], [60, 180, 75]),
+        ([2, 3, 7, 6], [240, 200, 40]),
+        ([0, 1, 3, 2], [150, 60, 200]),
+        ([4, 6, 7, 5], [40, 200, 200]),
+    ];
+    let mut tris = Vec::new();
+    for (q, color) in faces {
+        for (a, b, c) in [(q[0], q[1], q[2]), (q[0], q[2], q[3])] {
+            tris.push(SceneTri {
+                a: v(a),
+                b: v(b),
+                c: v(c),
+                color,
+                alpha: 1.0,
+                set: SetKind::Volume,
+            });
+        }
+    }
+    RenderScene {
+        tris,
+        segments: Vec::new(),
+        markers: Vec::new(),
+        bbox: Some(rustmspt::types::BoundingBox { min: lo, max: hi }),
+    }
+}
+
+#[cfg(feature = "gpu")]
+fn try_gpu() -> Option<rustmspt::gpu::GpuScenePipeline> {
+    match rustmspt::gpu::GpuScenePipeline::new() {
+        Ok(p) => Some(p),
+        Err(e) => {
+            println!("Skipping GPU scene test (no GPU available): {e}");
+            None
+        }
+    }
+}
+
+#[test]
+#[cfg(feature = "gpu")]
+fn gpu_scene_matches_cpu_within_tolerance() {
+    let scene = opaque_scene();
+    let settings = SceneRenderSettings::default();
+    let options = rustmspt::gpu::GpuSceneOptions::default();
+    let (w, h) = (128usize, 128usize);
+
+    for projection in [
+        RenderProjection::Orthographic,
+        RenderProjection::Perspective,
+    ] {
+        let mesh = Mesh {
+            vertices: vec![Vec3::new(0.0, -5.0, -5.0), Vec3::new(2.0, 5.0, 5.0)],
+            faces: Vec::new(),
+        };
+        let camera = build_render_camera(
+            &mesh,
+            &RenderCameraSpec {
+                focus_point: [1.0, 0.0, 0.0],
+                view_direction: [0.4, 0.3, -1.0],
+                up_vector: Some([0.0, 0.0, 1.0]),
+                projection,
+                perspective_fov_degrees: 45.0,
+                camera_distance: None,
+                fit_padding: 0.1,
+                width: w,
+                height: h,
+            },
+        )
+        .expect("camera should build");
+
+        let cpu = render_scene_cpu(&scene, &camera, w, h, &settings);
+        let Some(mut gpu_pipeline) = try_gpu() else {
+            return;
+        };
+        let gpu = gpu_pipeline
+            .render(&scene, &camera, w, h, &settings, &options)
+            .expect("gpu render should succeed");
+
+        assert_eq!(cpu.rgba.len(), gpu.rgba.len());
+        let mut mismatched = 0usize;
+        let mut max_channel_diff = 0i32;
+        for (c, g) in cpu.rgba.chunks_exact(4).zip(gpu.rgba.chunks_exact(4)) {
+            let diff = (0..4)
+                .map(|k| (c[k] as i32 - g[k] as i32).abs())
+                .max()
+                .unwrap_or(0);
+            max_channel_diff = max_channel_diff.max(diff);
+            if diff > 2 {
+                mismatched += 1;
+            }
+        }
+        let total = w * h;
+        assert!(
+            mismatched * 100 <= total * 2,
+            "{projection:?}: {mismatched}/{total} pixels differ by >2 (max channel diff {max_channel_diff})"
+        );
+    }
+}
+
+#[test]
+#[cfg(feature = "gpu")]
+fn gpu_per_vertex_color_reproduces_scene_colors() {
+    // one quad per colour, side by side: the preview must paint each with its own colour
+    // rather than a single uniform base colour.
+    let scene = opaque_scene();
+    let settings = SceneRenderSettings::default();
+    let (w, h) = (96usize, 96usize);
+    let camera = ortho_camera_along_x(w, h);
+    let Some(mut gpu_pipeline) = try_gpu() else {
+        return;
+    };
+    let gpu = gpu_pipeline
+        .render(
+            &scene,
+            &camera,
+            w,
+            h,
+            &settings,
+            &rustmspt::gpu::GpuSceneOptions::default(),
+        )
+        .expect("gpu render should succeed");
+
+    // the near quad (red) faces the camera and must dominate the image centre
+    let centre = ((h / 2) * w + w / 2) * 4;
+    let (r, g, b) = (gpu.rgba[centre], gpu.rgba[centre + 1], gpu.rgba[centre + 2]);
+    assert!(
+        r > g && r > b,
+        "expected the red quad at the centre, got ({r}, {g}, {b})"
+    );
+    assert!(r > 100, "expected a lit red, got {r}");
+}
+
+#[test]
+#[cfg(feature = "gpu")]
+fn gpu_line_pipeline_draws_overlay_segments() {
+    let mut scene = opaque_scene();
+    scene.segments.push(SceneSegment {
+        a: Vec3::new(-1.0, -4.0, 0.0),
+        b: Vec3::new(-1.0, 4.0, 0.0),
+        color: [0, 255, 0],
+    });
+    let settings = SceneRenderSettings::default();
+    let (w, h) = (96usize, 96usize);
+    let camera = ortho_camera_along_x(w, h);
+    let Some(mut gpu_pipeline) = try_gpu() else {
+        return;
+    };
+
+    let with_lines = gpu_pipeline
+        .render(
+            &scene,
+            &camera,
+            w,
+            h,
+            &settings,
+            &rustmspt::gpu::GpuSceneOptions::with_overlays(),
+        )
+        .expect("gpu render should succeed");
+    let without = gpu_pipeline
+        .render(
+            &scene,
+            &camera,
+            w,
+            h,
+            &settings,
+            &rustmspt::gpu::GpuSceneOptions::default(),
+        )
+        .expect("gpu render should succeed");
+
+    let green = |img: &rustmspt::types::RenderedImage| {
+        img.rgba
+            .chunks_exact(4)
+            .filter(|p| p[1] > 200 && p[0] < 100 && p[2] < 100)
+            .count()
+    };
+    assert!(green(&with_lines) > 0, "the LineList pass drew nothing");
+    assert_eq!(
+        green(&without),
+        0,
+        "segments must be off when not requested"
+    );
+}
+
+#[test]
+#[cfg(feature = "gpu")]
+fn gpu_clip_plane_discards_the_positive_side() {
+    let scene = opaque_scene();
+    let settings = SceneRenderSettings::default();
+    let (w, h) = (96usize, 96usize);
+    let camera = ortho_camera_along_x(w, h);
+    let Some(mut gpu_pipeline) = try_gpu() else {
+        return;
+    };
+
+    let full = gpu_pipeline
+        .render(
+            &scene,
+            &camera,
+            w,
+            h,
+            &settings,
+            &rustmspt::gpu::GpuSceneOptions::default(),
+        )
+        .expect("gpu render should succeed");
+    // clip everything with y > 0
+    let clipped = gpu_pipeline
+        .render(
+            &scene,
+            &camera,
+            w,
+            h,
+            &settings,
+            &rustmspt::gpu::GpuSceneOptions {
+                clip_plane: Some(rustmspt::gpu::GpuClipPlane {
+                    origin: Vec3::new(0.0, 0.0, 0.0),
+                    normal: Vec3::new(0.0, 1.0, 0.0),
+                }),
+                ..Default::default()
+            },
+        )
+        .expect("gpu render should succeed");
+
+    let background = |img: &rustmspt::types::RenderedImage| {
+        img.rgba
+            .chunks_exact(4)
+            .filter(|p| p[0] == 255 && p[1] == 255 && p[2] == 255)
+            .count()
+    };
+    let (b_full, b_clipped) = (background(&full), background(&clipped));
+    assert!(
+        b_clipped > b_full,
+        "clipping must expose background: {b_full} -> {b_clipped}"
+    );
+    // roughly half the covered pixels should survive; allow a wide band for framing
+    let covered_full = w * h - b_full;
+    let covered_clipped = w * h - b_clipped;
+    assert!(
+        covered_clipped * 4 < covered_full * 3 && covered_clipped > covered_full / 8,
+        "expected about half the coverage to survive: {covered_full} -> {covered_clipped}"
+    );
+}
+
+#[test]
+#[cfg(feature = "gpu")]
+fn gpu_batch_views_match_individual_renders() {
+    let scene = box_scene();
+    let settings = SceneRenderSettings::default();
+    let options = rustmspt::gpu::GpuSceneOptions::default();
+    let (w, h) = (64usize, 64usize);
+    let mesh = Mesh {
+        vertices: vec![Vec3::new(0.0, 0.0, 0.0), Vec3::new(2.0, 1.0, 1.5)],
+        faces: Vec::new(),
+    };
+    let cameras: Vec<_> = ["front", "top", "iso_ne"]
+        .iter()
+        .map(|name| {
+            let (dir, up) = named_view(name).unwrap();
+            build_render_camera(
+                &mesh,
+                &RenderCameraSpec {
+                    focus_point: [1.0, 0.5, 0.75],
+                    view_direction: dir,
+                    up_vector: Some(up),
+                    projection: RenderProjection::Orthographic,
+                    perspective_fov_degrees: 45.0,
+                    camera_distance: None,
+                    fit_padding: 0.05,
+                    width: w,
+                    height: h,
+                },
+            )
+            .unwrap()
+        })
+        .collect();
+
+    let Some(mut gpu_pipeline) = try_gpu() else {
+        return;
+    };
+    let batch = gpu_pipeline
+        .render_views(&scene, &cameras, w, h, &settings, &options)
+        .expect("batch render should succeed");
+    assert_eq!(batch.len(), cameras.len());
+
+    for (i, camera) in cameras.iter().enumerate() {
+        let single = gpu_pipeline
+            .render(&scene, camera, w, h, &settings, &options)
+            .expect("single render should succeed");
+        assert_eq!(
+            batch[i].rgba, single.rgba,
+            "batch view {i} differs from the same camera rendered alone"
+        );
+    }
+    // the three views must not all be identical, or the batch is not varying the camera
+    assert_ne!(batch[0].rgba, batch[1].rgba);
+}
+
+#[test]
+fn mesh_render_backend_selection() {
+    let dir = tempfile::tempdir().unwrap();
+    let vtu_path = dir.path().join("fixture.vtu");
+    save_vtu(&vtu_path, &contract_doc(), VtuEncoding::AppendedRaw).unwrap();
+
+    let config_for = |backend: &str, out: &std::path::Path| -> MeshRenderConfig {
+        let yaml = format!(
+            r#"
+mesh_render:
+  input: {}
+  output_dir: {}
+  views: [front]
+  width: 32
+  height: 32
+  backend: {}
+"#,
+            vtu_path.display(),
+            out.display(),
+            backend
+        );
+        serde_yaml::from_str(&yaml).unwrap()
+    };
+
+    // the default is the CPU reference renderer
+    let default_cfg: MeshRenderConfig = serde_yaml::from_str(&format!(
+        "mesh_render:\n  input: {}\n  output_dir: {}\n",
+        vtu_path.display(),
+        dir.path().join("d").display()
+    ))
+    .unwrap();
+    assert_eq!(default_cfg.mesh_render.backend, "cpu");
+
+    // `auto` always produces an image: it uses the GPU when one is available and
+    // silently falls back to the CPU renderer when it is not
+    let auto_out = dir.path().join("auto");
+    MeshRenderPipeline {
+        config: config_for("auto", &auto_out),
+    }
+    .run()
+    .expect("auto backend must always succeed");
+    assert!(auto_out.join("fixture_front.png").exists());
+
+    // an unknown backend is a config error naming the accepted values
+    let bad_out = dir.path().join("bad");
+    let err = MeshRenderPipeline {
+        config: config_for("quantum", &bad_out),
+    }
+    .run()
+    .expect_err("unknown backend must be rejected");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("quantum") && msg.contains("cpu"),
+        "unhelpful error: {msg}"
+    );
 }

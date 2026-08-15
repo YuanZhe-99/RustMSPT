@@ -1,0 +1,89 @@
+# Configuration for the `mesh` subcommand (tetrahedral volume mesh generation).
+# Design: PLAN_mesh_generation.md §6.3 (config sketch); the schema of record lives in
+# SPEC_meshgen_geometry.md / SPEC_meshgen_numerics.md / SPEC_meshgen_contracts.md.
+# The pipeline validates these fields up front (see MeshGenParams::validate); the
+# parse-time rejects frozen in PLAN §6.3 are enforced there, not assumed.
+meshgen:
+  inputs:
+    - stl: data/input/particles.stl
+    # priority defaults to 0 for EVERY input; lower = higher priority. Inputs sharing a
+    # priority is the normal case, not an error: where they overlap, the region keeps both
+    # X (R-A3), which is what "these two bodies interpenetrate" means. Give an explicit
+    # priority only to express real precedence — then the lower number wins the overlap
+    # outright and the loser keeps nothing there (R-A4). File order carries no rank.
+    # kind: auto | solid | sheet   (auto detects from closedness)
+    # - stl: data/input/void1.stl
+    #   priority: 0                 # same rank as particles.stl -> shared overlap region
+    # - stl: data/input/coating.stl
+    #   priority: 1                 # outranked by everything at priority 0
+    # - stl: data/input/grain_boundary.stl
+    #   kind: sheet
+  domain:
+    min: [0.0, 0.0, 0.0]
+    max: [1.0, 1.0, 1.0]
+  sizing:
+    h_max_frac: 0.05        # x box diagonal (cap)
+    h_min_frac: 0.002       # x box diagonal (floor)
+    chord_error_frac: 0.2   # curvature criterion
+    feature_angle_deg: 45.0
+    grading: 2.0            # max size ratio over one element (the 2:1 gradation); must be > 1
+    gap_cells: 2.0          # elements across a gap that stays volumetric; must be >= 1
+    curve_cells: 2.0        # h_max / this along every locked curve (sharp edge, S2
+                            # intersection curve, rim, non-manifold edge). The chord
+                            # rules cannot see these - a cube edge is straight and two
+                            # crossing surfaces do not bend - so without this nothing
+                            # refines toward them. 1.0 disables. Note it lowers h, and
+                            # t_sheet/t_layer are fractions of the converged h.
+  gaps:
+    t_layer_factor: 1.0     # x local h(x)
+    t_sheet_factor: 0.2     # x local h(x)
+    confidence_min: 0.9
+  envelope:
+    eps_frac: 1.0e-4        # x box diagonal; must be < 0.5 * t_sheet_factor * h_min_frac
+  repair:
+    level: conservative     # strict | conservative | permissive
+  coincidence: merge        # merge | reject | warn
+  fem_profile: implicit     # implicit | explicit | none
+  thin:                     # S8b thin regimes (PLAN §10.11); all optional
+    enabled: true           # false disables the band path; cells fall back to the conforming fan
+    band_min_dihedral_deg: 8.0    # predicted + runtime dihedral floor for a band element
+    band_max_ar: 20.0             # predicted aspect-ratio ceiling
+    min_altitude_frac: 0.0        # altitude floor as a fraction of h; 0 = take it from fem_profile
+                                  # (implicit: off, explicit: 0.05 * h as a stable-dt proxy)
+    regional_failure_share: 0.05  # Steiner share past which a whole region is demoted ([THIN-SKIP])
+    forbid_volumetric_fallback: false  # true removes ladder rung 4, so an unmeshable thin
+                                       # region is rejected with a report instead of kept volumetric
+    collapse_sheets: false        # G7-2 production rim collapse: an edge whose two wall crossings
+                                  # belong to one Sheet region and lie within t_sheet carries one
+                                  # shared rim node, so the gap becomes a welded sheet (SPEC
+                                  # geometry §8.2, k=3) and its rim is emitted as a declared curve.
+                                  # Verified clean ([V3]/[V7]/[V8] PASS, deterministic, quality
+                                  # unchanged) but OFF by default: the evidence is two synthetic
+                                  # fixtures, and where it fires it changes meshes substantially
+                                  # (two-plate fixture: 3,888 band elements -> a 2,592-face welded
+                                  # sheet). Turning it on is what the frozen spec asks for a region
+                                  # below t_sheet. See PLAN §0.2.
+  determinism: strict       # strict | fast
+  materials:
+    by_component: { 1: steel, 2: pore }
+    by_region_key: { "3+5": composite_A }
+    unmapped: error          # error | elset-only
+  acceleration:
+    mode: auto
+  snapshots: key            # none | key | all   (s02, s05, s08, s11)
+  output:
+    vtu: data/output/mesh.vtu
+    # Also write a tets-only `<name>_volume.vtu` beside every snapshot. The primary file
+    # is mixed-cell by contract (tets + tagged interface triangles + rim polylines, SPEC
+    # contracts §2.1) because the face tags carry the cohesive/split-node contract - but
+    # that makes it unreadable in a viewer without a filter: ParaView's Feature Edges
+    # walks the triangle cells and draws a web over every interface, which reads as a
+    # cracked mesh even though the volume underneath is watertight. The companion shares
+    # the primary file's node numbering (GlobalPointId is the identity).
+    split_volume: true
+    # abaqus: data/output/mesh.inp
+    report: data/output/mesh_verification
+  verify:
+    max_ar_warn: 20.0
+    min_dihedral_deg: 5.0
+    # warn_is_fatal: false

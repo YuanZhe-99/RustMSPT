@@ -28,6 +28,8 @@ Mirrors the `src/` module layout. Each document opens with an `## Index` table (
 | [pipeline-packing.md](reference/pipeline-packing.md) | `pipeline/{pack,pack_targets}.rs` |
 | [pipeline-optimize.md](reference/pipeline-optimize.md) | `pipeline/optimize.rs` |
 | [mesh-render-and-vtu.md](reference/mesh-render-and-vtu.md) | `io/vtu.rs`, `meshgen/render_scene.rs`, `geometry/scene_render.rs`, `pipeline/mesh_render.rs`, `config/mesh_render.rs` |
+| [mesh-verify.md](reference/mesh-verify.md) | `meshgen/{predicates,verify}.rs`, `pipeline/mesh_verify.rs`, `config/mesh_verify.rs` |
+| [meshgen.md](reference/meshgen.md) | `config/meshgen.rs`, `pipeline/meshgen.rs`, `meshgen/{surface,features,predicates,arrange,topo,gapfield,sizing,lattice,snapshot}.rs` - S0/S1/G2/G3/G4 |
 
 ## Algorithms (conceptual explanations)
 
@@ -60,6 +62,7 @@ Each walkthrough shows a realistic config, the exact CLI command, and output cap
 | [pack-target-distribution.md](examples/pack-target-distribution.md) | `pack` with target diameter distribution steering |
 | [render.md](examples/render.md) | `render` |
 | [mesh-render.md](examples/mesh-render.md) | `mesh-render` (VTU volume-mesh renderer) |
+| [mesh.md](examples/mesh.md) | `mesh` (tetrahedral mesh generation, S0/S1/G2-1..G2-3) |
 
 ## Conventions used throughout
 

@@ -735,3 +735,85 @@ fn decode_binary(vtk_type: &str, bytes: &[u8]) -> Result<ArrayData> {
         other => return Err(invalid(format!("unsupported DataArray type {other}"))),
     })
 }
+
+impl ArrayData {
+    // AI-FUNC-SUMMARY: A new array holding only the tuples whose index passes `keep`; returns ArrayData; side effects: none.
+    pub fn select_tuples(&self, components: usize, keep: &[bool]) -> ArrayData {
+        let n = components.max(1);
+        macro_rules! pick {
+            ($v:expr, $variant:ident) => {{
+                let mut out = Vec::with_capacity(keep.iter().filter(|k| **k).count() * n);
+                for (tuple, alive) in keep.iter().enumerate() {
+                    if !*alive {
+                        continue;
+                    }
+                    for c in 0..n {
+                        if let Some(value) = $v.get(tuple * n + c) {
+                            out.push(*value);
+                        }
+                    }
+                }
+                ArrayData::$variant(out)
+            }};
+        }
+        match self {
+            ArrayData::U8(v) => pick!(v, U8),
+            ArrayData::I32(v) => pick!(v, I32),
+            ArrayData::I64(v) => pick!(v, I64),
+            ArrayData::U32(v) => pick!(v, U32),
+            ArrayData::U64(v) => pick!(v, U64),
+            ArrayData::F32(v) => pick!(v, F32),
+            ArrayData::F64(v) => pick!(v, F64),
+        }
+    }
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: The tets-only view of a mixed-cell document - the `_volume` companion of
+//   `SPEC_meshgen_contracts.md` §2.1.
+// Inputs: the primary document.
+// Returns: a document carrying only `VTK_TETRA` cells, with every per-cell array sliced to match and
+//   `GlobalPointId` mapping into the primary numbering.
+// Side effects: None.
+// Notes: The primary artefact is mixed on purpose - the tagged faces carry §10.13's cohesive/
+//   split-node contract - but that makes it unreadable in a viewer without a filter: ParaView's
+//   Feature Edges walks the triangle cells and draws a web over every interface, which reads as a
+//   cracked mesh even when the volume underneath is watertight. The reference implementation's
+//   output is tets-only for exactly this reason. Points are kept whole rather than compacted, so
+//   node numbering matches the primary file and `GlobalPointId` is the identity - a companion whose
+//   node ids disagreed with the contract file would be worse than no companion at all.
+pub fn volume_only(doc: &VtuDoc) -> VtuDoc {
+    let keep: Vec<bool> = doc.types.iter().map(|t| *t == VTK_TETRA).collect();
+    let mut out = VtuDoc {
+        points: doc.points.clone(),
+        connectivity: Vec::new(),
+        offsets: Vec::new(),
+        types: Vec::new(),
+        point_data: doc.point_data.clone(),
+        cell_data: Vec::new(),
+        // Field data carries the domain box, the schema version and the provenance
+        // stamp. Dropping it makes the companion's own domain-boundary faces read as
+        // 3,072 leaks, because `[V3]` no longer knows where the domain is.
+        field_data: doc.field_data.clone(),
+    };
+    for (index, alive) in keep.iter().enumerate() {
+        if !*alive {
+            continue;
+        }
+        out.connectivity.extend_from_slice(doc.cell(index));
+        out.offsets.push(out.connectivity.len() as i64);
+        out.types.push(doc.types[index]);
+    }
+    for array in &doc.cell_data {
+        out.cell_data.push(DataArray {
+            name: array.name.clone(),
+            components: array.components,
+            data: array.data.select_tuples(array.components, &keep),
+        });
+    }
+    out.point_data.push(DataArray::scalar(
+        "GlobalPointId",
+        ArrayData::I64((0..doc.points.len() as i64).collect()),
+    ));
+    out
+}

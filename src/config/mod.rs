@@ -4,6 +4,8 @@ pub mod deserialize;
 pub mod forging;
 pub mod measurement;
 pub mod mesh_render;
+pub mod mesh_verify;
+pub mod meshgen;
 pub mod optimization;
 pub mod packing;
 pub mod render;
@@ -59,11 +61,9 @@ pub fn load_yaml<T: for<'de> serde::Deserialize<'de>>(path: &Path) -> Result<T> 
 // Notes: Returns InvalidConfig for any length other than 3 or 6.
 pub fn parse_box_dimensions(dimensions: &[f64]) -> Result<crate::types::BoundingBox> {
     match dimensions.len() {
-        3 => Ok(crate::types::BoundingBox::from_size(crate::types::Vec3::new(
-            dimensions[0],
-            dimensions[1],
-            dimensions[2],
-        ))),
+        3 => Ok(crate::types::BoundingBox::from_size(
+            crate::types::Vec3::new(dimensions[0], dimensions[1], dimensions[2]),
+        )),
         6 => Ok(crate::types::BoundingBox {
             min: crate::types::Vec3::new(dimensions[0], dimensions[1], dimensions[2]),
             max: crate::types::Vec3::new(dimensions[3], dimensions[4], dimensions[5]),
@@ -79,6 +79,12 @@ pub use crop::{CropConfig, CropInput, CropOutput, CropRawParams};
 pub use forging::{ForgingConfig, ForgingParams};
 pub use measurement::{MeasurementConfig, MeasurementParams};
 pub use mesh_render::{FilterSpec, MeshRenderConfig, MeshRenderParams, ViewSpec};
+pub use mesh_verify::{MeshVerifyConfig, MeshVerifyParams, VerifyGateParams};
+pub use meshgen::{
+    CoincidencePolicy, DeterminismMode, FemProfile, InputKind, MeshGenConfig, MeshGenDomain,
+    MeshGenEnvelope, MeshGenGaps, MeshGenInput, MeshGenMaterials, MeshGenOutput, MeshGenParams,
+    MeshGenRepair, MeshGenSizing, MeshGenThin, RepairLevel, SnapshotMode, UnmappedPolicy,
+};
 pub use optimization::{OptimizationConfig, OptimizationParams, TargetConfig};
 pub use packing::{PackingConfig, PackingFilters, PackingParams};
 pub use render::{RenderConfig, RenderParams};

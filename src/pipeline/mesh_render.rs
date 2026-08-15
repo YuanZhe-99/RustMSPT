@@ -5,9 +5,11 @@ use crate::geometry::render::{
     build_render_camera, parse_render_projection, parse_render_vec3, RenderCameraSpec,
 };
 use crate::geometry::scene_render::{named_view, render_scene_cpu, SceneRenderSettings};
-use crate::io::vtu::{load_vtu, ArrayData};
 use crate::io::save_image;
-use crate::meshgen::render_scene::{build_scene, ColorMode, SceneFilter, SceneSpec};
+use crate::io::vtu::{load_vtu, ArrayData};
+use crate::meshgen::render_scene::{
+    build_scene, ColorMode, SceneFilter, SceneSpec, DEFAULT_MAX_WIREFRAME_EDGES,
+};
 use crate::types::{BoundingBox, Mesh, Vec3};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -68,6 +70,39 @@ fn build_filters(specs: &[FilterSpec]) -> Result<Vec<SceneFilter>> {
         .collect()
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Render every requested view through the GPU opaque preview in one batch.
+// Inputs: extracted scene, named cameras, resolution, appearance settings.
+// Returns: Ok(one image per camera) or Err(message) when the GPU path is unavailable.
+// Side effects: Initializes wgpu on the first call of the process.
+// Notes: Compiled out without the `gpu` feature, where it always reports unavailability so
+//   `backend: auto` degrades to the CPU renderer exactly as it does on a machine with no adapter.
+#[cfg(feature = "gpu")]
+fn render_views_gpu(
+    scene: &crate::meshgen::render_scene::RenderScene,
+    cameras: &[(String, crate::geometry::render::RenderCamera)],
+    width: usize,
+    height: usize,
+    settings: &SceneRenderSettings,
+) -> std::result::Result<Vec<crate::types::RenderedImage>, String> {
+    let cams: Vec<crate::geometry::render::RenderCamera> =
+        cameras.iter().map(|(_, c)| *c).collect();
+    let options = crate::gpu::GpuSceneOptions::with_overlays();
+    crate::gpu::GpuScenePipeline::new()?
+        .render_views(scene, &cams, width, height, settings, &options)
+}
+
+#[cfg(not(feature = "gpu"))]
+fn render_views_gpu(
+    _scene: &crate::meshgen::render_scene::RenderScene,
+    _cameras: &[(String, crate::geometry::render::RenderCamera)],
+    _width: usize,
+    _height: usize,
+    _settings: &SceneRenderSettings,
+) -> std::result::Result<Vec<crate::types::RenderedImage>, String> {
+    Err("built without the `gpu` feature".to_string())
+}
+
 impl Pipeline for MeshRenderPipeline {
     // AI-FUNC-SUMMARY:
     // Purpose: Render a contract VTU to one PNG per configured view: load, extract a filtered RenderScene, build a camera per view (named preset or custom), CPU-composite, and save.
@@ -86,19 +121,26 @@ impl Pipeline for MeshRenderPipeline {
             };
             ColorMode::Uniform([c[0], c[1], c[2]])
         } else {
-            let arr = doc.cell_array(&p.color_by).ok_or_else(|| {
-                RustMsptError::InvalidConfig(format!(
-                    "mesh_render.color_by names cell array '{}', which is absent from this VTU (produced by mesh generation or mesh-verify --annotate)",
-                    p.color_by
-                ))
-            })?;
+            // Point fields (`separation_t`, `sizing_h`) colour a cell by the mean of
+            // its points, so a stage snapshot with no cell field still renders.
+            let arr = doc
+                .cell_array(&p.color_by)
+                .or_else(|| doc.point_array(&p.color_by))
+                .ok_or_else(|| {
+                    RustMsptError::InvalidConfig(format!(
+                        "mesh_render.color_by names cell or point array '{}', which is absent from this VTU (produced by mesh generation or mesh-verify --annotate)",
+                        p.color_by
+                    ))
+                })?;
             match arr.data {
                 ArrayData::F32(_) | ArrayData::F64(_) => ColorMode::Scalar {
                     array: p.color_by.clone(),
                     min: p.scalar_min,
                     max: p.scalar_max,
                 },
-                _ => ColorMode::Categorical { array: p.color_by.clone() },
+                _ => ColorMode::Categorical {
+                    array: p.color_by.clone(),
+                },
             }
         };
 
@@ -126,7 +168,7 @@ impl Pipeline for MeshRenderPipeline {
             show_faces: p.show_faces,
             show_curves: p.show_curves,
             wireframe: p.wireframe,
-            max_wireframe_edges: 200_000,
+            max_wireframe_edges: DEFAULT_MAX_WIREFRAME_EDGES,
             highlight_points,
         };
 
@@ -142,6 +184,12 @@ impl Pipeline for MeshRenderPipeline {
             scene.segments.len(),
             scene.markers.len()
         );
+        if scene.wireframe_edges_emitted < scene.wireframe_edges_total {
+            println!(
+                "[mesh-render] WARNING: wireframe thinned to {} of {} edges (cap {}); the frame is a uniform stride sample, not the full mesh",
+                scene.wireframe_edges_emitted, scene.wireframe_edges_total, spec.max_wireframe_edges
+            );
+        }
 
         let corner_mesh = Mesh {
             vertices: vec![
@@ -159,7 +207,10 @@ impl Pipeline for MeshRenderPipeline {
         let center = bbox.min.add(bbox.max).scale(0.5);
         let projection = parse_render_projection(&p.projection)?;
         let background = parse_rgb("background", &p.background, true)?;
-        let settings = SceneRenderSettings { background, ambient: p.ambient };
+        let settings = SceneRenderSettings {
+            background,
+            ambient: p.ambient,
+        };
 
         let stem = Path::new(&p.input)
             .file_stem()
@@ -168,6 +219,7 @@ impl Pipeline for MeshRenderPipeline {
         let out_dir = PathBuf::from(&p.output_dir);
         std::fs::create_dir_all(&out_dir)?;
 
+        let mut cameras = Vec::with_capacity(p.views.len());
         for view in &p.views {
             let (view_name, direction, up, focus) = match view {
                 ViewSpec::Named(name) => {
@@ -178,7 +230,12 @@ impl Pipeline for MeshRenderPipeline {
                     })?;
                     (name.clone(), dir, Some(up), center)
                 }
-                ViewSpec::Custom { name, view_direction, focus_point, up_vector } => {
+                ViewSpec::Custom {
+                    name,
+                    view_direction,
+                    focus_point,
+                    up_vector,
+                } => {
                     let dir = parse_render_vec3("views.view_direction", view_direction)?;
                     let up = match up_vector {
                         Some(u) => Some(parse_render_vec3("views.up_vector", u)?),
@@ -202,8 +259,39 @@ impl Pipeline for MeshRenderPipeline {
                 width: p.width,
                 height: p.height,
             };
-            let camera = build_render_camera(&corner_mesh, &camera_spec)?;
-            let image = render_scene_cpu(&scene, &camera, p.width, p.height, &settings);
+            cameras.push((view_name, build_render_camera(&corner_mesh, &camera_spec)?));
+        }
+
+        let backend = p.backend.trim().to_ascii_lowercase();
+        let images = match backend.as_str() {
+            "cpu" => None,
+            "gpu" | "auto" => {
+                match render_views_gpu(&scene, &cameras, p.width, p.height, &settings) {
+                    Ok(images) => Some(images),
+                    Err(e) if backend == "auto" => {
+                        println!(
+                            "[mesh-render] GPU preview unavailable, using the CPU renderer: {e}"
+                        );
+                        None
+                    }
+                    Err(e) => return Err(RustMsptError::Gpu(e)),
+                }
+            }
+            other => {
+                return Err(RustMsptError::InvalidConfig(format!(
+                    "mesh_render.backend '{other}' must be cpu, gpu, or auto"
+                )))
+            }
+        };
+        if images.is_some() {
+            println!("[mesh-render] GPU opaque preview (per-set opacity ignored; the CPU path is the transparency reference)");
+        }
+
+        for (i, (view_name, camera)) in cameras.iter().enumerate() {
+            let image = match &images {
+                Some(batch) => batch[i].clone(),
+                None => render_scene_cpu(&scene, camera, p.width, p.height, &settings),
+            };
             let out_path = out_dir.join(format!("{stem}_{view_name}.png"));
             save_image(&out_path, &image)?;
             println!("[mesh-render] wrote {}", out_path.display());

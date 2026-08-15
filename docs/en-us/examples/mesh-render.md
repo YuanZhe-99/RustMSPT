@@ -83,4 +83,15 @@ RGBA; when `background` has alpha 0, exterior pixels are fully transparent
 (checkable with any image tool). The integration suite
 (`tests/mesh_render_tests.rs`) exercises round-trip I/O, extraction counts,
 filter errors, analytic transparency compositing, named views, and this
-pipeline end-to-end.
+pipeline end-to-end. GA-5 adds committed CPU PNG baselines in
+`data/fixtures/meshgen/render_baselines/cpu/` for `good_cube.vtu` across four
+diagnostic variants and all ten named views. Normal test runs compare against
+those files; regenerate them only deliberately:
+
+```bash
+RUSTMSPT_UPDATE_RENDER_BASELINES=1 cargo test --test mesh_visual_regression_tests
+```
+
+The GPU baseline test compares opaque variants against the CPU reference and
+skips when no adapter is available. Transparent GPU output is excluded by
+design because the CPU path is the exact transparency reference.
