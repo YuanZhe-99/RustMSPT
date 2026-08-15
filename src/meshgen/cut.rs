@@ -1343,6 +1343,16 @@ pub fn cut_lattice(
     let mut pending_interfaces: Vec<(usize, [u32; 3], i32)> = Vec::new();
     let mut keys = keys;
     let mut face_steiner: BTreeMap<[u32; 3], u32> = BTreeMap::new();
+    // §7.3's `FaceTriCache`, wired in as a **consistency check first** (P-3, face-first
+    // integration). Every escalated cell triangulates the faces it shares with its neighbours,
+    // and today each cell computes that independently - they agree only because `face_mesh` is a
+    // pure function of the face. The cache makes that sharing explicit and, more usefully,
+    // *detects* any face where the two cells disagree, which is invariant J1 measured on real
+    // meshes rather than argued from the signature. Nothing consumes its triangles yet: this run
+    // must be a no-op, and `face_cache_conflicts` is the number that says whether the switch is
+    // safe to make.
+    let mut face_cache = crate::meshgen::facecache::FaceTriCache::new();
+    let mut face_cache_conflicts = 0usize;
     for (index, cell) in per_cell.into_iter().enumerate() {
         if let Some(reason) = cell.escalation {
             mesh.escalated.push((index as u32, reason));
@@ -1369,6 +1379,9 @@ pub fn cut_lattice(
             // arbitrary answer, and the cap triangles come out with mixed sides.
             let mut meeting_nodes: Vec<(u32, [i32; 2])> = Vec::new();
             for (state, loop_nodes, crossed) in &faces {
+                // Where this face's triangles start, so they can be lifted back out below
+                // whichever branch produced them and checked against the cache.
+                let face_begin = boundary.len();
                 // G7-1's doubly-cut face rule is applied here, to the *face*, before
                 // anything cell-level is decided - and that is load-bearing rather
                 // than tidy. A face two walls cross is shared by two cells, and only
@@ -1528,6 +1541,56 @@ pub fn cut_lattice(
                             }
                         }
                         boundary.extend(loop_fan(&loop_nodes, id));
+                    }
+                }
+                // §7.3's cache, consulted but not yet obeyed. The key is the face's three parent
+                // corners' `NodeKey`s and the fingerprint is the components crossing it — both
+                // derived from the face alone, so the two cells sharing it look up the same entry.
+                // The first cell to reach a face inserts its triangles; the second compares. A
+                // difference is a J1 violation that today would surface far away as a crack, and
+                // counting them is what says whether the cache can take over the computation.
+                {
+                    let mut corners = [loop_nodes[0]; 3];
+                    let mut slot = 0usize;
+                    for node in loop_nodes.iter() {
+                        if (*node as usize) < n_parent_nodes as usize && slot < 3 {
+                            corners[slot] = *node;
+                            slot += 1;
+                        }
+                    }
+                    if slot == 3 {
+                        corners.sort_by_key(|node| keys[*node as usize]);
+                        let mut fingerprint: Vec<i64> = crossed
+                            .as_ref()
+                            .map(|face| face.components.iter().map(|x| *x as i64).collect())
+                            .unwrap_or_default();
+                        fingerprint.sort_unstable();
+                        fingerprint.dedup();
+                        let mine: Vec<[u32; 3]> = boundary[face_begin..].to_vec();
+                        let key = crate::meshgen::facecache::face_key(corners, &keys);
+                        let sorted = |tris: &[[u32; 3]]| -> Vec<[u32; 3]> {
+                            let mut out: Vec<[u32; 3]> = tris
+                                .iter()
+                                .map(|t| {
+                                    let mut k = *t;
+                                    k.sort_unstable();
+                                    k
+                                })
+                                .collect();
+                            out.sort_unstable();
+                            out
+                        };
+                        match face_cache.get_or_insert(key, fingerprint, || mine.clone()) {
+                            Ok(cached) => {
+                                if sorted(cached) != sorted(&mine) {
+                                    face_cache_conflicts += 1;
+                                }
+                            }
+                            // A fingerprint mismatch is §7.3's hard error: the two cells disagree
+                            // about what crosses the face they share. Counted here rather than
+                            // raised, because nothing depends on the cache yet.
+                            Err(_) => face_cache_conflicts += 1,
+                        }
                     }
                 }
             }
@@ -1980,6 +2043,15 @@ pub fn cut_lattice(
             p.apex_only,
             share(p.apex_only)
         );
+    }
+    if face_cache.len() > 0 {
+        mesh.warnings.push(format!(
+            "[FACE-CACHE] {} shared face(s) triangulated, {} reused by the second cell, \
+             {} conflict(s) - a conflict is two cells disagreeing on a face they share (J1)",
+            face_cache.len(),
+            face_cache.hits,
+            face_cache_conflicts
+        ));
     }
     for (reason, count) in &mesh.stats.n_escalated {
         let (tag, text) = match reason {
