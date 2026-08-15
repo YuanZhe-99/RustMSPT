@@ -1,6 +1,6 @@
 # SPEC — Mesh generation: data contracts freeze (subtask G0-3)
 
-**Status:** frozen (rev 1.1, schema v1; additive G2 diagnostic orientation field recorded 2026-07-28). Normative for `src/io/vtu.rs`,
+**Status:** frozen (rev 1.2, schema v1; additive G2 diagnostic orientation field recorded 2026-07-28; **rev 1.2 2026-08-15 adds `[V13]` to §4 and the two P3 rows to §5** under the plan's P-1.1 — additive to the catalog and the accuracy table, no schema change, `SchemaVersion` stays 1). Normative for `src/io/vtu.rs`,
 `src/meshgen/verify.rs`, `src/meshgen/render_scene.rs`, and every producer of a
 contract VTU.
 **Date:** 2026-07-28
@@ -243,7 +243,30 @@ G6-0 adopted the conforming fan over constrained edge recovery, so the mesh is n
 required to reproduce every curve as a chain of edges.
 | **[V10]** Export completeness | INP↔VTU cross-check: element/node counts, per-set sums, unmapped-region audit | FAIL | — |
 | **[V11]** Compare mode | strict: canonical-order arrays byte-equal, coordinates bit-identical. topology: identical connectivity/labels/tables, coordinates within `1e-6·diag`, quality within 1% | FAIL | selected by `DeterminismMode` |
-| **[V12]** Provenance & stats | counts, `[OWN-STATS]`, repair-log echo, config-hash match, stage/filename agreement, memory summary | INFO (mismatch: WARN) | — |
+| **[V12]** Provenance & stats | counts, `[OWN-STATS]`, repair-log echo, config-hash match, stage/filename agreement, memory summary; **per-`provenance` element counts and per-S5-cell emission rates** (`tets_provenance_*`, `cells_provenance_*`, `tets_per_cell_*`, `lattice_cells`) | INFO (mismatch: WARN) | — |
+| **[V13]** Interface fidelity *(added 2026-08-15; needs the input surfaces)* | the **material boundary** — a face whose two tets carry different region sets, or a single-owner face inside a body off the domain box — measured against the input surface at its **corners**: on-surface area share, area-weighted mean and max \|distance\|, area-weighted **signed** offset, `displacement_share`; the interior sag is reported apart as `chord_*` | WARN | §5's P3 rows |
+
+`[V13]` **added 2026-08-15** under `PLAN_mesh_generation.md` P-1.1, and it is not a
+variant of `[V5]`. `[V5]` measures the *declared* interface — the tagged `VTK_TRIANGLE`
+cells — whose nodes S7 snaps onto the surface, so it reads essentially exact on a mesh
+whose real material boundary is a staircase of **undeclared** faces half a cell away.
+`[V13]` derives the boundary from the volume, region set against region set, and never
+consults a tag.
+
+Two rules make its numbers mean what they say:
+
+1. **P3 is read at the face corners.** A flat facet whose three vertices are cut nodes on
+   the surface is a *chord* of it — the best a mesh of flat facets can do, with a sag that
+   falls as `h²` and is traded against P2 by refinement. A facet whose vertices are lattice
+   nodes or a cell centroid is somewhere else entirely, and that is the staircase P3
+   forbids. Measuring the whole facet at once conflates them: on the sphere fixture it
+   charged the mesher for 87 % of its boundary area when most of that was irreducible
+   faceting. The sag is still measured, as `chord_mean`/`chord_max`, as its own number.
+2. **Two numbers, because a boundary fails in two ways one distance cannot separate** —
+   *rough but centred* and *smooth but displaced*. Only the **signed** mean tells them
+   apart: roughness cancels in it, displacement does not. Both are violations; the pair is
+   for diagnosis, not for grading one as acceptable.
+
 
 Invocation:
 
@@ -303,6 +326,9 @@ always reported alongside. Enforced by [V5]/[V6].
 
 | Metric | Definition | Default gate |
 |---|---|---|
+| **P3 surface exactness** | share of **material-boundary** area anchored to the input surface, where "anchored" is every *corner* within `interface_on_surface_frac` of the face's own edge length | **1.0** — P3 admits no displacement |
+| **P3 displacement** | area-weighted **signed** corner distance from a component's material boundary to its surface / local edge length; + outside the body, − inside | ≤ `interface_offset_frac` (0.5%) |
+| **Material-boundary chord sag** | area-weighted distance from a boundary face's edge midpoints and centroid to the surface / local edge length; reported, not gated, and **not** a P3 violation | — (falls as `h²`; steered by `chord_error_frac`) |
 | Surface conformance | interface-node distance to its component surface / local interface edge length | ≤ 2% (max) |
 | Surface fidelity | sampled two-sided Hausdorff, tagged faces ↔ input patch | ≤ `max(ε, 0.25·h(x))` |
 | Chord error | tagged-face midpoint deviation / local `h` | ≤ `chord_error_frac` (0.2) |

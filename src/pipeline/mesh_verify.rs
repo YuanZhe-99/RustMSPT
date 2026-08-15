@@ -31,6 +31,10 @@ pub fn gates_from_config(p: &VerifyGateParams) -> VerifyGates {
         plane_tol_frac: p.plane_tol_frac.unwrap_or(d.plane_tol_frac),
         hanging_tol_frac: p.hanging_tol_frac.unwrap_or(d.hanging_tol_frac),
         surface_distance_frac: p.surface_distance_frac.unwrap_or(d.surface_distance_frac),
+        interface_on_surface_frac: p
+            .interface_on_surface_frac
+            .unwrap_or(d.interface_on_surface_frac),
+        interface_offset_frac: p.interface_offset_frac.unwrap_or(d.interface_offset_frac),
         max_items_per_section: p.max_items_per_section.unwrap_or(d.max_items_per_section),
         expected_partitions: p.expected_partitions.or(d.expected_partitions),
         warn_is_fatal: p.warn_is_fatal.unwrap_or(d.warn_is_fatal),

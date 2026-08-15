@@ -463,7 +463,11 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `emit_snapshot` | Mesh Tooling | `src/meshgen/snapshot.rs:215` | Stamp metadata + write the snapshot VTU; returns the path. |
 | `warn_if_large` | Mesh Tooling | `src/meshgen/snapshot.rs:246` | Size WARN: snapshots=all + >5 M tets estimate. |
 | `VerifyOptions` | Mesh Tooling | `src/meshgen/verify.rs:410` | Out-of-document verifier inputs (expected_stage for the [V12] cross-check). |
-| `verify_with_options` | Mesh Tooling | `src/meshgen/verify.rs:441` | Verify with stage context; s00-s03 skip volume-only [V7]/[V8]. |
+| `verify_with_options` | Mesh Tooling | `src/meshgen/verify.rs:744` | Verify with stage context; s00-s03 skip volume-only [V7]/[V8]/[V13]. |
+| `BoundaryFace` | Mesh Tooling | `src/meshgen/verify.rs:3531` | One material-boundary face as [V13] measures it: area, local edge length, mean/max distance and signed offset. |
+| `FidelityAcc` | Mesh Tooling | `src/meshgen/verify.rs:3548` | [V13]'s area-weighted per-component accumulator. |
+| `absorb` | Mesh Tooling | `src/meshgen/verify.rs:3561` | Fold one boundary face into a [V13] accumulator. |
+| `check_v13` | Mesh Tooling | `src/meshgen/verify.rs:3603` | [V13] interface fidelity: the material boundary read off the volume, measured against the input surface (the plan's P3). |
 | `GpuClipPlane` | Mesh Tooling | `src/gpu/scene_render.rs:45` | Optional half-space clip for the GPU scene preview (smooth cut). |
 | `GpuSceneOptions` | Mesh Tooling | `src/gpu/scene_render.rs:52` | GPU-only toggles: clip plane, overlay segments, markers. |
 | `GpuScenePipeline` | Mesh Tooling | `src/gpu/scene_render.rs:70` | Offscreen GPU scene preview: coloured TriangleList + LineList overlay with clip-plane discard. |

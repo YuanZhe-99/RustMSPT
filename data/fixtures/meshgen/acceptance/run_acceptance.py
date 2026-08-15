@@ -1,17 +1,30 @@
 #!/usr/bin/env python3
-"""Run the nine acceptance cases end to end and print the metric table.
+"""Run the nine acceptance cases end to end and print the goal's metric tables.
 
 Why this exists: the cases' configs lived only in shell history. Every session that
 measured them rebuilt the configs by hand, so a number quoted in one session could not
 be reproduced in the next - and twice a conclusion was argued from a measurement that
 no longer existed anywhere. The configs are the experiment; they belong in the repo.
 
+Three tables, one per goal property that has a number (PLAN Part I §1):
+
+  P3  exact surfaces  - [V13], the material boundary measured against the input surface.
+                        `on%` is the share of boundary area that lies *on* it; P3 is met
+                        only at 100. `disp` separates a boundary that is displaced from
+                        one that is merely rough - see [V13]'s note.
+  P2  minimum elements - [V12]/[V13], the element count and where the elements came from,
+                        normalised by input surface area so two meshers on the same STL
+                        are comparable.
+  P1/P4               - the check statuses, unchanged.
+
 Usage:
     python3 data/fixtures/meshgen/acceptance/run_acceptance.py [case ...]
+    python3 data/fixtures/meshgen/acceptance/run_acceptance.py --json baseline.json
 
 With no arguments it runs all nine. `RUSTMSPT_CUT_DIAG` is set for every run so the
-`parent_cell` array is present and the undeclared-boundary metric can separate a
-defect *inside* one escalated cell from a disagreement between two.
+`parent_cell` array is present - it is what turns element counts into per-lattice-cell
+emission rates, and it lets the undeclared-boundary metric separate a defect *inside*
+one escalated cell from a disagreement between two.
 """
 
 import json
@@ -162,46 +175,164 @@ def run(case, stls, overrides):
     v5, _ = metrics_of(report, "V5")
     v6, _ = metrics_of(report, "V6")
     v1, _ = metrics_of(report, "V1")
+    v12, _ = metrics_of(report, "V12")
+    v13, _ = metrics_of(report, "V13")
     errors = [v for k, v in v5.items() if k.endswith("_volume_error")]
+    tets = int(v12.get("tets", v1.get("tets", 0)))
+    area = v13.get("input_surface_area", 0.0)
     return {
         "case": case,
-        "tets": int(v1.get("tets", 0)),
+        "tets": tets,
         "V1": status_of(report, "V1"),
         "V3": status_of(report, "V3"),
+        "V4": status_of(report, "V4"),
         "V5": status_of(report, "V5"),
         "V6": status_of(report, "V6"),
         "V9": status_of(report, "V9"),
+        "V13": status_of(report, "V13"),
         "misattr": int(v5.get("misattributed_cells", -1)),
         "adjacency": int(v6.get("region_adjacency_violations", -1)),
         "undecl": int(v6.get("undeclared_boundary_faces", -1)),
         "same_cell": int(v6.get("undeclared_boundary_same_cell", -1)),
         "undecl_area": v6.get("undeclared_boundary_area", 0.0),
         "vol_err": max(errors) if errors else 0.0,
+        # --- P3, from [V13] ---
+        "on_surface": v13.get("on_surface_area_frac", float("nan")),
+        "dev_mean_h": v13.get("deviation_mean_frac_h", float("nan")),
+        "dev_max_h": v13.get("deviation_max_frac_h", float("nan")),
+        "offset_h": v13.get("offset_mean_frac_h", float("nan")),
+        "disp_share": v13.get("displacement_share", float("nan")),
+        "chord_mean_h": v13.get("chord_mean_frac_h", float("nan")),
+        "bnd_faces": int(v13.get("material_boundary_faces", -1)),
+        # --- P2, from [V12] + [V13] ---
+        "input_area": area,
+        "tets_per_area": tets / area if area > 0 else float("nan"),
+        "cells": int(v12.get("lattice_cells", -1)),
+        "tets_per_cell": v12.get("tets_per_lattice_cell", float("nan")),
+        "fan_tets": int(v12.get("tets_provenance_junction", -1)),
+        "fan_cells": int(v12.get("cells_provenance_junction", -1)),
+        "fan_per_cell": v12.get("tets_per_cell_junction", float("nan")),
+        "cut_tets": int(v12.get("tets_provenance_cut", -1)),
+        "cut_per_cell": v12.get("tets_per_cell_cut", float("nan")),
+        "lattice_tets": int(v12.get("tets_provenance_lattice", -1)),
+        "lattice_per_cell": v12.get("tets_per_cell_lattice", float("nan")),
     }
+
+
+def table(rows, title, note, columns):
+    """Print one goal property's table. `columns` is (header, width, formatter)."""
+    print()
+    print(title)
+    print(note)
+    header = " ".join(f"{name:>{width}}" for name, width, _ in columns)
+    print(header)
+    print("-" * len(header))
+    for r in rows:
+        if "error" in r:
+            print(f"{r['case']:5} ERROR: {r['error']}")
+            continue
+        print(" ".join(f"{fmt(r):>{width}}" for _, width, fmt in columns))
+
+
+def num(value, spec, scale=1.0):
+    """Format a metric, printing `-` for the sentinel the verifier uses for 'absent'."""
+    if value is None or value != value or value < 0:
+        return "-"
+    value = value * scale
+    return format(int(round(value)) if spec == "d" else value, spec)
 
 
 def main():
     os.makedirs(WORK, exist_ok=True)
-    wanted = sys.argv[1:]
-    cases = [c for c in CASES if not wanted or c[0] in wanted]
-    header = (
-        f"{'case':5} {'tets':>9} {'V1':>5} {'V3':>5} {'V5':>5} {'V6':>5} {'V9':>5} "
-        f"{'misattr':>8} {'adjac':>6} {'undecl':>7} {'same':>7} {'vol%':>7}"
-    )
-    print(header)
-    print("-" * len(header))
+    argv = list(sys.argv[1:])
+    baseline = None
+    if "--json" in argv:
+        at = argv.index("--json")
+        baseline = argv[at + 1]
+        del argv[at : at + 2]
+    cases = [c for c in CASES if not argv or c[0] in argv]
+
+    rows = []
     for case, stls, overrides in cases:
         r = run(case, stls, overrides)
-        if "error" in r:
-            print(f"{case:5} ERROR: {r['error']}")
-            sys.stdout.flush()
-            continue
-        print(
-            f"{r['case']:5} {r['tets']:>9} {r['V1']:>5} {r['V3']:>5} {r['V5']:>5} "
-            f"{r['V6']:>5} {r['V9']:>5} {r['misattr']:>8} {r['adjacency']:>6} "
-            f"{r['undecl']:>7} {r['same_cell']:>7} {r['vol_err']*100:>7.3f}"
-        )
-        sys.stdout.flush()
+        rows.append(r)
+        print(f"[{case}] done", file=sys.stderr)
+        sys.stderr.flush()
+
+    table(
+        rows,
+        "P3 - exact surfaces: the material boundary against the input surface ([V13])",
+        "Read at the face CORNERS: on% is the share of boundary area anchored to the "
+        "surface, and P3 is met only at 100.000. dev/h, off/h: area-weighted mean "
+        "|distance| and SIGNED distance, per local edge. disp: |offset|/deviation - 0 rough "
+        "about the right place, 1 a sheet in the wrong one. chord/h is the sag of an "
+        "anchored flat facet across curvature - it falls as h^2, it is P2's business, and "
+        "it is NOT a P3 violation.",
+        [
+            ("case", 5, lambda r: r["case"]),
+            ("V13", 6, lambda r: r["V13"]),
+            ("faces", 9, lambda r: num(r["bnd_faces"], "d")),
+            ("on%", 9, lambda r: num(r["on_surface"], ".3f", 100.0)),
+            ("dev/h%", 8, lambda r: num(r["dev_mean_h"], ".2f", 100.0)),
+            ("max/h%", 8, lambda r: num(r["dev_max_h"], ".1f", 100.0)),
+            ("off/h%", 8, lambda r: format(r["offset_h"] * 100.0, "+.2f")),
+            # The share is |offset|/deviation, so on a mesh that is entirely on the surface
+            # it is 0/0 and reads 1.000 from float noise. Blank it there: with nothing off
+            # the surface there is no error to attribute.
+            (
+                "disp",
+                6,
+                lambda r: "-" if r["on_surface"] >= 1.0 else num(r["disp_share"], ".3f"),
+            ),
+            ("chord/h%", 9, lambda r: num(r["chord_mean_h"], ".2f", 100.0)),
+        ],
+    )
+
+    table(
+        rows,
+        "P2 - minimum elements: the count, normalised and attributed ([V12] + [V13])",
+        "tets/A: elements per unit INPUT surface area - the denominator both meshers see "
+        "identically. cells: S5 lattice cells, which are TETS, so an untouched one emits "
+        "exactly 1 and every t/cell below reads as what that path costs over leaving the "
+        "cell alone. 'fan' is the escalated cells the conforming centroid fan owns.",
+        [
+            ("case", 5, lambda r: r["case"]),
+            ("tets", 10, lambda r: num(r["tets"], "d")),
+            ("tets/A", 10, lambda r: num(r["tets_per_area"], ".0f")),
+            ("cells", 9, lambda r: num(r["cells"], "d")),
+            ("t/cell", 7, lambda r: num(r["tets_per_cell"], ".2f")),
+            ("fan tets", 9, lambda r: num(r["fan_tets"], "d")),
+            ("fan%", 6, lambda r: num(r["fan_tets"] / r["tets"] if r.get("tets") else -1, ".1f", 100.0)),
+            ("fan/cell", 8, lambda r: num(r["fan_per_cell"], ".2f")),
+            ("cut/cell", 8, lambda r: num(r["cut_per_cell"], ".2f")),
+            ("bg/cell", 7, lambda r: num(r["lattice_per_cell"], ".2f")),
+        ],
+    )
+
+    table(
+        rows,
+        "P1/P4 - the mesh is produced and is usable: check statuses and the old metrics",
+        "unchanged from the previous table; kept so a regression in one property is visible "
+        "beside a gain in another.",
+        [
+            ("case", 5, lambda r: r["case"]),
+            ("V1", 5, lambda r: r["V1"]),
+            ("V3", 5, lambda r: r["V3"]),
+            ("V4", 5, lambda r: r["V4"]),
+            ("V5", 5, lambda r: r["V5"]),
+            ("V6", 5, lambda r: r["V6"]),
+            ("V9", 5, lambda r: r["V9"]),
+            ("misattr", 8, lambda r: num(r["misattr"], "d")),
+            ("adjac", 6, lambda r: num(r["adjacency"], "d")),
+            ("undecl", 7, lambda r: num(r["undecl"], "d")),
+            ("vol%", 7, lambda r: num(r["vol_err"], ".3f", 100.0)),
+        ],
+    )
+
+    if baseline:
+        with open(baseline, "w") as f:
+            json.dump(rows, f, indent=2, sort_keys=True)
+        print(f"\nwrote {baseline}")
 
 
 if __name__ == "__main__":

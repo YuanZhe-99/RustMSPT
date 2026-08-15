@@ -29,6 +29,12 @@ pub struct VerifyGateParams {
     /// [V5]'s two-sided surface-conformance gate, as a fraction of the mesh bbox diagonal.
     #[serde(default)]
     pub surface_distance_frac: Option<f64>,
+    /// [V13]'s "on the surface" tolerance, as a fraction of the face's own edge length.
+    #[serde(default)]
+    pub interface_on_surface_frac: Option<f64>,
+    /// [V13]'s displacement gate on the area-weighted signed offset, same denominator.
+    #[serde(default)]
+    pub interface_offset_frac: Option<f64>,
 }
 
 // AI-FUNC-SUMMARY:

@@ -28,7 +28,11 @@ shape are frozen: tests assert on them.
 | `VerifyReport` | `src/meshgen/verify.rs:179` | Full result plus metadata echo; `passed`, `exit_code`, `fired_codes`, `section` accessors. |
 | `VerifyOptions` | `src/meshgen/verify.rs:410` | Out-of-document verifier inputs; carries `expected_stage` (parsed from a snapshot filename) for the [V12] cross-check. |
 | `verify` | `src/meshgen/verify.rs:430` | Run the catalog over a contract or external VTU; returns one section per entry in contract order. |
-| `verify_with_options` | `src/meshgen/verify.rs:441` | `verify` with out-of-document options; surface stages s00-s03 skip volume-only [V7]/[V8]. |
+| `verify_with_options` | `src/meshgen/verify.rs:744` | `verify` with out-of-document options; surface stages s00-s03 skip volume-only [V7]/[V8]/[V13]. |
+| `BoundaryFace` | `src/meshgen/verify.rs:3531` | One material-boundary face as [V13] measures it: area, local edge length, mean/max \|distance\| and **signed** offset to the component's surface. |
+| `FidelityAcc` | `src/meshgen/verify.rs:3548` | [V13]'s per-component accumulator; every sum is area-weighted so a coarse face cannot outvote a fine one by being counted once. |
+| `absorb` | `src/meshgen/verify.rs:3561` | Fold one `BoundaryFace` into a `FidelityAcc`. |
+| `check_v13` | `src/meshgen/verify.rs:3603` | [V13] interface fidelity: the material boundary read off the volume (region set vs region set, tags never consulted) and measured against the input surface. |
 | `report_to_json` | `src/meshgen/verify.rs:1510` | Serialize the frozen JSON report (hand-rolled; the project carries no JSON dependency). |
 | `report_to_log` | `src/meshgen/verify.rs:1619` | Sectioned human log with a `[PASS]/[WARN]/[FAIL]/[SKIP]` line per check and a summary. |
 | `annotate` | `src/meshgen/verify.rs:1681` | Copy of the document carrying the quality arrays plus the `verify_flags` bitmask (bit *k* = `[V(k+1)]`). |
@@ -39,7 +43,7 @@ shape are frozen: tests assert on them.
 
 ## What runs today
 
-The catalog always reports **all twelve** sections. Checks that need data the
+The catalog always reports **all thirteen** sections. Checks that need data the
 document does not carry report `SKIPPED` with a reason naming the missing array
 or the producing stage — a report never silently omits a check.
 
@@ -56,7 +60,36 @@ or the producing stage — a report never silently omits a check.
 | [V9] Junctions | skipped | lands with G6-4 |
 | [V10] Export completeness | skipped | lands with G9-2 |
 | [V11] Compare mode | skipped | lands with GK-3 |
-| [V12] Provenance & stats | **full** | counts, metadata echo, `Counts`-vs-mesh agreement, `SchemaVersion` check, `StageIndex` range + filename cross-check (T-C6) |
+| [V12] Provenance & stats | **full** | counts, metadata echo, `Counts`-vs-mesh agreement, `SchemaVersion` check, `StageIndex` range + filename cross-check (T-C6), and the **element-count attribution** the plan's P2 is steered on: per-`provenance` tet counts, and — when `parent_cell` is present under `RUSTMSPT_CUT_DIAG` — the S5 cells behind them and the emission rate per cell. The S5 cell is a lattice **tet**, so an untouched one emits exactly 1 and `tets_per_cell_*` reads directly as what that path costs over leaving the cell alone. |
+| [V13] Interface fidelity | **full when `surfaces:` is set** | the plan's P3, measured. See below — it is not a variant of [V5]. |
+
+**[V13] is what [V5] cannot be.** [V5] measures the *declared* interface: the tagged
+`VTK_TRIANGLE` cells, whose nodes S7 snapped onto the input surface. Those nodes are on
+the surface essentially exactly, so [V5] reports a near-perfect fit for a mesh whose real
+material boundary — the faces between tets that disagree about which body they are inside
+— is a staircase half a cell away and carries no tag at all. [V13] derives the boundary
+from the volume and never consults a tag, which is why it is the check the goal's "exact
+surfaces" property is read from.
+
+**It is read at the face corners, and that matters.** A flat facet whose three vertices
+are cut nodes on the surface is a *chord* of it — the best a mesh of flat facets can do,
+with a sag that falls as `h²` and is what refinement buys. A facet whose vertices are
+lattice nodes or a cell centroid is somewhere else entirely, and that is the staircase.
+Measuring the whole facet at once conflates them: on the sphere fixture it charged the
+mesher for 87% of its boundary area when most of that was irreducible faceting. The sag is
+still reported, as `chord_mean` / `chord_max`, as its own number and not as a violation.
+
+It reports two numbers because a boundary fails in two ways one distance cannot separate:
+
+- **rough but centred** — it zigzags across the surface. Mean \|distance\| is large; the
+  area-weighted **signed** offset is ~0.
+- **smooth but displaced** — it is a clean sheet in the wrong place. Both are large.
+
+`displacement_share` = \|offset\| / deviation is that discrimination as one number: ~0
+rough, ~1 displaced. This exists because a change was once scored as a 26% improvement on
+a proxy metric while it moved a fixture from the first failure to the second and made a
+plate 2.6× thinner than the input — and nothing in the suite noticed. Both are P3
+violations; the pair is for diagnosis, never for grading one as acceptable.
 
 Design points worth knowing:
 

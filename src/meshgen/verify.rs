@@ -156,6 +156,17 @@ pub struct VerifyGates {
     /// one global denominator makes a well-fitted node in a fine region indistinguishable
     /// from a badly-fitted one in a coarse region.
     pub surface_distance_frac: f64,
+    /// [V13]'s numerical width of the word "on": a material-boundary face counts as lying
+    /// **on** the input surface when every sample on it is within this fraction of the
+    /// face's own edge length. Not a licence — P3 admits no displacement — only the
+    /// tolerance below which a cut node snapped onto the surface reads as being there;
+    /// such nodes measure ~1e-15 against it.
+    pub interface_on_surface_frac: f64,
+    /// [V13]'s displacement gate: the area-weighted **signed** offset of a component's
+    /// material boundary, as a fraction of local edge length. Roughness cancels in that
+    /// average and displacement does not, so this gate fires only on a boundary that is
+    /// systematically in the wrong place.
+    pub interface_offset_frac: f64,
     pub max_items_per_section: usize,
     pub expected_partitions: Option<i64>,
     pub warn_is_fatal: bool,
@@ -172,6 +183,8 @@ impl Default for VerifyGates {
             plane_tol_frac: 1.0e-9,
             hanging_tol_frac: 1.0e-9,
             surface_distance_frac: 0.02,
+            interface_on_surface_frac: 0.02,
+            interface_offset_frac: 0.005,
             max_items_per_section: 50,
             expected_partitions: None,
             warn_is_fatal: false,
@@ -785,6 +798,16 @@ pub fn verify_with_options(
         "lands with GK-3; use `mesh-verify --compare a.vtu b.vtu`",
     ));
     sections.push(check_v12(&view, cap, &options));
+    if surface_stage {
+        sections.push(VerifySection::skipped(
+            "V13",
+            "Interface fidelity",
+            "surface-stage snapshots s00-s03 carry no volume cells, so they have no material \
+             boundary to measure",
+        ));
+    } else {
+        sections.push(check_v13(&view, &face_owners, &options.surfaces, gates, cap));
+    }
 
     let (mut fail, mut warn, mut info) = (0, 0, 0);
     let (mut run, mut skipped) = (0, 0);
@@ -2113,6 +2136,74 @@ fn check_v12(view: &MeshView, cap: usize, options: &VerifyOptions) -> VerifySect
     s.metric("curve_cells", view.curves.len() as f64);
     s.metric("bbox_diagonal", view.diag);
 
+    // Where the elements came from (P-1.2, requirement R2). P2 - the fewest elements that
+    // satisfy P3 and P4 - needs the total *attributed*, not just counted: a 3.6x gap against
+    // the reference is not actionable until it is split into the escalation fallback's
+    // emission rate, the volume-filling lattice, and the table cuts. The `provenance` array
+    // is contract cell data (§2.1) and carries exactly that split; `parent_cell` is the
+    // diagnostic array under `RUSTMSPT_CUT_DIAG` and turns the counts into per-lattice-cell
+    // *rates*, which is the form the comparison is made in.
+    let provenance = cell_i64(view.doc, "provenance");
+    let parent = cell_i64(view.doc, "parent_cell");
+    if let Some(provenance) = &provenance {
+        // The names are `Provenance`'s (classify.rs): 0 lattice, 1 cut, 2 arbitrated,
+        // 3 junction - the escalated cells the conforming centroid fan owns - 4 band.
+        const KINDS: [(i64, &str); 5] = [
+            (0, "lattice"),
+            (1, "cut"),
+            (2, "arbitrated"),
+            (3, "junction"),
+            (4, "band"),
+        ];
+        for (code, name) in KINDS {
+            let tets = view
+                .tets
+                .iter()
+                .filter(|&&c| provenance.get(c).copied() == Some(code))
+                .count();
+            s.metric(&format!("tets_provenance_{name}"), tets as f64);
+            if let Some(parent) = &parent {
+                let cells: HashSet<i64> = view
+                    .tets
+                    .iter()
+                    .filter(|&&c| provenance.get(c).copied() == Some(code))
+                    .filter_map(|&c| parent.get(c).copied())
+                    .filter(|&p| p >= 0)
+                    .collect();
+                s.metric(&format!("cells_provenance_{name}"), cells.len() as f64);
+                // Elements emitted per S5 cell of this kind. The S5 cell is a lattice *tet*,
+                // not a hex, so an uncut one passes through as exactly 1 and the ratios below
+                // read directly as "what this path costs against leaving the cell alone".
+                // That is the number R2 asks for: the fallback's emission rate.
+                s.metric(
+                    &format!("tets_per_cell_{name}"),
+                    if cells.is_empty() {
+                        0.0
+                    } else {
+                        tets as f64 / cells.len() as f64
+                    },
+                );
+            }
+        }
+    }
+    if let Some(parent) = &parent {
+        let cells: HashSet<i64> = view
+            .tets
+            .iter()
+            .filter_map(|&c| parent.get(c).copied())
+            .filter(|&p| p >= 0)
+            .collect();
+        s.metric("lattice_cells", cells.len() as f64);
+        s.metric(
+            "tets_per_lattice_cell",
+            if cells.is_empty() {
+                0.0
+            } else {
+                view.tets.len() as f64 / cells.len() as f64
+            },
+        );
+    }
+
     // Schema version (SPEC §2.4, T-C6): a present-but-wrong value is a named FAIL.
     let schema = field_i64(view.doc, "SchemaVersion");
     if !schema.is_empty() && schema[0] != 1 {
@@ -3431,9 +3522,753 @@ fn connected_shells(tris: &[[Vec3; 3]]) -> Vec<Vec<usize>> {
     out
 }
 
+// ---------------------------------------------------------------------------
+// [V13] Interface fidelity - the material boundary measured against the input
+// ---------------------------------------------------------------------------
+
+/// One material-boundary face, already charged to the component whose surface it is
+/// supposed to lie on, measured in two groups that must not be mixed.
+///
+/// **Corners** answer P3: is this face *anchored to* the surface? A face whose three
+/// vertices are cut nodes on the surface is a chord of it, which is what a mesh of flat
+/// facets can be; a face whose vertices are lattice nodes or a cell centroid is somewhere
+/// else entirely, which is the staircase.
+///
+/// **Interior** (edge midpoints and centroid) answers a different question: given that the
+/// face is anchored, how far does it sag across the curvature between its corners? That is
+/// chord error, it falls as `h^2`, and it is traded against P2 by refinement — reporting it
+/// as a P3 violation would declare every curved surface unmeshable and hide the staircase
+/// inside a number that can never reach zero.
+struct BoundaryFace {
+    component: usize,
+    area: f64,
+    local_h: f64,
+    /// Mean |distance| over the three corners — roughness *and* displacement together.
+    deviation: f64,
+    /// Largest |distance| over the corners; "on the surface" is read from this.
+    deviation_max: f64,
+    /// Mean **signed** corner distance; + is outside the body, − is inside it. This is the
+    /// term that survives averaging over a displaced boundary and cancels over a rough one.
+    offset: f64,
+    /// Mean |distance| over the interior samples: the chord sag.
+    chord: f64,
+    /// Largest |distance| over the interior samples.
+    chord_max: f64,
+    centroid: Vec3,
+}
+
+/// Per-component accumulator, all sums area-weighted so a coarse face cannot outvote a
+/// fine one by being counted once.
+#[derive(Default)]
+struct FidelityAcc {
+    area: f64,
+    on_surface_area: f64,
+    deviation: f64,
+    deviation_frac: f64,
+    deviation_max: f64,
+    deviation_max_frac: f64,
+    offset: f64,
+    offset_frac: f64,
+    chord: f64,
+    chord_frac: f64,
+    chord_max: f64,
+    chord_max_frac: f64,
+    faces: usize,
+}
+
+// AI-FUNC-SUMMARY: Fold one boundary face into an accumulator, area-weighted; side effects: mutates acc.
+fn absorb(acc: &mut FidelityAcc, f: &BoundaryFace, tol: f64) {
+    let h = if f.local_h > 0.0 { f.local_h } else { 1.0 };
+    acc.faces += 1;
+    acc.area += f.area;
+    acc.deviation += f.area * f.deviation;
+    acc.deviation_frac += f.area * f.deviation / h;
+    acc.offset += f.area * f.offset;
+    acc.offset_frac += f.area * f.offset / h;
+    acc.deviation_max = acc.deviation_max.max(f.deviation_max);
+    acc.deviation_max_frac = acc.deviation_max_frac.max(f.deviation_max / h);
+    acc.chord += f.area * f.chord;
+    acc.chord_frac += f.area * f.chord / h;
+    acc.chord_max = acc.chord_max.max(f.chord_max);
+    acc.chord_max_frac = acc.chord_max_frac.max(f.chord_max / h);
+    if f.deviation_max <= tol * h {
+        acc.on_surface_area += f.area;
+    }
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: `PLAN_mesh_generation.md` P3 - every material boundary in the mesh lies **on** the input
+//   surface - measured as displacement, on the volume, per component.
+// Inputs: the mesh view, the tet face-owner map from `[V3]`, the input surfaces, the gates, the cap.
+// Returns: the `[V13]` section.
+// Side effects: None.
+// Notes: This exists because `[V5]` cannot answer P3 and the record shows what that costs.
+//   `[V5]` measures the *declared* interface - the tagged triangle cells - against the input, and
+//   those nodes are snapped onto the surface by S7, so it reads essentially exact on a mesh whose
+//   real material boundary is a staircase half a cell away. The staircase is undeclared: it is a
+//   face between two tets whose region sets differ and which carries no tag. P3 is a statement
+//   about *that* face, so this check derives the boundary from the volume - region set against
+//   region set - and never consults a tag.
+//
+//   **Corners, not the whole face.** P3 is read from the face's three vertices. A face whose
+//   vertices are cut nodes on the surface is a *chord* of it - the best a flat facet can do, with
+//   a sag that falls as `h^2` and is traded against P2 by refinement. A face whose vertices are
+//   lattice nodes or a cell centroid is somewhere else entirely, and that is the staircase P3
+//   forbids. Measuring the whole face at once mixes them: on the sphere it charged the mesher for
+//   87 % of its boundary area when most of that was irreducible faceting. The sag is still
+//   reported, as `chord_*`, as its own number.
+//
+//   **Two numbers, not one, and that pairing is the point.** A boundary can be wrong in two ways
+//   that no single distance separates: *rough but centred* (it zigzags across the surface) and
+//   *smooth but displaced* (it is a clean sheet in the wrong place). Both raise mean |distance|.
+//   Only the **signed** mean separates them - roughness cancels, displacement does not. A recorded
+//   change traded the first for the second on one fixture, reported a 26 % improvement on a proxy,
+//   and made the plate 2.6x thinner than true; nothing in the suite noticed. `displacement_share`
+//   (|offset| / deviation) is that discrimination as a single number: ~0 is rough, ~1 is displaced.
+//   Both violate P3 - the pairing is for diagnosis, not for grading one as acceptable.
+//
+//   The sign convention is + outside the body, - inside, taken from the nearest input triangle's
+//   plane and corrected by the component's enclosed signed volume, since an STL states its winding
+//   but does not guarantee it. Open sheets have no inside, so their offset is reported with the
+//   raw winding and is meaningful only in magnitude.
+fn check_v13(
+    view: &MeshView,
+    owners: &HashMap<[i64; 3], Vec<usize>>,
+    surfaces: &[SurfaceComponent],
+    gates: &VerifyGates,
+    cap: usize,
+) -> VerifySection {
+    let mut s = VerifySection::new("V13", "Interface fidelity");
+    if surfaces.is_empty() {
+        s.status = CheckStatus::Skipped;
+        s.skipped_reason =
+            Some("no input surfaces supplied; pass them as `surfaces:` in the config".to_string());
+        return s;
+    }
+    let Some(region_key) = cell_i64(view.doc, "region_key") else {
+        s.status = CheckStatus::Skipped;
+        s.skipped_reason = Some(
+            "cell array 'region_key' absent; the material boundary is defined by which element \
+             owns which material, so there is nothing to measure without it"
+                .to_string(),
+        );
+        return s;
+    };
+    let sets = decode_set_table(view.doc, "RegionSet");
+    if sets.is_empty() {
+        s.status = CheckStatus::Skipped;
+        s.skipped_reason =
+            Some("field arrays 'RegionSetOffsets'/'RegionSetComponents' absent".to_string());
+        return s;
+    }
+
+    let per_component: Vec<TriIndex> = surfaces
+        .iter()
+        .map(|c| TriIndex::build(c.tris.clone()))
+        .collect();
+    let orientation: Vec<f64> = surfaces
+        .iter()
+        .map(|c| {
+            let v: f64 = c.tris.iter().map(|t| t[0].cross(t[1]).dot(t[2]) / 6.0).sum();
+            if v < 0.0 {
+                -1.0
+            } else {
+                1.0
+            }
+        })
+        .collect();
+    // Reported so P-1.2's element-count gate has an input-side denominator: elements per unit
+    // interface area has to be normalised by something both meshers see identically, and the
+    // *mesh's* own boundary area is not that - a fanned staircase has more of it than the
+    // surface it approximates, which would flatter exactly the construction under audit.
+    let input_area: f64 = surfaces
+        .iter()
+        .flat_map(|c| c.tris.iter())
+        .map(|t| {
+            let n = t[1].sub(t[0]).cross(t[2].sub(t[0]));
+            0.5 * n.dot(n).sqrt()
+        })
+        .sum();
+
+    let inside_set = |k: i64| -> Vec<i64> {
+        if k < 0 {
+            return Vec::new();
+        }
+        match sets.get(k as usize) {
+            Some(members) => members.iter().copied().filter(|x| *x != 0).collect(),
+            None => Vec::new(),
+        }
+    };
+
+    let plane_tol = gates.plane_tol_frac * view.diag;
+    let mut keys: Vec<&[i64; 3]> = owners.keys().collect();
+    keys.sort_unstable();
+    let mut boundary: Vec<BoundaryFace> = Vec::new();
+    let mut void_faces = 0usize;
+    for k in keys {
+        let cells = &owners[k];
+        // The material boundary, read off the volume: a face whose two tets disagree about
+        // which components they are inside, or a face with one tet that is inside something
+        // and is not the domain box. Nothing here consults a face tag - a boundary the mesher
+        // failed to declare is still a boundary, and is precisely the case that has been
+        // invisible.
+        let mut candidates: Vec<i64> = match cells.len() {
+            2 => {
+                let a = inside_set(region_key.get(cells[0]).copied().unwrap_or(-1));
+                let b = inside_set(region_key.get(cells[1]).copied().unwrap_or(-1));
+                a.iter()
+                    .filter(|x| !b.contains(x))
+                    .chain(b.iter().filter(|x| !a.contains(x)))
+                    .copied()
+                    .collect()
+            }
+            1 => {
+                if on_domain_plane(view, k, plane_tol, None) {
+                    continue;
+                }
+                let a = inside_set(region_key.get(cells[0]).copied().unwrap_or(-1));
+                if !a.is_empty() {
+                    void_faces += 1;
+                }
+                a
+            }
+            _ => continue,
+        };
+        candidates.sort_unstable();
+        candidates.dedup();
+        if candidates.is_empty() {
+            continue;
+        }
+
+        let p = [
+            view.doc.points[k[0] as usize],
+            view.doc.points[k[1] as usize],
+            view.doc.points[k[2] as usize],
+        ];
+        let normal = p[1].sub(p[0]).cross(p[2].sub(p[0]));
+        let area = 0.5 * normal.dot(normal).sqrt();
+        if area <= 0.0 {
+            continue;
+        }
+        let local_h = [p[1].sub(p[0]), p[2].sub(p[1]), p[0].sub(p[2])]
+            .iter()
+            .map(|e| e.dot(*e).sqrt())
+            .sum::<f64>()
+            / 3.0;
+        let centroid = p[0].add(p[1]).add(p[2]).scale(1.0 / 3.0);
+        // Two sample groups, kept apart on purpose — see `BoundaryFace`. The corners say
+        // whether the face is anchored to the surface (P3); the interior says how far a
+        // face that *is* anchored sags across the curvature between them (chord error,
+        // which falls as h^2 and is P2's business, not P3's).
+        let corners = [p[0], p[1], p[2]];
+        let interior = [
+            p[0].add(p[1]).scale(0.5),
+            p[1].add(p[2]).scale(0.5),
+            p[2].add(p[0]).scale(0.5),
+            centroid,
+        ];
+
+        // Which component's surface this face is supposed to be: the nearest candidate at the
+        // centroid. Where the symmetric difference names two - a high-priority body's boundary
+        // re-exposing the label underneath - the face is a boundary of both, lying on either
+        // satisfies P3, and charging it to the far one would report a displacement that is not
+        // there.
+        let mut chosen: Option<(f64, usize)> = None;
+        for x in &candidates {
+            let Ok(index) = usize::try_from(*x - 1) else {
+                continue;
+            };
+            if index >= surfaces.len() {
+                continue;
+            }
+            if let Some((d, _)) = per_component[index].nearest(centroid) {
+                if chosen.is_none_or(|(best, _)| d < best) {
+                    chosen = Some((d, index));
+                }
+            }
+        }
+        let Some((_, index)) = chosen else {
+            continue;
+        };
+
+        let tri_index = &per_component[index];
+        let orient = orientation[index];
+        let (mut sum, mut max, mut signed) = (0.0f64, 0.0f64, 0.0f64);
+        for q in &corners {
+            let Some((d, t)) = tri_index.nearest(*q) else {
+                continue;
+            };
+            sum += d;
+            max = max.max(d);
+            let side = q.sub(tri_index.tris[t][0]).dot(tri_index.normals[t]) * orient;
+            signed += if side < 0.0 { -d } else { d };
+        }
+        let (mut chord, mut chord_max) = (0.0f64, 0.0f64);
+        for q in &interior {
+            let Some((d, _)) = tri_index.nearest(*q) else {
+                continue;
+            };
+            chord += d;
+            chord_max = chord_max.max(d);
+        }
+        boundary.push(BoundaryFace {
+            component: index,
+            area,
+            local_h,
+            deviation: sum / corners.len() as f64,
+            deviation_max: max,
+            offset: signed / corners.len() as f64,
+            chord: chord / interior.len() as f64,
+            chord_max,
+            centroid,
+        });
+    }
+
+    if boundary.is_empty() {
+        s.status = CheckStatus::Skipped;
+        s.skipped_reason = Some(
+            "the mesh has no material boundary: every tet carries the same region set, so there \
+             is no interface to measure"
+                .to_string(),
+        );
+        return s;
+    }
+
+    let tol = gates.interface_on_surface_frac;
+    let mut per: std::collections::BTreeMap<usize, FidelityAcc> = std::collections::BTreeMap::new();
+    let mut all = FidelityAcc::default();
+    for f in &boundary {
+        absorb(per.entry(f.component).or_default(), f, tol);
+        absorb(&mut all, f, tol);
+    }
+
+    let norm = |acc: &FidelityAcc, v: f64| if acc.area > 0.0 { v / acc.area } else { 0.0 };
+    s.metric("material_boundary_faces", all.faces as f64);
+    s.metric("material_boundary_area", all.area);
+    s.metric("input_surface_area", input_area);
+    s.metric("void_boundary_faces", void_faces as f64);
+    let on_frac = norm(&all, all.on_surface_area);
+    s.metric("on_surface_area_frac", on_frac);
+    s.metric("off_surface_area_frac", 1.0 - on_frac);
+    s.metric("deviation_max", all.deviation_max);
+    s.metric("deviation_max_frac_h", all.deviation_max_frac);
+    s.metric("deviation_mean", norm(&all, all.deviation));
+    s.metric("deviation_mean_frac_h", norm(&all, all.deviation_frac));
+    s.metric("offset_mean", norm(&all, all.offset));
+    s.metric("offset_mean_frac_h", norm(&all, all.offset_frac));
+    // Chord sag, kept separate from everything above: this is what a flat facet costs
+    // across curvature *given* that its corners are on the surface, it falls as h^2, and
+    // it is what `chord_error_frac` already steers. It is not a P3 violation.
+    s.metric("chord_mean", norm(&all, all.chord));
+    s.metric("chord_mean_frac_h", norm(&all, all.chord_frac));
+    s.metric("chord_max", all.chord_max);
+    s.metric("chord_max_frac_h", all.chord_max_frac);
+    // The discrimination, as one number: ~0 the boundary is rough about the right place,
+    // ~1 it is a clean sheet in the wrong place. Undefined when the boundary is exact.
+    let deviation_mean = norm(&all, all.deviation);
+    s.metric(
+        "displacement_share",
+        if deviation_mean > 0.0 {
+            norm(&all, all.offset).abs() / deviation_mean
+        } else {
+            0.0
+        },
+    );
+
+    let mut displaced: Vec<(i64, f64, f64)> = Vec::new();
+    for (index, acc) in &per {
+        let x = *index as i64 + 1;
+        s.metric(&format!("component_{x}_boundary_area"), acc.area);
+        s.metric(
+            &format!("component_{x}_on_surface_area_frac"),
+            norm(acc, acc.on_surface_area),
+        );
+        s.metric(
+            &format!("component_{x}_deviation_mean"),
+            norm(acc, acc.deviation),
+        );
+        s.metric(
+            &format!("component_{x}_deviation_mean_frac_h"),
+            norm(acc, acc.deviation_frac),
+        );
+        s.metric(
+            &format!("component_{x}_deviation_max_frac_h"),
+            acc.deviation_max_frac,
+        );
+        s.metric(
+            &format!("component_{x}_chord_mean_frac_h"),
+            norm(acc, acc.chord_frac),
+        );
+        s.metric(&format!("component_{x}_offset_mean"), norm(acc, acc.offset));
+        let offset_frac = norm(acc, acc.offset_frac);
+        s.metric(&format!("component_{x}_offset_mean_frac_h"), offset_frac);
+        if offset_frac.abs() > gates.interface_offset_frac {
+            displaced.push((x, norm(acc, acc.offset), offset_frac));
+        }
+    }
+
+    // Gates. P3 admits no displacement, so the off-surface share is reported whenever it is
+    // nonzero rather than against a tolerance on how much is allowed; `interface_on_surface_frac`
+    // is only the numerical width of the word "on", and cut nodes that really are on the surface
+    // measure ~1e-15 against it.
+    if all.on_surface_area < all.area {
+        let mut worst: Vec<&BoundaryFace> = boundary
+            .iter()
+            .filter(|f| f.deviation_max > tol * f.local_h.max(f64::MIN_POSITIVE))
+            .collect();
+        worst.sort_by(|a, b| {
+            (b.deviation_max / b.local_h.max(f64::MIN_POSITIVE))
+                .partial_cmp(&(a.deviation_max / a.local_h.max(f64::MIN_POSITIVE)))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        s.push(
+            VerifyItem::bare(
+                Severity::Warn,
+                "V13.off_surface",
+                format!(
+                    "{:.2}% of the material-boundary area is not anchored to the input surface \
+                     (worst face has a corner {:.3e} away, {:.1}% of its own edge length; \
+                     area-weighted mean {:.3e}). Measured on the face corners, so a flat facet \
+                     chording a curved patch is not counted here - its sag is reported \
+                     separately as `chord_mean`. P3 admits none of this: a face parallel to the \
+                     surface and a fraction of h away is a violation, however small the fraction.",
+                    (1.0 - on_frac) * 100.0,
+                    all.deviation_max,
+                    all.deviation_max_frac * 100.0,
+                    deviation_mean,
+                ),
+            ),
+            cap,
+        );
+        for f in worst.iter().take(cap.min(16)) {
+            let mut item = VerifyItem::bare(
+                Severity::Warn,
+                "V13.off_surface",
+                format!(
+                    "a material-boundary face of area {:.3e} has a corner {:.3e} ({:.1}% of its \
+                     own edge length) off component {}'s surface",
+                    f.area,
+                    f.deviation_max,
+                    f.deviation_max / f.local_h.max(f64::MIN_POSITIVE) * 100.0,
+                    f.component as i64 + 1,
+                ),
+            );
+            item.coordinates.push(f.centroid);
+            s.push(item, cap);
+        }
+    }
+    for (x, offset, frac) in &displaced {
+        let direction = if *offset < 0.0 { "into" } else { "out of" };
+        s.push(
+            VerifyItem::bare(
+                Severity::Warn,
+                "V13.displaced",
+                format!(
+                    "component {x}'s material boundary is displaced {direction} the body by \
+                     {:.3e} on area-weighted average ({:.2}% of a local edge). A boundary that is \
+                     merely rough averages to zero here, so this is the surface in the wrong \
+                     place, not the surface roughly placed - the material on that side is \
+                     systematically {}.",
+                    offset.abs(),
+                    frac.abs() * 100.0,
+                    if *offset < 0.0 { "short" } else { "surplus" },
+                ),
+            ),
+            cap,
+        );
+    }
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::vtu::{ArrayData, DataArray};
+
+    // ---------------------------------------------------------------- [V13] fixtures
+    //
+    // P-1.1's acceptance is a discrimination, not a number: the check must report the
+    // displacement of a boundary that is *smooth but in the wrong place*, and must not
+    // report one for a boundary that is *rough but centred on the right place*. Both
+    // fixtures below are the same 24-node block with the same amount of error - only the
+    // region labels differ - so nothing but that discrimination can explain a difference
+    // in the verdict.
+    //
+    // The block: x in {0.4, 0.6, 0.8}, y in {0.4, 0.6}, z in {0, 0.10, 0.14, 0.30}, six
+    // hexes each Kuhn-split into six tets (a split that is conforming on a structured grid,
+    // so every shared quad is triangulated identically from both sides). The domain box is
+    // the block itself, so every outer face is excused and the only material boundary is
+    // the one the labels create. The input surface is the closed slab z in [0, 0.12], so
+    // the true interface is the plane z = 0.12.
+
+    const XS: [f64; 3] = [0.4, 0.6, 0.8];
+    const YS: [f64; 2] = [0.4, 0.6];
+    const ZS: [f64; 4] = [0.0, 0.10, 0.14, 0.30];
+
+    // Kuhn's six tets of a unit hex, as (x, y, z) corner offsets: every monotone path from
+    // v000 to v111. All six share the main diagonal, which is what makes the face diagonals
+    // agree between neighbouring hexes.
+    const KUHN: [[usize; 4]; 6] = [
+        [0b000, 0b100, 0b110, 0b111],
+        [0b000, 0b100, 0b101, 0b111],
+        [0b000, 0b010, 0b110, 0b111],
+        [0b000, 0b010, 0b011, 0b111],
+        [0b000, 0b001, 0b101, 0b111],
+        [0b000, 0b001, 0b011, 0b111],
+    ];
+
+    /// Build the block. `material(column, layer)` says whether that hex is inside component 1.
+    fn fidelity_block(material: impl Fn(usize, usize) -> bool) -> VtuDoc {
+        let node = |i: usize, j: usize, k: usize| ((k * YS.len() + j) * XS.len() + i) as i64;
+        let mut points = Vec::new();
+        for z in ZS {
+            for y in YS {
+                for x in XS {
+                    points.push(Vec3::new(x, y, z));
+                }
+            }
+        }
+        let mut connectivity = Vec::new();
+        let mut offsets = Vec::new();
+        let mut types = Vec::new();
+        let mut region_key: Vec<i32> = Vec::new();
+        for layer in 0..ZS.len() - 1 {
+            for column in 0..XS.len() - 1 {
+                let corner = |bits: usize| {
+                    node(
+                        column + (bits >> 2 & 1),
+                        bits >> 1 & 1,
+                        layer + (bits & 1),
+                    )
+                };
+                for tet in KUHN {
+                    for bits in tet {
+                        connectivity.push(corner(bits));
+                    }
+                    offsets.push(connectivity.len() as i64);
+                    types.push(VTK_TETRA);
+                    region_key.push(if material(column, layer) { 1 } else { 0 });
+                }
+            }
+        }
+        VtuDoc {
+            points,
+            connectivity,
+            offsets,
+            types,
+            cell_data: vec![DataArray::scalar("region_key", ArrayData::I32(region_key))],
+            field_data: vec![
+                // key 0 is the background sentinel {0}; key 1 is {1}, inside component 1.
+                DataArray::scalar("RegionSetOffsets", ArrayData::I64(vec![1, 2])),
+                DataArray::scalar("RegionSetComponents", ArrayData::I64(vec![0, 1])),
+                DataArray::scalar("DomainMin", ArrayData::F64(vec![0.4, 0.4, 0.0])),
+                DataArray::scalar("DomainMax", ArrayData::F64(vec![0.8, 0.6, 0.30])),
+            ],
+            ..Default::default()
+        }
+    }
+
+    /// The closed slab `[0,1] x [0,1] x [0, top]`, wound outward.
+    fn slab(top: f64) -> SurfaceComponent {
+        let c = |x: f64, y: f64, z: f64| Vec3::new(x, y, z);
+        let quad = |a: Vec3, b: Vec3, d: Vec3, e: Vec3| vec![[a, b, d], [a, d, e]];
+        let mut tris = Vec::new();
+        // bottom (-z), top (+z), then the four sides.
+        tris.extend(quad(c(0.0, 0.0, 0.0), c(0.0, 1.0, 0.0), c(1.0, 1.0, 0.0), c(1.0, 0.0, 0.0)));
+        tris.extend(quad(c(0.0, 0.0, top), c(1.0, 0.0, top), c(1.0, 1.0, top), c(0.0, 1.0, top)));
+        tris.extend(quad(c(0.0, 0.0, 0.0), c(1.0, 0.0, 0.0), c(1.0, 0.0, top), c(0.0, 0.0, top)));
+        tris.extend(quad(c(1.0, 0.0, 0.0), c(1.0, 1.0, 0.0), c(1.0, 1.0, top), c(1.0, 0.0, top)));
+        tris.extend(quad(c(1.0, 1.0, 0.0), c(0.0, 1.0, 0.0), c(0.0, 1.0, top), c(1.0, 1.0, top)));
+        tris.extend(quad(c(0.0, 1.0, 0.0), c(0.0, 0.0, 0.0), c(0.0, 0.0, top), c(0.0, 1.0, top)));
+        SurfaceComponent { priority: 0, closed: true, tris }
+    }
+
+    fn fidelity(doc: &VtuDoc) -> VerifySection {
+        let options = VerifyOptions {
+            expected_stage: None,
+            surfaces: vec![slab(0.12)],
+        };
+        verify_with_options(doc, &VerifyGates::default(), options)
+            .section("V13")
+            .cloned()
+            .expect("the catalog must always carry [V13]")
+    }
+
+    fn metric(s: &VerifySection, name: &str) -> f64 {
+        s.metrics
+            .iter()
+            .find(|(k, _)| k == name)
+            .unwrap_or_else(|| panic!("[V13] must report `{name}`; it reported {:?}", s.metrics))
+            .1
+    }
+
+    /// The half of P-1.1's acceptance that says the check must **report** a displacement:
+    /// a boundary that is a perfect plane 0.02 inside the body, with no roughness at all.
+    #[test]
+    fn v13_reports_a_smooth_boundary_that_is_in_the_wrong_place() {
+        // Material fills the bottom layer of both columns: the boundary is the flat plane
+        // z = 0.10 while the input surface is at z = 0.12.
+        let doc = fidelity_block(|_, layer| layer == 0);
+        let s = fidelity(&doc);
+
+        assert!(
+            (metric(&s, "material_boundary_area") - 0.08).abs() < 1.0e-12,
+            "the boundary is the 0.4 x 0.2 plane at z = 0.10"
+        );
+        assert!(
+            (metric(&s, "deviation_mean") - 0.02).abs() < 1.0e-12,
+            "every sample is exactly 0.02 from the surface, so the mean is 0.02, got {}",
+            metric(&s, "deviation_mean")
+        );
+        // The finding: signed, and negative because the material stops short of its surface.
+        assert!(
+            (metric(&s, "offset_mean") + 0.02).abs() < 1.0e-12,
+            "a boundary displaced into the body must report -0.02, got {}",
+            metric(&s, "offset_mean")
+        );
+        assert!(
+            (metric(&s, "displacement_share") - 1.0).abs() < 1.0e-9,
+            "with no roughness at all, the whole deviation is displacement"
+        );
+        assert_eq!(metric(&s, "on_surface_area_frac"), 0.0);
+        let codes: Vec<&str> = s.items.iter().map(|i| i.code.as_str()).collect();
+        assert!(codes.contains(&"V13.displaced"), "fired {codes:?}");
+        assert!(codes.contains(&"V13.off_surface"), "fired {codes:?}");
+    }
+
+    /// The other half, and the one the record says matters: a boundary with the *same* error
+    /// magnitude that straddles the surface instead of sitting off it must **not** be
+    /// reported as displaced. A metric that cannot tell these apart scores a change that
+    /// trades roughness for displacement as an improvement - which is what happened.
+    #[test]
+    fn v13_does_not_report_a_rough_boundary_that_is_centred() {
+        // Column 0 stops at z = 0.10, column 1 runs on to z = 0.14: the boundary straddles
+        // the true surface at 0.12, half of it short and half of it over, joined by the
+        // vertical step between the columns.
+        let doc = fidelity_block(|column, layer| layer == 0 || (column == 1 && layer == 1));
+        let s = fidelity(&doc);
+
+        // Two horizontal patches of 0.04 plus the 0.2 x 0.04 step between the columns.
+        assert!((metric(&s, "material_boundary_area") - 0.088).abs() < 1.0e-12);
+        // Exactly the same error magnitude as the displaced fixture: every corner is 0.02
+        // from the surface there too.
+        let deviation = metric(&s, "deviation_mean");
+        assert!(
+            (deviation - 0.02).abs() < 1.0e-12,
+            "the boundary is exactly as far from the surface as the displaced one, got {deviation}"
+        );
+        // ...and none of it is displacement: over and short cancel exactly.
+        assert!(
+            metric(&s, "offset_mean").abs() < 1.0e-12,
+            "a boundary centred on the surface must report no offset, got {}",
+            metric(&s, "offset_mean")
+        );
+        assert!(metric(&s, "displacement_share") < 1.0e-9);
+        let codes: Vec<&str> = s.items.iter().map(|i| i.code.as_str()).collect();
+        assert!(
+            !codes.contains(&"V13.displaced"),
+            "a centred boundary must not be reported as displaced; fired {codes:?}"
+        );
+        // It is still a P3 violation, and still says so.
+        assert!(codes.contains(&"V13.off_surface"), "fired {codes:?}");
+    }
+
+    /// The control: a boundary that lies *on* the surface reports nothing. Without this the
+    /// two tests above are satisfied by a check that always fires.
+    #[test]
+    fn v13_passes_a_boundary_that_lies_on_the_surface() {
+        // Same block, but the input surface's top is moved onto the mesh's own boundary
+        // plane z = 0.10 - the mesh is then exactly conforming to it.
+        let doc = fidelity_block(|_, layer| layer == 0);
+        let options = VerifyOptions {
+            expected_stage: None,
+            surfaces: vec![slab(0.10)],
+        };
+        let s = verify_with_options(&doc, &VerifyGates::default(), options)
+            .section("V13")
+            .cloned()
+            .unwrap();
+        assert_eq!(s.status, CheckStatus::Pass, "items: {:?}", s.items);
+        assert_eq!(metric(&s, "on_surface_area_frac"), 1.0);
+        assert!(metric(&s, "deviation_max") < 1.0e-15);
+        assert!(s.items.is_empty());
+    }
+
+    /// A closed box over the same footprint as the mesh block, `[0.4,0.8] x [0.4,0.6] x
+    /// [0, top]`, whose top is **tented**: it passes exactly through the block's grid nodes
+    /// and rises by `bump` at each cell centre. A mesh boundary face at `z = top` therefore
+    /// has all three corners exactly on the surface and an interior that does not touch it.
+    fn tented_box(top: f64, bump: f64) -> SurfaceComponent {
+        let c = |x: f64, y: f64, z: f64| Vec3::new(x, y, z);
+        // Each quad is given in CCW order as seen from outside, then fanned from its first
+        // corner - so the whole soup is consistently outward-wound.
+        let quad = |a: Vec3, b: Vec3, d: Vec3, e: Vec3| vec![[a, b, d], [a, d, e]];
+        let (x0, x1, x2) = (XS[0], XS[1], XS[2]);
+        let (y0, y1) = (YS[0], YS[1]);
+        let zb = 0.0;
+        let mut tris = Vec::new();
+        tris.extend(quad(c(x0, y0, zb), c(x0, y1, zb), c(x2, y1, zb), c(x2, y0, zb)));
+        tris.extend(quad(c(x0, y0, zb), c(x2, y0, zb), c(x2, y0, top), c(x0, y0, top)));
+        tris.extend(quad(c(x0, y1, zb), c(x0, y1, top), c(x2, y1, top), c(x2, y1, zb)));
+        tris.extend(quad(c(x0, y0, zb), c(x0, y0, top), c(x0, y1, top), c(x0, y1, zb)));
+        tris.extend(quad(c(x2, y0, zb), c(x2, y1, zb), c(x2, y1, top), c(x2, y0, top)));
+        for (a, b) in [(x0, x1), (x1, x2)] {
+            let apex = c((a + b) * 0.5, (y0 + y1) * 0.5, top + bump);
+            let corners = [c(a, y0, top), c(b, y0, top), c(b, y1, top), c(a, y1, top)];
+            for k in 0..4 {
+                tris.push([apex, corners[k], corners[(k + 1) % 4]]);
+            }
+        }
+        SurfaceComponent { priority: 0, closed: true, tris }
+    }
+
+    /// The distinction the sphere forced: a flat facet whose three corners are on a curved
+    /// surface is a **chord** of it, not a displacement of it. Its sag falls as `h^2` and is
+    /// what refinement buys; counting it as a P3 violation would declare every curved
+    /// surface unmeshable and bury the staircase inside a number that can never reach zero.
+    #[test]
+    fn v13_does_not_charge_a_face_for_chording_a_curved_surface() {
+        let doc = fidelity_block(|_, layer| layer == 0);
+        let options = VerifyOptions {
+            expected_stage: None,
+            surfaces: vec![tented_box(0.10, 0.01)],
+        };
+        let s = verify_with_options(&doc, &VerifyGates::default(), options)
+            .section("V13")
+            .cloned()
+            .unwrap();
+
+        // Every corner is a vertex of the input surface, so the boundary is anchored...
+        assert_eq!(metric(&s, "on_surface_area_frac"), 1.0);
+        assert!(metric(&s, "deviation_max") < 1.0e-15);
+        assert_eq!(s.status, CheckStatus::Pass, "items: {:?}", s.items);
+        // ...and the sag between the corners is measured, separately, and not as a violation.
+        assert!(
+            metric(&s, "chord_mean") > 1.0e-3,
+            "the tent rises 0.01 above the mesh's flat faces; the sag must be reported, got {}",
+            metric(&s, "chord_mean")
+        );
+    }
+
+    /// [V5] measures the *declared* interface and this measures the material boundary the
+    /// volume actually has. On a mesh that declares no interface at all they must disagree,
+    /// and that disagreement is the whole reason [V13] exists.
+    #[test]
+    fn v13_sees_a_boundary_v5_cannot() {
+        let doc = fidelity_block(|_, layer| layer == 0);
+        let report = verify_with_options(
+            &doc,
+            &VerifyGates::default(),
+            VerifyOptions { expected_stage: None, surfaces: vec![slab(0.12)] },
+        );
+        assert_eq!(
+            report.section("V5").unwrap().status,
+            CheckStatus::Skipped,
+            "with no tagged faces [V5] has nothing to measure - and still the mesh's material \
+             boundary is 0.02 off the surface"
+        );
+        assert_eq!(report.section("V13").unwrap().status, CheckStatus::Warn);
+    }
 
     // The predicate's semantics, stated case by case. It is per component, not per count:
     // that is the whole difference between it and `[V6]`'s region-adjacency rule.

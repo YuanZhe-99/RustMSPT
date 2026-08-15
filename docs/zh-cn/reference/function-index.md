@@ -401,7 +401,11 @@
 | `emit_snapshot` | 网格工具 | `src/meshgen/snapshot.rs:215` | 打标元数据并写出快照 VTU；返回路径。 |
 | `warn_if_large` | 网格工具 | `src/meshgen/snapshot.rs:246` | 尺寸 WARN：snapshots=all + 估计 >5 M 四面体。 |
 | `VerifyOptions` | 网格工具 | `src/meshgen/verify.rs:410` | 文档之外的验证器输入（expected_stage 用于 [V12] 交叉校验）。 |
-| `verify_with_options` | 网格工具 | `src/meshgen/verify.rs:441` | 带阶段上下文的验证；s00-s03 跳过仅体网格 [V7]/[V8]。 |
+| `verify_with_options` | 网格工具 | `src/meshgen/verify.rs:744` | 带阶段上下文的验证；s00-s03 跳过仅体网格 [V7]/[V8]/[V13]。 |
+| `BoundaryFace` | 网格工具 | `src/meshgen/verify.rs:3531` | [V13] 眼中的一个材料边界面：面积、局部边长、距离与带符号偏移。 |
+| `FidelityAcc` | 网格工具 | `src/meshgen/verify.rs:3548` | [V13] 按面积加权的逐分量累加器。 |
+| `absorb` | 网格工具 | `src/meshgen/verify.rs:3561` | 将一个边界面折叠进 [V13] 累加器。 |
+| `check_v13` | 网格工具 | `src/meshgen/verify.rs:3603` | [V13] 界面保真度：从体网格读出材料边界并与输入曲面比对（计划中的 P3）。 |
 | `GpuClipPlane` | 网格工具 | `src/gpu/scene_render.rs:45` | GPU 场景预览的可选半空间裁剪（平滑切割）。 |
 | `GpuSceneOptions` | 网格工具 | `src/gpu/scene_render.rs:52` | GPU 专用开关：裁剪平面、叠加线段、标记。 |
 | `GpuScenePipeline` | 网格工具 | `src/gpu/scene_render.rs:70` | 离屏 GPU 场景预览：带颜色的 TriangleList + LineList 叠加，均支持裁剪平面丢弃。 |

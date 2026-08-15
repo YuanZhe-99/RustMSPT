@@ -212,7 +212,9 @@ fn every_catalog_section_is_reported_and_skips_name_a_reason() {
     let ids: Vec<&str> = report.sections.iter().map(|s| s.id.as_str()).collect();
     assert_eq!(
         ids,
-        vec!["V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8", "V9", "V10", "V11", "V12"],
+        vec![
+            "V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8", "V9", "V10", "V11", "V12", "V13",
+        ],
         "the report must cover the whole catalog in contract order"
     );
     for s in &report.sections {
@@ -225,7 +227,7 @@ fn every_catalog_section_is_reported_and_skips_name_a_reason() {
             );
         }
     }
-    assert_eq!(report.checks_run + report.checks_skipped, 12);
+    assert_eq!(report.checks_run + report.checks_skipped, 13);
 }
 
 /// A plain tet mesh with no contract arrays at all: the geometry checks must still
