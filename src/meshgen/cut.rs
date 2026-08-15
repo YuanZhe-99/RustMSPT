@@ -4109,6 +4109,46 @@ fn split_escalated_cell(
         return None;
     }
 
+    // **P-3 gate handle (`RUSTMSPT_CDT=1`): route the cell through the §7.2-§7.4 kernel.**
+    // Not a setting - which mesher a cell gets is not a matter of taste (R3) - and it must not
+    // survive the gate. It sits here rather than replacing the path below because the kernel
+    // declines any cell that would need a node the neighbour does not have, so the soup split
+    // stays the answer for everything it turns down.
+    if std::env::var_os("RUSTMSPT_CDT").is_some() {
+        let cut_nodes: Vec<(i32, Vec<u32>)> = crossing
+            .iter()
+            .map(|(component, set)| (*component, set.iter().copied().collect()))
+            .collect();
+        if let Some(subdivision) = crate::meshgen::cdt::subdivide_cell(
+            boundary,
+            &cut_nodes,
+            nodes,
+            volume_tolerance.max(f64::MIN_POSITIVE) * 1.0e-6,
+            1.0e-9,
+        ) {
+            let pieces: Vec<SmallVec<[[u32; 3]; 16]>> = subdivision
+                .pieces
+                .iter()
+                .map(|soup| soup.iter().copied().collect())
+                .collect();
+            // The same guard §6 puts on every cut: the pieces must add up to the parent.
+            let total: f64 = pieces
+                .iter()
+                .map(|piece| fan_volume(piece, polygon_soup_centroid(piece, nodes), nodes))
+                .sum();
+            if (total - parent_volume).abs() <= volume_tolerance * parent_volume {
+                if std::env::var_os("RUSTMSPT_JCT_DIAG").is_some() {
+                    println!(
+                        "[CDT] cell {index}: {} piece(s), {} cap triangle(s)",
+                        pieces.len(),
+                        subdivision.caps.len()
+                    );
+                }
+                return Some((pieces, subdivision.caps));
+            }
+        }
+    }
+
     let mut pieces: Vec<SmallVec<[[u32; 3]; 16]>> = vec![boundary.iter().copied().collect()];
     let mut caps: Vec<([u32; 3], i32)> = Vec::new();
     for (component, surface) in &crossing {

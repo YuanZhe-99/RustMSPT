@@ -30,6 +30,24 @@
 //! never costs correctness. Bounding the cut to the fragment is what a true CDT buys and is the
 //! next question this kernel makes askable, not one it answers.
 //!
+//! **INTEGRATION STATUS (2026-08-15): the kernel is sound; wiring it in cell-by-cell is NOT.**
+//! `subdivide_cell` is reachable under `RUSTMSPT_CDT=1`, a gate handle and not a setting. Measured
+//! there: a7b +0.249 pp of on-surface area, a7a +0.030, a3 +0.014, a8 +0.020, `[V3]` clean on all
+//! of them **except a8**, which fails with 12 boundary leaks, 6 hanging nodes and 2 non-manifold
+//! edges out of 555,204 interior faces. Two safety rules were added and neither is sufficient:
+//! refusing to intern a new node, then requiring the cell's boundary to come back triangle-for-
+//! triangle. The residue is small but it is real, and small conformity failures are the expensive
+//! kind.
+//!
+//! The reason is structural, not a bug to chase. A cell that clips puts an edge on its boundary
+//! that its neighbour - which did not clip - does not have, and *whether to clip is decided per
+//! cell*. Invariant J1 says the triangulation of a face must be a pure function of the face, so
+//! the crease trace has to enter the shared face's triangulation **once, agreed by both cells,
+//! before either meshes its interior**. That is exactly what SPEC §7.3's `FaceTriCache` is
+//! specified for, and it is not implemented. Until it is, this kernel can only take cells whose
+//! boundary it does not need to re-cut - which is a bound, not a tuning parameter, and it is why
+//! the gains above are fractions of a point rather than the ~75 % of crease damage on offer.
+//!
 //! Determinism (R-P2, §7.4): planes are consumed in the caller's order, which is canonical by
 //! construction; every vertex is interned through a `NodeKey` so a point computed twice is one
 //! node; and each face's fan apex is its smallest key, so a face shared by two pieces is
@@ -400,6 +418,234 @@ pub fn cell_of_tet(tet: [u32; 4], arena: &NodeArena) -> ConvexCell {
     }
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: The constraint planes of one cell, fitted through the cut nodes a component left on it.
+// Inputs: the component's cut-node ids, the arena, and the coplanarity tolerance.
+// Returns: one plane per coplanar group, in a canonical order.
+// Side effects: None.
+// Notes: **The planes are fitted to the cut nodes rather than taken from the input triangles, and
+//   that is what makes the result conforming.** A plane through the cut nodes passes exactly
+//   through the points where the surface crosses the cell's edges - the points the *neighbouring*
+//   cell also has, because a cut node is a function of the edge and the component (invariant K2).
+//   So clipping by it re-derives the nodes already on every shared face and interns no new one
+//   there, which is the difference between a cut that conforms and a cut that cracks. Taking the
+//   plane from the input triangle instead would be the same plane only where the patch is exactly
+//   planar through those nodes, and would drift everywhere else.
+//
+//   Grouping is what handles the crease, which is the whole point: a component whose cut nodes are
+//   **not** coplanar has more than one patch in this cell, and the groups are those patches. The
+//   greedy pass seeds on the three smallest keys, claims every node within tolerance of their
+//   plane, and repeats on the remainder - so a flat patch yields one plane, a creased pair yields
+//   two, and the crease is their intersection line, an edge of the output by construction.
+//
+//   Seeding by smallest key rather than by any geometric preference is deliberate: it is the same
+//   total order §4's SNK rule uses, so the grouping is a pure function of the node set (R-P2), and
+//   two cells sharing these nodes group them identically.
+pub fn planes_through_cut_nodes(nodes: &[u32], arena: &NodeArena, tol: f64) -> Vec<Plane> {
+    let mut remaining: Vec<u32> = nodes.to_vec();
+    remaining.sort_by_key(|id| arena.keys[*id as usize]);
+    remaining.dedup();
+    let mut planes: Vec<Plane> = Vec::new();
+    // Bounded: every pass either fixes a plane and removes at least three nodes, or gives up.
+    while remaining.len() >= 3 {
+        let mut seed: Option<Plane> = None;
+        // The first non-degenerate triple in key order.
+        'outer: for i in 0..remaining.len() {
+            for j in (i + 1)..remaining.len() {
+                for k in (j + 1)..remaining.len() {
+                    let tri = [
+                        arena.points[remaining[i] as usize],
+                        arena.points[remaining[j] as usize],
+                        arena.points[remaining[k] as usize],
+                    ];
+                    if let Some(plane) = Plane::of_triangle(tri) {
+                        seed = Some(plane);
+                        break 'outer;
+                    }
+                }
+            }
+        }
+        let Some(plane) = seed else { break };
+        let (on, off): (Vec<u32>, Vec<u32>) = remaining
+            .iter()
+            .partition(|id| plane.distance(arena.points[**id as usize]).abs() <= tol);
+        if on.len() < 3 {
+            break;
+        }
+        planes.push(plane);
+        remaining = off;
+    }
+    planes
+}
+
+/// One cell's subdivision, in the shape `split_escalated_cell` already hands downstream:
+/// material pieces as closed triangle soups, plus the cap triangles tagged by component.
+pub struct CellSubdivision {
+    pub pieces: Vec<Vec<[u32; 3]>>,
+    pub caps: Vec<([u32; 3], i32)>,
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Subdivide one escalated cell by the planes its crossing components leave on it, and
+//   hand back pieces and caps in the shape the existing §7.6 path uses.
+// Inputs: the cell's closed boundary soup, the cut nodes per component, the global node table, the
+//   key quantum and the coplanarity/on-plane tolerance.
+// Returns: the subdivision, or None when the cell is one the kernel must decline.
+// Side effects: None - it interns into a *local* arena and returns nothing new.
+// Notes: **It declines rather than inventing a node, and that is the integration's safety rule.**
+//   A plane fitted through cut nodes re-derives the nodes already on every shared face, so the
+//   common case interns nothing; but a plane extends past the bounded patch that defined it, and
+//   where it leaves the patch it can cross a face edge somewhere new. A node invented there exists
+//   in this cell and not in the neighbour, which is a crack - the one failure mode that would not
+//   show up in the kernel's own tests, because those mesh a cell in isolation. So the arena is
+//   checked afterwards: if it grew, the cell is refused and the caller's existing path takes it.
+//   That keeps the kernel to the cells where it is provably conforming, and makes the refusal rate
+//   a number to report rather than a risk to argue about.
+pub fn subdivide_cell(
+    boundary: &[[u32; 3]],
+    cut_nodes: &[(i32, Vec<u32>)],
+    nodes: &[Vec3],
+    quantum: f64,
+    tol: f64,
+) -> Option<CellSubdivision> {
+    // A local arena over just this cell's nodes, keeping global ids. Building one over the whole
+    // mesh per cell would be O(N log N) per cell, and the cell only ever touches its own nodes.
+    let mut local: Vec<u32> = boundary.iter().flatten().copied().collect();
+    local.sort_unstable();
+    local.dedup();
+    let mut arena = NodeArena::new(
+        local.iter().map(|id| nodes[*id as usize]).collect(),
+        quantum,
+    );
+    let to_local: BTreeMap<u32, u32> = local
+        .iter()
+        .enumerate()
+        .map(|(slot, id)| (*id, slot as u32))
+        .collect();
+    let before = arena.points.len();
+
+    let mut planes: Vec<(Plane, i32)> = Vec::new();
+    for (component, ids) in cut_nodes {
+        let mapped: Vec<u32> = ids.iter().filter_map(|id| to_local.get(id).copied()).collect();
+        for plane in planes_through_cut_nodes(&mapped, &arena, tol) {
+            planes.push((plane, *component));
+        }
+    }
+    if planes.is_empty() {
+        return None;
+    }
+
+    let cell = ConvexCell {
+        faces: boundary
+            .iter()
+            .filter_map(|t| {
+                Some(vec![
+                    *to_local.get(&t[0])?,
+                    *to_local.get(&t[1])?,
+                    *to_local.get(&t[2])?,
+                ])
+            })
+            .collect(),
+    };
+    if cell.faces.len() != boundary.len() {
+        return None;
+    }
+    let only_planes: Vec<Plane> = planes.iter().map(|(p, _)| *p).collect();
+    let pieces = subdivide(&cell, &only_planes, &mut arena, tol);
+    if arena.points.len() != before {
+        // A plane left the patch that defined it and wanted a node no neighbour has.
+        return None;
+    }
+    if pieces.len() < 2 {
+        return None;
+    }
+    // **Interning no new node is not enough, and a8 proved it: `[V3]` failed anyway.** A plane
+    // through existing nodes still *splits an existing boundary triangle* into two, and the
+    // neighbour across that face - which did not clip - keeps it whole. Same vertices, different
+    // edges, and the face no longer matches: a crack.
+    //
+    // So the boundary must come back unchanged, triangle for triangle. Every piece face that is
+    // not in a constraint plane has to be one of the original boundary triangles; anything else
+    // means the clip re-cut the cell's surface, and the cell is refused.
+    //
+    let back = |id: u32| -> u32 { local[id as usize] };
+    // This is the invariant J1 problem in its proper form, and it is *why* SPEC §7.3 specifies a
+    // `FaceTriCache` keyed on the face rather than on the cell: the crease trace has to be put
+    // into the shared face's triangulation **once, by both cells**, before either meshes its
+    // interior. Until that exists, the kernel can only take cells whose surface it does not need
+    // to re-cut - which is the honest bound on this integration, not a tuning parameter.
+    let original: std::collections::BTreeSet<[u32; 3]> = boundary
+        .iter()
+        .map(|t| {
+            let mut k = *t;
+            k.sort_unstable();
+            k
+        })
+        .collect();
+    for piece in &pieces {
+        for face in &piece.faces {
+            let in_plane = planes.iter().any(|(plane, _)| {
+                face.iter()
+                    .all(|id| plane.distance(arena.points[*id as usize]).abs() <= tol)
+            });
+            if in_plane {
+                continue;
+            }
+            if face.len() != 3 {
+                return None;
+            }
+            let mut k = [back(face[0]), back(face[1]), back(face[2])];
+            k.sort_unstable();
+            if !original.contains(&k) {
+                return None;
+            }
+        }
+    }
+
+    let mut out = CellSubdivision {
+        pieces: Vec::with_capacity(pieces.len()),
+        caps: Vec::new(),
+    };
+    for piece in &pieces {
+        let mut soup: Vec<[u32; 3]> = Vec::new();
+        for face in &piece.faces {
+            if face.len() < 3 {
+                continue;
+            }
+            // Fanned from the face's own smallest key, so the two pieces sharing it - and the
+            // two *cells* sharing it, when it is on the boundary - agree (invariant J1).
+            let Some(&pivot) = face.iter().min_by_key(|id| arena.keys[**id as usize]) else {
+                continue;
+            };
+            let at = face.iter().position(|id| *id == pivot).unwrap_or(0);
+            for step in 1..face.len() - 1 {
+                let tri = [
+                    back(pivot),
+                    back(face[(at + step) % face.len()]),
+                    back(face[(at + step + 1) % face.len()]),
+                ];
+                if tri[0] == tri[1] || tri[1] == tri[2] || tri[0] == tri[2] {
+                    continue;
+                }
+                soup.push(tri);
+                // A face lying in a constraint plane is the material boundary there, and is
+                // what the caller tags as an interface triangle.
+                if let Some((_, component)) = planes.iter().find(|(plane, _)| {
+                    face.iter()
+                        .all(|id| plane.distance(arena.points[*id as usize]).abs() <= tol)
+                }) {
+                    out.caps.push((tri, *component));
+                }
+            }
+        }
+        if soup.len() < 4 {
+            return None;
+        }
+        out.pieces.push(soup);
+    }
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -661,6 +907,38 @@ mod tests {
             from_above, from_below,
             "J1: both cells must derive the same triangles for the face they share"
         );
+    }
+
+    // Plane fitting is the integration's load-bearing step: one flat patch must give exactly one
+    // plane, and a creased pair exactly two - that is how the crease survives into the mesh.
+    #[test]
+    fn cut_nodes_group_into_one_plane_per_patch() {
+        let flat = NodeArena::new(
+            vec![
+                Vec3::new(0.0, 0.0, 0.5),
+                Vec3::new(1.0, 0.0, 0.5),
+                Vec3::new(0.0, 1.0, 0.5),
+                Vec3::new(1.0, 1.0, 0.5),
+            ],
+            QUANTUM,
+        );
+        let planes = planes_through_cut_nodes(&[0, 1, 2, 3], &flat, 1.0e-9);
+        assert_eq!(planes.len(), 1, "coplanar cut nodes are one patch");
+
+        // Two patches meeting along y = 0: one in z = 0, one rising with y.
+        let creased = NodeArena::new(
+            vec![
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(0.0, -1.0, 0.0),
+                Vec3::new(1.0, -1.0, 0.0),
+                Vec3::new(0.0, 1.0, 1.0),
+                Vec3::new(1.0, 1.0, 1.0),
+            ],
+            QUANTUM,
+        );
+        let planes = planes_through_cut_nodes(&[0, 1, 2, 3, 4, 5], &creased, 1.0e-9);
+        assert_eq!(planes.len(), 2, "a crease is two patches, hence two planes");
     }
 
     // A plane that misses the cell must leave it exactly alone - not clone it into two pieces,
