@@ -1680,7 +1680,19 @@ pub fn cut_lattice(
                     // way) and volume 0.361/0.098 % -> 0.574/0.443 %. Its 134 violations sit
                     // at the plates' rim, in §7.5-seeded pieces, not in the cells the ladder
                     // turned down - so the gate stays where it is.
+                    //
+                    // **P-3.1 re-opens this, and the reason is the instrument, not the
+                    // argument.** Both evaluations above gated on `[V6]` and volume error.
+                    // Neither can see P3: `[V6]` counts undeclared faces and volume error is
+                    // an aggregate, so a cell whose material boundary is a staircase half a
+                    // cell off the surface scores identically to one whose boundary is on it.
+                    // That is the exact failure R5 was written for. `[V13]` now measures the
+                    // displacement directly, so the experiment is re-run under
+                    // `RUSTMSPT_JCT_SPLIT_GAPS=1` — a prototype-gate bisection handle, like
+                    // `RUSTMSPT_NO_JCT_CUT` beside it. It must not survive into P-3.2: if the
+                    // relaxation is right, the gate goes away and nothing replaces it (R3).
                     let meets_inside = !two_surfaces
+                        || std::env::var_os("RUSTMSPT_JCT_SPLIT_GAPS").is_some()
                         || faces.iter().any(|(_, _, crossed)| {
                             crossed.as_ref().is_some_and(|face| face.point.is_some())
                         });
