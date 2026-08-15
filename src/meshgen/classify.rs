@@ -643,6 +643,23 @@ impl PointClassifier {
     }
 
     // AI-FUNC-SUMMARY:
+    // Purpose: The arranged triangles of the solid at `slot` - the surface itself, not a
+    //   question about it.
+    // Inputs: the slot.
+    // Returns: the triangles, empty when the slot is out of range.
+    // Side effects: None.
+    // Notes: `inside` answers "which side of this surface is the point on"; S8's spoke cut needs
+    //   "*where* does this surface cross this segment", which no parity test can give. The
+    //   geometry is already gathered and shared, so exposing it costs nothing and rebuilding it
+    //   in S8 would be a second copy of the same arranged faces.
+    pub fn triangles(&self, slot: usize) -> &[[Vec3; 3]] {
+        self.solids
+            .get(slot)
+            .map(|solid| solid.triangles.as_slice())
+            .unwrap_or(&[])
+    }
+
+    // AI-FUNC-SUMMARY:
     // Purpose: Whether `point` lies inside the solid component at `slot`.
     // Inputs: the point, the slot, and a counter for filter escalations.
     // Returns: bool.
