@@ -44,8 +44,8 @@ CASES = [
     ("a2", ["a2_cube.stl"], {}),
     ("a3", ["a3_cube.stl", "a3_sphere.stl"], {}),
     ("a4", ["a4_cube.stl", "a4_sphere.stl"], {"h_max_frac": 0.0125}),
-    ("a6a", ["a6a_cube.stl", "a6a_limb.stl"], {"h_max_frac": 0.04, "h_min_frac": 0.002}),
-    ("a6b", ["a6b_cube.stl", "a6b_limb.stl"], {"h_max_frac": 0.04, "h_min_frac": 0.002}),
+    ("a6a", ["a6a_cube.stl", "a6a_limb.stl"], {"h_max_frac": 0.04, "h_min_frac": 0.004}),
+    ("a6b", ["a6b_cube.stl", "a6b_limb.stl"], {"h_max_frac": 0.04, "h_min_frac": 0.004}),
     ("a7a", ["a7a_lower.stl", "a7a_upper.stl"], {}),
     ("a7b", ["a7b_lower.stl", "a7b_upper.stl"], {}),
     ("a8", ["a8_lattice.stl"], {}),
@@ -119,6 +119,16 @@ def status_of(report, section):
 
 def run(case, stls, overrides):
     config = write_config(case, stls, overrides)
+    # Clear last run's artefacts first. Without this a run that fails validation leaves
+    # the previous mesh on disk, the existence check below passes, and the table reports
+    # the *old* mesh under the new settings - two different configs silently produced
+    # byte-identical rows before this was added.
+    for stale in (
+        os.path.join(WORK, case + ".debug", case + "_s08_cut.vtu"),
+        os.path.join(WORK, case + ".json"),
+    ):
+        if os.path.exists(stale):
+            os.remove(stale)
     env = dict(os.environ, RUSTMSPT_CUT_DIAG="1")
     mesh = subprocess.run(
         [BIN, "mesh", "--config", config], capture_output=True, text=True, env=env
