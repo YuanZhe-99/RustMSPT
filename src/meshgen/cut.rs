@@ -3654,6 +3654,21 @@ pub fn cut_to_doc(mesh: &CutMesh, components: &[ArrangeComponent]) -> VtuDoc {
         parent.resize(cells, -1);
         doc.cell_data
             .push(DataArray::scalar("parent_cell", ArrayData::I32(parent)));
+        // *Why* the parent cell escalated, per tet: the `Escalation` ordinal, or -1 when the
+        // cell took the §6 table. `provenance` already says a tet came from the fallback;
+        // this says which gap in the table sent it there, and gate P-3.1 turns on that
+        // distinction - the answer differs per reason (a new table row, an upstream fix in
+        // §5.2/S7, or genuine local recovery with Steiner insertion), so the design effort
+        // has to go where the P3 damage actually is rather than where the cell count is.
+        let escalation_of: BTreeMap<u32, Escalation> = mesh.escalated.iter().copied().collect();
+        let mut reason: Vec<i32> = mesh
+            .parent_of
+            .iter()
+            .map(|cell| escalation_of.get(cell).map_or(-1, |e| *e as i32))
+            .collect();
+        reason.resize(cells, -1);
+        doc.cell_data
+            .push(DataArray::scalar("escalation_reason", ArrayData::I32(reason)));
     }
 
     // `N_ID` per `PLAN_mesh_generation.md` §5.3: the union of the resolved element labels

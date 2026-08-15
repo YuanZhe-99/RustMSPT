@@ -2186,6 +2186,37 @@ fn check_v12(view: &MeshView, cap: usize, options: &VerifyOptions) -> VerifySect
             }
         }
     }
+    // Per escalation reason (P-3.1): how many cells took each gap in the §6 table, and how
+    // many elements that cost. Paired with `[V13]`'s per-reason off-surface area, this is
+    // what says whether a reason is worth designing against - a reason that escalates many
+    // cells and damages no surface is not.
+    if let Some(reason) = cell_i64(view.doc, "escalation_reason") {
+        // The ordinals are `Escalation`'s, in declaration order (cut.rs).
+        const REASONS: [(i64, &str); 5] = [
+            (0, "junction"),
+            (1, "multi_crossing"),
+            (2, "inconsistent"),
+            (3, "dry_run"),
+            (4, "quality"),
+        ];
+        for (code, name) in REASONS {
+            let tets: Vec<usize> = view
+                .tets
+                .iter()
+                .copied()
+                .filter(|&c| reason.get(c).copied() == Some(code))
+                .collect();
+            s.metric(&format!("escalated_tets_{name}"), tets.len() as f64);
+            if let Some(parent) = &parent {
+                let cells: HashSet<i64> = tets
+                    .iter()
+                    .filter_map(|&c| parent.get(c).copied())
+                    .filter(|&p| p >= 0)
+                    .collect();
+                s.metric(&format!("escalated_cells_{name}"), cells.len() as f64);
+            }
+        }
+    }
     if let Some(parent) = &parent {
         let cells: HashSet<i64> = view
             .tets
@@ -3554,6 +3585,10 @@ struct BoundaryFace {
     chord: f64,
     /// Largest |distance| over the interior samples.
     chord_max: f64,
+    /// Why the cell behind this face escalated, when the mesh says so: the `Escalation`
+    /// ordinal of the lowest-numbered reason among the face's owners, or -1 when neither
+    /// owner escalated. Diagnostic only — present under `RUSTMSPT_CUT_DIAG`.
+    escalation: i64,
     centroid: Vec3,
 }
 
@@ -3700,6 +3735,22 @@ fn check_v13(
         }
     };
 
+    // Diagnostic, present only under `RUSTMSPT_CUT_DIAG`: which gap in the §6 table sent
+    // each tet to the fallback. Gate P-3.1 needs the P3 damage attributed per reason, not
+    // per cell count, because a reason that escalates many cells and costs no surface area
+    // is not the one to design against.
+    let escalation_reason = cell_i64(view.doc, "escalation_reason");
+    let reason_of = |cells: &[usize]| -> i64 {
+        escalation_reason.as_ref().map_or(-1, |per_cell| {
+            cells
+                .iter()
+                .filter_map(|c| per_cell.get(*c).copied())
+                .filter(|r| *r >= 0)
+                .min()
+                .unwrap_or(-1)
+        })
+    };
+
     let plane_tol = gates.plane_tol_frac * view.diag;
     let mut keys: Vec<&[i64; 3]> = owners.keys().collect();
     keys.sort_unstable();
@@ -3820,6 +3871,7 @@ fn check_v13(
             offset: signed / corners.len() as f64,
             chord: chord / interior.len() as f64,
             chord_max,
+            escalation: reason_of(cells),
             centroid,
         });
     }
@@ -3874,6 +3926,29 @@ fn check_v13(
             0.0
         },
     );
+
+    // P-3.1's census: the off-surface boundary area, charged to the escalation reason that
+    // produced it. A face is charged to the lowest-numbered reason among its two owners, so
+    // nothing is double counted; `escalation_-1` is the area no escalated cell touches, and
+    // it is the interesting one - that is P3 damage the §6 table produced on its own, which
+    // no replacement for the fallback would fix.
+    if escalation_reason.is_some() {
+        let mut per_reason: std::collections::BTreeMap<i64, (f64, f64, usize)> =
+            std::collections::BTreeMap::new();
+        for f in &boundary {
+            let entry = per_reason.entry(f.escalation).or_default();
+            entry.0 += f.area;
+            if f.deviation_max > tol * f.local_h.max(f64::MIN_POSITIVE) {
+                entry.1 += f.area;
+                entry.2 += 1;
+            }
+        }
+        for (reason, (area, off, faces)) in &per_reason {
+            s.metric(&format!("escalation_{reason}_boundary_area"), *area);
+            s.metric(&format!("escalation_{reason}_off_surface_area"), *off);
+            s.metric(&format!("escalation_{reason}_off_surface_faces"), *faces as f64);
+        }
+    }
 
     let mut displaced: Vec<(i64, f64, f64)> = Vec::new();
     for (index, acc) in &per {
