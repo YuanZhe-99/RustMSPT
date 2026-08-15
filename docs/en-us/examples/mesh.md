@@ -328,9 +328,14 @@ they are *not* skipped: they are re-meshed as a conforming centroid fan, which k
 the mesh valid and conforming and chamfers their material boundary by at most one
 cell.
 
-`s08_cut` carries the real `region_key` on cells that now follow the geometry, plus
-tagged interface triangles (`cell_kind = 1`) with their `(inside, outside)` element
-pairs:
+Every snapshot is written as a **pair** (P-2.1). `mesh_s08_cut.vtu` is the mesh: tets
+only, with `region_key` on cells that now follow the geometry. Opened directly in
+ParaView its only feature edges are the domain box, which is the point of it having the
+plain name. `mesh_s08_cut_contract.vtu` beside it is the mixed-cell contract document —
+the same tets plus tagged interface triangles (`cell_kind = 1`) with their
+`(inside, outside)` element pairs, and the rim polylines — and it is what to open when
+you need the tags, or to hand `mesh-verify` when you want the whole catalog, since
+`[V5]`–`[V9]` read them. Both share one point array.
 
 ```yaml
 mesh_render:

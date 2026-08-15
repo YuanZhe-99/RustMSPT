@@ -1,6 +1,6 @@
 # SPEC — Mesh generation: data contracts freeze (subtask G0-3)
 
-**Status:** frozen (rev 1.2, schema v1; additive G2 diagnostic orientation field recorded 2026-07-28; **rev 1.2 2026-08-15 adds `[V13]` to §4 and the two P3 rows to §5** under the plan's P-1.1 — additive to the catalog and the accuracy table, no schema change, `SchemaVersion` stays 1). Normative for `src/io/vtu.rs`,
+**Status:** frozen (rev 1.2, schema v1; additive G2 diagnostic orientation field recorded 2026-07-28; **rev 1.2 2026-08-15: §4 gains `[V13]` and §5 the P3 rows (plan P-1.1); §1 changes which file is the deliverable (plan P-2.1 / R4)** — the contract document's schema is untouched by both, so `SchemaVersion` stays 1). Normative for `src/io/vtu.rs`,
 `src/meshgen/verify.rs`, `src/meshgen/render_scene.rs`, and every producer of a
 contract VTU.
 **Date:** 2026-07-28
@@ -35,7 +35,26 @@ schema/implementation mismatches before any mesher code exists (§12 D-1, D-3).
 
 ## 1. File organization
 
-**One primary mixed-cell `.vtu`** (VTK XML `UnstructuredGrid`, single `Piece`):
+**Amended 2026-08-15 (rev 1.2, P-2.1 / requirement R4): which file is the deliverable
+changed; the contract document itself did not.** Every write now produces a **pair**:
+
+| file | contents | role |
+|---|---|---|
+| `<name>.vtu` | `VTK_TETRA` only, region identity on the `region_key` cell array | **the delivered mesh.** Opened directly, its only feature edges are the domain box |
+| `<name>_contract.vtu` | the mixed-cell contract document below | the auxiliary the face-tag contract, S9–S11 and the INP export read |
+
+The volume is *derived* (`volume_only`), never authored, so the two cannot drift; they
+share one point array, `GlobalPointId` maps back, and `Counts` is restated on the derived
+file so it does not misdescribe itself. A document with **no tets** is a surface stage
+(s00–s03): there is no volume to deliver, so it is written whole under the plain name and
+no auxiliary appears. There is no setting for any of this — which file is the mesh is not
+a matter of taste (R3).
+
+Everything the verifier's full catalog needs lives in the auxiliary: `[V5]`–`[V9]` read
+the face tags, so `mesh-verify` is pointed at `_contract.vtu` when the whole catalog is
+wanted. `[V1]`–`[V4]`, `[V6]`, `[V12]` and `[V13]` run on the delivered file unchanged.
+
+**The contract document** (VTK XML `UnstructuredGrid`, single `Piece`) is unchanged:
 `VTK_TETRA` (10) volume cells + `VTK_TRIANGLE` (5) tagged-face cells +
 `VTK_POLY_LINE` (4) feature-curve cells + `VTK_VOXEL` (11) lattice-preview cells,
 **all indexing one shared point array**. Shared topology is then verifiable by
@@ -54,10 +73,10 @@ point-index identity, which is the whole reason the contract is one file.
 | `NumberOfTuples` | **required** on every `FieldData` array; omitted elsewhere |
 | `NumberOfComponents` | emitted only when `≠ 1` |
 
-`--split` companions (`_volume`/`_faces`/`_curves.vtu`) are an optional export for
-tools that reject mixed cells; each carries `GlobalPointId` mapping into the
-primary numbering. They are never the primary artefact and are not verified
-independently.
+`--split` companions (`_faces`/`_curves.vtu`) remain an optional export for tools that
+reject mixed cells; each carries `GlobalPointId` mapping into the shared numbering. The
+`_volume` companion is no longer one of them — it *is* the deliverable, under the plain
+name, and it **is** verified independently (that is P-2.1's acceptance).
 
 **External VTUs** are accepted with only points + tet connectivity;
 geometry-only verification (§7, checks [V1]–[V5]) and geometry-only rendering run

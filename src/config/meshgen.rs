@@ -201,6 +201,12 @@ pub struct MeshGenMaterials {
 }
 
 // AI-FUNC-SUMMARY: Output destinations; `vtu` is required, `abaqus`/`report` optional; side effects: none.
+//
+// `vtu` names the **delivered** mesh: a tets-only unstructured grid carrying region identity as a
+// cell array (requirement R4). The mixed-cell contract document - tagged faces, rim curves, the
+// tag tables S9-S11 and the INP export need - is written beside it as `<stem>_contract.vtu`. Both
+// are always written; there is no setting for it, because which file is the mesh is not a matter
+// of taste.
 #[derive(Debug, Clone, Deserialize)]
 pub struct MeshGenOutput {
     pub vtu: String,
@@ -208,20 +214,6 @@ pub struct MeshGenOutput {
     pub abaqus: Option<String>,
     #[serde(default)]
     pub report: Option<String>,
-    /// Also write the tets-only `_volume.vtu` companion beside every snapshot
-    /// (`SPEC_meshgen_contracts.md` §2.1). The primary file is mixed-cell by design -
-    /// the tagged faces carry §10.13's cohesive contract - but that makes it unreadable
-    /// in a viewer without a filter: ParaView's Feature Edges walks the triangle cells
-    /// and draws a web over every interface, which reads as a cracked mesh even when the
-    /// volume underneath is watertight. The companion is what a solver and a viewer
-    /// actually consume, and it shares the primary file's node numbering.
-    #[serde(default = "default_split_volume")]
-    pub split_volume: bool,
-}
-
-// AI-FUNC-SUMMARY: Default for `output.split_volume` - on, because the tets-only file is what consumers need; returns bool; side effects: none.
-fn default_split_volume() -> bool {
-    true
 }
 
 // AI-FUNC-SUMMARY:

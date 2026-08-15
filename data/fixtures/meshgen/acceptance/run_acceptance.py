@@ -15,6 +15,8 @@ Three tables, one per goal property that has a number (PLAN Part I §1):
   P2  minimum elements - [V12]/[V13], the element count and where the elements came from,
                         normalised by input surface area so two meshers on the same STL
                         are comparable.
+  P-2.1 the deliverable - is the file we hand over a tets-only mesh whose only feature
+                        edges are the domain box? Read off the delivered file alone.
   P1/P4               - the check statuses, unchanged.
 
 Usage:
@@ -95,12 +97,9 @@ CONFIG = """meshgen:
     mode: auto
   snapshots: key
   output:
+    # Every snapshot writes the delivered tets-only volume under the plain name and the
+    # mixed-cell contract document beside it as `_contract.vtu` (P-2.1). No setting.
     vtu: {out}
-    # true, matching the shipped config: it writes the tets-only companion that
-    # G7 goal 2 is checked on. ParaView's Feature Edges walks the primary file's
-    # tagged interface triangles and draws a web over every interface, which reads
-    # as a cracked mesh even though the volume underneath is watertight.
-    split_volume: true
   verify:
     max_ar_warn: 20.0
     min_dihedral_deg: 5.0
@@ -130,19 +129,85 @@ def metrics_of(report, section):
     return {}, "ABSENT"
 
 
+def check_delivered(path, env):
+    """P-2.1's acceptance, per case: is the file we hand over actually the mesh?
+
+    Three claims, all read off the delivered file itself and none of them from the
+    contract document beside it:
+
+      tets_only   nothing in the file but VTK_TETRA (10), so no filter is needed to see it
+      box_only    [V3] fires nothing - every single-owner face is on a domain plane, none
+                  is shared by more than two tets, no edge is non-manifold. On a document
+                  carrying no tags that IS "the only feature edges are the domain box"
+      region      region identity rides on a cell array, not on separate triangle cells
+
+    All three come from `mesh-verify` run on the delivered file, not from parsing it here.
+    The first version scanned the XML for the `types` array and reported eight of nine cases
+    as "not tets-only" - because it read the first 2 MB and the `types` block sits past that
+    on every mesh bigger than a1. The tool already knows: [V12] counts cells and tets, and
+    [V6] skips with a named reason when `region_key` is absent.
+    """
+    out = {"exists": os.path.exists(path), "tets_only": False, "box_only": False,
+           "region": False, "cells": 0, "tets": 0, "codes": []}
+    if not out["exists"]:
+        return out
+    js = os.path.splitext(path)[0] + "_delivered.json"
+    cfg = os.path.splitext(path)[0] + "_delivered.yaml"
+    with open(cfg, "w") as f:
+        f.write(f"mesh_verify:\n  input: {path}\n  json: {js}\n")
+    subprocess.run([BIN, "mesh-verify", "--config", cfg], capture_output=True, text=True, env=env)
+    if not os.path.exists(js):
+        return out
+    with open(js) as f:
+        report = json.load(f)
+    v12, _ = metrics_of(report, "V12")
+    out["cells"] = int(v12.get("cells", 0))
+    out["tets"] = int(v12.get("tets", 0))
+    out["tets_only"] = out["tets"] > 0 and out["cells"] == out["tets"]
+    # [V6] needs `region_key`; it reports SKIPPED naming the missing array when it is not
+    # there, so a section that ran is proof the identity is carried on the cells.
+    _, v6_status = metrics_of(report, "V6")
+    out["region"] = v6_status not in ("SKIPPED", "ABSENT")
+    codes = [
+        i["code"]
+        for s in report["sections"]
+        if s["id"] in ("V1", "V3")
+        for i in s["items"]
+        if i["severity"] in ("WARN", "FAIL")
+    ]
+    out["codes"] = sorted(set(codes))
+    out["box_only"] = not out["codes"]
+    return out
+
+
 def status_of(report, section):
     return metrics_of(report, section)[1]
 
 
 def run(case, stls, overrides):
     config = write_config(case, stls, overrides)
+    # P-2.1: `<case>_s08_cut.vtu` is the DELIVERED mesh - tets only, region identity on a
+    # cell array - and `<case>_s08_cut_contract.vtu` beside it is the mixed-cell document
+    # carrying the tags. The full catalog is read off the contract file, because [V5]-[V9]
+    # need those tags; the delivered file gets its own structural pass below, which is the
+    # acceptance criterion "opened directly, the only feature edges are the domain box".
+    delivered = os.path.join(WORK, case + ".debug", case + "_s08_cut.vtu")
+    contract = os.path.join(WORK, case + ".debug", case + "_s08_cut_contract.vtu")
     # Clear last run's artefacts first. Without this a run that fails validation leaves
     # the previous mesh on disk, the existence check below passes, and the table reports
     # the *old* mesh under the new settings - two different configs silently produced
     # byte-identical rows before this was added.
     for stale in (
-        os.path.join(WORK, case + ".debug", case + "_s08_cut.vtu"),
+        delivered,
+        contract,
         os.path.join(WORK, case + ".json"),
+        os.path.join(WORK, case + "_delivered.json"),
+        # Left behind by runs from before P-2.1, when the tets-only file was an optional
+        # `_volume` companion. Nothing writes it now, so an old one lying beside the current
+        # artefacts is exactly the "reported the previous mesh under the new settings" trap
+        # this list already exists to close.
+        os.path.join(WORK, case + ".debug", case + "_s08_cut_volume.vtu"),
+        os.path.join(WORK, case + ".debug", case + "_s05_lattice_volume.vtu"),
     ):
         if os.path.exists(stale):
             os.remove(stale)
@@ -152,13 +217,12 @@ def run(case, stls, overrides):
     )
     # `mesh` exits non-zero by design - S9..S11 are unimplemented - after writing the
     # s08 cut snapshot, which is the mesh these gates are measured on.
-    vtu = os.path.join(WORK, case + ".debug", case + "_s08_cut.vtu")
-    if not os.path.exists(vtu):
+    if not os.path.exists(contract):
         return {"case": case, "error": [(mesh.stderr or mesh.stdout).strip()[-200:]]}
     js = os.path.join(WORK, case + ".json")
     vcfg = os.path.join(WORK, case + "_verify.yaml")
     with open(vcfg, "w") as f:
-        f.write("mesh_verify:\n  input: {}\n  json: {}\n  surfaces:\n".format(vtu, js))
+        f.write("mesh_verify:\n  input: {}\n  json: {}\n  surfaces:\n".format(contract, js))
         for stl in stls:
             f.write("    - {}\n".format(os.path.join(HERE, stl)))
         f.write("  verify:\n    max_ar_warn: 20.0\n    min_dihedral_deg: 5.0\n")
@@ -172,6 +236,7 @@ def run(case, stls, overrides):
         return {"case": case, "error": [verify.stderr.strip()[-200:]]}
     with open(js) as f:
         report = json.load(f)
+    deliverable = check_delivered(delivered, env)
     v5, _ = metrics_of(report, "V5")
     v6, _ = metrics_of(report, "V6")
     v1, _ = metrics_of(report, "V1")
@@ -203,6 +268,14 @@ def run(case, stls, overrides):
         "offset_h": v13.get("offset_mean_frac_h", float("nan")),
         "disp_share": v13.get("displacement_share", float("nan")),
         "chord_mean_h": v13.get("chord_mean_frac_h", float("nan")),
+        # --- P-2.1, read off the DELIVERED file ---
+        "delivered_ok": (
+            deliverable["exists"]
+            and deliverable["tets_only"]
+            and deliverable["box_only"]
+            and deliverable["region"]
+        ),
+        "delivered": deliverable,
         "bnd_faces": int(v13.get("material_boundary_faces", -1)),
         # --- P2, from [V12] + [V13] ---
         "input_area": area,
@@ -306,6 +379,26 @@ def main():
             ("fan/cell", 8, lambda r: num(r["fan_per_cell"], ".2f")),
             ("cut/cell", 8, lambda r: num(r["cut_per_cell"], ".2f")),
             ("bg/cell", 7, lambda r: num(r["lattice_per_cell"], ".2f")),
+        ],
+    )
+
+    table(
+        rows,
+        "P-2.1 - the delivered file IS the mesh (R4)",
+        "Read off `<case>_s08_cut.vtu` alone, never the `_contract.vtu` beside it. "
+        "tets-only: nothing in the file but VTK_TETRA. box-only: [V1]/[V3] fire nothing, so "
+        "every free face is on a domain plane, none is shared by more than two tets, and no "
+        "edge is non-manifold - which on an untagged document is exactly 'the only feature "
+        "edges are the domain box'. region: identity rides on a cell array.",
+        [
+            ("case", 5, lambda r: r["case"]),
+            ("delivered", 10, lambda r: "yes" if r["delivered"]["exists"] else "MISSING"),
+            ("cells", 10, lambda r: num(r["delivered"]["cells"], "d")),
+            ("tets-only", 10, lambda r: "yes" if r["delivered"]["tets_only"] else "NO"),
+            ("box-only", 9, lambda r: "yes" if r["delivered"]["box_only"] else "NO"),
+            ("region", 7, lambda r: "yes" if r["delivered"]["region"] else "NO"),
+            ("R4", 4, lambda r: "OK" if r["delivered_ok"] else "FAIL"),
+            ("fired", 40, lambda r: ", ".join(r["delivered"]["codes"]) or "-"),
         ],
     )
 

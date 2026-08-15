@@ -72,15 +72,15 @@ meshgen:
     mode: auto
   snapshots: key            # none | key | all   (s02, s05, s08, s11)
   output:
+    # The DELIVERED mesh: a tets-only unstructured grid carrying region identity as a
+    # cell array. Opened directly, its only feature edges are the domain box.
     vtu: data/output/mesh.vtu
-    # Also write a tets-only `<name>_volume.vtu` beside every snapshot. The primary file
-    # is mixed-cell by contract (tets + tagged interface triangles + rim polylines, SPEC
-    # contracts §2.1) because the face tags carry the cohesive/split-node contract - but
-    # that makes it unreadable in a viewer without a filter: ParaView's Feature Edges
-    # walks the triangle cells and draws a web over every interface, which reads as a
-    # cracked mesh even though the volume underneath is watertight. The companion shares
-    # the primary file's node numbering (GlobalPointId is the identity).
-    split_volume: true
+    # Written beside it, always and automatically: `<name>_contract.vtu`, the mixed-cell
+    # document (tets + tagged interface triangles + rim polylines, SPEC contracts §2.1)
+    # that carries the face-tag contract S9-S11 and the INP export need. It shares the
+    # delivered file's node numbering - GlobalPointId is the identity - and it is the
+    # file `mesh-verify` wants when you need the whole catalog, since [V5]-[V9] read the
+    # tags. It is not the mesh, and there is no setting to swap them.
     # abaqus: data/output/mesh.inp
     report: data/output/mesh_verification
   verify:

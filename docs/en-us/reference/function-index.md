@@ -460,7 +460,7 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `snapshot_path` | Mesh Tooling | `src/meshgen/snapshot.rs:118` | <stem>.debug/<stem>_sNN_<name>.vtu path (Quality carries _r<N>). |
 | `SnapshotMeta` | Mesh Tooling | `src/meshgen/snapshot.rs:132` | Bundled stamping inputs for stamp_metadata/emit_snapshot. |
 | `stamp_metadata` | Mesh Tooling | `src/meshgen/snapshot.rs:166` | Stamp the full §2.4 metadata block onto a snapshot document. |
-| `emit_snapshot` | Mesh Tooling | `src/meshgen/snapshot.rs:215` | Stamp metadata + write the snapshot VTU; returns the path. |
+| `emit_snapshot` | Mesh Tooling | `src/meshgen/snapshot.rs:276` | Stamp metadata, then write the pair R4 defines: the delivered tets-only volume under the plain name and the mixed-cell contract document beside it. Returns the delivered path. |
 | `warn_if_large` | Mesh Tooling | `src/meshgen/snapshot.rs:246` | Size WARN: snapshots=all + >5 M tets estimate. |
 | `VerifyOptions` | Mesh Tooling | `src/meshgen/verify.rs:410` | Out-of-document verifier inputs (expected_stage for the [V12] cross-check). |
 | `verify_with_options` | Mesh Tooling | `src/meshgen/verify.rs:744` | Verify with stage context; s00-s03 skip volume-only [V7]/[V8]/[V13]. |
@@ -538,9 +538,9 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `connected_shells` | Mesh Generation | `src/meshgen/verify.rs` | Partition a triangle soup into shells that share vertex positions, so each part of a union can be bounded on its own. |
 | `sampled_volume` | Mesh Generation | `src/meshgen/verify.rs` | Union-correct volume estimate: sample each shell's own bounds and charge each sample to the first shell containing it. |
 | `ChildTets` | Mesh Generation | `src/meshgen/cut.rs` | The children one cell's §6 table row produces; eight is the largest row (case D). |
-| `volume_only` | I/O | `src/io/vtu.rs` | The tets-only `_volume` companion of a mixed-cell document, with per-cell arrays sliced and `GlobalPointId` into the primary numbering. |
+| `volume_only` | I/O | `src/io/vtu.rs:785` | The **delivered** tets-only document derived from a mixed-cell one: per-cell arrays sliced, `GlobalPointId` into the shared numbering, `Counts` restated so the derived file does not misdescribe itself. |
 | `ArrayData::select_tuples` | I/O | `src/io/vtu.rs` | A new array holding only the tuples whose index passes a keep mask. |
-| `emit_snapshot_with_companion` | Mesh Generation | `src/meshgen/snapshot.rs` | Write a snapshot and, when `output.split_volume` is set, its tets-only companion. |
+| `contract_path` | Mesh Generation | `src/meshgen/snapshot.rs:333` | The auxiliary mixed-cell document's path beside a delivered volume: `<stem>_contract.vtu`. |
 | `polygon_soup_centroid` | Mesh Generation | `src/meshgen/cut.rs` | Centroid of a closed triangle soup - the apex a slab's fan cones to. |
 | `KEY_ORDER_REFINEMENT` | Mesh Generation | `src/meshgen/cut.rs` | How much finer than the weld grid S8's ordering key is (SPEC §1.2 Rule K-O). |
 | `REGIME_NORMAL` | Mesh Generation | `src/meshgen/cut.rs` | The `regime` cell-array code of an ordinary element. |

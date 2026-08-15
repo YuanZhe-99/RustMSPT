@@ -14,6 +14,16 @@
     "chord_mean_h": 0.021278998677839674,
     "cut_per_cell": 4.592432432432433,
     "cut_tets": 8496,
+    "delivered": {
+      "box_only": true,
+      "cells": 32200,
+      "codes": [],
+      "exists": true,
+      "region": true,
+      "tets": 32200,
+      "tets_only": true
+    },
+    "delivered_ok": true,
     "dev_max_h": 0.24604149993150987,
     "dev_mean_h": 0.0025441892968366725,
     "disp_share": 0.9999999999998747,
@@ -31,7 +41,7 @@
     "tets_per_area": 28608.08953055742,
     "tets_per_cell": 1.3102213541666667,
     "undecl": 205,
-    "undecl_area": 0.08468719086021204,
+    "undecl_area": 0.08468719086021206,
     "vol_err": 0.007728332162266625
   },
   {
@@ -49,6 +59,16 @@
     "chord_mean_h": 1.396777207996908e-15,
     "cut_per_cell": 4.389580973952435,
     "cut_tets": 46512,
+    "delivered": {
+      "box_only": true,
+      "cells": 111756,
+      "codes": [],
+      "exists": true,
+      "region": true,
+      "tets": 111756,
+      "tets_only": true
+    },
+    "delivered_ok": true,
     "dev_max_h": 4.9988497279199265e-14,
     "dev_mean_h": 1.201285516337585e-15,
     "disp_share": 1,
@@ -66,7 +86,7 @@
     "tets_per_area": 64687.18795347635,
     "tets_per_cell": 1.4735759493670886,
     "undecl": 12,
-    "undecl_area": 0.0020093393088913454,
+    "undecl_area": 0.002009339308891345,
     "vol_err": 1.437104124277308e-14
   },
   {
@@ -84,6 +104,16 @@
     "chord_mean_h": 0.018426244196680232,
     "cut_per_cell": 3.8234227231506672,
     "cut_tets": 59026,
+    "delivered": {
+      "box_only": true,
+      "cells": 160061,
+      "codes": [],
+      "exists": true,
+      "region": true,
+      "tets": 160061,
+      "tets_only": true
+    },
+    "delivered_ok": true,
     "dev_max_h": 1.0891460571981872,
     "dev_mean_h": 0.011086242649175933,
     "disp_share": 0.7365526359986662,
@@ -101,7 +131,7 @@
     "tets_per_area": 114015.45486305225,
     "tets_per_cell": 1.6051042920176495,
     "undecl": 5321,
-    "undecl_area": 0.2793908965344658,
+    "undecl_area": 0.27939089653446525,
     "vol_err": 0.005548443920454418
   },
   {
@@ -119,6 +149,16 @@
     "chord_mean_h": 0.004262220962534637,
     "cut_per_cell": 4.356226745458525,
     "cut_tets": 199036,
+    "delivered": {
+      "box_only": true,
+      "cells": 1745852,
+      "codes": [],
+      "exists": true,
+      "region": true,
+      "tets": 1745852,
+      "tets_only": true
+    },
+    "delivered_ok": true,
     "dev_max_h": 0.5444851710646192,
     "dev_mean_h": 0.0003338531298944734,
     "disp_share": 0.9514821407462735,
@@ -136,7 +176,7 @@
     "tets_per_area": 1003719.1728069508,
     "tets_per_cell": 1.1099828084309895,
     "undecl": 1830,
-    "undecl_area": 0.024559889092855156,
+    "undecl_area": 0.024559889092855183,
     "vol_err": 0.0004899220320551238
   },
   {
@@ -154,6 +194,16 @@
     "chord_mean_h": 0.001603020991858474,
     "cut_per_cell": 4.4904908324792165,
     "cut_tets": 78862,
+    "delivered": {
+      "box_only": true,
+      "cells": 195967,
+      "codes": [],
+      "exists": true,
+      "region": true,
+      "tets": 195967,
+      "tets_only": true
+    },
+    "delivered_ok": true,
     "dev_max_h": 1.218946264718991,
     "dev_mean_h": 0.0020536091348223253,
     "disp_share": 0.9243607881047798,
@@ -171,7 +221,7 @@
     "tets_per_area": 199958.14801142825,
     "tets_per_cell": 1.5410087443381983,
     "undecl": 1358,
-    "undecl_area": 0.012688505557734662,
+    "undecl_area": 0.012688505557734672,
     "vol_err": 0.004987161004382715
   },
   {
@@ -189,6 +239,16 @@
     "chord_mean_h": 0.0006411505886279886,
     "cut_per_cell": 4.466220011233251,
     "cut_tets": 111325,
+    "delivered": {
+      "box_only": true,
+      "cells": 260109,
+      "codes": [],
+      "exists": true,
+      "region": true,
+      "tets": 260109,
+      "tets_only": true
+    },
+    "delivered_ok": true,
     "dev_max_h": 1.2189025932009085,
     "dev_mean_h": 0.0008877521124901598,
     "disp_share": 0.7608947658978638,
@@ -206,7 +266,7 @@
     "tets_per_area": 261889.82964968373,
     "tets_per_cell": 1.6648041474654378,
     "undecl": 2252,
-    "undecl_area": 0.010196046438396125,
+    "undecl_area": 0.010196046438396134,
     "vol_err": 0.0001420519214342712
   },
   {
@@ -224,6 +284,16 @@
     "chord_mean_h": 0.02761362628496749,
     "cut_per_cell": 4.122501545435813,
     "cut_tets": 40013,
+    "delivered": {
+      "box_only": true,
+      "cells": 142347,
+      "codes": [],
+      "exists": true,
+      "region": true,
+      "tets": 142347,
+      "tets_only": true
+    },
+    "delivered_ok": true,
     "dev_max_h": 1.025606591593091,
     "dev_mean_h": 0.02829546184942499,
     "disp_share": 0.9858258924938579,
@@ -241,7 +311,7 @@
     "tets_per_area": 74642.89797673191,
     "tets_per_cell": 1.7286030018943994,
     "undecl": 7555,
-    "undecl_area": 0.8009681658107413,
+    "undecl_area": 0.8009681658107395,
     "vol_err": 0.0033802258954160184
   },
   {
@@ -259,6 +329,16 @@
     "chord_mean_h": 0.012862891753924854,
     "cut_per_cell": 4.160393353679213,
     "cut_tets": 49076,
+    "delivered": {
+      "box_only": true,
+      "cells": 115606,
+      "codes": [],
+      "exists": true,
+      "region": true,
+      "tets": 115606,
+      "tets_only": true
+    },
+    "delivered_ok": true,
     "dev_max_h": 1.025606591593091,
     "dev_mean_h": 0.013483983042157423,
     "disp_share": 0.9608339389387042,
@@ -294,6 +374,16 @@
     "chord_mean_h": 0.03051600198611658,
     "cut_per_cell": 4.109119782214156,
     "cut_tets": 72452,
+    "delivered": {
+      "box_only": true,
+      "cells": 278345,
+      "codes": [],
+      "exists": true,
+      "region": true,
+      "tets": 278345,
+      "tets_only": true
+    },
+    "delivered_ok": true,
     "dev_max_h": 1.0659086659760424,
     "dev_mean_h": 0.034711238745032444,
     "disp_share": 0.8835698029213402,
@@ -311,7 +401,7 @@
     "tets_per_area": 165209.51884093706,
     "tets_per_cell": 1.4629563444092883,
     "undecl": 10777,
-    "undecl_area": 0.6204255922456318,
+    "undecl_area": 0.6204255922456376,
     "vol_err": 0.015394050297662809
   }
 ]

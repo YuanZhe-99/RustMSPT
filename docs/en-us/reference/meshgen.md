@@ -142,7 +142,7 @@ the shape. `s08_cut` is the first snapshot that fits the input.
 | `snapshot_path` | `src/meshgen/snapshot.rs:118` | `<stem>.debug/<stem>_sNN_<name>.vtu` (Quality carries `_r<N>`). |
 | `SnapshotMeta` | `src/meshgen/snapshot.rs:132` | Bundled stamping inputs (stage, round, config hash, domain, determinism, generator version). |
 | `stamp_metadata` | `src/meshgen/snapshot.rs:166` | Stamp the full §2.4 metadata block onto a snapshot document. |
-| `emit_snapshot` | `src/meshgen/snapshot.rs:215` | Stamp metadata + write the snapshot VTU; returns the path. |
+| `emit_snapshot` | `src/meshgen/snapshot.rs:276` | Stamp metadata, then write the delivered tets-only volume under the plain name and the mixed-cell contract document beside it as `_contract.vtu`; returns the delivered path. |
 | `warn_if_large` | `src/meshgen/snapshot.rs:246` | Size WARN: `snapshots: all` + >5 M tets estimate. |
 
 ### G6-1 snap (S7)

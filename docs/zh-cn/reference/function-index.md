@@ -398,7 +398,7 @@
 | `snapshot_path` | 网格工具 | `src/meshgen/snapshot.rs:118` | <stem>.debug/<stem>_sNN_<name>.vtu 路径（Quality 带 _r<N>）。 |
 | `SnapshotMeta` | 网格工具 | `src/meshgen/snapshot.rs:132` | stamp_metadata/emit_snapshot 的打标输入集合。 |
 | `stamp_metadata` | 网格工具 | `src/meshgen/snapshot.rs:166` | 将完整 §2.4 元数据块打标到快照文档。 |
-| `emit_snapshot` | 网格工具 | `src/meshgen/snapshot.rs:215` | 打标元数据并写出快照 VTU；返回路径。 |
+| `emit_snapshot` | 网格工具 | `src/meshgen/snapshot.rs:276` | 打标元数据，然后写出 R4 定义的一对文件：以普通名交付的仅四面体体网格，以及紧邻其旁的混合单元契约文档。返回交付文件的路径。 |
 | `warn_if_large` | 网格工具 | `src/meshgen/snapshot.rs:246` | 尺寸 WARN：snapshots=all + 估计 >5 M 四面体。 |
 | `VerifyOptions` | 网格工具 | `src/meshgen/verify.rs:410` | 文档之外的验证器输入（expected_stage 用于 [V12] 交叉校验）。 |
 | `verify_with_options` | 网格工具 | `src/meshgen/verify.rs:744` | 带阶段上下文的验证；s00-s03 跳过仅体网格 [V7]/[V8]/[V13]。 |
@@ -474,9 +474,9 @@
 | `connected_shells` | 网格生成 | `src/meshgen/verify.rs` | 按共享顶点位置把三角形集合划分为若干壳，使并集的每个组成部分可以各自定界。 |
 | `sampled_volume` | 网格生成 | `src/meshgen/verify.rs` | 并集正确的体积估计：在每个壳自身的包围盒内采样，并把每个采样点计入第一个包含它的壳。 |
 | `ChildTets` | 网格生成 | `src/meshgen/cut.rs` | 单个单元按 §6 表格行生成的子单元；最大的一行（情形 D）为 8 个。 |
-| `volume_only` | 输入输出 | `src/io/vtu.rs` | 混合单元文档的仅四面体 `_volume` 伴随文件，逐单元数组同步筛选，并带回主文件编号的 `GlobalPointId`。 |
+| `volume_only` | 输入输出 | `src/io/vtu.rs:785` | 由混合单元文档派生出的**交付**用仅四面体文档：逐单元数组同步筛选，带回共享编号的 `GlobalPointId`，并重述 `Counts` 以免派生文件自我描述失真。 |
 | `ArrayData::select_tuples` | 输入输出 | `src/io/vtu.rs` | 仅保留索引通过保留掩码的元组，生成新数组。 |
-| `emit_snapshot_with_companion` | 网格生成 | `src/meshgen/snapshot.rs` | 写出快照；当 `output.split_volume` 开启时，同时写出其仅四面体伴随文件。 |
+| `contract_path` | 网格生成 | `src/meshgen/snapshot.rs:333` | 交付体网格旁的辅助混合单元文档路径：`<stem>_contract.vtu`。 |
 | `polygon_soup_centroid` | 网格生成 | `src/meshgen/cut.rs` | 闭合三角形集合的形心——各层扇形锥化所用的顶点。 |
 | `KEY_ORDER_REFINEMENT` | 网格生成 | `src/meshgen/cut.rs` | S8 的排序键比焊接网格细多少（SPEC §1.2 Rule K-O）。 |
 | `REGIME_NORMAL` | 网格生成 | `src/meshgen/cut.rs` | 普通单元的 `regime` 单元数组编码。 |

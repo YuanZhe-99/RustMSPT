@@ -67,7 +67,6 @@ CONFIG = """meshgen:
   snapshots: key
   output:
     vtu: {out}
-    split_volume: true
   verify:
     max_ar_warn: 20.0
     min_dihedral_deg: 5.0
@@ -166,7 +165,9 @@ def run_case(case):
             )
         )
 
-    vtu = os.path.join(work, "mesh.debug", "mesh_s08_cut.vtu")
+    # P-2.1: the plain name is the delivered tets-only volume; the full catalog needs the
+    # mixed-cell contract document beside it, because [V5]-[V9] read the face tags.
+    vtu = os.path.join(work, "mesh.debug", "mesh_s08_cut_contract.vtu")
     js = os.path.join(work, "report.json")
     for stale in (vtu, js):
         if os.path.exists(stale):

@@ -21,7 +21,7 @@ use crate::meshgen::thin::{band_ladder, FemProfile, LadderOutcome, ThinOptions};
 use crate::meshgen::lattice::{
     balance_octree, build_lattice_with_splits, lattice_to_doc, LatticeOptions,
 };
-use crate::meshgen::snapshot::{emit_snapshot_with_companion, should_emit, warn_if_large, SnapshotMeta, Stage};
+use crate::meshgen::snapshot::{emit_snapshot, should_emit, warn_if_large, SnapshotMeta, Stage};
 use crate::meshgen::surface::{condition_surface, condition_surface_to_doc_with_components};
 use crate::meshgen::arrange::ArrangedCurveKind;
 use crate::meshgen::{
@@ -292,7 +292,7 @@ impl Pipeline for MeshGenPipeline {
                 (output_domain_min, output_domain_max),
             )
             .with_determinism(p.determinism);
-            let path = emit_snapshot_with_companion(&mut doc, output_path, &meta, encoding, p.output.split_volume)?;
+            let path = emit_snapshot(&mut doc, output_path, &meta, encoding)?;
             println!("[mesh] snapshot s00: {}", path.display());
         }
 
@@ -317,7 +317,7 @@ impl Pipeline for MeshGenPipeline {
                 (output_domain_min, output_domain_max),
             )
             .with_determinism(p.determinism);
-            let path = emit_snapshot_with_companion(&mut doc, output_path, &meta, encoding, p.output.split_volume)?;
+            let path = emit_snapshot(&mut doc, output_path, &meta, encoding)?;
             println!("[mesh] snapshot s01: {}", path.display());
         }
 
@@ -441,7 +441,7 @@ impl Pipeline for MeshGenPipeline {
                 (output_domain_min, output_domain_max),
             )
             .with_determinism(p.determinism);
-            let path = emit_snapshot_with_companion(&mut doc, output_path, &meta, encoding, p.output.split_volume)?;
+            let path = emit_snapshot(&mut doc, output_path, &meta, encoding)?;
             clock = stage_time("snapshot-s02", clock);
             println!("[mesh] snapshot s02: {}", path.display());
         }
@@ -690,7 +690,7 @@ impl Pipeline for MeshGenPipeline {
                 (output_domain_min, output_domain_max),
             )
             .with_determinism(p.determinism);
-            let path = emit_snapshot_with_companion(&mut doc, output_path, &meta, encoding, p.output.split_volume)?;
+            let path = emit_snapshot(&mut doc, output_path, &meta, encoding)?;
             clock = stage_time("snapshot-s03", clock);
             println!("[mesh] snapshot s03: {}", path.display());
         }
@@ -970,7 +970,7 @@ impl Pipeline for MeshGenPipeline {
             let meta =
                 SnapshotMeta::new(Stage::Sizing, config_hash, (output_domain_min, output_domain_max))
                     .with_determinism(p.determinism);
-            let path = emit_snapshot_with_companion(&mut doc, output_path, &meta, encoding, p.output.split_volume)?;
+            let path = emit_snapshot(&mut doc, output_path, &meta, encoding)?;
             clock = stage_time("snapshot-s04", clock);
             println!("[mesh] snapshot s04: {}", path.display());
         }
@@ -1016,7 +1016,7 @@ impl Pipeline for MeshGenPipeline {
                 (output_domain_min, output_domain_max),
             )
             .with_determinism(p.determinism);
-            let path = emit_snapshot_with_companion(&mut doc, output_path, &meta, encoding, p.output.split_volume)?;
+            let path = emit_snapshot(&mut doc, output_path, &meta, encoding)?;
             clock = stage_time("snapshot-s05", clock);
             println!("[mesh] snapshot s05: {}", path.display());
         }
@@ -1060,7 +1060,7 @@ impl Pipeline for MeshGenPipeline {
                 (output_domain_min, output_domain_max),
             )
             .with_determinism(p.determinism);
-            let path = emit_snapshot_with_companion(&mut doc, output_path, &meta, encoding, p.output.split_volume)?;
+            let path = emit_snapshot(&mut doc, output_path, &meta, encoding)?;
             clock = stage_time("snapshot-s06", clock);
             println!("[mesh] snapshot s06: {}", path.display());
         }
@@ -1118,7 +1118,7 @@ impl Pipeline for MeshGenPipeline {
                 (output_domain_min, output_domain_max),
             )
             .with_determinism(p.determinism);
-            let path = emit_snapshot_with_companion(&mut doc, output_path, &meta, encoding, p.output.split_volume)?;
+            let path = emit_snapshot(&mut doc, output_path, &meta, encoding)?;
             clock = stage_time("snapshot-s07", clock);
             println!("[mesh] snapshot s07: {}", path.display());
         }
@@ -1260,7 +1260,7 @@ impl Pipeline for MeshGenPipeline {
                 (output_domain_min, output_domain_max),
             )
             .with_determinism(p.determinism);
-            let path = emit_snapshot_with_companion(&mut doc, output_path, &meta, encoding, p.output.split_volume)?;
+            let path = emit_snapshot(&mut doc, output_path, &meta, encoding)?;
             clock = stage_time("snapshot-s08", clock);
             println!("[mesh] snapshot s08: {}", path.display());
         }

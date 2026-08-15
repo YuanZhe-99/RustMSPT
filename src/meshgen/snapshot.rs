@@ -266,36 +266,37 @@ pub fn stamp_metadata(doc: &mut VtuDoc, meta: &SnapshotMeta) {
 }
 
 // AI-FUNC-SUMMARY:
-// Purpose: Write one snapshot VTU: stamp metadata, create the debug dir, save.
-// Inputs: the doc, the output VTU path (determines the debug dir + stem), the
-//   snapshot metadata, and the VTU encoding.
-// Returns: the path written.
-// Side effects: Writes a `.vtu` file under `<stem>.debug/`.
-// Notes: Ascii encoding is used when the output path ends in `.ascii.vtu`,
-//   otherwise appended-raw, matching the writer's default.
+// Purpose: Write one snapshot as the pair requirement R4 defines - the delivered **tets-only
+//   volume** under the plain name, and the mixed-cell contract document beside it as `_contract`.
+// Inputs: the doc, the output VTU path (determines the debug dir + stem), the snapshot metadata,
+//   and the VTU encoding.
+// Returns: the path of the **delivered** file, which is what gets printed and opened.
+// Side effects: Writes one or two `.vtu` files under `<stem>.debug/`.
+// Notes: Ascii encoding is used when the output path ends in `.ascii.vtu`, otherwise appended-raw.
+//
+//   **Which file gets the plain name is the whole point (P-2.1).** The contract document is
+//   mixed-cell by design - `VTK_TRIANGLE` cells carry the face-tag contract S9-S11 and the INP
+//   export need, `VTK_POLY_LINE` cells carry the rim curves - and that makes it unreadable as
+//   opened: ParaView's Feature Edges walks those triangle cells and draws a web over every
+//   interface, which reads as a cracked mesh even though the volume underneath is watertight
+//   (measured: free faces all on the domain box, none shared by more than two tets, no
+//   non-manifold edge, on all nine acceptance cases). Handing someone that file and telling them
+//   to open the companion answers a question they did not ask. So the deliverable is the volume,
+//   region identity travels on it as a cell array, and the file that needs a filter says so in
+//   its name.
+//
+//   The volume is *derived*, never authored - `volume_only` of the same document - so the two
+//   cannot drift and their node numbering is identical, with `GlobalPointId` mapping back.
+//
+//   A document with no tets at all is a surface stage (s00-s03): there is no volume to deliver,
+//   the document *is* the artefact, and naming it `_contract` would misdescribe it. The rule keys
+//   off the document rather than the stage label, so a stage that later grows a volume needs no
+//   change here.
 pub fn emit_snapshot(
     doc: &mut VtuDoc,
     output_vtu: &Path,
     meta: &SnapshotMeta,
     encoding: VtuEncoding,
-) -> Result<PathBuf> {
-    emit_snapshot_with_companion(doc, output_vtu, meta, encoding, false)
-}
-
-// AI-FUNC-SUMMARY:
-// Purpose: Write a snapshot and, optionally, its tets-only `_volume` companion (§2.1).
-// Inputs: the document, the configured output path, the stamp metadata, the encoding, and whether to
-//   write the companion.
-// Returns: the primary snapshot's path.
-// Side effects: Writes one or two VTU files.
-// Notes: The companion is derived, never authored: it is `volume_only` of the same document, so it
-//   cannot drift from the contract file and its node numbering is identical.
-pub fn emit_snapshot_with_companion(
-    doc: &mut VtuDoc,
-    output_vtu: &Path,
-    meta: &SnapshotMeta,
-    encoding: VtuEncoding,
-    split_volume: bool,
 ) -> Result<PathBuf> {
     stamp_metadata(doc, meta);
     let path = snapshot_path(output_vtu, meta.stage, meta.round);
@@ -310,20 +311,31 @@ pub fn emit_snapshot_with_companion(
         encoding
     };
     doc.validate()?;
-    save_vtu(&path, doc, encoding)?;
-    if split_volume {
-        let volume = crate::io::vtu::volume_only(doc);
-        if !volume.types.is_empty() {
-            let stem = path
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_default();
-            let companion = path.with_file_name(format!("{stem}_volume.vtu"));
-            volume.validate()?;
-            save_vtu(&companion, &volume, encoding)?;
-        }
+    let volume = crate::io::vtu::volume_only(doc);
+    if volume.types.is_empty() {
+        save_vtu(&path, doc, encoding)?;
+        return Ok(path);
     }
+    save_vtu(&contract_path(&path), doc, encoding)?;
+    volume.validate()?;
+    save_vtu(&path, &volume, encoding)?;
     Ok(path)
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: The auxiliary mixed-cell document's path beside a delivered volume: `<stem>_contract.vtu`.
+// Inputs: the delivered file's path.
+// Returns: the auxiliary's path.
+// Side effects: None.
+// Notes: `Stage::from_path` scans the stem for `sNN`, so the suffix does not disturb `[V12]`'s
+//   stage/filename cross-check - both files answer for the same stage, because they are the same
+//   document.
+pub fn contract_path(delivered: &Path) -> PathBuf {
+    let stem = delivered
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    delivered.with_file_name(format!("{stem}_contract.vtu"))
 }
 
 // AI-FUNC-SUMMARY:

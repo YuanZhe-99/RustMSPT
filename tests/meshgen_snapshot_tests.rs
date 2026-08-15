@@ -5,13 +5,15 @@
 //! mismatch is a named error), and the acceptance criterion: a fixture pipeline
 //! emits the s-series, and the verifier + renderer accept every snapshot.
 
-use rustmspt::config::meshgen::SnapshotMode;
-use rustmspt::io::vtu::{load_vtu, VtuEncoding};
+use rustmspt::config::meshgen::{MeshGenConfig, SnapshotMode};
+use rustmspt::io::vtu::{load_vtu, VtuEncoding, VTK_TETRA, VTK_TRIANGLE};
 use rustmspt::meshgen::render_scene::{build_scene, SceneSpec};
 use rustmspt::meshgen::snapshot::{
     emit_snapshot, should_emit, snapshot_path, warn_if_large, SnapshotMeta, Stage,
 };
 use rustmspt::meshgen::verify::{verify, verify_with_options, VerifyGates, VerifyOptions};
+use rustmspt::pipeline::meshgen::MeshGenPipeline;
+use rustmspt::pipeline::Pipeline;
 use rustmspt::types::Vec3;
 use std::path::PathBuf;
 
@@ -147,38 +149,138 @@ fn emit_series_verifier_and_renderer_accept_every_snapshot() {
         let path =
             emit_snapshot(&mut doc, &out_vtu, &meta, VtuEncoding::Ascii).expect("emit succeeds");
 
-        // T-C6: the filename stage matches the stamped StageIndex.
-        let expected = Stage::from_path(&path).expect("snapshot filename parses");
-        assert_eq!(expected.index(), stage.index());
-
-        let reloaded = load_vtu(&path).expect("snapshot reloads");
-        reloaded.validate().expect("snapshot validates");
-
-        // The verifier accepts it (no FAIL), with the filename cross-check active.
-        let options = VerifyOptions::from_path(&path);
-        let report = verify_with_options(&reloaded, &VerifyGates::default(), options);
-        let fired = report.fired_codes();
-        let fails: Vec<&str> = fired
-            .iter()
-            .filter(|c| c.starts_with("V12."))
-            .map(|s| s.as_str())
-            .collect();
+        // P-2.1: the plain name is the delivered volume, and the mixed-cell contract
+        // document sits beside it. Both are checked here - narrowing this test to whichever
+        // file happens to carry the plain name would quietly stop covering the other.
+        let contract = rustmspt::meshgen::snapshot::contract_path(&path);
         assert!(
-            fails.is_empty(),
-            "stage {:?}: unexpected V12 codes {:?}",
-            stage,
-            fails
+            contract.exists(),
+            "stage {stage:?}: the contract document must be written beside the delivered volume"
         );
 
-        // The renderer accepts it (build_scene does not error).
-        let scene =
-            build_scene(&reloaded, &SceneSpec::default()).expect("renderer accepts snapshot");
+        for (role, file) in [("delivered", &path), ("contract", &contract)] {
+            // T-C6: the filename stage matches the stamped StageIndex, on both.
+            let expected = Stage::from_path(file).expect("snapshot filename parses");
+            assert_eq!(expected.index(), stage.index(), "{role}");
+
+            let reloaded = load_vtu(file).expect("snapshot reloads");
+            reloaded.validate().expect("snapshot validates");
+
+            // The verifier accepts it (no FAIL), with the filename cross-check active.
+            let options = VerifyOptions::from_path(file);
+            let report = verify_with_options(&reloaded, &VerifyGates::default(), options);
+            let fired = report.fired_codes();
+            let fails: Vec<&str> = fired
+                .iter()
+                .filter(|c| c.starts_with("V12."))
+                .map(|s| s.as_str())
+                .collect();
+            assert!(
+                fails.is_empty(),
+                "stage {stage:?} ({role}): unexpected V12 codes {fails:?}"
+            );
+
+            // The renderer accepts it (build_scene does not error).
+            let scene =
+                build_scene(&reloaded, &SceneSpec::default()).expect("renderer accepts snapshot");
+            assert!(
+                !scene.tris.is_empty() || !scene.segments.is_empty(),
+                "stage {stage:?} ({role}): scene has no geometry"
+            );
+        }
+
+        // The delivered file is the mesh: nothing in it but tetrahedra, which is what
+        // makes "the only feature edges are the domain box" true as opened.
+        let delivered = load_vtu(&path).expect("delivered reloads");
         assert!(
-            !scene.tris.is_empty() || !scene.segments.is_empty(),
-            "stage {:?}: scene has no geometry",
-            stage
+            delivered.types.iter().all(|t| *t == VTK_TETRA),
+            "stage {stage:?}: the delivered file must carry tetrahedra and nothing else"
+        );
+        // ...and the contract document still carries the cells the tag contract needs.
+        let full = load_vtu(&contract).expect("contract reloads");
+        assert!(
+            full.types.iter().any(|t| *t != VTK_TETRA),
+            "stage {stage:?}: the contract document must keep its non-tet cells"
+        );
+        assert_eq!(
+            full.points, delivered.points,
+            "stage {stage:?}: the two files must share one node numbering"
         );
     }
+}
+
+/// P-2.1's acceptance, on a real pipeline run rather than on a re-stamped fixture: the file
+/// the pipeline names plainly is the mesh, and opened directly its only feature edges are the
+/// domain box.
+///
+/// "Only feature edges are the domain box" is three claims, and `[V3]` is exactly the check
+/// for them on a document carrying no tags: every face with one adjacent tet lies on a domain
+/// plane (else `V3.boundary_leak`), none is shared by more than two (`V3.multi_shared_face`),
+/// no edge is non-manifold. `[V1]` adds the fourth - every cell a well-formed tetrahedron.
+#[test]
+fn pipeline_delivers_a_tets_only_volume_whose_only_boundary_is_the_domain_box() {
+    let temp = tempfile::tempdir().unwrap();
+    let output = temp.path().join("mesh.vtu");
+    let input = PathBuf::from("data/fixtures/meshgen/acceptance/a2_cube.stl");
+    assert!(input.exists(), "the a2 cube fixture must be present");
+    // Coarse on purpose: this test is about which file carries which cells, not about
+    // resolution, and a coarse lattice keeps it a unit-test-speed run.
+    let yaml = format!(
+        "meshgen:\n  inputs:\n    - stl: {}\n  domain: {{ min: [0,0,0], max: [1,1,1] }}\n  \
+         sizing: {{ h_max_frac: 0.15, h_min_frac: 0.05 }}\n  snapshots: key\n  \
+         output: {{ vtu: {} }}\n",
+        input.display(),
+        output.display()
+    );
+    let config: MeshGenConfig = serde_yaml::from_str(&yaml).unwrap();
+    // S9..S11 are unimplemented, so the run reports that after writing s08 - which is the
+    // stage this asserts on.
+    let error = MeshGenPipeline { config }.run().unwrap_err().to_string();
+    assert!(error.contains("S9..S11"), "{error}");
+
+    let delivered = temp.path().join("mesh.debug/mesh_s08_cut.vtu");
+    let contract = temp.path().join("mesh.debug/mesh_s08_cut_contract.vtu");
+    assert!(delivered.exists(), "the delivered volume must carry the plain name");
+    assert!(contract.exists(), "the contract document must be written beside it");
+
+    let volume = load_vtu(&delivered).expect("delivered loads");
+    volume.validate().expect("delivered validates");
+    assert!(!volume.types.is_empty(), "the delivered mesh must not be empty");
+    assert!(
+        volume.types.iter().all(|t| *t == VTK_TETRA),
+        "the delivered file must carry tetrahedra and nothing else"
+    );
+    // Region identity travels on the volume as a cell array (R4), not as separate cells.
+    assert!(
+        volume.cell_array("region_key").is_some(),
+        "the delivered mesh must carry region identity as a cell array"
+    );
+
+    let report = verify_with_options(
+        &volume,
+        &VerifyGates::default(),
+        VerifyOptions::from_path(&delivered),
+    );
+    let offending: Vec<String> = report
+        .fired_codes()
+        .into_iter()
+        .filter(|c| c.starts_with("V1.") || c.starts_with("V3."))
+        .collect();
+    assert!(
+        offending.is_empty(),
+        "opened directly, the delivered mesh must show nothing but the domain box; fired {offending:?}"
+    );
+
+    // The auxiliary keeps what the tag contract needs, on the same node numbering.
+    let full = load_vtu(&contract).expect("contract loads");
+    assert!(
+        full.types.iter().any(|t| *t == VTK_TRIANGLE),
+        "the contract document must keep its tagged interface faces"
+    );
+    assert_eq!(
+        full.points, volume.points,
+        "both files must share one node numbering"
+    );
 }
 
 #[test]

@@ -99,7 +99,7 @@ S0、S1 与 G2-1 至 G2-5 已实现。流水线在 S0 前按区域对角线归�
 | `snapshot_path` | `src/meshgen/snapshot.rs:118` | `<stem>.debug/<stem>_sNN_<name>.vtu`（Quality 带 `_r<N>`）。 |
 | `SnapshotMeta` | `src/meshgen/snapshot.rs:132` | 打标输入集合（阶段、轮次、配置哈希、区域、确定性、生成器版本）。 |
 | `stamp_metadata` | `src/meshgen/snapshot.rs:166` | 将完整 §2.4 元数据块打标到快照文档。 |
-| `emit_snapshot` | `src/meshgen/snapshot.rs:215` | 打标元数据并写出快照 VTU；返回路径。 |
+| `emit_snapshot` | `src/meshgen/snapshot.rs:276` | 打标元数据，然后以普通名写出交付用的仅四面体体网格，并在其旁写出混合单元契约文档 `_contract.vtu`；返回交付文件路径。 |
 | `warn_if_large` | `src/meshgen/snapshot.rs:246` | 尺寸 WARN：`snapshots: all` + 估计 >5 M 四面体。 |
 
 ## 配置块（PLAN §6.3）

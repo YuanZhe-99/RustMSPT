@@ -815,5 +815,13 @@ pub fn volume_only(doc: &VtuDoc) -> VtuDoc {
         "GlobalPointId",
         ArrayData::I64((0..doc.points.len() as i64).collect()),
     ));
+    // `Counts` (§2.4) is `[points, tets, faces, curves]` and was stamped for the mixed-cell
+    // document. Copied verbatim it claims tagged faces and curves this document does not have,
+    // and `[V12]` calls that out as `count_mismatch` - correctly, since a derived file that
+    // misdescribes itself is worse than one carrying no metadata at all. Restate it here rather
+    // than at the call site, so any consumer of `volume_only` gets a self-consistent document.
+    if let Some(counts) = out.field_data.iter_mut().find(|a| a.name == "Counts") {
+        counts.data = ArrayData::I64(vec![out.points.len() as i64, out.types.len() as i64, 0, 0]);
+    }
     out
 }
