@@ -2,6 +2,7 @@ pub mod arrange;
 pub mod cdt;
 pub mod classify;
 pub mod cut;
+pub mod facecache;
 pub mod features;
 pub mod gapfield;
 pub mod junction;
