@@ -17,6 +17,19 @@ fn fixture(name: &str) -> PathBuf {
     PathBuf::from("data/fixtures/meshgen").join(format!("{name}.vtu"))
 }
 
+/// One named metric out of one section, or `-1.0` when the section or the metric is absent -
+/// a value no count or area can take, so a missing metric fails an assertion rather than
+/// reading as zero.
+fn metric(report: &rustmspt::meshgen::verify::VerifyReport, section: &str, name: &str) -> f64 {
+    report
+        .sections
+        .iter()
+        .find(|s| s.id == section)
+        .and_then(|s| s.metrics.iter().find(|(k, _)| k == name))
+        .map(|(_, v)| *v)
+        .unwrap_or(-1.0)
+}
+
 fn run(name: &str) -> rustmspt::meshgen::verify::VerifyReport {
     let doc = load_vtu(&fixture(name)).expect("fixture loads");
     doc.validate().expect("fixture is structurally valid");
@@ -531,5 +544,50 @@ fn v6_region_adjacency_rejects_a_two_component_step_across_an_untagged_face() {
             .iter()
             .any(|c| c == "V6.region_adjacency"),
         "a one-component step is the ordinary material boundary and must pass"
+    );
+
+    // ...and *that* is the gap the undeclared-boundary metric exists to measure. The step is
+    // legal in size, but the face it crosses declares nothing, so the mesh asserts a boundary
+    // of component 1 that no interface names. `[V6]` cannot say so - its allowance floors at
+    // one component - and until this metric there was no number for it at all.
+    let report = verify(&legal, &VerifyGates::default());
+    assert!(
+        metric(&report, "V6", "undeclared_boundary_faces") >= 1.0,
+        "a {{1}} tet whose faces carry no tag is an undeclared material boundary: got {}",
+        metric(&report, "V6", "undeclared_boundary_faces")
+    );
+    assert!(
+        metric(&report, "V6", "undeclared_boundary_area") > 0.0,
+        "undeclared faces must contribute area"
+    );
+}
+
+// AI-FUNC-SUMMARY: A mesh with no material boundary at all must report zero undeclared boundary -
+//   the metric's control, so it cannot pass by counting every interior face; side effects: none.
+#[test]
+fn undeclared_boundary_metric_is_zero_when_no_material_boundary_exists() {
+    let base = load_vtu(&fixture("good_cube")).unwrap();
+    let mut doc = base.clone();
+    doc.field_data.retain(|a| {
+        !a.name.starts_with("RegionSet") && a.name != "ComponentX" && a.name != "ComponentY"
+    });
+    for (name, data) in [
+        ("RegionSetOffsets", ArrayData::I64(vec![1, 2])),
+        ("RegionSetComponents", ArrayData::I32(vec![0, 1])),
+        ("ComponentX", ArrayData::I32(vec![1])),
+        ("ComponentY", ArrayData::I32(vec![0])),
+    ] {
+        doc.field_data.push(DataArray::scalar(name, data));
+    }
+    // Every tet in the same region: no face anywhere separates two different inside-sets.
+    let keys = vec![1i64; doc.types.len()];
+    doc.cell_data.retain(|a| a.name != "region_key");
+    doc.cell_data
+        .push(DataArray::scalar("region_key", ArrayData::I64(keys)));
+    let report = verify(&doc, &VerifyGates::default());
+    assert_eq!(
+        metric(&report, "V6", "undeclared_boundary_faces"),
+        0.0,
+        "a uniformly labelled mesh has no material boundary to declare"
     );
 }

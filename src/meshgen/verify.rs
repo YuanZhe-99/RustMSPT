@@ -1411,6 +1411,39 @@ fn check_v4(
     s
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: The components whose material boundary crosses a face without the face declaring them.
+// Inputs: the inside-sets of the two tets sharing the face, and the components tagged on the face.
+// Returns: the components of the symmetric difference the face does not declare, sorted and unique.
+// Side effects: None.
+// Notes: This is the predicate `[V6]`'s region-adjacency rule cannot express. That rule compares
+//   the *size* of the step against the number of components declared on the face and floors the
+//   allowance at 1, so a single-component step across an untagged face satisfies it. Here the
+//   question is per component and not per count: if crossing this face enters or leaves component
+//   x, the face is a boundary of x and must name x.
+fn undeclared_components(a: &[i64], b: &[i64], tags: Option<&BTreeSet<i64>>) -> Vec<i64> {
+    let mut out: Vec<i64> = a
+        .iter()
+        .filter(|x| !b.contains(x))
+        .chain(b.iter().filter(|x| !a.contains(x)))
+        .filter(|x| !tags.is_some_and(|t| t.contains(x)))
+        .copied()
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+// AI-FUNC-SUMMARY: Area of the triangle a face key names; returns f64 (0.0 if a node id is out of range); side effects: none.
+fn face_area(points: &[Vec3], fk: &[i64; 3]) -> f64 {
+    let corner = |i: usize| points.get(fk[i] as usize).copied();
+    let (Some(a), Some(b), Some(c)) = (corner(0), corner(1), corner(2)) else {
+        return 0.0;
+    };
+    let n = b.sub(a).cross(c.sub(a));
+    0.5 * n.dot(n).sqrt()
+}
+
 // AI-FUNC-SUMMARY: [V6] ID semantics (VTU-only subset) — region-key legality and one priority per key; returns VerifySection; side effects: none.
 fn check_v6(
     view: &MeshView,
@@ -1537,8 +1570,8 @@ fn check_v6(
         }
     }
     let components_on_face: HashMap<[i64; 3], usize> = tags_on_face
-        .into_iter()
-        .map(|(key, set)| (key, set.len()))
+        .iter()
+        .map(|(key, set)| (*key, set.len()))
         .collect();
 
     let mut bad_adjacent = 0usize;
@@ -1600,9 +1633,80 @@ fn check_v6(
         }
     }
 
+    // --- undeclared material boundary ---
+    // The rule above judges a step by its **size** against what the face declares, and floors
+    // `allowed` at 1. So a one-component step across a face carrying no tag at all passes it:
+    // entering component 2 from the void through an undeclared face is legal to `[V6]`. That is
+    // exactly what a §7.6 fan leaves between two pieces of one escalated cell whose material
+    // boundary runs through its interior, so the suite had no number for it and the defect was
+    // argued about from renders instead. This measures it: a face across which a component is
+    // entered or left is a boundary of that component, and every material boundary must be a
+    // declared interface.
+    //
+    // Reported as a metric, not a finding. It is a young measurement - A-2 renders correctly
+    // carrying a handful, A-7a carries thousands with no visible artefact - so it earns the right
+    // to gate anything only after it has been shown to track something that matters. Mixed
+    // priorities are excluded on the same grounds as above: there the inside-set difference is
+    // not the material boundary, because a higher-priority label replaces the one beneath it.
+    let parent_cell = cell_i64(view.doc, "parent_cell");
+    let mut undeclared_faces = 0usize;
+    let mut undeclared_area = 0.0f64;
+    let mut undeclared_same_cell = 0usize;
+    let mut undeclared_mixed_priority = 0usize;
+    if !surface_stage {
+        for (fk, cells) in owners.iter() {
+            if cells.len() != 2 {
+                continue;
+            }
+            let (left, right) = (cells[0], cells[1]);
+            let (ka, kb) = (
+                region_key.get(left).copied().unwrap_or(-1),
+                region_key.get(right).copied().unwrap_or(-1),
+            );
+            if ka == kb || ka < 0 || kb < 0 {
+                continue;
+            }
+            let (a, b) = (inside_set(ka), inside_set(kb));
+            let missing = undeclared_components(&a, &b, tags_on_face.get(fk));
+            if missing.is_empty() {
+                continue;
+            }
+            let mut priorities: Vec<i64> = a
+                .iter()
+                .chain(b.iter())
+                .filter_map(|x| y_of.get(x).copied())
+                .collect();
+            priorities.sort_unstable();
+            priorities.dedup();
+            if priorities.len() > 1 {
+                undeclared_mixed_priority += 1;
+                continue;
+            }
+            undeclared_faces += 1;
+            undeclared_area += face_area(&view.doc.points, fk);
+            // Both sides coming from one lattice cell is the §7.6 signature: the split handed
+            // back a piece spanning the boundary and the fan turned that boundary into a
+            // staircase of interior faces. Only available under `RUSTMSPT_CUT_DIAG`.
+            if let Some(parents) = &parent_cell {
+                if parents.get(left).is_some() && parents.get(left) == parents.get(right) {
+                    undeclared_same_cell += 1;
+                }
+            }
+        }
+    }
+
     s.metric("region_sets", sets.len() as f64);
     s.metric("illegal_region_keys", illegal as f64);
     s.metric("priority_mismatches", mismatches as f64);
+    s.metric("undeclared_boundary_faces", undeclared_faces as f64);
+    s.metric("undeclared_boundary_area", undeclared_area);
+    s.metric(
+        "undeclared_boundary_mixed_priority",
+        undeclared_mixed_priority as f64,
+    );
+    if parent_cell.is_some() {
+        s.metric("undeclared_boundary_same_cell", undeclared_same_cell as f64);
+    }
     s.metric("region_adjacency_violations", bad_adjacent as f64);
     s.metric(
         "region_adjacency_mixed_priority",
@@ -3325,4 +3429,57 @@ fn connected_shells(tris: &[[Vec3; 3]]) -> Vec<Vec<usize>> {
         out.push(shell);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The predicate's semantics, stated case by case. It is per component, not per count:
+    // that is the whole difference between it and `[V6]`'s region-adjacency rule.
+    #[test]
+    fn undeclared_components_is_per_component_not_per_count() {
+        let tagged = |xs: &[i64]| -> BTreeSet<i64> { xs.iter().copied().collect() };
+
+        // Nothing changes across the face - no boundary, declared or not.
+        assert!(undeclared_components(&[1], &[1], None).is_empty());
+        assert!(undeclared_components(&[], &[], None).is_empty());
+
+        // A material boundary across a face carrying no tag at all. This is the case
+        // `[V6]` passes and the metric exists for.
+        assert_eq!(undeclared_components(&[1], &[], None), vec![1]);
+        assert_eq!(undeclared_components(&[], &[2], None), vec![2]);
+
+        // Declared for the component that changes - the ordinary, correct interface.
+        assert!(undeclared_components(&[1], &[], Some(&tagged(&[1]))).is_empty());
+
+        // Declared, but for the wrong component: still undeclared for the one that changes.
+        assert_eq!(undeclared_components(&[1], &[], Some(&tagged(&[2]))), vec![1]);
+
+        // A two-component step declared for only one of them reports just the other, so the
+        // count is of components missing a declaration rather than of faces failing a size rule.
+        assert_eq!(
+            undeclared_components(&[1, 2], &[], Some(&tagged(&[1]))),
+            vec![2]
+        );
+        assert!(undeclared_components(&[1, 2], &[], Some(&tagged(&[1, 2]))).is_empty());
+
+        // Direction does not matter: entering and leaving are the same boundary.
+        assert_eq!(
+            undeclared_components(&[1, 3], &[3], None),
+            undeclared_components(&[3], &[1, 3], None)
+        );
+    }
+
+    #[test]
+    fn face_area_matches_a_known_triangle() {
+        let points = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(2.0, 0.0, 0.0),
+            Vec3::new(0.0, 3.0, 0.0),
+        ];
+        assert!((face_area(&points, &[0, 1, 2]) - 3.0).abs() < 1e-12);
+        // An out-of-range node id yields 0.0 rather than panicking the verifier.
+        assert_eq!(face_area(&points, &[0, 1, 99]), 0.0);
+    }
 }
