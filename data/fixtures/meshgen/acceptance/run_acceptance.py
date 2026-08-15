@@ -83,7 +83,11 @@ CONFIG = """meshgen:
   snapshots: key
   output:
     vtu: {out}
-    split_volume: false
+    # true, matching the shipped config: it writes the tets-only companion that
+    # G7 goal 2 is checked on. ParaView's Feature Edges walks the primary file's
+    # tagged interface triangles and draws a web over every interface, which reads
+    # as a cracked mesh even though the volume underneath is watertight.
+    split_volume: true
   verify:
     max_ar_warn: 20.0
     min_dihedral_deg: 5.0
