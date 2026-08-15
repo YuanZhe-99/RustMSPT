@@ -1,4 +1,5 @@
 pub mod arrange;
+pub mod cdt;
 pub mod classify;
 pub mod cut;
 pub mod features;
