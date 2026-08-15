@@ -1300,6 +1300,10 @@ pub fn cut_lattice(
     let mut seed_uncertain = 0usize;
     let mut seeded_pieces = 0usize;
     let mut hidden_recovered = 0usize;
+    // Off by default: it costs a classifier query per node of every fanned piece, and it
+    // exists to answer one question once (see `SpokeProbe`), not to run in production.
+    let probing_spokes = std::env::var_os("RUSTMSPT_SPOKE_PROBE").is_some();
+    let mut spoke_probe = SpokeProbe::default();
     let mut mesh = CutMesh {
         nodes,
         tets: Vec::new(),
@@ -1588,6 +1592,39 @@ pub fn cut_lattice(
             // only when the table or the §4.4 floor refuses it - which is the ladder's
             // last rung, and is what `regime = 2` means in the contract arrays.
             let mut slabs: CellSlabs = SmallVec::new();
+            // Which slabs §7.6's split produced, and the nodes each component's surface is
+            // known to pass through - both only for the spoke probe below, which is off
+            // unless `RUSTMSPT_SPOKE_PROBE` is set.
+            let mut split_slabs: std::ops::Range<usize> = 0..0;
+            let mut on_surface: BTreeMap<i32, BTreeSet<u32>> = BTreeMap::new();
+            if probing_spokes {
+                for component in &all_components {
+                    let mut here: BTreeSet<u32> = BTreeSet::new();
+                    for a in 0..4 {
+                        for b in (a + 1)..4 {
+                            let (x, y) = (lattice.tets[index][a], lattice.tets[index][b]);
+                            let edge = if x <= y { [x, y] } else { [y, x] };
+                            if let Some(node) = cut_index.get(&(edge, *component)) {
+                                here.insert(*node);
+                            }
+                            if let Some(node) = second_index.get(&(edge, *component)) {
+                                here.insert(*node);
+                            }
+                        }
+                    }
+                    for node in &lattice.tets[index] {
+                        if on_cut.contains_key(&(*node, *component)) {
+                            here.insert(*node);
+                        }
+                    }
+                    for (node, owners) in &meeting_nodes {
+                        if owners.contains(component) {
+                            here.insert(*node);
+                        }
+                    }
+                    on_surface.insert(*component, here);
+                }
+            }
             match band {
                 Some(plan) => {
                     mesh.stats.n_band_cells += 1;
@@ -1667,8 +1704,12 @@ pub fn cut_lattice(
                             mesh.stats.n_junction_splits += 1;
                             mesh.stats.n_junction_split_pieces += pieces.len();
                             for (triangle, component) in caps {
+                                for node in triangle {
+                                    on_surface.entry(component).or_default().insert(node);
+                                }
                                 pending_interfaces.push((mesh.tets.len(), triangle, component));
                             }
+                            split_slabs = slabs.len()..slabs.len() + pieces.len();
                             for piece in pieces {
                                 slabs.push((piece.to_vec(), None));
                             }
@@ -1692,7 +1733,18 @@ pub fn cut_lattice(
                     }
                 }
             }
-            for (slab, pairs) in &slabs {
+            for (slot, (slab, pairs)) in slabs.iter().enumerate() {
+                if probing_spokes && pairs.is_none() {
+                    probe_spoke_cut(
+                        slab,
+                        &mesh.nodes,
+                        &all_components,
+                        classifier,
+                        &on_surface,
+                        split_slabs.contains(&slot),
+                        &mut spoke_probe,
+                    );
+                }
                 if let Some(pairs) = pairs {
                     let diagonals = snk_cell_diagonals(*pairs, &keys);
                     if let Ok(meshed) =
@@ -1904,6 +1956,29 @@ pub fn cut_lattice(
     if std::env::var("RUSTMSPT_CUT_DIAG").is_ok() {
         let centroid_ids: BTreeSet<u32> = face_steiner.values().copied().collect();
         diagnose_conformity(&mesh, n_parent_nodes, n_cut_and_parent_nodes, &centroid_ids);
+    }
+    if probing_spokes {
+        let p = spoke_probe;
+        let cuttable = p.base_straddle + p.apex_only;
+        let share = |n: usize| -> f64 {
+            if cuttable == 0 {
+                0.0
+            } else {
+                100.0 * n as f64 / cuttable as f64
+            }
+        };
+        println!(
+            "[SPOKE-PROBE] pieces={} straddling={} (from_split={}) fan_tets={} straddling_tets={}",
+            p.pieces, p.straddling, p.from_split, p.fan_tets, p.straddling_tets
+        );
+        println!(
+            "[SPOKE-PROBE] base_straddle={} ({:.1} %)  apex_only={} ({:.1} %)  \
+             - apex_only is §6 Case C, cuttable on spokes alone; base_straddle is not",
+            p.base_straddle,
+            share(p.base_straddle),
+            p.apex_only,
+            share(p.apex_only)
+        );
     }
     for (reason, count) in &mesh.stats.n_escalated {
         let (tag, text) = match reason {
@@ -3804,6 +3879,145 @@ fn push_field(doc: &mut VtuDoc, name: &str, components: usize, data: ArrayData) 
 //   Only cells crossed by two or more components are attempted. A single-component escalation is
 //   §6 refusing a legal row, not a junction; splitting it buys nothing the table would not have
 //   done better, and every extra path here is a path the fan's totality no longer covers.
+/// What the spoke-cut probe counts, per (piece, component) that straddles.
+///
+/// The question it exists to answer, before any of §7.6's fan is rebuilt: **can the surface
+/// be recovered inside an escalated cell by cutting interior spokes only?** That rests on
+/// one claim - a fan tet's *base* never straddles, so every straddling edge is a spoke from
+/// a boundary node to the piece centroid, interior to one cell and shared with no
+/// neighbour, and invariant J1 survives without an agreement protocol.
+///
+/// `split_soup_by_surface` documents the case that claim assumes away. Its `mixed sides`
+/// relaxation exists for "a triangle with corners on both sides and no cut node between
+/// them ... a **face** that was not split where this surface crosses it", and that
+/// relaxation is load-bearing - it took `[V6]` A-6a 37 -> 21. Such a triangle *is* a fan
+/// tet's base, and cutting its edges is the J1 problem the derivation claimed to escape.
+///
+/// So `base_straddle` against `apex_only` decides it. `apex_only` is §6's Case C
+/// `(1,3,0)`/`(3,1,0)`: base uniform, apex opposite, all three crossings on spokes - the
+/// cuttable case. `base_straddle` is the derivation failing.
+#[derive(Default, Clone, Copy, Debug)]
+struct SpokeProbe {
+    /// Fanned pieces examined, whatever they are made of.
+    pieces: usize,
+    /// (piece, component) pairs where the component's surface crosses the piece.
+    straddling: usize,
+    /// ...of which the piece came from a §7.6 split rather than the whole-cell fallback fan.
+    from_split: usize,
+    /// Fan tets in straddling pieces.
+    fan_tets: usize,
+    /// ...that the surface actually crosses.
+    straddling_tets: usize,
+    /// ...whose base carries both sides. **The derivation is false for these.**
+    base_straddle: usize,
+    /// ...whose base is uniform with the apex opposite: §6 Case C, cuttable on spokes alone.
+    apex_only: usize,
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Count how a component's surface meets the fan tets of one piece, to decide whether
+//   §7.6's fan can be cut on interior spokes alone (see `SpokeProbe`).
+// Inputs: the piece's closed soup, node positions, the components in play, the classifier, the
+//   nodes each component's surface is known to pass through, whether the piece came from a split.
+// Returns: nothing; accumulates into `probe`.
+// Side effects: Mutates `probe` only. **Never touches the mesh** - the fan tets are not built,
+//   because a fan tet is exactly one boundary triangle plus the piece centroid, so its four sides
+//   are computable from the soup alone. That is what keeps this probe unable to change output.
+// Notes: The side rule is `split_soup_by_surface`'s, deliberately: a node the surface is known to
+//   pass through has no side, and so does a node whose predicate answer comes back uncertain -
+//   which is the geometric statement of the same thing, and matters wherever two bodies are in
+//   exact contact.
+fn probe_spoke_cut(
+    slab: &[[u32; 3]],
+    nodes: &[Vec3],
+    all_components: &[i32],
+    classifier: &PointClassifier,
+    on_surface: &BTreeMap<i32, BTreeSet<u32>>,
+    from_split: bool,
+    probe: &mut SpokeProbe,
+) {
+    if slab.is_empty() {
+        return;
+    }
+    probe.pieces += 1;
+    let centroid = polygon_soup_centroid(slab, nodes);
+    for component in all_components {
+        let Some(slot) = classifier.slot_of(*component) else {
+            continue;
+        };
+        let empty = BTreeSet::new();
+        let surface = on_surface.get(component).unwrap_or(&empty);
+        // One classifier query per node, not per incidence: a node sits in about six of the
+        // piece's triangles and the query is a five-ray parity test.
+        let mut cache: BTreeMap<u32, Option<bool>> = BTreeMap::new();
+        let mut side_of = |node: u32| -> Option<bool> {
+            if let Some(hit) = cache.get(&node) {
+                return *hit;
+            }
+            let side = if surface.contains(&node) {
+                None
+            } else {
+                let mut uncertain = 0usize;
+                let inside = classifier.inside(nodes[node as usize], slot, &mut uncertain);
+                if uncertain > 0 {
+                    None
+                } else {
+                    Some(inside)
+                }
+            };
+            cache.insert(node, side);
+            side
+        };
+        let (mut saw_inside, mut saw_outside) = (false, false);
+        for triangle in slab {
+            for node in triangle {
+                match side_of(*node) {
+                    Some(true) => saw_inside = true,
+                    Some(false) => saw_outside = true,
+                    None => {}
+                }
+            }
+        }
+        if !(saw_inside && saw_outside) {
+            continue;
+        }
+        probe.straddling += 1;
+        if from_split {
+            probe.from_split += 1;
+        }
+        let apex = {
+            let mut uncertain = 0usize;
+            let inside = classifier.inside(centroid, slot, &mut uncertain);
+            if uncertain > 0 {
+                None
+            } else {
+                Some(inside)
+            }
+        };
+        for triangle in slab {
+            probe.fan_tets += 1;
+            let sides = [
+                side_of(triangle[0]),
+                side_of(triangle[1]),
+                side_of(triangle[2]),
+            ];
+            let base_inside = sides.contains(&Some(true));
+            let base_outside = sides.contains(&Some(false));
+            let has_inside = base_inside || apex == Some(true);
+            let has_outside = base_outside || apex == Some(false);
+            if !(has_inside && has_outside) {
+                continue;
+            }
+            probe.straddling_tets += 1;
+            if base_inside && base_outside {
+                probe.base_straddle += 1;
+            } else {
+                probe.apex_only += 1;
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn split_escalated_cell(
     index: usize,
