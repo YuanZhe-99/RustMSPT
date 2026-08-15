@@ -768,6 +768,9 @@ fn curve_coverage(
         })
         .collect();
     let covered = per_segment.iter().filter(|hit| **hit).count();
+    if std::env::var_os("RUSTMSPT_SNAP_DIAG").is_some() {
+        curve_reach_report(segments, &per_segment, nodes, edges);
+    }
     // An uncovered segment is K1's other escalation set: report its midpoint and its
     // length so the caller can ask the sizing field for elements small enough that the
     // next pass has nodes to snap onto it.
@@ -778,6 +781,100 @@ fn curve_coverage(
         .map(|((a, b), _)| (a.add(*b).scale(0.5), norm(b.sub(*a))))
         .collect();
     (segments.len(), covered, uncovered)
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Diagnose *why* an uncovered curve segment is uncovered - is any node close enough to
+//   have been snapped onto it in the first place?
+// Inputs: the locked segments, which came out covered, the snapped nodes and the edge list.
+// Returns: nothing; prints a `[SNAP-REACH]` histogram. Enabled by `RUSTMSPT_SNAP_DIAG`.
+// Side effects: Prints.
+// Notes: Snapping moves an *existing* node and never inserts one, and no move may exceed
+//   `SNAP_MOTION_CAP` (0.30) of the node's shortest incident edge. So the histogram of
+//   `distance(node, segment) / l_min(node)`, minimised over nearby nodes, says which kind of
+//   failure an uncovered segment is: below 0.30 the cap allowed a move that did not happen (a
+//   policy failure), above it no cap-obeying move reaches (a geometric one).
+//
+//   **The number this was built to find, and the answer it gave.** On A-8, 39 % of uncovered
+//   segments sit below 0.30 and none is beyond 1.00 - which reads as "mostly policy". It is not:
+//   covering a segment end to end needs a contiguous *chain* of lattice edges lying along it, and
+//   this histogram measures single nodes. Both conclusions the histogram invited were tested and
+//   failed - see the P-3 record in the plan. Read it as a bound on what snapping could ever do,
+//   never as a to-do list.
+fn curve_reach_report(
+    segments: &[(Vec3, Vec3)],
+    per_segment: &[bool],
+    nodes: &[Vec3],
+    edges: &[[u32; 2]],
+) {
+    let mut l_min = vec![f64::INFINITY; nodes.len()];
+    for edge in edges {
+        let length = norm(nodes[edge[1] as usize].sub(nodes[edge[0] as usize]));
+        for end in edge {
+            let slot = *end as usize;
+            if length < l_min[slot] {
+                l_min[slot] = length;
+            }
+        }
+    }
+    let edge_boxes: Vec<(Vec3, Vec3)> = edges
+        .iter()
+        .map(|edge| seg_bounds(nodes[edge[0] as usize], nodes[edge[1] as usize]))
+        .collect();
+    let grid = BoxGrid::build(&edge_boxes);
+    const BINS: [f64; 4] = [0.30, 0.50, 1.00, f64::INFINITY];
+    let mut hist = [0usize; 4];
+    let (mut unreachable_len, mut total_len) = (0.0f64, 0.0f64);
+    let mut scratch: Vec<u32> = Vec::new();
+    for ((a, b), covered) in segments.iter().zip(per_segment.iter()) {
+        if *covered {
+            continue;
+        }
+        let length = norm(b.sub(*a));
+        total_len += length;
+        let (lo, hi) = seg_bounds(*a, *b);
+        let reach = length.max(f64::MIN_POSITIVE);
+        let pad = Vec3::new(reach, reach, reach);
+        grid.query_into(lo.sub(pad), hi.add(pad), &mut scratch);
+        let mut best = f64::INFINITY;
+        for index in scratch.iter() {
+            for end in edges[*index as usize] {
+                let slot = end as usize;
+                let d = norm(closest_on_segment(nodes[slot], *a, *b).sub(nodes[slot]));
+                let scale = l_min[slot];
+                if scale.is_finite() && scale > 0.0 {
+                    best = best.min(d / scale);
+                }
+            }
+        }
+        let bin = BINS.iter().position(|edge| best < *edge).unwrap_or(3);
+        hist[bin] += 1;
+        if bin > 0 {
+            unreachable_len += length;
+        }
+    }
+    let uncovered: usize = hist.iter().sum();
+    if uncovered == 0 {
+        return;
+    }
+    let pct = |n: usize| 100.0 * n as f64 / uncovered as f64;
+    println!(
+        "[SNAP-REACH] {uncovered} uncovered segment(s) by nearest node distance / l_min: \
+         <0.30 {} ({:.1} %) | 0.30-0.50 {} ({:.1} %) | 0.50-1.00 {} ({:.1} %) | >1.00 {} ({:.1} %)",
+        hist[0],
+        pct(hist[0]),
+        hist[1],
+        pct(hist[1]),
+        hist[2],
+        pct(hist[2]),
+        hist[3],
+        pct(hist[3])
+    );
+    println!(
+        "[SNAP-REACH] {:.1} % of uncovered curve LENGTH is out of reach of the {:.0} % motion cap",
+        100.0 * unreachable_len / total_len.max(f64::MIN_POSITIVE),
+        SNAP_MOTION_CAP * 100.0
+    );
 }
 
 // AI-FUNC-SUMMARY:
