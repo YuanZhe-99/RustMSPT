@@ -1661,42 +1661,31 @@ pub fn cut_lattice(
                     // the plate's own two walls - and that is a gap S8b owns rather than
                     // two bodies approaching each other, so the meeting-point test must
                     // not be asked of it.
-                    let two_surfaces = {
-                        let mut owners: SmallVec<[i32; 2]> = SmallVec::new();
-                        for (_, _, crossed) in faces.iter() {
-                            if let Some(face) = crossed {
-                                for component in &face.components {
-                                    if !owners.contains(component) {
-                                        owners.push(*component);
-                                    }
-                                }
-                            }
-                        }
-                        owners.len() > 1
-                    };
-                    // Letting a cell S8b *declined* take the split instead of the fan was
-                    // tried again with every fix above in place, and it is still a loss:
-                    // A-7a splits 512 more cells for **no** change in `[V6]` (134 either
-                    // way) and volume 0.361/0.098 % -> 0.574/0.443 %. Its 134 violations sit
-                    // at the plates' rim, in §7.5-seeded pieces, not in the cells the ladder
-                    // turned down - so the gate stays where it is.
+                    // **Every escalated cell is offered to the split (P-3.2).** Until
+                    // 2026-08-15 a two-surface cell was offered only when the two surfaces
+                    // *met inside it* - the reasoning being that two walls crossing a cell
+                    // without meeting is a *gap*, and a gap belongs to S8b's band ladder,
+                    // which knows its regime and its thickness. The reasoning is sound and
+                    // the gate was wrong anyway, because it fires on cells S8b **declined**:
+                    // A-7a's 0.006 gap is below the sheet threshold, so the ladder passes,
+                    // and its 2,176 parallel-plate cells then fell through to the fan with
+                    // nothing to catch them.
                     //
-                    // **P-3.1 re-opens this, and the reason is the instrument, not the
-                    // argument.** Both evaluations above gated on `[V6]` and volume error.
-                    // Neither can see P3: `[V6]` counts undeclared faces and volume error is
-                    // an aggregate, so a cell whose material boundary is a staircase half a
-                    // cell off the surface scores identically to one whose boundary is on it.
-                    // That is the exact failure R5 was written for. `[V13]` now measures the
-                    // displacement directly, so the experiment is re-run under
-                    // `RUSTMSPT_JCT_SPLIT_GAPS=1` — a prototype-gate bisection handle, like
-                    // `RUSTMSPT_NO_JCT_CUT` beside it. It must not survive into P-3.2: if the
-                    // relaxation is right, the gate goes away and nothing replaces it (R3).
-                    let meets_inside = !two_surfaces
-                        || std::env::var_os("RUSTMSPT_JCT_SPLIT_GAPS").is_some()
-                        || faces.iter().any(|(_, _, crossed)| {
-                            crossed.as_ref().is_some_and(|face| face.point.is_some())
-                        });
-                    let split = meets_inside.then(|| split_escalated_cell(
+                    // It survived two reviews because both measured `[V6]` and volume error,
+                    // and neither can see P3 - a boundary displaced half a cell off the
+                    // surface scores exactly like one lying on it. Measured with `[V13]`,
+                    // removing the gate takes A-7a from **73.4 % to 88.7 %** of material-
+                    // boundary area on the surface (off-surface area -58 %) and A-3 from
+                    // 89.4 % to 91.5 %, for +3.6 % / +0.9 % elements. Six of the nine cases
+                    // are bit-identical - no cell reaches the path. Volume error stays inside
+                    // its 1 % gate, `[V1]`/`[V3]` are unchanged, `[V6]`'s adjacency count
+                    // improves, min dihedral is identical to three decimals, and R-P2 holds.
+                    //
+                    // Nothing replaces it, and nothing may: which cells get a conforming cut
+                    // is not a setting (R3). The split's own guards decline safely where it
+                    // cannot work - on A-7a they hard-fail zero times - and every rejection
+                    // path still falls back to the fan.
+                    let split = Some(split_escalated_cell(
                         index,
                         &boundary,
                         tet,
