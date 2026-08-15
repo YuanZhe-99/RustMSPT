@@ -3755,6 +3755,7 @@ fn check_v13(
     let mut keys: Vec<&[i64; 3]> = owners.keys().collect();
     keys.sort_unstable();
     let mut boundary: Vec<BoundaryFace> = Vec::new();
+    let mut boundary_owners: Vec<Vec<usize>> = Vec::new();
     let mut void_faces = 0usize;
     for k in keys {
         let cells = &owners[k];
@@ -3874,6 +3875,7 @@ fn check_v13(
             escalation: reason_of(cells),
             centroid,
         });
+        boundary_owners.push(cells.clone());
     }
 
     if boundary.is_empty() {
@@ -3926,6 +3928,130 @@ fn check_v13(
             0.0
         },
     );
+
+    // P-3.1's second question: is the off-surface area at the surface's *creases*?
+    //
+    // A cap triangle can represent a flat patch of surface exactly, and cannot represent a
+    // patch with a sharp edge running through it at all — the crease needs a mesh edge along
+    // it. So where S7 fails to carry a feature curve as a chain of mesh edges, the cut slices
+    // *across* the crease and the boundary must leave the surface no matter how good the
+    // subdivision is. That is a different defect from the fallback's, it lives upstream in S7
+    // rather than in the cut, and no local mesher fixes it.
+    //
+    // Measured as: off-surface area whose face centroid lies within one local edge length of
+    // a curve the mesh declares (the `VTK_POLY_LINE` cells), against the rest.
+    // Measured against the **input's** sharp edges, not the curves the mesh declares. The
+    // first version of this used `view.curves` and reported a8 at 26.8 % near-curve — but a8
+    // carries only 24 of its 1,404 locked segments as mesh edges, so that number was the
+    // share near the few curves the mesh *kept*, which is not the question. The creases are a
+    // property of the input and are derived from it here: an edge shared by two input
+    // triangles whose normals differ by more than the feature angle.
+    let curve_segments: Vec<(Vec3, Vec3)> = {
+        let quant = |p: Vec3| {
+            (
+                (p.x * 1.0e9).round() as i64,
+                (p.y * 1.0e9).round() as i64,
+                (p.z * 1.0e9).round() as i64,
+            )
+        };
+        let mut by_edge: HashMap<((i64, i64, i64), (i64, i64, i64)), Vec<(Vec3, Vec3, Vec3)>> =
+            HashMap::new();
+        for component in surfaces {
+            for t in &component.tris {
+                for k in 0..3 {
+                    let (a, b) = (t[k], t[(k + 1) % 3]);
+                    let (ka, kb) = (quant(a), quant(b));
+                    let key = if ka <= kb { (ka, kb) } else { (kb, ka) };
+                    by_edge.entry(key).or_default().push((a, b, tri_normal(*t).unwrap_or(
+                        Vec3::new(0.0, 0.0, 1.0),
+                    )));
+                }
+            }
+        }
+        // 45 degrees, the sizing default `feature_angle_deg`.
+        const SHARP_COS: f64 = std::f64::consts::FRAC_1_SQRT_2;
+        let mut out = Vec::new();
+        for uses in by_edge.values() {
+            let sharp = uses.len() < 2
+                || uses.iter().enumerate().any(|(i, (_, _, na))| {
+                    uses[i + 1..]
+                        .iter()
+                        .any(|(_, _, nb)| na.dot(*nb).abs() < SHARP_COS)
+                });
+            if sharp {
+                out.push((uses[0].0, uses[0].1));
+            }
+        }
+        out
+    };
+    if !curve_segments.is_empty() {
+        let near_curve = |p: Vec3, radius: f64| -> bool {
+            curve_segments.iter().any(|(a, b)| {
+                let ab = b.sub(*a);
+                let len2 = ab.dot(ab);
+                let t = if len2 > 0.0 {
+                    (p.sub(*a).dot(ab) / len2).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                let d = p.sub(a.add(ab.scale(t)));
+                d.dot(d) <= radius * radius
+            })
+        };
+        let (mut near, mut away) = (0.0f64, 0.0f64);
+        for f in &boundary {
+            if f.deviation_max <= tol * f.local_h.max(f64::MIN_POSITIVE) {
+                continue;
+            }
+            if near_curve(f.centroid, f.local_h) {
+                near += f.area;
+            } else {
+                away += f.area;
+            }
+        }
+        s.metric("off_surface_area_near_curve", near);
+        s.metric("off_surface_area_away_from_curve", away);
+        s.metric(
+            "off_surface_near_curve_share",
+            if near + away > 0.0 { near / (near + away) } else { 0.0 },
+        );
+    }
+
+    // P-3.1's third question, and the fork for what to do about it: was the off-surface face
+    // ever *cut*, or is it a raw lattice face? `provenance` (§2.1) is `Lattice` on a tet the
+    // cut never touched. A material boundary between two such tets means no cut was attempted
+    // there at all — the surface passed through a cell S6 classified by vertex parity and S8
+    // never opened, so the boundary is a staircase of untouched lattice faces. That is a
+    // sizing/classification failure (Phase P-4), and no subdivision scheme reaches it.
+    // A boundary between tets the cut *did* touch is the opposite: the cut ran and put the
+    // face in the wrong place, which is P-3's to fix.
+    if let Some(provenance) = cell_i64(view.doc, "provenance") {
+        let (mut untouched, mut touched) = (0.0f64, 0.0f64);
+        for (f, cells) in boundary.iter().zip(boundary_owners.iter()) {
+            if f.deviation_max <= tol * f.local_h.max(f64::MIN_POSITIVE) {
+                continue;
+            }
+            // 0 is `Provenance::Lattice` — the cut never wrote this tet.
+            if cells
+                .iter()
+                .all(|c| provenance.get(*c).copied().unwrap_or(0) == 0)
+            {
+                untouched += f.area;
+            } else {
+                touched += f.area;
+            }
+        }
+        s.metric("off_surface_area_never_cut", untouched);
+        s.metric("off_surface_area_cut_wrong", touched);
+        s.metric(
+            "off_surface_never_cut_share",
+            if untouched + touched > 0.0 {
+                untouched / (untouched + touched)
+            } else {
+                0.0
+            },
+        );
+    }
 
     // P-3.1's census: the off-surface boundary area, charged to the escalation reason that
     // produced it. A face is charged to the lowest-numbered reason among its two owners, so
