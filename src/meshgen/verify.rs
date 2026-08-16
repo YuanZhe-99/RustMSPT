@@ -2740,6 +2740,90 @@ impl TriIndex {
     // Notes: Rings outward one grid shell at a time and stops only once the best distance found is
     //   inside the shell already searched, so the answer is exact and not "whatever the first
     //   non-empty bucket held".
+    // AI-FUNC-SUMMARY:
+    // Purpose: The distance from `p` to the first triangle a ray hits, within `limit`.
+    // Inputs: the ray's origin and unit direction, and how far to look.
+    // Returns: the hit distance, or None when the ray leaves the limit unobstructed.
+    // Side effects: None.
+    // Notes: Phase P-4 needs the **local feature size** at a face, not the distance to the nearest
+    //   surface: the claim under test is that the never-cut damage sits where a body is thinner
+    //   than one element, and "thinner than" is a two-sided measurement. Casting both ways from a
+    //   face centroid and adding the hits gives the body's thickness (or the gap's width) through
+    //   that point, which is the quantity `h` has to resolve. Bucket-walked over the segment's own
+    //   AABB rather than marched cell by cell: `limit` is a small multiple of `h`, so the box spans
+    //   a handful of buckets and the simpler code is not the slower one. An epsilon floor on `t`
+    //   keeps the origin's own surface - the face is *on* the boundary - from being reported as a
+    //   zero-thickness hit.
+    fn first_hit(&self, origin: Vec3, dir: Vec3, limit: f64) -> Option<f64> {
+        if self.tris.is_empty() || limit <= 0.0 {
+            return None;
+        }
+        let far = origin.add(dir.scale(limit));
+        let lo = Vec3::new(
+            origin.x.min(far.x),
+            origin.y.min(far.y),
+            origin.z.min(far.z),
+        );
+        let hi = Vec3::new(
+            origin.x.max(far.x),
+            origin.y.max(far.y),
+            origin.z.max(far.z),
+        );
+        let ax = |v: f64, o: f64, d: i64| (((v - o) / self.cell).floor() as i64).clamp(0, d - 1);
+        let (klo, khi) = (
+            [
+                ax(lo.x, self.origin.x, self.dims[0]),
+                ax(lo.y, self.origin.y, self.dims[1]),
+                ax(lo.z, self.origin.z, self.dims[2]),
+            ],
+            [
+                ax(hi.x, self.origin.x, self.dims[0]),
+                ax(hi.y, self.origin.y, self.dims[1]),
+                ax(hi.z, self.origin.z, self.dims[2]),
+            ],
+        );
+        let eps = limit * 1.0e-6;
+        let mut best = f64::INFINITY;
+        for z in klo[2]..=khi[2] {
+            for y in klo[1]..=khi[1] {
+                for x in klo[0]..=khi[0] {
+                    let flat = ((z * self.dims[1] + y) * self.dims[0] + x) as usize;
+                    let Some(bucket) = self.buckets.get(flat) else {
+                        continue;
+                    };
+                    for index in bucket {
+                        let t = self.tris[*index as usize];
+                        // Moller-Trumbore, one-sided test disabled: the ray may hit a triangle
+                        // from either face, and which side the input's winding presents is not
+                        // something a feature-size measurement may depend on.
+                        let (e1, e2) = (t[1].sub(t[0]), t[2].sub(t[0]));
+                        let pv = dir.cross(e2);
+                        let det = e1.dot(pv);
+                        if det.abs() <= f64::MIN_POSITIVE {
+                            continue;
+                        }
+                        let inv = 1.0 / det;
+                        let tv = origin.sub(t[0]);
+                        let u = tv.dot(pv) * inv;
+                        if !(-1.0e-9..=1.0 + 1.0e-9).contains(&u) {
+                            continue;
+                        }
+                        let qv = tv.cross(e1);
+                        let v = dir.dot(qv) * inv;
+                        if v < -1.0e-9 || u + v > 1.0 + 1.0e-9 {
+                            continue;
+                        }
+                        let hit = e2.dot(qv) * inv;
+                        if hit > eps && hit < best && hit <= limit {
+                            best = hit;
+                        }
+                    }
+                }
+            }
+        }
+        best.is_finite().then_some(best)
+    }
+
     fn nearest(&self, p: Vec3) -> Option<(f64, usize)> {
         if self.tris.is_empty() {
             return None;
@@ -3574,6 +3658,9 @@ struct BoundaryFace {
     component: usize,
     area: f64,
     local_h: f64,
+    /// Unit normal, for P-4's two-sided feature-size cast. Its sign is the face's own winding
+    /// and is not meaningful here — the measurement casts both ways and adds the hits.
+    normal: Vec3,
     /// Mean |distance| over the three corners — roughness *and* displacement together.
     deviation: f64,
     /// Largest |distance| over the corners; "on the surface" is read from this.
@@ -3807,6 +3894,7 @@ fn check_v13(
             .map(|e| e.dot(*e).sqrt())
             .sum::<f64>()
             / 3.0;
+        let unit_normal = normal.scale(1.0 / (2.0 * area));
         let centroid = p[0].add(p[1]).add(p[2]).scale(1.0 / 3.0);
         // Two sample groups, kept apart on purpose — see `BoundaryFace`. The corners say
         // whether the face is anchored to the surface (P3); the interior says how far a
@@ -3867,6 +3955,7 @@ fn check_v13(
             component: index,
             area,
             local_h,
+            normal: unit_normal,
             deviation: sum / corners.len() as f64,
             deviation_max: max,
             offset: signed / corners.len() as f64,
@@ -4043,6 +4132,100 @@ fn check_v13(
         }
         s.metric("off_surface_area_never_cut", untouched);
         s.metric("off_surface_area_cut_wrong", touched);
+        // **Phase P-4's first measurement, and it is a falsifiable one.** The never-cut area is
+        // charged to sizing on the argument that these are bodies no lattice vertex lands inside -
+        // so no cut is offered and the material boundary is a raw lattice face. That argument
+        // predicts something checkable: the geometry there should be **thinner than one element**.
+        // Local feature size is measured two-sidedly, by casting from the face centroid along
+        // +/- its own normal and adding the first hits, which is the body's thickness (or the
+        // gap's width) through that point - the quantity `h` has to resolve. Binned against the
+        // face's own edge length:
+        //
+        //   t/h < 1   the feature cannot be resolved at this h at all - the claim holds
+        //   1 <= t/h < 2   marginal; one refinement level would settle it
+        //   t/h >= 2   resolved, and still wrong - which the claim does NOT explain
+        //
+        // The third bin is why this is worth measuring rather than asserting. If it is large, the
+        // never-cut damage is not a sizing failure and P-4 is aimed at the wrong thing.
+        let all_tris: Vec<[Vec3; 3]> = surfaces.iter().flat_map(|c| c.tris.iter().copied()).collect();
+        if !all_tris.is_empty() {
+            let index = TriIndex::build(all_tris);
+            let (mut thin, mut marginal, mut resolved, mut open) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+            let mut ratio_area = 0.0f64;
+            let mut ratio_sum = 0.0f64;
+            for (f, cells) in boundary.iter().zip(boundary_owners.iter()) {
+                if f.deviation_max <= tol * f.local_h.max(f64::MIN_POSITIVE) {
+                    continue;
+                }
+                if !cells
+                    .iter()
+                    .all(|c| provenance.get(*c).copied().unwrap_or(0) == 0)
+                {
+                    continue;
+                }
+                let h = f.local_h.max(f64::MIN_POSITIVE);
+                // Eight elements is far enough to settle "thin or not" and keeps the bucket walk
+                // to a handful of cells; anything past it is not a resolution question.
+                let limit = 8.0 * h;
+                let normal = f.normal;
+                let (a, b) = (
+                    index.first_hit(f.centroid, normal, limit),
+                    index.first_hit(f.centroid, normal.scale(-1.0), limit),
+                );
+                match (a, b) {
+                    (Some(a), Some(b)) => {
+                        let ratio = (a + b) / h;
+                        ratio_area += f.area;
+                        ratio_sum += ratio * f.area;
+                        if ratio < 1.0 {
+                            thin += f.area;
+                        } else if ratio < 2.0 {
+                            marginal += f.area;
+                        } else {
+                            resolved += f.area;
+                        }
+                    }
+                    // Nothing within eight elements on one side: not a thin feature at all.
+                    _ => open += f.area,
+                }
+            }
+            // **Where the rest of it is.** With the never-cut bin measured at 0.3 % of the total,
+            // the no-escalation damage is almost entirely faces the cut DID produce. `regime`
+            // says which machinery produced them: 0 normal, 2 the collapsed/band path. Splitting
+            // the off-surface area by it is what separates "S8 cut it wrong" from "S3/S4 handed
+            // S8 a thin region it then represented as designed".
+            if let Some(regime) = cell_i64(view.doc, "regime") {
+                let (mut normal, mut banded, mut mixed) = (0.0f64, 0.0f64, 0.0f64);
+                for (f, cells) in boundary.iter().zip(boundary_owners.iter()) {
+                    if f.deviation_max <= tol * f.local_h.max(f64::MIN_POSITIVE) {
+                        continue;
+                    }
+                    let any_band = cells
+                        .iter()
+                        .any(|c| regime.get(*c).copied().unwrap_or(0) != 0);
+                    let all_band = cells
+                        .iter()
+                        .all(|c| regime.get(*c).copied().unwrap_or(0) != 0);
+                    if all_band {
+                        banded += f.area;
+                    } else if any_band {
+                        mixed += f.area;
+                    } else {
+                        normal += f.area;
+                    }
+                }
+                s.metric("off_surface_area_regime_normal", normal);
+                s.metric("off_surface_area_regime_band", banded);
+                s.metric("off_surface_area_regime_mixed", mixed);
+            }
+            s.metric("never_cut_area_thinner_than_h", thin);
+            s.metric("never_cut_area_within_2h", marginal);
+            s.metric("never_cut_area_resolved", resolved);
+            s.metric("never_cut_area_unbounded", open);
+            if ratio_area > 0.0 {
+                s.metric("never_cut_feature_size_over_h_mean", ratio_sum / ratio_area);
+            }
+        }
         s.metric(
             "off_surface_never_cut_share",
             if untouched + touched > 0.0 {
