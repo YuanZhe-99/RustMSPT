@@ -2743,6 +2743,16 @@ fn cut_one_cell(
             }
             return uncut(any_cut_edge.then_some(Escalation::Inconsistent));
         }
+        // **P-4.4, measured and settled.** One ambiguous component and no crossed edge means
+        // the body passes through the cell's *interior* without touching an edge — a strut thinner
+        // than the cell. §6's table has nothing to cut and claims the whole cell, which is what
+        // makes A-8's mesh fatter than its input. The opposite extreme was tried behind a
+        // bisection handle — claim nothing — and it is worth **0.014 points** on A-8 (82.411 ->
+        // 82.425) and exactly nothing on A-3: the material boundary is a raw lattice face either
+        // way, it merely moves to the cell's other faces. So the label is not the damage and no
+        // choice here can be. Only a cut that puts the boundary ON the surface helps, and for a
+        // body that touches no edge that means SPEC §7.2's fragment-driven mesher. The handle was
+        // removed once it had answered.
         (1, 0) => {}
         // Both sides of a welded sheet: two ambiguous solids, one surface. Settled
         // below, by the same table, with the second component taking the complement.
