@@ -2693,6 +2693,29 @@ fn cut_one_cell(
     }
 
 
+    // P-4.4: trace one cell end to end. `RUSTMSPT_TRACE_CELL=<lattice index>` prints what the
+    // classification handed the cut and what the cut is about to decide, which is the only way to
+    // tell a §6 table row from a welded-sheet path from a recovery when all of them can produce
+    // "one tet, inside".
+    if std::env::var("RUSTMSPT_TRACE_CELL").ok().and_then(|v| v.parse::<usize>().ok())
+        == Some(index)
+    {
+        println!(
+            "[TRACE {index}] nodes {:?} record {:?} crossing_components {:?} any_cut_edge {}",
+            tet,
+            classification.records[index].entries,
+            crossing_components,
+            any_cut_edge
+        );
+        for node in &tet {
+            let on: SmallVec<[i32; 2]> = all_components
+                .iter()
+                .filter(|x| on_cut.contains_key(&(*node, **x)))
+                .copied()
+                .collect();
+            println!("[TRACE {index}]   node {node} at {:?} on_cut {on:?}", nodes[*node as usize]);
+        }
+    }
     let record = &classification.records[index];
     let ambiguous: SmallVec<[i32; 2]> = record
         .entries

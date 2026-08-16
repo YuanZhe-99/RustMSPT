@@ -3451,6 +3451,57 @@ fn check_v5(
             }
         }
     }
+    // **The mechanism, tested directly (P-4.4).** A-8's parent cell 98213 is a single unsplit
+    // tet, all four nodes lattice, labelled component 1 — while two of those nodes sit 0.219 h and
+    // 0.583 h OUTSIDE the surface and the other two were snapped onto it by S7. A cell whose nodes
+    // are all outside-or-on has no edge crossing (an edge from an on-surface node to an outside
+    // node does not cross), so no cut is offered and the cell is classified wholesale. Classified
+    // as *inside*, it hands the body a cell's worth of material the input does not have, and the
+    // material boundary lands on its outer faces, up to 0.58 h off the geometry.
+    //
+    // The test is "no node is strictly inside": a body genuinely occupying a cell puts at least
+    // one node in it. Counting cells that carry a component on no such evidence sizes the defect
+    // without assuming the mechanism — a cell with a node strictly inside is legitimately claimed
+    // however its boundary is drawn.
+    let mut claimed_without_evidence = 0usize;
+    let mut claimed_without_evidence_volume = 0.0f64;
+    for (index, component) in surfaces.iter().enumerate() {
+        if !component.closed {
+            continue;
+        }
+        let x = index as i32 + 1;
+        for &c in &view.tets {
+            let n = view.doc.cell(c);
+            if n.len() != 4 {
+                continue;
+            }
+            let key = region_key.get(c).copied().unwrap_or(-1);
+            let named = if key < 0 || set_offsets.is_empty() {
+                false
+            } else {
+                let k = key as usize;
+                let start = if k == 0 { 0 } else { set_offsets[k - 1] as usize };
+                let end = set_offsets[k].min(set_components.len() as i64) as usize;
+                set_components[start.min(set_components.len())..end].contains(&(x as i64))
+            };
+            if !named {
+                continue;
+            }
+            let p: Vec<Vec3> = n.iter().map(|i| view.doc.points[*i as usize]).collect();
+            if p.iter().any(|q| per_component[index].contains(*q)) {
+                continue;
+            }
+            claimed_without_evidence += 1;
+            claimed_without_evidence_volume += p[1]
+                .sub(p[0])
+                .cross(p[2].sub(p[0]))
+                .dot(p[3].sub(p[0]))
+                .abs()
+                / 6.0;
+        }
+    }
+    s.metric("claimed_with_no_node_inside", claimed_without_evidence as f64);
+    s.metric("claimed_with_no_node_inside_volume", claimed_without_evidence_volume);
     s.metric("overattributed_cells_whole_group_outside", overattributed_lonely as f64);
     s.metric("overattributed_volume_whole_group_outside", overattributed_lonely_volume);
     s.metric("overattributed_cells", overattributed as f64);
