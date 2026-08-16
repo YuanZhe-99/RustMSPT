@@ -3,6 +3,7 @@ use crate::config::meshgen::{FemProfile as ConfigFemProfile, InputKind, MeshGenC
 use crate::error::{Result, RustMsptError};
 use crate::io::stl::load_stl;
 use crate::io::vtu::VtuEncoding;
+use smallvec::SmallVec;
 use crate::meshgen::features::{detect_features, features_to_doc_with_components};
 use crate::meshgen::gapfield::{
     compute_gap_field, gapfield_to_doc, thin_context, GapFieldOptions, Regime, SkipReason,
@@ -12,7 +13,7 @@ use crate::meshgen::sizing::{
     gap_sources, sizing_to_doc, CouplingOptions, LockReason, SizingConstraint, SizingCriterion,
     SizingLookup, SizingOptions, SizingSource,
 };
-use crate::meshgen::classify::{
+use crate::meshgen::classify::{Side, 
     classified_to_doc, classify_lattice_with, ClassifyOptions, PointClassifier,
 };
 use crate::meshgen::snap::{snap_lattice, snapped_to_doc, SnapOptions};
@@ -876,6 +877,158 @@ impl Pipeline for MeshGenPipeline {
                 },
             );
             clock = stage_time("S7", clock);
+
+            // **P-4.7 probe (`RUSTMSPT_SUBCELL_PROBE=1`), print-only.** A body can pass through a
+            // cell's interior touching no edge (PLAN §6.14). Refinement and labelling are both
+            // closed for it (§6.15, §6.16), leaving only a cut driven by the surface fragment —
+            // and the SHAPE of that fragment decides what the cut has to be able to do. Because
+            // the body touches no tet edge, its trace on a face cannot reach the face's boundary,
+            // so it is a closed loop strictly inside the face. Counting how many of a cell's four
+            // faces carry a trace separates the cases: 2 is a body passing through, 0 is a body
+            // ending inside the cell (a tip or a blob), and anything else is a shape the simple
+            // through-cut cannot assume.
+            if std::env::var_os("RUSTMSPT_SUBCELL_PROBE").is_some() {
+                let crossed: std::collections::HashSet<[u32; 2]> = snapped
+                    .crossings
+                    .iter()
+                    .map(|c| {
+                        let (a, b) = (c.edge[0], c.edge[1]);
+                        if a <= b { [a, b] } else { [b, a] }
+                    })
+                    .collect();
+                // Segment where surface triangle `s` crosses the plane of `f`, clipped to `f`.
+                let trace = |f: [Vec3; 3], s: [Vec3; 3]| -> bool {
+                    let n = f[1].sub(f[0]).cross(f[2].sub(f[0]));
+                    let scale = n.dot(n).sqrt();
+                    if scale <= 0.0 {
+                        return false;
+                    }
+                    let d: [f64; 3] = [
+                        n.dot(s[0].sub(f[0])) / scale,
+                        n.dot(s[1].sub(f[0])) / scale,
+                        n.dot(s[2].sub(f[0])) / scale,
+                    ];
+                    let tol = 1.0e-12;
+                    if d.iter().all(|x| *x > tol) || d.iter().all(|x| *x < -tol) {
+                        return false;
+                    }
+                    // The two points where `s`'s edges meet the plane.
+                    let mut hits: SmallVec<[Vec3; 3]> = SmallVec::new();
+                    for k in 0..3 {
+                        let (a, b) = (k, (k + 1) % 3);
+                        if (d[a] > tol && d[b] < -tol) || (d[a] < -tol && d[b] > tol) {
+                            let t = d[a] / (d[a] - d[b]);
+                            hits.push(s[a].add(s[b].sub(s[a]).scale(t)));
+                        } else if d[a].abs() <= tol {
+                            hits.push(s[a]);
+                        }
+                    }
+                    if hits.len() < 2 {
+                        return false;
+                    }
+                    // Does any part of that segment lie inside `f`? Sampled — this is a census of
+                    // which faces are touched, not the cut itself.
+                    let inside = |q: Vec3| -> bool {
+                        let area = |u: Vec3, v: Vec3, w: Vec3| {
+                            v.sub(u).cross(w.sub(u)).dot(n) / (scale * scale)
+                        };
+                        area(f[0], f[1], q) >= -1.0e-9
+                            && area(f[1], f[2], q) >= -1.0e-9
+                            && area(f[2], f[0], q) >= -1.0e-9
+                    };
+                    (0..=8).any(|i| {
+                        let t = i as f64 / 8.0;
+                        inside(hits[0].add(hits[1].sub(hits[0]).scale(t)))
+                    })
+                };
+                let mut hist = [0usize; 5];
+                let mut cells = 0usize;
+                // The area these cells can possibly contribute to the material boundary: their own
+                // outer faces. An upper bound, and the point of it is to compare against `[V13]`'s
+                // measured off-surface area before any of this is built.
+                let mut face_area = 0.0f64;
+                let mut face_area_two = 0.0f64;
+                for (index, tet) in lattice.tets.iter().enumerate() {
+                    let ambiguous: Vec<i32> = classification.records[index]
+                        .entries
+                        .iter()
+                        .filter(|(_, side)| *side == Side::Ambiguous)
+                        .map(|(x, _)| *x)
+                        .collect();
+                    if ambiguous.is_empty() {
+                        continue;
+                    }
+                    if (0..4).any(|a| {
+                        ((a + 1)..4).any(|b| {
+                            let (x, y) = (tet[a], tet[b]);
+                            crossed.contains(&if x <= y { [x, y] } else { [y, x] })
+                        })
+                    }) {
+                        continue;
+                    }
+                    let centroid = tet
+                        .iter()
+                        .fold(Vec3::new(0.0, 0.0, 0.0), |acc, node| {
+                            acc.add(snapped.nodes[*node as usize])
+                        })
+                        .scale(0.25);
+                    let mut uncertain = 0usize;
+                    if !ambiguous.iter().any(|x| {
+                        point_classifier
+                            .slot_of(*x)
+                            .is_some_and(|slot| point_classifier.inside(centroid, slot, &mut uncertain))
+                    }) {
+                        continue;
+                    }
+                    cells += 1;
+                    let mut touched = 0usize;
+                    for slots in [[0usize, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]] {
+                        let f = [
+                            snapped.nodes[tet[slots[0]] as usize],
+                            snapped.nodes[tet[slots[1]] as usize],
+                            snapped.nodes[tet[slots[2]] as usize],
+                        ];
+                        let any = clipped.faces.iter().any(|face| {
+                            ambiguous.contains(&face.component)
+                                && trace(
+                                    f,
+                                    [
+                                        clipped.vertices[face.nodes[0]],
+                                        clipped.vertices[face.nodes[1]],
+                                        clipped.vertices[face.nodes[2]],
+                                    ],
+                                )
+                        });
+                        touched += usize::from(any);
+                    }
+                    hist[touched] += 1;
+                    let area: f64 = [[0usize, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]]
+                        .iter()
+                        .map(|slots| {
+                            let (a, b, c) = (
+                                snapped.nodes[tet[slots[0]] as usize],
+                                snapped.nodes[tet[slots[1]] as usize],
+                                snapped.nodes[tet[slots[2]] as usize],
+                            );
+                            let n = b.sub(a).cross(c.sub(a));
+                            0.5 * n.dot(n).sqrt()
+                        })
+                        .sum();
+                    face_area += area;
+                    if touched == 2 {
+                        face_area_two += area;
+                    }
+                }
+                println!(
+                    "[SUBCELL-PROBE] {cells} cell(s) with a body through the interior and no edge crossing; \
+                     faces carrying a trace: 0 -> {}, 1 -> {}, 2 -> {}, 3 -> {}, 4 -> {}",
+                    hist[0], hist[1], hist[2], hist[3], hist[4]
+                );
+                println!(
+                    "[SUBCELL-PROBE] their outer faces total {face_area:.5} of area ({face_area_two:.5} on the two-face cells) - \
+                     compare against `[V13]`'s measured off-surface area for the case"
+                );
+            }
 
             // A request binds only if it asks for something strictly finer than the
             // field already gives there; otherwise the floor is reached and retrying
