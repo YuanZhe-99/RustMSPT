@@ -333,44 +333,6 @@ All pipelines implement `src/pipeline/mod.rs::Pipeline` with a single `fn run(&s
 ### Parallelism
 See [Algorithm Overview](#3-algorithm-overview) above — particularly [Simulated Annealing and the Island Model](#simulated-annealing-and-the-island-model) and [Spatial Grid Collision Detection](#spatial-grid-collision-detection) — and `docs/en-us/algorithms/simulated-annealing-island-model.md` / `docs/en-us/algorithms/spatial-grid-collision.md` for the full picture. Load-bearing facts not covered there:
 
-- **Rayon** is the primary parallelism framework project-wide; thread pools are created per-pipeline via `ThreadPoolBuilder`.
-- **Voxelization**: `build_bbox_occupancy` parallelizes over x-slabs with `par_chunks_mut`, using ray-casting `point_inside_mesh` for correct 3D solid containment (parry3d `TriMesh::contains_local_point()` is unreliable without pseudo normals).
-- **Island model**: when `optimization.islands > 1`, independent SA instances run in parallel via `std::thread::scope`, each with its own dedicated `ThreadPool` (`ThreadPool` is not `Clone` — see [Common Pitfalls](#10-common-pitfalls)).
-
-### Packing Targets
-See [Packing Target Diameter Distribution](#packing-target-diameter-distribution) above and `docs/en-us/algorithms/packing-target-diameter-distribution.md` for the full picture. Load-bearing facts not covered there:
-
-- `packing.target_diameter_distribution_csv` and `packing.target_mean_sphericity` are both optional, best-effort/soft controls — target volume fraction always has priority, and neither ever blocks placement outright.
-- Target-aware packing writes `<output_stem>_diameter_distribution.csv` beside the output STL, with per-bin target/actual frequencies, counts, errors, and attempt totals.
-- Diameter and sphericity metrics always use the full closed mesh, while volume-fraction accounting (boundary modes 2/3) always uses the in-box clipped volume — these are computed independently and can diverge for particles that straddle the box boundary.
-
-### GPU Acceleration Roadmap
-See [Algorithm Overview](#3-algorithm-overview) above (each algorithm doc has its own GPU section) and `docs/en-us/reference/gpu.md` for the full picture; `PLAN.md` tracks implementation progress. Load-bearing facts not covered there:
-
-- CUDA must not be used as the primary acceleration path — portability (a feature-gated `wgpu`/WGSL backend behind a compute abstraction, with CPU fallback and CPU reference tests) is a project requirement.
-- The `AccelerationMode` enum (`auto`/`cpu`/`gpu`) and `select_backend()` in `src/compute/policy.rs` handle runtime dispatch; the `measure` and `optimize` pipelines report the effective backend used and any fallback reason.
-- The config field `acceleration.mode` (default `auto`) is supported in `MeasurementParams` and `OptimizationParams`.
-
-### Key Dependencies
-| Crate | Purpose |
-|-------|---------|
-| `parry3d-f64` | Collision detection, BVH-accelerated point queries, distance computation |
-| `nalgebra` | Linear algebra (Matrix3, Vector3, PCA via SymmetricEigen) |
-| `rustfft` | FFT for exact S2 computation |
-| `rayon` | Data parallelism |
-| `rand` | Random number generation for SA and Monte Carlo |
-| `tiff` | TIFF image I/O |
-| `image` | PNG encoding/decoding for rendered RGBA images |
-| `clap` | CLI argument parsing |
-| `csv` | Target pore-diameter distribution parsing |
-| `serde` + `serde_yaml` | YAML config deserialization |
-| `indicatif` | Progress bars |
-| `wgpu` | GPU compute abstraction (optional, feature `gpu`) |
-| `pollster` | Async-to-sync bridge for wgpu init (optional, feature `gpu`) |
-| `bytemuck` | Zero-cost POD casting for GPU buffer uploads (optional, feature `gpu`) |
-| `robust` | Adaptive exact `orient2d`/`orient3d` predicates behind the project sign wrapper |
-| `spade` 2.15.1 | Restricted local planar CDT for G2-1 (`try_add_constraint` only) |
-| `smallvec` | Inline component-incidence storage for arrangement curves |
 
 ## 8. Code Conventions
 
@@ -651,3 +613,66 @@ When inspecting code:
 - **Attribute to the offending corner, not to the face — it changed the answer by 60 points.** The first version of that census credited a face to "S7 bound" if **any** of its lattice corners was bound, and read a8 at **60.6 %** S7-bound. Corner-accurate — the corner actually carrying `deviation_max` — a8 is **0.0 %**. A face routinely has one corner exactly on the surface and another half an element off it, and only the second is the defect. The loose version would have aimed the whole phase at S7 on the strength of the case that carries the most damage of the nine. **When a metric aggregates over an entity with several parts, check whether the part that fails is the part you are naming.**
 - **Do not generalise from a `[V13]` worst-face listing.** a8's listed worst faces all have a corner **6.250e-3** out — exactly one lattice pitch — which reads as "the surface is a whole cell away from the boundary". Binned properly, the `≥ 1 h` population is **0.3 %**; the mass is at 0.25–0.5 h (31.1 %) and under 0.25 h (43.6 %). The listing is capped and sorted by severity, so it is a sample of the tail by construction and says nothing about the distribution.
 - **Snapping a NODE to a SURFACE is not closed by the finding that closed snapping an EDGE to a CURVE.** §6.4 closed S7 curve conformity with geometry: laying a lattice edge along an arbitrary line needs motion in two directions, up to 0.707·l_min, above any validity-preserving cap. A node onto a nearby surface is a **one-directional** constraint and a different problem, and P-4.1 measures the distances at 0.25–0.5 h. Do not carry the curve refutation across to the surface case — check the two-line difference before citing it.
+
+## Reporting to the owner (standing rule, set 2026-08-16)
+
+Every substantial reply ends with a status block covering four things, in this order. It is not
+optional and not conditional on the work having gone well.
+
+1. **What finished** — the step just completed, with the numbers that say so.
+2. **What is next** — the specific next step, not a direction. "Diagnose a8's 0.263 of off-surface
+   area" is a next step; "keep improving P3" is not.
+3. **Why I stopped here** — context exhaustion, a measurement that has to run, a decision that is
+   the owner's, work genuinely finished, or a blocker. Say which. Never let stopping look like
+   completion, and never let completion look like stopping.
+4. **What I need from you, if anything** — a decision between named options with their trade-offs,
+   or explicitly *nothing, proceeding*.
+
+The reason this is a rule: several times the owner has had to ask "what's next?" after a reply that
+reported results and then trailed off. A result without a next step reads as finished when it is
+not, and the owner cannot tell the difference between "I ran out of room", "I need you to choose",
+and "this phase is done" unless it is stated.
+
+
+- **Rayon** is the primary parallelism framework project-wide; thread pools are created per-pipeline via `ThreadPoolBuilder`.
+- **Voxelization**: `build_bbox_occupancy` parallelizes over x-slabs with `par_chunks_mut`, using ray-casting `point_inside_mesh` for correct 3D solid containment (parry3d `TriMesh::contains_local_point()` is unreliable without pseudo normals).
+- **Island model**: when `optimization.islands > 1`, independent SA instances run in parallel via `std::thread::scope`, each with its own dedicated `ThreadPool` (`ThreadPool` is not `Clone` — see [Common Pitfalls](#10-common-pitfalls)).
+
+### Packing Targets
+See [Packing Target Diameter Distribution](#packing-target-diameter-distribution) above and `docs/en-us/algorithms/packing-target-diameter-distribution.md` for the full picture. Load-bearing facts not covered there:
+
+- `packing.target_diameter_distribution_csv` and `packing.target_mean_sphericity` are both optional, best-effort/soft controls — target volume fraction always has priority, and neither ever blocks placement outright.
+- Target-aware packing writes `<output_stem>_diameter_distribution.csv` beside the output STL, with per-bin target/actual frequencies, counts, errors, and attempt totals.
+- Diameter and sphericity metrics always use the full closed mesh, while volume-fraction accounting (boundary modes 2/3) always uses the in-box clipped volume — these are computed independently and can diverge for particles that straddle the box boundary.
+
+### GPU Acceleration Roadmap
+See [Algorithm Overview](#3-algorithm-overview) above (each algorithm doc has its own GPU section) and `docs/en-us/reference/gpu.md` for the full picture; `PLAN.md` tracks implementation progress. Load-bearing facts not covered there:
+
+- CUDA must not be used as the primary acceleration path — portability (a feature-gated `wgpu`/WGSL backend behind a compute abstraction, with CPU fallback and CPU reference tests) is a project requirement.
+- The `AccelerationMode` enum (`auto`/`cpu`/`gpu`) and `select_backend()` in `src/compute/policy.rs` handle runtime dispatch; the `measure` and `optimize` pipelines report the effective backend used and any fallback reason.
+- The config field `acceleration.mode` (default `auto`) is supported in `MeasurementParams` and `OptimizationParams`.
+
+### Key Dependencies
+| Crate | Purpose |
+|-------|---------|
+| `parry3d-f64` | Collision detection, BVH-accelerated point queries, distance computation |
+| `nalgebra` | Linear algebra (Matrix3, Vector3, PCA via SymmetricEigen) |
+| `rustfft` | FFT for exact S2 computation |
+| `rayon` | Data parallelism |
+| `rand` | Random number generation for SA and Monte Carlo |
+| `tiff` | TIFF image I/O |
+| `image` | PNG encoding/decoding for rendered RGBA images |
+| `clap` | CLI argument parsing |
+| `csv` | Target pore-diameter distribution parsing |
+| `serde` + `serde_yaml` | YAML config deserialization |
+| `indicatif` | Progress bars |
+| `wgpu` | GPU compute abstraction (optional, feature `gpu`) |
+| `pollster` | Async-to-sync bridge for wgpu init (optional, feature `gpu`) |
+| `bytemuck` | Zero-cost POD casting for GPU buffer uploads (optional, feature `gpu`) |
+| `robust` | Adaptive exact `orient2d`/`orient3d` predicates behind the project sign wrapper |
+| `spade` 2.15.1 | Restricted local planar CDT for G2-1 (`try_add_constraint` only) |
+| `smallvec` | Inline component-incidence storage for arrangement curves |
+
+- **P-4.2 landed, and it answers "snap or refine" with a threshold.** Snapping is refuted by *distance*: the free-lattice corners carrying 58.8 % of the damage sit at a mean **0.43 h** from the surface while `SNAP_MOTION_CAP` is **0.30** of the shortest incident edge, so it reaches at most ~21–29 % of the population without raising a cap that keeps elements valid. (This is a **different** refutation from §6.4's curve one — a node onto a surface is one-directional, so do not cite the curve argument here.) Refinement works, and the requirement turned out to be a **step**: `gap_cells` 2 and 3 give meshes identical to the digit (a7a 88.717 %, a7b 91.377 %) and 4 jumps them to 99.829 % and 99.892 %. Below four, no lattice vertex lands inside the gap, so S8 is never offered a cut at all. That made `gap_cells < 4` a setting choosing between a correct and an incorrect mesh — R3 — so the default and the `validate()` floor both moved to 4. Suite off-surface area **0.8885 → 0.4872 (−45 %)**, with the element cost landing exactly where the gain is and two cases coming out *cheaper*.
+- **Sweep the criterion, not just the resolution.** Halving `h` told us a7a's gap damage was under-resolution (99.83 % for 2.34× elements) but not *what* was under-resolved. Sweeping `gap_cells` at the frozen `h` found a discrete threshold, which is a far more useful object: it names the requirement ("four cells across a gap"), it is defensible as a floor rather than a tuning, and it leaves `h` alone everywhere the gap criterion does not fire. A global knob that fixes something tells you less than the local criterion that was wrong.
+- **When a production default changes, check whether the unit fixtures were sized against it.** Raising `gap_cells` to 4 broke three sizing tests — not because the mechanism changed but because `lfs_floor = gap_cells * h_min` rose above the 0.02–0.03 gaps those fixtures use, so the constraint correctly emitted nothing and they were testing a different scenario. Pin the value in the fixture with a note saying why, rather than adjusting the assertions to match the new default: the tests exist to check `h = t / gap_cells` and the Lipschitz field between samples, at a scale where those are actually exercised.
