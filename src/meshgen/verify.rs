@@ -4290,10 +4290,11 @@ fn check_v13(
                     if f.deviation_max <= tol * h {
                         continue;
                     }
-                    if f.nodes
-                        .iter()
-                        .all(|n| origin.get(*n).copied().unwrap_or(0) != 0)
-                    {
+                    // The population a snap would have to reach: the offending corner is a
+                    // lattice node S7 left free. Binning the wider "any lattice corner" set
+                    // describes a different population and would misprice the lever.
+                    let node = f.nodes[f.worst_corner];
+                    if origin.get(node).copied().unwrap_or(0) != 0 {
                         continue;
                     }
                     let ratio = f.deviation_max / h;

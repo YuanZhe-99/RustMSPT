@@ -174,11 +174,19 @@ fn gap_field(meshes: &[Mesh], kinds: &[u8]) -> (ArrangedSurface, GapField) {
 }
 
 // AI-FUNC-SUMMARY: The default G4-1 options over the unit domain; returns SizingOptions; side effects: none.
+// Notes: `gap_cells` is pinned rather than inherited. These fixtures size their gaps against it —
+//   0.02 and 0.03 against an `h_min` of 0.01 — so the production value (4, a representability
+//   threshold measured in P-4.2) puts `lfs_floor = gap_cells * h_min` above the gaps themselves and
+//   the constraint correctly emits nothing, which is a different scenario from the one each test
+//   was written to check. Stating the value here keeps them testing the *mechanism* (`h = t /
+//   gap_cells`, and the Lipschitz field between samples) at a scale where it is exercised, and
+//   stops the production default from silently redefining what they assert.
 fn options() -> SizingOptions {
     SizingOptions {
         domain_min: Vec3::new(0.0, 0.0, 0.0),
         domain_max: Vec3::new(1.0, 1.0, 1.0),
         eps: EPS,
+        gap_cells: 2.0,
         ..Default::default()
     }
 }

@@ -402,7 +402,7 @@ impl Default for SizingOptions {
             chord_error_frac: 0.2,
             feature_angle_deg: 45.0,
             grading: 2.0,
-            gap_cells: 2.0,
+            gap_cells: 4.0,
             curve_cells: 2.0,
             eps: 1.0e-4,
             lfs_points_per_face: 4096,

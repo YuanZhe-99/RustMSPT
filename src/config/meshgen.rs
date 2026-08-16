@@ -326,9 +326,14 @@ impl MeshGenParams {
                 self.sizing.curve_cells
             )));
         }
-        if self.sizing.gap_cells < 1.0 {
+        // R3: a setting may not choose between a correct mesh and an incorrect one. Fewer than
+        // four elements across a gap does exactly that - see `default_gap_cells` for the measured
+        // step - so the floor is the threshold, not 1.
+        if self.sizing.gap_cells < 4.0 {
             return Err(RustMsptError::InvalidConfig(format!(
-                "meshgen.sizing.gap_cells must be >= 1 element across a volumetric gap, got {}",
+                "meshgen.sizing.gap_cells must be >= 4 elements across a volumetric gap (below \
+                 that no lattice vertex lands inside the gap and its boundary is a staircase of \
+                 uncut lattice faces, measured), got {}",
                 self.sizing.gap_cells
             )));
         }
@@ -438,9 +443,15 @@ fn default_curve_cells() -> f64 {
     2.0
 }
 
-// AI-FUNC-SUMMARY: Serde default for sizing.gap_cells; returns 2.0 elements across a volumetric gap; side effects: none.
+// AI-FUNC-SUMMARY: Serde default for sizing.gap_cells; returns 4.0 elements across a volumetric gap; side effects: none.
+// Notes: **Four, and it is a representability threshold rather than a taste (P-4.2).** Measured on
+//   A-7a and A-7b at their frozen h: `gap_cells` 2 and 3 give *identical* meshes to the digit -
+//   88.717 % and 91.377 % of material-boundary area on the surface - and 4 jumps both to 99.829 %
+//   and 99.892 %, cutting off-surface area by 69x and 83x. There is no gradient between 2 and 4;
+//   below 4 no lattice vertex lands inside the gap, so S8 is never offered a cut and the boundary
+//   is a staircase of raw lattice faces whatever the rest of the pipeline does.
 fn default_gap_cells() -> f64 {
-    2.0
+    4.0
 }
 
 // AI-FUNC-SUMMARY: Serde default for gaps.t_layer_factor; returns 1.0; side effects: none.

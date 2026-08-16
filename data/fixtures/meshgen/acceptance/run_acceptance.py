@@ -78,7 +78,7 @@ CONFIG = """meshgen:
     chord_error_frac: 0.2
     feature_angle_deg: 45.0
     grading: 2.0
-    gap_cells: 2.0
+    gap_cells: 4.0
     curve_cells: 2.0
   gaps:
     t_layer_factor: 1.0

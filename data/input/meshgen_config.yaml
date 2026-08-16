@@ -27,7 +27,9 @@ meshgen:
     chord_error_frac: 0.2   # curvature criterion
     feature_angle_deg: 45.0
     grading: 2.0            # max size ratio over one element (the 2:1 gradation); must be > 1
-    gap_cells: 2.0          # elements across a gap that stays volumetric; must be >= 1
+    gap_cells: 4.0          # elements across a gap that stays volumetric; must be >= 4 (P-4.2: below
+                            # four, no lattice vertex lands inside the gap and its boundary is a
+                            # staircase of uncut lattice faces - measured, not a preference)
     curve_cells: 2.0        # h_max / this along every locked curve (sharp edge, S2
                             # intersection curve, rim, non-manifold edge). The chord
                             # rules cannot see these - a cube edge is straight and two
