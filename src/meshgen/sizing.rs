@@ -842,10 +842,25 @@ pub fn gap_sources(
         // ten-fold mesh on a7b, from seventeen fragments of a gap that was measured
         // correctly. A measurement too sparse for S3 to act on is too sparse to bind the
         // field to its floor.
-        let declined = matches!(
-            region.skip,
-            Some(SkipReason::Speck) | Some(SkipReason::Undersampled)
-        );
+        // **P-4.5: `Speck` is no longer suppressed, and the reason is that it is decided on AREA.**
+        // The paragraph above is right about a region whose `t` is small because the region is
+        // degenerate - a wedge closing to zero at an intersection curve. `IntersectionWedge` names
+        // that case and stays suppressed. `Speck` names something else: a patch smaller in area
+        // than one bootstrap element. A lattice of many thin struts is nothing but such patches,
+        // and each one is a real feature with a real thickness. A-8 declares 288 of them and its
+        // sub-cell damage (P-4.4) - a strut threading through a cell, touching no edge, claimed
+        // whole - is exactly what suppressing them costs.
+        //
+        // Measured on A-8 at a floor low enough for the requirement to bind: **82.411 % ->
+        // 92.011 %** of material-boundary area on the surface, off-surface area 0.263 -> 0.116.
+        // And it is the more element-efficient lever of the two: 92.011 % at 1.296 M tets against
+        // `h_min` alone reaching 88.794 % at 1.304 M **and failing `[V1]`/`[V3]`**. Where the floor
+        // already binds it costs nothing, because the sources it adds are clamped anyway.
+        //
+        // `Undersampled` stays suppressed: that is a one- or two-sample fragment of a gap the band
+        // conversion has already undertaken to mesh, and the a7b measurement in the paragraph above
+        // is about those.
+        let declined = matches!(region.skip, Some(SkipReason::Undersampled));
         if regime == Regime::Normal && !declined {
             continue;
         }

@@ -54,6 +54,14 @@ BIN = os.path.join(ROOT, "target", "release", "rustmspt")
 #        and 0.0200 in the band regime (generate_acceptance_cases.py) - plus the config
 #        default floor 0.002, because the matrix floor 0.012 is twice the 0.0060 limb and
 #        nothing refines toward it (measured: 701 undeclared faces against 2,216).
+#   A-8  h_min_frac 0.006 - the same situation as A-6's floor, measured the same way. Its
+#        struts ask the gap criterion for t/gap_cells and the matrix floor 0.012 (h_min =
+#        0.020785) clamps every one of those sources, so the sizing field never refines
+#        toward the geometry and a strut ends up threading through a cell without touching
+#        an edge (PLAN §6.14). Dropping the floor lets the requirement bind: 82.411 % ->
+#        92.011 % of material-boundary area on the surface. 0.003 was also measured and is
+#        WORSE - 88.794 % and `[V1]`/`[V3]` both FAIL - so this is the floor the geometry
+#        needs, not the smallest one available.
 CASES = [
     ("a1", ["a1_sphere.stl"], {}),
     ("a2", ["a2_cube.stl"], {}),
@@ -63,7 +71,7 @@ CASES = [
     ("a6b", ["a6b_cube.stl", "a6b_limb.stl"], {"h_max_frac": 0.04, "h_min_frac": 0.004}),
     ("a7a", ["a7a_lower.stl", "a7a_upper.stl"], {}),
     ("a7b", ["a7b_lower.stl", "a7b_upper.stl"], {}),
-    ("a8", ["a8_lattice.stl"], {}),
+    ("a8", ["a8_lattice.stl"], {"h_min_frac": 0.006}),
 ]
 
 CONFIG = """meshgen:
