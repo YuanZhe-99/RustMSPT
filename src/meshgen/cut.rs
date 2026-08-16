@@ -456,11 +456,12 @@ fn check_face_cache(
     loop_nodes: &[u32],
     n_parent_nodes: u32,
     keys: &[NodeKey],
+    points: &[Vec3],
     crossed: Option<&CrossedFace>,
     mine: &[[u32; 3]],
-) {
+) -> Option<Vec<[u32; 3]>> {
     if mine.is_empty() || loop_nodes.is_empty() {
-        return;
+        return None;
     }
     let mut corners = [loop_nodes[0]; 3];
     let mut slot = 0usize;
@@ -471,7 +472,7 @@ fn check_face_cache(
         }
     }
     if slot != 3 {
-        return;
+        return None;
     }
     corners.sort_by_key(|node| keys[*node as usize]);
     let mut fingerprint: Vec<i64> = crossed
@@ -479,30 +480,93 @@ fn check_face_cache(
         .unwrap_or_default();
     fingerprint.sort_unstable();
     fingerprint.dedup();
-    let sorted = |tris: &[[u32; 3]]| -> Vec<[u32; 3]> {
+    // **Canonical winding, so the comparison covers orientation and not just membership.**
+    // §5.2 re-orients each sub-triangle to the *calling cell's* winding, so the two cells sharing
+    // a face legitimately emit opposite windings and a naive triple comparison would report every
+    // shared face as a conflict. Both are put into the face's own frame first: the reference
+    // normal is `(b-a) x (c-a)` over the face's key-sorted corners - a pure function of the face -
+    // and every triangle is flipped to agree with it, then rotated to start at its smallest node.
+    // What survives is the triangulation *as the face sees it*, which is what the cache must store
+    // if it is ever to hand triangles to the second cell rather than merely check them.
+    let canonical = |tris: &[[u32; 3]]| -> Vec<[u32; 3]> {
+        let (a, b, c) = (
+            points[corners[0] as usize],
+            points[corners[1] as usize],
+            points[corners[2] as usize],
+        );
+        let reference = b.sub(a).cross(c.sub(a));
         let mut out: Vec<[u32; 3]> = tris
             .iter()
             .map(|t| {
-                let mut k = *t;
-                k.sort_unstable();
-                k
+                let (p, q, r) = (
+                    points[t[0] as usize],
+                    points[t[1] as usize],
+                    points[t[2] as usize],
+                );
+                let mut t = if q.sub(p).cross(r.sub(p)).dot(reference) < 0.0 {
+                    [t[1], t[0], t[2]]
+                } else {
+                    *t
+                };
+                // Rotate to the smallest node, preserving the cycle, so the same triangle
+                // written from two different starting corners compares equal.
+                let at = (0..3).min_by_key(|slot| t[*slot]).unwrap_or(0);
+                t = [t[at], t[(at + 1) % 3], t[(at + 2) % 3]];
+                t
             })
             .collect();
         out.sort_unstable();
         out
     };
     let key = crate::meshgen::facecache::face_key(corners, keys);
-    let owned = mine.to_vec();
+    let owned = canonical(mine);
     match cache.get_or_insert(key, fingerprint, || owned.clone()) {
         Ok(cached) => {
-            if sorted(cached) != sorted(mine) {
+            if cached != owned.as_slice() {
                 *conflicts += 1;
+                return None;
             }
+            Some(cached.to_vec())
         }
         // §7.3's hard error: the two cells disagree about what crosses the face they share.
-        // Counted rather than raised, because nothing depends on the cache yet.
-        Err(_) => *conflicts += 1,
+        // Counted rather than raised, because the caller falls back to its own triangles.
+        Err(_) => {
+            *conflicts += 1;
+            None
+        }
     }
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Re-orient a face's canonical triangles to one cell's outward winding.
+// Inputs: the canonical triangles, the cell's four nodes, and the coordinates.
+// Returns: the triangles wound outward from this cell.
+// Side effects: None.
+// Notes: The cache stores each face once, in the face's own frame; the boundary soup needs it in
+//   the *cell's*, because `fan_volume` and `polygon_soup_centroid` read the winding and a flipped
+//   face makes a piece's volume negative. The apex - the cell node not on this face - decides it:
+//   a face triangle is outward when its normal points away from the apex. That is a pure function
+//   of the cell and the face, so the two cells sharing a face take the same stored triangles and
+//   independently arrive at their own correct, opposite windings.
+fn orient_face_outward(tris: &[[u32; 3]], tet: [u32; 4], points: &[Vec3]) -> Vec<[u32; 3]> {
+    tris.iter()
+        .map(|t| {
+            let Some(&apex) = tet.iter().find(|node| !t.contains(node)) else {
+                return *t;
+            };
+            let (p, q, r) = (
+                points[t[0] as usize],
+                points[t[1] as usize],
+                points[t[2] as usize],
+            );
+            let outward = q.sub(p).cross(r.sub(p)).dot(points[apex as usize].sub(p)) < 0.0;
+            if outward {
+                *t
+            } else {
+                [t[1], t[0], t[2]]
+            }
+        })
+        .collect()
 }
 
 // AI-FUNC-SUMMARY:
@@ -1467,6 +1531,7 @@ pub fn cut_lattice(
                         loop_nodes,
                         n_parent_nodes,
                         &keys,
+                        &mesh.nodes,
                         crossed.as_ref(),
                         &boundary[face_begin..],
                     );
@@ -1591,6 +1656,7 @@ pub fn cut_lattice(
                                 &loop_nodes,
                                 n_parent_nodes,
                                 &keys,
+                                &mesh.nodes,
                                 crossed.as_ref(),
                                 &boundary[face_begin..],
                             );
@@ -1629,15 +1695,25 @@ pub fn cut_lattice(
                         boundary.extend(loop_fan(&loop_nodes, id));
                     }
                 }
-                check_face_cache(
+                // **The cache is authoritative from here (§7.3).** Its triangles replace this
+                // cell's own, re-wound outward from this cell. Today that is provably a no-op -
+                // zero conflicts across the nine cases, winding included - and that is the point:
+                // the switch is made while it changes nothing, so that when crease chords are
+                // added to the *cache* they reach both cells identically. Adding them per cell is
+                // what cracked the mesh twice.
+                if let Some(shared) = check_face_cache(
                     &mut face_cache,
                     &mut face_cache_conflicts,
                     loop_nodes,
                     n_parent_nodes,
                     &keys,
+                    &mesh.nodes,
                     crossed.as_ref(),
                     &boundary[face_begin..],
-                );
+                ) {
+                    boundary.truncate(face_begin);
+                    boundary.extend(orient_face_outward(&shared, tet, &mesh.nodes));
+                }
             }
             // G7-1: a cell whose two walls sandwich a thin gap is *not* one blob. If
             // the doubly-cut face rule covers all four of its faces, it splits into
