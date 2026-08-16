@@ -4419,9 +4419,40 @@ fn check_v13(
                             .map(|(i, f)| (f.area, i))
                             .collect();
                         worst.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+                        let straddles = |f: &BoundaryFace| -> bool {
+                            let idx = &per_component[f.component];
+                            let mut pos = false;
+                            let mut neg = false;
+                            for n in &f.nodes {
+                                let q = view.doc.points[*n];
+                                let Some((d, t)) = idx.nearest(q) else { continue };
+                                if d <= tol * f.local_h.max(f64::MIN_POSITIVE) {
+                                    continue;
+                                }
+                                let side =
+                                    q.sub(idx.tris[t][0]).dot(idx.normals[t]) * orientation[f.component];
+                                if side < 0.0 {
+                                    neg = true;
+                                } else {
+                                    pos = true;
+                                }
+                            }
+                            pos && neg
+                        };
+                        let (mut n_straddle, mut a_straddle) = (0usize, 0.0f64);
+                        for (_, i) in &worst {
+                            if straddles(&boundary[*i]) {
+                                n_straddle += 1;
+                                a_straddle += boundary[*i].area;
+                            }
+                        }
                         println!(
-                            "[V13-DIAG] {} off-surface face(s) between parent cells with all-lattice corners",
-                            worst.len()
+                            "[V13-DIAG] {} off-surface face(s) between parent cells with all-lattice corners; \
+                             {} of them ({:.5} of area) have corners on BOTH sides of the surface - the face is \
+                             crossed and the crossing was lost",
+                            worst.len(),
+                            n_straddle,
+                            a_straddle
                         );
                         for (_, i) in worst.iter().take(8) {
                             let f = &boundary[*i];
@@ -4439,6 +4470,32 @@ fn check_v13(
                                     )
                                 })
                                 .collect();
+                            // Signed distance per corner, orientation-corrected: + outside the
+                            // body, - inside. If the two unsnapped corners straddle the surface,
+                            // the face IS crossed and the crossing was lost; if they are both
+                            // outside, the face is genuinely outside and the neighbour's material
+                            // assignment is what is wrong. The two need opposite fixes.
+                            let signs: Vec<f64> = f
+                                .nodes
+                                .iter()
+                                .map(|n| {
+                                    let q = view.doc.points[*n];
+                                    let idx = &per_component[f.component];
+                                    match idx.nearest(q) {
+                                        Some((d, t)) => {
+                                            let side = q
+                                                .sub(idx.tris[t][0])
+                                                .dot(idx.normals[t])
+                                                * orientation[f.component];
+                                            let v = if side < 0.0 { -d } else { d };
+                                            (v / f.local_h.max(f64::MIN_POSITIVE) * 1000.0).round()
+                                                / 1000.0
+                                        }
+                                        None => f64::NAN,
+                                    }
+                                })
+                                .collect();
+                            println!("[V13-DIAG]   signed d/h per corner: {signs:?}");
                             println!(
                                 "[V13-DIAG]   area {:.3e} dev/h {:.1}% nodes {:?} at {:?} | {}",
                                 f.area,
