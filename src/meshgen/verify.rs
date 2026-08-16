@@ -4762,6 +4762,58 @@ fn check_v13(
                     s.metric("off_surface_between_parents_worst_is_lattice", cross[2]);
                     s.metric("off_surface_between_parents_worst_is_interned", cross[3]);
                 }
+                // **P-3.6: how far off are the INTERNED corners?** After refinement a8's damage is
+                // 37.7 % faces whose worst corner is a node the cut interned, all of them inside a
+                // single parent cell (the between-parents share is 0.0 %). Two very different
+                // things produce such a node: a *meeting point*, the closest approach of two cut
+                // chords, which is an estimate of where the surfaces meet and should be within a
+                // small fraction of an element; and a *centroid* — a face's centre or a piece's —
+                // which is off the surface by construction and by about half an element. The
+                // distance separates them, and they need different fixes: sharpen the estimate, or
+                // stop coning to a centre.
+                let mut interned_bins = [0.0f64; 3];
+                for f in boundary.iter() {
+                    let h = f.local_h.max(f64::MIN_POSITIVE);
+                    if f.deviation_max <= tol * h {
+                        continue;
+                    }
+                    let node = f.nodes[f.worst_corner];
+                    if origin.get(node).copied().unwrap_or(0) == 0 {
+                        continue;
+                    }
+                    let ratio = f.deviation_max / h;
+                    let slot = if ratio < 0.1 {
+                        0
+                    } else if ratio < 0.3 {
+                        1
+                    } else {
+                        2
+                    };
+                    interned_bins[slot] += f.area;
+                }
+                // **P-3.7: what would P3 read at a looser tolerance?** `interface_on_surface_frac`
+                // is 0.02 - a corner counts as on the surface within 2 % of its own edge length -
+                // and after the P-4.5 refinement more than half of a8's interned-corner damage sits
+                // between that and 0.1 h. So the question "is the residue a structural defect or a
+                // placement that is nearly right" has a direct answer: sweep the tolerance and see
+                // where the number goes. A structural staircase sits at 0.2-0.6 h and barely moves;
+                // a near-miss population collapses.
+                for (label, factor) in [("05", 0.05f64), ("10", 0.10), ("25", 0.25)] {
+                    let on: f64 = boundary
+                        .iter()
+                        .filter(|f| {
+                            f.deviation_max <= factor * f.local_h.max(f64::MIN_POSITIVE)
+                        })
+                        .map(|f| f.area)
+                        .sum();
+                    let total: f64 = boundary.iter().map(|f| f.area).sum();
+                    if total > 0.0 {
+                        s.metric(&format!("on_surface_area_frac_at_{label}pct_h"), on / total);
+                    }
+                }
+                s.metric("interned_corner_off_under_tenth_h", interned_bins[0]);
+                s.metric("interned_corner_off_tenth_to_third_h", interned_bins[1]);
+                s.metric("interned_corner_off_over_third_h", interned_bins[2]);
                 s.metric("off_surface_area_lattice_corner_bound", bound);
                     s.metric("off_surface_area_lattice_corner_free", free);
                     s.metric("off_surface_faces_lattice_corner_bound", bound_faces as f64);
