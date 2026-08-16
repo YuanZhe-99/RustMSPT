@@ -4346,7 +4346,125 @@ fn check_v13(
                             free_faces += 1;
                         }
                     }
-                    s.metric("off_surface_area_lattice_corner_bound", bound);
+                    // **Is the off-surface boundary a face BETWEEN two parent lattice cells, or a face
+                // inside one?** This is the split a8 needs. A boundary inside one parent cell is a
+                // cap — §7.6 cut the cell and put its material boundary somewhere; if that is off
+                // the surface, the cut is wrong. A boundary between two parents is the shared
+                // lattice face itself: neither cell put a cap there, they simply disagree about
+                // the material across a face that was never cut, and the staircase runs along the
+                // background grid. `[JCT-FALLBACK]` is only 118 of a8's 2,613 escalated cells, so
+                // "the fan chamfered it" cannot be the explanation and this tells us what is.
+                if let Some(parent) = cell_i64(view.doc, "parent_cell") {
+                    let (mut between, mut within) = (0.0f64, 0.0f64);
+                    for (f, cells) in boundary.iter().zip(boundary_owners.iter()) {
+                        if f.deviation_max <= tol * f.local_h.max(f64::MIN_POSITIVE) {
+                            continue;
+                        }
+                        let mut parents: Vec<i64> = cells
+                            .iter()
+                            .map(|c| parent.get(*c).copied().unwrap_or(-1))
+                            .collect();
+                        parents.sort_unstable();
+                        parents.dedup();
+                        if parents.len() > 1 {
+                            between += f.area;
+                        } else {
+                            within += f.area;
+                        }
+                    }
+                    s.metric("off_surface_area_between_parent_cells", between);
+                    s.metric("off_surface_area_within_one_parent_cell", within);
+                    // Cross-tabulated with the node kind, because neither split alone names the
+                    // population: a8 is 46/54 between/within and 76/24 lattice/interned, and those
+                    // are compatible with several different defects. The four-way table is what
+                    // says which one.
+                    let mut cross = [0.0f64; 4];
+                    for (f, cells) in boundary.iter().zip(boundary_owners.iter()) {
+                        if f.deviation_max <= tol * f.local_h.max(f64::MIN_POSITIVE) {
+                            continue;
+                        }
+                        let mut parents: Vec<i64> = cells
+                            .iter()
+                            .map(|c| parent.get(*c).copied().unwrap_or(-1))
+                            .collect();
+                        parents.sort_unstable();
+                        parents.dedup();
+                        let interned =
+                            origin.get(f.nodes[f.worst_corner]).copied().unwrap_or(0) != 0;
+                        cross[usize::from(parents.len() > 1) * 2 + usize::from(interned)] += f.area;
+                    }
+                    // The dominant a8 bucket, listed rather than counted, because "an uncut shared
+                    // face separating different materials" is a shape that has to be looked at
+                    // before it can be explained. Print-only.
+                    if std::env::var_os("RUSTMSPT_V13_DIAG").is_some() {
+                        let mut worst: Vec<(f64, usize)> = boundary
+                            .iter()
+                            .enumerate()
+                            .filter(|(i, f)| {
+                                if f.deviation_max <= tol * f.local_h.max(f64::MIN_POSITIVE) {
+                                    return false;
+                                }
+                                let cells = &boundary_owners[*i];
+                                let mut ps: Vec<i64> = cells
+                                    .iter()
+                                    .map(|c| parent.get(*c).copied().unwrap_or(-1))
+                                    .collect();
+                                ps.sort_unstable();
+                                ps.dedup();
+                                ps.len() > 1
+                                    && f.nodes.iter().all(|n| {
+                                        origin.get(*n).copied().unwrap_or(0) == 0
+                                    })
+                            })
+                            .map(|(i, f)| (f.area, i))
+                            .collect();
+                        worst.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+                        println!(
+                            "[V13-DIAG] {} off-surface face(s) between parent cells with all-lattice corners",
+                            worst.len()
+                        );
+                        for (_, i) in worst.iter().take(8) {
+                            let f = &boundary[*i];
+                            let cells = &boundary_owners[*i];
+                            let info: Vec<String> = cells
+                                .iter()
+                                .map(|c| {
+                                    format!(
+                                        "cell {c} parent {} prov {} esc {}",
+                                        parent.get(*c).copied().unwrap_or(-1),
+                                        provenance.get(*c).copied().unwrap_or(-1),
+                                        cell_i64(view.doc, "escalation_reason")
+                                            .and_then(|a| a.get(*c).copied())
+                                            .unwrap_or(-9)
+                                    )
+                                })
+                                .collect();
+                            println!(
+                                "[V13-DIAG]   area {:.3e} dev/h {:.1}% nodes {:?} at {:?} | {}",
+                                f.area,
+                                100.0 * f.deviation_max / f.local_h.max(f64::MIN_POSITIVE),
+                                f.nodes,
+                                f.nodes
+                                    .iter()
+                                    .map(|n| {
+                                        let p = view.doc.points[*n];
+                                        (
+                                            (p.x * 1.0e5).round() / 1.0e5,
+                                            (p.y * 1.0e5).round() / 1.0e5,
+                                            (p.z * 1.0e5).round() / 1.0e5,
+                                        )
+                                    })
+                                    .collect::<Vec<_>>(),
+                                info.join(" | ")
+                            );
+                        }
+                    }
+                    s.metric("off_surface_within_parent_worst_is_lattice", cross[0]);
+                    s.metric("off_surface_within_parent_worst_is_interned", cross[1]);
+                    s.metric("off_surface_between_parents_worst_is_lattice", cross[2]);
+                    s.metric("off_surface_between_parents_worst_is_interned", cross[3]);
+                }
+                s.metric("off_surface_area_lattice_corner_bound", bound);
                     s.metric("off_surface_area_lattice_corner_free", free);
                     s.metric("off_surface_faces_lattice_corner_bound", bound_faces as f64);
                     s.metric("off_surface_faces_lattice_corner_free", free_faces as f64);
