@@ -3362,6 +3362,97 @@ fn check_v5(
             }
         }
     }
+    // **Is an over-attributed tet a defect, or an artefact of testing tets against a PIECE-level
+    // decision?** §7.5 seeds a whole piece from one interior sample and the piece is then fanned;
+    // a fan tet of a non-convex piece can have its own centroid outside the body while the piece
+    // is correctly labelled. The discriminator is the rest of its own group: tets sharing a parent
+    // cell and a region key are one labelled body, so if ANY of them has a centroid inside, the
+    // label is right; if NONE does, the whole group sits outside the geometry and the label itself
+    // is wrong.
+    //
+    // **Both halves are real defects — they are different ones.** Group-outside is a LABELLING
+    // fault: material the input does not have, wearing a body's name. Lobe-outside is a SHAPE
+    // fault: the piece is correctly labelled and its boundary simply extends past the surface,
+    // which is precisely what `[V13]` measures as an outward-displaced material boundary. Reading
+    // the second as an artefact of the check would discard a8's actual P3 damage. On a8 the split
+    // is 26 cells / 1.784e-05 labelling against 632 cells / 1.012e-05 shape, and the 26 coincide
+    // exactly with the cells §6's table decided — so the two questions separate cleanly by stage.
+    let mut overattributed_lonely = 0usize;
+    let mut overattributed_lonely_volume = 0.0f64;
+    if overattributed > 0 {
+        if let Some(parent) = cell_i64(view.doc, "parent_cell") {
+            let mut group_has_inside: std::collections::HashMap<(i64, i64), bool> =
+                std::collections::HashMap::new();
+            for (index, component) in surfaces.iter().enumerate() {
+                if !component.closed {
+                    continue;
+                }
+                for &c in &view.tets {
+                    let n = view.doc.cell(c);
+                    if n.len() != 4 {
+                        continue;
+                    }
+                    let p: Vec<Vec3> = n.iter().map(|i| view.doc.points[*i as usize]).collect();
+                    let centroid = p[0].add(p[1]).add(p[2]).add(p[3]).scale(0.25);
+                    let key = (
+                        parent.get(c).copied().unwrap_or(-1),
+                        region_key.get(c).copied().unwrap_or(-1) as i64,
+                    );
+                    let entry = group_has_inside.entry(key).or_insert(false);
+                    *entry = *entry || per_component[index].contains(centroid);
+                }
+            }
+            for (volume, centroid, _) in &worst_overattributed {
+                // Re-find the cell by its centroid is not possible here, so the group test is
+                // applied over the same scan below; this loop only totals the lonely ones.
+                let _ = (volume, centroid);
+            }
+            for (index, component) in surfaces.iter().enumerate() {
+                if !component.closed {
+                    continue;
+                }
+                let x = index as i32 + 1;
+                for &c in &view.tets {
+                    let n = view.doc.cell(c);
+                    if n.len() != 4 {
+                        continue;
+                    }
+                    let key = region_key.get(c).copied().unwrap_or(-1);
+                    let named = if key < 0 || set_offsets.is_empty() {
+                        false
+                    } else {
+                        let k = key as usize;
+                        let start = if k == 0 { 0 } else { set_offsets[k - 1] as usize };
+                        let end = set_offsets[k].min(set_components.len() as i64) as usize;
+                        set_components[start.min(set_components.len())..end].contains(&(x as i64))
+                    };
+                    if !named {
+                        continue;
+                    }
+                    let p: Vec<Vec3> = n.iter().map(|i| view.doc.points[*i as usize]).collect();
+                    let centroid = p[0].add(p[1]).add(p[2]).add(p[3]).scale(0.25);
+                    if per_component[index].contains(centroid) {
+                        continue;
+                    }
+                    let group = (
+                        parent.get(c).copied().unwrap_or(-1),
+                        region_key.get(c).copied().unwrap_or(-1) as i64,
+                    );
+                    if !group_has_inside.get(&group).copied().unwrap_or(false) {
+                        overattributed_lonely += 1;
+                        overattributed_lonely_volume += p[1]
+                            .sub(p[0])
+                            .cross(p[2].sub(p[0]))
+                            .dot(p[3].sub(p[0]))
+                            .abs()
+                            / 6.0;
+                    }
+                }
+            }
+        }
+    }
+    s.metric("overattributed_cells_whole_group_outside", overattributed_lonely as f64);
+    s.metric("overattributed_volume_whole_group_outside", overattributed_lonely_volume);
     s.metric("overattributed_cells", overattributed as f64);
     s.metric("overattributed_cells_never_cut", overattributed_never_cut as f64);
     s.metric("overattributed_volume_never_cut", overattributed_never_cut_volume);
