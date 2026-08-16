@@ -458,6 +458,7 @@ fn check_face_cache(
     keys: &[NodeKey],
     points: &[Vec3],
     crossed: Option<&CrossedFace>,
+    crease: bool,
     mine: &[[u32; 3]],
 ) -> Option<Vec<[u32; 3]>> {
     if mine.is_empty() || loop_nodes.is_empty() {
@@ -480,6 +481,14 @@ fn check_face_cache(
         .unwrap_or_default();
     fingerprint.sort_unstable();
     fingerprint.dedup();
+    // P-3.3's constraint set. A crease-fanned face is triangulated from a point no component's
+    // chords name, so the components alone no longer describe what the face is constrained by;
+    // without this a cell that fanned and a cell that took §5.2's table would present the same
+    // fingerprint and their disagreement would be reported as a plain triangle mismatch instead
+    // of §7.3's hard error. Out of band from any component id on purpose.
+    if crease {
+        fingerprint.push(i64::MIN);
+    }
     // **Canonical winding, so the comparison covers orientation and not just membership.**
     // §5.2 re-orients each sub-triangle to the *calling cell's* winding, so the two cells sharing
     // a face legitimately emit opposite windings and a naive triple comparison would report every
@@ -1426,6 +1435,56 @@ pub fn cut_lattice(
         })
         .collect();
 
+    // P-3.3: for each face a locked curve pierces, how many of its (at most two) owning
+    // cells escalated. Only a face escalated on *both* sides can have its triangulation
+    // changed by the junction path alone - the other side would keep §5.2's straight chord
+    // and the two would stop matching, which is how the two earlier crease attempts cracked
+    // the mesh. Scoped to `curve_pierce`'s keys, so this is a handful of lookups per cell and
+    // not a map over every face in the lattice.
+    // **Which curve pierced the face, and whose it is.** A crease is a sharp edge of *one*
+    // surface, and that is the whole population P-3.3 targets. An intersection curve looks
+    // identical to `curve_pierce` - both are locked polylines - but putting a node on one
+    // where only a single component cuts the face declares a junction the mesh has no material
+    // for: `[V9]`'s `curve_node_id` then reads "node 20347 lies on curve 13, where components
+    // [1, 2] meet, but its N_ID is [0, 2]", six of them on A-3, and it is right to. The node
+    // really is on the 1-2 curve and really has no component-1 element touching it. Restricting
+    // the fan to curves whose component set the face's own cut can carry removes the claim
+    // rather than papering over it in the label.
+    let mut pierce_components: BTreeMap<[u32; 3], SmallVec<[i32; 2]>> = BTreeMap::new();
+    for curve in &options.locked_curves {
+        if curve.segments.is_empty() {
+            continue;
+        }
+        for (face, _) in curve_pierce_points(lattice, &nodes, &keys, &curve.segments) {
+            let entry = pierce_components.entry(face).or_default();
+            for component in &curve.components {
+                if !entry.contains(component) {
+                    entry.push(*component);
+                }
+            }
+        }
+    }
+    for members in pierce_components.values_mut() {
+        members.sort_unstable();
+    }
+
+    let mut pierced_owners: BTreeMap<[u32; 3], (u8, u8)> = BTreeMap::new();
+    if !curve_pierce.is_empty() {
+        for (index, tet) in lattice.tets.iter().enumerate() {
+            let escalated = per_cell[index].escalation.is_some();
+            for slots in TET_FACES {
+                let mut corners = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+                corners.sort_by_key(|node| keys[*node as usize]);
+                if !curve_pierce.contains_key(&corners) {
+                    continue;
+                }
+                let entry = pierced_owners.entry(corners).or_insert((0, 0));
+                entry.0 += 1;
+                entry.1 += u8::from(escalated);
+            }
+        }
+    }
+
     // --- concatenate in cell order ---
     // Serial, in ascending cell order, so the §7.5 samples are taken in a fixed
     // sequence and R-P2 holds whatever the thread count is.
@@ -1485,6 +1544,14 @@ pub fn cut_lattice(
     // safe to make.
     let mut face_cache = crate::meshgen::facecache::FaceTriCache::new();
     let mut face_cache_conflicts = 0usize;
+    // P-3.3's census, print-only: how many faces a locked curve pierces are nevertheless
+    // *expressible*, i.e. take §5.2's table and get a straight chord drawn across the kink.
+    // That is the crease damage's face-level signature, and its size decides whether the
+    // face-first route is worth the change. Keyed by face so a shared one counts once.
+    let mut crease_faces: BTreeSet<[u32; 3]> = BTreeSet::new();
+    let mut crease_faces_expressible: BTreeSet<[u32; 3]> = BTreeSet::new();
+    let mut crease_faces_both_escalated: BTreeSet<[u32; 3]> = BTreeSet::new();
+    let mut crease_faces_fanned: BTreeSet<[u32; 3]> = BTreeSet::new();
     for (index, cell) in per_cell.into_iter().enumerate() {
         if let Some(reason) = cell.escalation {
             mesh.escalated.push((index as u32, reason));
@@ -1514,6 +1581,30 @@ pub fn cut_lattice(
                 // Where this face's triangles start, so they can be lifted back out below
                 // whichever branch produced them and checked against the cache.
                 let face_begin = boundary.len();
+                if let Some(state) = state.as_ref() {
+                    if curve_pierce.contains_key(&state.nodes) {
+                        crease_faces.insert(state.nodes);
+                        crease_faces_expressible.insert(state.nodes);
+                        if let Some((owners, escalated)) = pierced_owners.get(&state.nodes) {
+                            if owners == escalated {
+                                crease_faces_both_escalated.insert(state.nodes);
+                            }
+                        }
+                    }
+                } else if let Some(face) = crossed.as_ref() {
+                    let mut corners = [face.loop_nodes[0]; 3];
+                    let mut slot = 0usize;
+                    for node in &face.loop_nodes {
+                        if (*node as usize) < n_parent_nodes as usize && slot < 3 {
+                            corners[slot] = *node;
+                            slot += 1;
+                        }
+                    }
+                    corners.sort_by_key(|node| keys[*node as usize]);
+                    if curve_pierce.contains_key(&corners) {
+                        crease_faces.insert(corners);
+                    }
+                }
                 // G7-1's doubly-cut face rule is applied here, to the *face*, before
                 // anything cell-level is decided - and that is load-bearing rather
                 // than tidy. A face two walls cross is shared by two cells, and only
@@ -1533,8 +1624,97 @@ pub fn cut_lattice(
                         &keys,
                         &mesh.nodes,
                         crossed.as_ref(),
+                        false,
                         &boundary[face_begin..],
                     );
+                    continue;
+                }
+                // **P-3.3: the kink becomes an edge.** A face a locked curve pierces is still
+                // *expressible* whenever one component leaves it two cut nodes - which is what a
+                // crease looks like, since both patches belong to the same surface - so §5.2 draws
+                // one straight chord between them and the material boundary chamfers across the
+                // sharp edge. That is 85.7 % of the P3 damage (§6.1), and no amount of
+                // tetrahedralising the cell can repair it: the crease has to be an *edge*, so the
+                // pierce point has to be a *node* first.
+                //
+                // The condition is `every owning cell escalated`, and it is not timidity. A face
+                // shared with a cell that took §6's table would keep the straight chord on that
+                // side while this side fanned, and the two triangulations of one shared face is
+                // precisely how the two earlier crease attempts cracked the mesh. It is a pure
+                // function of the *face* - both owners compute the same predicate from the same
+                // map - so J1 survives it, and §6's path can be brought along later without
+                // reworking this. Of the expressible pierced faces it admits a8 626 of 1,035,
+                // a7b 107 of 113, a6b 62 of 72, a6a 37 of 84, a3 109 of 285, a7a 3 of 10.
+                let crease_hub = state.as_ref().and_then(|state| {
+                    let point = curve_pierce.get(&state.nodes)?;
+                    let (owners, escalated) = pierced_owners.get(&state.nodes)?;
+                    if owners != escalated {
+                        return None;
+                    }
+                    // A crease only: every component meeting along the piercing curve has to
+                    // actually **cut an edge** of this face, or the new node claims a junction
+                    // the mesh has no material for (see `pierce_components`). `on_cut` does not
+                    // count towards it: a corner S7 snapped onto a patch says the node is on that
+                    // surface, not that the surface crosses this face, and admitting it let A-3's
+                    // cube-sphere intersection curves through - all six of `[V9]`'s
+                    // `curve_node_id` failures and a fourfold rise in `[V5]`'s misattributed
+                    // slivers, for +0.002 of P3.
+                    let cutting: SmallVec<[i32; 2]> = all_components
+                        .iter()
+                        .copied()
+                        .filter(|component| {
+                            (0..3).any(|slot| {
+                                let (a, b) = (state.nodes[slot], state.nodes[(slot + 1) % 3]);
+                                let edge = if a <= b { [a, b] } else { [b, a] };
+                                cut_index.contains_key(&(edge, *component))
+                                    || second_index.contains_key(&(edge, *component))
+                            })
+                        })
+                        .collect();
+                    let members = pierce_components.get(&state.nodes)?;
+                    if !members.iter().all(|component| cutting.contains(component)) {
+                        return None;
+                    }
+                    Some((state.nodes, *point))
+                });
+                if let Some((corners, point)) = crease_hub {
+                    // Interned per face by the same map the crossed and centroid paths use, so
+                    // the second cell finds the node rather than making a coincident duplicate.
+                    let id = match face_steiner.get(&corners) {
+                        Some(id) => *id,
+                        None => {
+                            let id = mesh.nodes.len() as u32;
+                            mesh.nodes.push(point);
+                            keys.push(node_key(point, order_quantum));
+                            face_steiner.insert(corners, id);
+                            id
+                        }
+                    };
+                    // On a locked curve, so on every surface that meets along it - the same
+                    // statement the crossed and loop-fan paths make about a pierce point, and
+                    // §7.6 needs it or its split asks the classifier for a side at a point
+                    // exactly on a surface it was not told about. Narrowing this to the
+                    // components that actually cut the face was tried and measured **neutral**
+                    // on every case, so the broader statement stands as the simpler one.
+                    for component in &all_components {
+                        meeting_nodes.push((id, [*component, *component]));
+                    }
+                    crease_faces_fanned.insert(corners);
+                    boundary.extend(loop_fan(loop_nodes, id));
+                    if let Some(shared) = check_face_cache(
+                        &mut face_cache,
+                        &mut face_cache_conflicts,
+                        loop_nodes,
+                        n_parent_nodes,
+                        &keys,
+                        &mesh.nodes,
+                        crossed.as_ref(),
+                        true,
+                        &boundary[face_begin..],
+                    ) {
+                        boundary.truncate(face_begin);
+                        boundary.extend(orient_face_outward(&shared, tet, &mesh.nodes));
+                    }
                     continue;
                 }
                 match face_mesh(state.as_ref(), loop_nodes, &keys, crossed.as_ref()) {
@@ -1658,6 +1838,7 @@ pub fn cut_lattice(
                                 &keys,
                                 &mesh.nodes,
                                 crossed.as_ref(),
+                                false,
                                 &boundary[face_begin..],
                             );
                             continue;
@@ -1709,6 +1890,7 @@ pub fn cut_lattice(
                     &keys,
                     &mesh.nodes,
                     crossed.as_ref(),
+                    false,
                     &boundary[face_begin..],
                 ) {
                     boundary.truncate(face_begin);
@@ -2172,6 +2354,19 @@ pub fn cut_lattice(
             face_cache.len(),
             face_cache.hits,
             face_cache_conflicts
+        ));
+    }
+    if !crease_faces.is_empty() {
+        mesh.warnings.push(format!(
+            "[CREASE-FACE] {} face(s) a locked curve pierces, of which {} are expressible \
+             (§5.2 draws one straight chord across the kink on those - the crease damage \
+             P-3.3 has to remove) and {} of those have every owning cell escalated, so the \
+             junction path alone can re-triangulate them without stranding a neighbour - \
+             {} were fanned from the pierce point, so the kink is an edge of the mesh there",
+            crease_faces.len(),
+            crease_faces_expressible.len(),
+            crease_faces_both_escalated.len(),
+            crease_faces_fanned.len()
         ));
     }
     for (reason, count) in &mesh.stats.n_escalated {
@@ -4435,7 +4630,9 @@ fn split_escalated_cell(
                     // plane and the exact predicate rightly says otherwise. Removing the
                     // node removes the question. The apex is chosen by key, so the cap is
                     // still a pure function of its cycle and both pieces agree on it.
-                    let Some(fan) = fan_cap(cycle, keys, nodes) else {
+                    let Some(fan) = fan_cap(cycle, keys, nodes, &|triangle| {
+                        cap_lies_in_parent_face(triangle, tet, nodes)
+                    }) else {
                         if std::env::var_os("RUSTMSPT_JCT_DIAG").is_some() {
                             println!("[JCT-DIAG] cell {index}: no apex fans this cap cleanly");
                         }
@@ -4693,7 +4890,12 @@ fn split_escalated_cell(
 //   cap is a piece of a *curved* surface, so it is not planar, and an ear test that works in one
 //   fitted plane cuts ears that are not ears in space. A non-planar cap needs a triangulation that
 //   never leaves the surface, which is not a polygon-triangulation problem at all.
-fn fan_cap(cycle: &[u32], keys: &[NodeKey], nodes: &[Vec3]) -> Option<SmallVec<[[u32; 3]; 8]>> {
+fn fan_cap(
+    cycle: &[u32],
+    keys: &[NodeKey],
+    nodes: &[Vec3],
+    forbidden: &dyn Fn(&[u32; 3]) -> bool,
+) -> Option<SmallVec<[[u32; 3]; 8]>> {
     let count = cycle.len();
     if count < 3 {
         return None;
@@ -4709,11 +4911,59 @@ fn fan_cap(cycle: &[u32], keys: &[NodeKey], nodes: &[Vec3]) -> Option<SmallVec<[
                 cycle[(apex + step + 1) % count],
             ]);
         }
-        if fan_is_simple(&fan, nodes) && !fan_swallows_vertex(&fan, cycle, nodes) {
+        if fan_is_simple(&fan, nodes)
+            && !fan_swallows_vertex(&fan, cycle, nodes)
+            && !fan.iter().any(forbidden)
+        {
             return Some(fan);
         }
     }
     None
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Whether a cap triangle lies **in** one of the parent cell's own four face planes.
+// Inputs: the triangle, the parent tet, and the coordinates.
+// Returns: true when all three of its nodes are on one parent face plane.
+// Side effects: None.
+// Notes: The existing guard beside the volume check compares a cap against the boundary soup as
+//   *exact triangles*, and that is not the whole of the condition. A cap can lie in a face's plane
+//   while matching none of that face's triangles - it cuts across them. A-6a's
+//   `(19130, 33794, 35636)` is the case: the shared face {19129, 19130, 19331} is fanned from the
+//   crease hub 35636 into four triangles, and the cap runs from 33794 to 19130 straight across two
+//   of them. The neighbour's cap does the same, so the triangle carries four tets - `[V3]`'s
+//   `multi_shared_face`, with three non-manifold edges behind it. Read as a plane test the guard
+//   covers both: an equal triangle is coplanar too.
+//
+//   The response is not to decline the cell but to choose a different apex - `fan_cap` tries them
+//   in key order and this is one more reason to reject one. On A-6a's quad the apex 33794 puts
+//   (33794, 35636, 19130) in the shared face while the apex 35636 does not, and the cell keeps its
+//   cut. Declining is left to the case where no apex avoids it.
+fn cap_lies_in_parent_face(triangle: &[u32; 3], tet: [u32; 4], nodes: &[Vec3]) -> bool {
+    const ON_FACE_FRAC: f64 = 1.0e-9;
+    for slots in TET_FACES {
+        let (a, b, c) = (
+            nodes[tet[slots[0]] as usize],
+            nodes[tet[slots[1]] as usize],
+            nodes[tet[slots[2]] as usize],
+        );
+        let normal = b.sub(a).cross(c.sub(a));
+        let area2 = normal.dot(normal);
+        if area2 <= 0.0 {
+            continue;
+        }
+        // `normal` is twice the face's area, so its square root is the face's own length
+        // scale - the tolerance is relative to the cell and not to the model's units.
+        let scale = area2.sqrt();
+        let limit = ON_FACE_FRAC * scale.sqrt() * scale;
+        if triangle
+            .iter()
+            .all(|node| normal.dot(nodes[*node as usize].sub(a)).abs() <= limit)
+        {
+            return true;
+        }
+    }
+    false
 }
 
 // AI-FUNC-SUMMARY: Whether any edge of a fan runs through a polygon vertex that is not one of that triangle's own; returns bool; side effects: none.
