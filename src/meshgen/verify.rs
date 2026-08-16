@@ -3267,6 +3267,25 @@ fn check_v5(
     // discrepancy into a list of cells someone can look at.
     let mut misattributed = 0usize;
     let mut misattributed_volume = 0.0f64;
+    // **The mirror, and `[V5]` was blind to it until 2026-08-16.** The loop below skips every
+    // cell that *does* name the component (`if named { continue }`), so it can only ever find
+    // material the mesh **dropped** — never material the mesh **added**. Those are different
+    // defects with different fixes, and the second is exactly what a8 has: `[V13]` reads its
+    // boundary as displaced *outward* (signed offset +2.17 % of a local edge against a mean
+    // deviation of 2.70 %, displacement 0.863), and every one of its 1,138 dominant off-surface
+    // faces lies wholly outside the input with no corner on the far side. A body that is
+    // uniformly fatter than its input passes the old check with `misattributed_cells = 0`,
+    // which a8 does. Symmetry here is not tidiness — it is the only way the check can see the
+    // failure that is actually present.
+    let mut overattributed = 0usize;
+    let mut overattributed_volume = 0.0f64;
+    let mut overattributed_never_cut = 0usize;
+    let mut overattributed_never_cut_volume = 0.0f64;
+    let provenance_of = cell_i64(view.doc, "provenance");
+    let escalation_of = cell_i64(view.doc, "escalation_reason");
+    let mut overattributed_table = 0usize;
+    let mut overattributed_table_volume = 0.0f64;
+    let mut worst_overattributed: Vec<(f64, Vec3, i32)> = Vec::new();
     // The worst offenders, so the finding names places rather than a number. Ranked by the
     // cell's own volume: the biggest misattributed element is the one worth looking at.
     let mut worst_misattributed: Vec<(f64, Vec3, i32)> = Vec::new();
@@ -3289,12 +3308,48 @@ fn check_v5(
                 let end = set_offsets[k].min(set_components.len() as i64) as usize;
                 set_components[start.min(set_components.len())..end].contains(&(x as i64))
             };
-            if named {
-                continue;
-            }
             let p: Vec<Vec3> = n.iter().map(|i| view.doc.points[*i as usize]).collect();
             let centroid = p[0].add(p[1]).add(p[2]).add(p[3]).scale(0.25);
-            if per_component[index].contains(centroid) {
+            let inside = per_component[index].contains(centroid);
+            if named {
+                // Carries the component, centroid strictly outside it: material the mesh added.
+                if !inside {
+                    let volume = p[1]
+                        .sub(p[0])
+                        .cross(p[2].sub(p[0]))
+                        .dot(p[3].sub(p[0]))
+                        .abs()
+                        / 6.0;
+                    overattributed += 1;
+                    overattributed_volume += volume;
+                    // Was this cell ever opened by the cut? A cell the cut *split* and then
+                    // over-filled is a §6 table defect; a cell the cut never touched which
+                    // nevertheless carries the component is an S6 **classification** defect, and
+                    // they are fixed in different stages. `provenance` 0 is `Lattice`.
+                    if provenance_of
+                        .as_ref()
+                        .and_then(|a| a.get(c).copied())
+                        .is_some_and(|v| v == 0)
+                    {
+                        overattributed_never_cut += 1;
+                        overattributed_never_cut_volume += volume;
+                    }
+                    // And which stage owns it: `escalation_reason` -1 is §6's frozen table
+                    // deciding the child's side combinatorially from the row; anything else is
+                    // §7.5 seeding a piece by sampling its interior. The fix differs.
+                    if escalation_of
+                        .as_ref()
+                        .and_then(|a| a.get(c).copied())
+                        .is_some_and(|v| v < 0)
+                    {
+                        overattributed_table += 1;
+                        overattributed_table_volume += volume;
+                    }
+                    worst_overattributed.push((volume, centroid, x));
+                }
+                continue;
+            }
+            if inside {
                 misattributed += 1;
                 let volume = p[1]
                     .sub(p[0])
@@ -3307,6 +3362,20 @@ fn check_v5(
             }
         }
     }
+    s.metric("overattributed_cells", overattributed as f64);
+    s.metric("overattributed_cells_never_cut", overattributed_never_cut as f64);
+    s.metric("overattributed_volume_never_cut", overattributed_never_cut_volume);
+    s.metric("overattributed_cells_table", overattributed_table as f64);
+    s.metric("overattributed_volume_table", overattributed_table_volume);
+    s.metric("overattributed_volume", overattributed_volume);
+    s.metric(
+        "overattributed_volume_share",
+        if meshed.values().sum::<f64>() > 0.0 {
+            overattributed_volume / meshed.values().sum::<f64>()
+        } else {
+            0.0
+        },
+    );
     s.metric("misattributed_cells", misattributed as f64);
     s.metric("misattributed_volume", misattributed_volume);
     s.metric(
@@ -3354,6 +3423,36 @@ fn check_v5(
     // `if !fired { s.status = Pass }` - an unconditional reset that silently discards any
     // finding pushed earlier in the function. Reporting it above the gates emitted the WARN
     // lines into the log while the section header still read PASS.
+    if overattributed > 0 {
+        fired = true;
+        s.push(
+            VerifyItem::bare(
+                Severity::Warn,
+                "V5.overattributed_material",
+                format!(
+                    "{overattributed} cell(s) carry a component their centroid is strictly \
+                     outside, totalling {overattributed_volume:e} of material the input does not \
+                     have; the mesh's body is fatter than the geometry there, which `[V13]` sees \
+                     as a boundary displaced outward"
+                ),
+            ),
+            cap,
+        );
+        worst_overattributed
+            .sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        for (volume, centroid, x) in worst_overattributed.iter().take(cap.min(8)) {
+            let mut item = VerifyItem::bare(
+                Severity::Warn,
+                "V5.overattributed_material",
+                format!(
+                    "a cell of volume {volume:.4e} carries component {x} and its centroid is \
+                     outside it"
+                ),
+            );
+            item.coordinates.push(*centroid);
+            s.push(item, cap);
+        }
+    }
     if misattributed > 0 {
         fired = true;
         s.push(
