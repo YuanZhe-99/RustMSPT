@@ -545,6 +545,11 @@ fn field_i64(doc: &VtuDoc, name: &str) -> Vec<i64> {
 }
 
 // AI-FUNC-SUMMARY: Read a cell-data array as i64 values; returns Option<Vec<i64>>; side effects: none.
+fn point_i64(doc: &VtuDoc, name: &str) -> Option<Vec<i64>> {
+    doc.point_array(name)
+        .map(|a| (0..a.data.len()).map(|i| a.data.get_i64(i)).collect())
+}
+
 fn cell_i64(doc: &VtuDoc, name: &str) -> Option<Vec<i64>> {
     doc.cell_array(name)
         .map(|a| (0..a.data.len()).map(|i| a.data.get_i64(i)).collect())
@@ -3661,6 +3666,10 @@ struct BoundaryFace {
     /// Unit normal, for P-4's two-sided feature-size cast. Its sign is the face's own winding
     /// and is not meaningful here — the measurement casts both ways and adds the hits.
     normal: Vec3,
+    /// The face's three node ids, so P-4 can ask `node_origin` what kind of node each corner is.
+    nodes: [usize; 3],
+    /// Which corner carries `deviation_max` — the one actually off the surface.
+    worst_corner: usize,
     /// Mean |distance| over the three corners — roughness *and* displacement together.
     deviation: f64,
     /// Largest |distance| over the corners; "on the surface" is read from this.
@@ -3934,12 +3943,20 @@ fn check_v13(
         let tri_index = &per_component[index];
         let orient = orientation[index];
         let (mut sum, mut max, mut signed) = (0.0f64, 0.0f64, 0.0f64);
-        for q in &corners {
+        let mut worst_corner = 0usize;
+        for (slot, q) in corners.iter().enumerate() {
             let Some((d, t)) = tri_index.nearest(*q) else {
                 continue;
             };
             sum += d;
-            max = max.max(d);
+            if d > max {
+                max = d;
+                // Which corner carries `deviation_max`, so P-4 can ask what kind of node *it* is.
+                // Attributing the face by "any lattice corner is bound" over-credits the bound
+                // bucket: a face can have one corner sitting exactly on the surface and another
+                // half an element off it, and only the second one is the defect.
+                worst_corner = slot;
+            }
             let side = q.sub(tri_index.tris[t][0]).dot(tri_index.normals[t]) * orient;
             signed += if side < 0.0 { -d } else { d };
         }
@@ -3956,6 +3973,8 @@ fn check_v13(
             area,
             local_h,
             normal: unit_normal,
+            nodes: [k[0] as usize, k[1] as usize, k[2] as usize],
+            worst_corner,
             deviation: sum / corners.len() as f64,
             deviation_max: max,
             offset: signed / corners.len() as f64,
@@ -4217,6 +4236,120 @@ fn check_v13(
                 s.metric("off_surface_area_regime_normal", normal);
                 s.metric("off_surface_area_regime_band", banded);
                 s.metric("off_surface_area_regime_mixed", mixed);
+            }
+            // **P-4.1: what kind of NODES does an off-surface material boundary stand on?** This
+            // is the question `provenance` could not answer, and §6.1's wrong mechanism came from
+            // asking it of the cells. A face whose three corners are all lattice nodes is a
+            // staircase - the boundary is running along the background grid. A face standing on
+            // cut nodes is a cut that ran and landed in the wrong place. The two need opposite
+            // fixes, and the split is the first thing P-4.1 has to know.
+            if let Some(origin) = point_i64(view.doc, "node_origin") {
+                let (mut lattice, mut cut, mut mixed) = (0.0f64, 0.0f64, 0.0f64);
+                let (mut lattice_faces, mut cut_faces, mut mixed_faces) = (0usize, 0usize, 0usize);
+                for f in boundary.iter() {
+                    if f.deviation_max <= tol * f.local_h.max(f64::MIN_POSITIVE) {
+                        continue;
+                    }
+                    let interned = f
+                        .nodes
+                        .iter()
+                        .filter(|n| origin.get(**n).copied().unwrap_or(0) != 0)
+                        .count();
+                    match interned {
+                        0 => {
+                            lattice += f.area;
+                            lattice_faces += 1;
+                        }
+                        3 => {
+                            cut += f.area;
+                            cut_faces += 1;
+                        }
+                        _ => {
+                            mixed += f.area;
+                            mixed_faces += 1;
+                        }
+                    }
+                    let _ = f.worst_corner;
+                }
+                s.metric("off_surface_area_on_lattice_nodes", lattice);
+                s.metric("off_surface_area_on_cut_nodes", cut);
+                s.metric("off_surface_area_on_mixed_nodes", mixed);
+                s.metric("off_surface_faces_on_lattice_nodes", lattice_faces as f64);
+                s.metric("off_surface_faces_on_cut_nodes", cut_faces as f64);
+                s.metric("off_surface_faces_on_mixed_nodes", mixed_faces as f64);
+                // **How far off, relative to the element.** A lattice corner a few per cent off is
+                // a snap that nearly landed; one at half an element is the background grid showing
+                // through, and one at a whole element is the surface a full cell away from where
+                // the boundary was drawn. The three want different answers, so P-4 may not treat
+                // them as one population.
+                let mut bins = [0.0f64; 4];
+                let mut worst_area = 0.0f64;
+                let mut worst_sum = 0.0f64;
+                for f in boundary.iter() {
+                    let h = f.local_h.max(f64::MIN_POSITIVE);
+                    if f.deviation_max <= tol * h {
+                        continue;
+                    }
+                    if f.nodes
+                        .iter()
+                        .all(|n| origin.get(*n).copied().unwrap_or(0) != 0)
+                    {
+                        continue;
+                    }
+                    let ratio = f.deviation_max / h;
+                    worst_area += f.area;
+                    worst_sum += ratio * f.area;
+                    let slot = if ratio < 0.25 {
+                        0
+                    } else if ratio < 0.5 {
+                        1
+                    } else if ratio < 1.0 {
+                        2
+                    } else {
+                        3
+                    };
+                    bins[slot] += f.area;
+                }
+                s.metric("lattice_corner_off_under_quarter_h", bins[0]);
+                s.metric("lattice_corner_off_quarter_to_half_h", bins[1]);
+                s.metric("lattice_corner_off_half_to_one_h", bins[2]);
+                s.metric("lattice_corner_off_over_one_h", bins[3]);
+                if worst_area > 0.0 {
+                    s.metric("lattice_corner_off_mean_over_h", worst_sum / worst_area);
+                }
+                // **The decisive split for P-4.** `constraint_kind` is S7's own record of what each
+                // node was bound to: 0 free, 1 on a surface, 2 on a curve, 3 a corner. An
+                // off-surface material boundary standing on a node S7 marked *free* is a staircase
+                // the pipeline never claimed to have placed - a resolution or classification
+                // question. One standing on a node S7 marked as **on a surface** is different in
+                // kind: the mesher recorded that node as lying on the geometry and `[V13]` measures
+                // it half an element away, so S7's own contract is not being met and no amount of
+                // refinement fixes it.
+                if let Some(kind) = point_i64(view.doc, "constraint_kind") {
+                    let (mut free, mut bound) = (0.0f64, 0.0f64);
+                    let (mut free_faces, mut bound_faces) = (0usize, 0usize);
+                    for f in boundary.iter() {
+                        if f.deviation_max <= tol * f.local_h.max(f64::MIN_POSITIVE) {
+                            continue;
+                        }
+                        // The corner that IS off the surface, not merely some corner of the face.
+                        let node = f.nodes[f.worst_corner];
+                        if origin.get(node).copied().unwrap_or(0) != 0 {
+                            continue;
+                        }
+                        if kind.get(node).copied().unwrap_or(0) != 0 {
+                            bound += f.area;
+                            bound_faces += 1;
+                        } else {
+                            free += f.area;
+                            free_faces += 1;
+                        }
+                    }
+                    s.metric("off_surface_area_lattice_corner_bound", bound);
+                    s.metric("off_surface_area_lattice_corner_free", free);
+                    s.metric("off_surface_faces_lattice_corner_bound", bound_faces as f64);
+                    s.metric("off_surface_faces_lattice_corner_free", free_faces as f64);
+                }
             }
             s.metric("never_cut_area_thinner_than_h", thin);
             s.metric("never_cut_area_within_2h", marginal);

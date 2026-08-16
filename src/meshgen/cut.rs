@@ -204,6 +204,12 @@ pub struct CutMesh {
     /// S7's nodes followed by the cut nodes, in that order - a node index below
     /// `n_snapped` still means the same node it did in S5.
     pub nodes: Vec<Vec3>,
+    /// How many of `nodes` are S5/S7 lattice nodes. Everything at or above this index was
+    /// interned by the cut — an edge crossing, a face Steiner point, a piece centroid. Phase
+    /// P-4 needs the distinction on the *nodes*, not on the cells: a material boundary whose
+    /// corners are all unsnapped lattice nodes is a staircase, and one whose corners are cut
+    /// nodes is a cut in the wrong place. `provenance` is per element and cannot say which.
+    pub n_lattice_nodes: u32,
     pub tets: Vec<[u32; 4]>,
     /// Per tet, its ownership record (`Provenance::Cut` where the cut wrote it).
     pub records: Vec<OwnershipRecord>,
@@ -1496,6 +1502,7 @@ pub fn cut_lattice(
     let probing_spokes = std::env::var_os("RUSTMSPT_SPOKE_PROBE").is_some();
     let mut spoke_probe = SpokeProbe::default();
     let mut mesh = CutMesh {
+        n_lattice_nodes: nodes.len() as u32,
         nodes,
         tets: Vec::new(),
         records: Vec::new(),
@@ -3993,6 +4000,16 @@ pub fn cut_to_doc(mesh: &CutMesh, components: &[ArrangeComponent]) -> VtuDoc {
         "partition_id",
         ArrayData::I32(vec![0; cells]),
     ));
+    // P-4's instrument, on the points rather than the cells: 0 is a lattice node S5 placed and
+    // S7 may have snapped, 1 is a node the cut interned. `provenance` answers "was this element
+    // written by the cut", which is a different question and the one that misled §6.1 - a cell
+    // can be cut on one face and still present a raw lattice face as its material boundary
+    // elsewhere, and then reads as `Cut` on both owners.
+    let node_origin: Vec<u8> = (0..doc.points.len())
+        .map(|node| u8::from(node as u32 >= mesh.n_lattice_nodes))
+        .collect();
+    doc.point_data
+        .push(DataArray::scalar("node_origin", ArrayData::U8(node_origin)));
     // The real per-element regime, not a placeholder: S8b's gap slabs are band
     // elements (1) or band-Steiner elements (2), and `[V7]`'s one-layer check reads
     // exactly this array. Writing zeros made that check vacuous on pipeline output.
