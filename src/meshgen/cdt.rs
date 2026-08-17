@@ -832,6 +832,152 @@ pub fn trace_on_face(face: [Vec3; 3], tris: &[[Vec3; 3]], tol: f64) -> Vec<[Vec3
     out
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Triangulate a planar polygon with one interior hole — a lattice face whose surface trace
+//   is a closed loop strictly inside it.
+// Inputs: the outer ring and the hole ring, both in the same plane, each in order.
+// Returns: triangles as indices into `outer` followed by `hole`, or None if the rings are degenerate
+//   or the ear clip cannot finish.
+// Side effects: None.
+// Notes: This is the face-side half of the sub-cell cut. A body that crosses no edge of a cell
+//   leaves a **closed loop strictly inside** each face it passes through (PLAN §6.17 measured that
+//   shape on every one of a8's and a6a's sub-cell cells), so the face has to carry that loop as
+//   edges before any cell-level cut can follow it. 3,711 of a8's faces are in this state against
+//   250,258 whose trace reaches the boundary and which §5.2 already expresses.
+//
+//   Bridge, then ear clip. The bridge joins the outer vertex and hole vertex that are closest,
+//   turning the annulus into one simple polygon; ear clipping then finishes it. Ear clipping was
+//   rejected for *caps* and correctly so — a cap is a piece of a curved surface and an ear test in
+//   a fitted plane cuts ears that are not ears in space — but a lattice face **is** planar, so the
+//   objection does not carry over. The hole is emitted with reversed orientation so the bridged
+//   polygon is simple.
+pub fn triangulate_with_hole(outer: &[Vec3], hole: &[Vec3]) -> Option<Vec<[u32; 3]>> {
+    if outer.len() < 3 || hole.len() < 3 {
+        return None;
+    }
+    // Work in the outer ring's plane, in 2D.
+    let origin = outer[0];
+    let normal = {
+        let mut n = Vec3::new(0.0, 0.0, 0.0);
+        for k in 0..outer.len() {
+            let (a, b) = (outer[k], outer[(k + 1) % outer.len()]);
+            n = n.add(a.sub(origin).cross(b.sub(origin)));
+        }
+        let len = n.dot(n).sqrt();
+        if len <= 0.0 {
+            return None;
+        }
+        n.scale(1.0 / len)
+    };
+    let axis_u = {
+        let seed = if normal.x.abs() < 0.9 {
+            Vec3::new(1.0, 0.0, 0.0)
+        } else {
+            Vec3::new(0.0, 1.0, 0.0)
+        };
+        let u = seed.sub(normal.scale(seed.dot(normal)));
+        let len = u.dot(u).sqrt();
+        if len <= 0.0 {
+            return None;
+        }
+        u.scale(1.0 / len)
+    };
+    let axis_v = normal.cross(axis_u);
+    let flat = |p: Vec3| -> (f64, f64) {
+        let r = p.sub(origin);
+        (r.dot(axis_u), r.dot(axis_v))
+    };
+    let area = |ring: &[Vec3]| -> f64 {
+        let mut sum = 0.0;
+        for k in 0..ring.len() {
+            let (a, b) = (flat(ring[k]), flat(ring[(k + 1) % ring.len()]));
+            sum += a.0 * b.1 - b.0 * a.1;
+        }
+        sum * 0.5
+    };
+    // Outer counter-clockwise, hole clockwise: that is what makes the bridged polygon simple.
+    let mut outer_ids: Vec<u32> = (0..outer.len() as u32).collect();
+    if area(outer) < 0.0 {
+        outer_ids.reverse();
+    }
+    let mut hole_ids: Vec<u32> = (0..hole.len() as u32).map(|k| k + outer.len() as u32).collect();
+    if area(hole) > 0.0 {
+        hole_ids.reverse();
+    }
+    let point = |id: u32| -> Vec3 {
+        if (id as usize) < outer.len() {
+            outer[id as usize]
+        } else {
+            hole[id as usize - outer.len()]
+        }
+    };
+    // The bridge: the closest outer/hole pair, so the cut does not cross either ring.
+    let mut best = (f64::INFINITY, 0usize, 0usize);
+    for (i, o) in outer_ids.iter().enumerate() {
+        for (j, h) in hole_ids.iter().enumerate() {
+            let d = point(*o).sub(point(*h));
+            let d2 = d.dot(d);
+            if d2 < best.0 {
+                best = (d2, i, j);
+            }
+        }
+    }
+    let (_, oi, hj) = best;
+    let mut ring: Vec<u32> = Vec::with_capacity(outer_ids.len() + hole_ids.len() + 2);
+    for k in 0..outer_ids.len() {
+        ring.push(outer_ids[(oi + k) % outer_ids.len()]);
+    }
+    ring.push(outer_ids[oi]);
+    for k in 0..hole_ids.len() {
+        ring.push(hole_ids[(hj + k) % hole_ids.len()]);
+    }
+    ring.push(hole_ids[hj]);
+    // Ear clipping on the bridged simple polygon.
+    let cross = |a: (f64, f64), b: (f64, f64), c: (f64, f64)| -> f64 {
+        (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0)
+    };
+    let mut out: Vec<[u32; 3]> = Vec::new();
+    let mut guard = ring.len() * ring.len() + 16;
+    while ring.len() > 3 && guard > 0 {
+        guard -= 1;
+        let n = ring.len();
+        let mut clipped = false;
+        for k in 0..n {
+            let (ia, ib, ic) = (ring[(k + n - 1) % n], ring[k], ring[(k + 1) % n]);
+            let (a, b, c) = (flat(point(ia)), flat(point(ib)), flat(point(ic)));
+            if cross(a, b, c) <= 0.0 {
+                continue;
+            }
+            // No other vertex inside the candidate ear.
+            let mut blocked = false;
+            for other in ring.iter() {
+                if *other == ia || *other == ib || *other == ic {
+                    continue;
+                }
+                let p = flat(point(*other));
+                if cross(a, b, p) >= 0.0 && cross(b, c, p) >= 0.0 && cross(c, a, p) >= 0.0 {
+                    blocked = true;
+                    break;
+                }
+            }
+            if blocked {
+                continue;
+            }
+            out.push([ia, ib, ic]);
+            ring.remove(k);
+            clipped = true;
+            break;
+        }
+        if !clipped {
+            return None;
+        }
+    }
+    if ring.len() == 3 {
+        out.push([ring[0], ring[1], ring[2]]);
+    }
+    (!out.is_empty()).then_some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1358,6 +1504,104 @@ mod tests {
             Vec3::new(0.2, 0.3, 2.0),
         ]];
         assert!(trace_on_face(face, &far, TOL).is_empty(), "never reaches the plane");
+    }
+
+
+    // The area test is the honest one for a triangulation with a hole: the triangles must cover the
+    // outer ring MINUS the hole, exactly. Too few and there is a gap; too many and something
+    // overlaps; cover the hole as well and the loop is not a hole at all.
+    #[test]
+    fn a_face_with_an_interior_loop_triangulates_to_the_annulus() {
+        let outer = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        ];
+        let hole = [
+            Vec3::new(0.2, 0.2, 0.0),
+            Vec3::new(0.4, 0.2, 0.0),
+            Vec3::new(0.4, 0.4, 0.0),
+            Vec3::new(0.2, 0.4, 0.0),
+        ];
+        let tris = triangulate_with_hole(&outer, &hole).expect("a triangle with a square hole");
+        let point = |id: u32| -> Vec3 {
+            if (id as usize) < outer.len() { outer[id as usize] } else { hole[id as usize - outer.len()] }
+        };
+        let total: f64 = tris
+            .iter()
+            .map(|t| {
+                let (a, b, c) = (point(t[0]), point(t[1]), point(t[2]));
+                b.sub(a).cross(c.sub(a)).dot(Vec3::new(0.0, 0.0, 1.0)).abs() / 2.0
+            })
+            .sum();
+        let expected = 0.5 - 0.2 * 0.2;
+        assert!(
+            (total - expected).abs() < 1.0e-9,
+            "the triangles must cover the face minus the loop: {total} vs {expected}"
+        );
+    }
+
+    // Every edge of the hole must survive as an edge of the triangulation - that is the whole point.
+    // If the loop is not an edge, the cell-level cut cannot follow it and the boundary chamfers,
+    // which is the defect PLAN §6.22 traced to a fan piece carrying mixed labels.
+    #[test]
+    fn the_interior_loop_survives_as_edges() {
+        let outer = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        ];
+        let hole = [
+            Vec3::new(0.15, 0.15, 0.0),
+            Vec3::new(0.45, 0.20, 0.0),
+            Vec3::new(0.25, 0.50, 0.0),
+        ];
+        let tris = triangulate_with_hole(&outer, &hole).expect("a triangle with a triangular hole");
+        let mut edges: std::collections::BTreeSet<(u32, u32)> = std::collections::BTreeSet::new();
+        for t in &tris {
+            for k in 0..3 {
+                let (a, b) = (t[k], t[(k + 1) % 3]);
+                edges.insert(if a <= b { (a, b) } else { (b, a) });
+            }
+        }
+        for k in 0..hole.len() {
+            let a = (outer.len() + k) as u32;
+            let b = (outer.len() + (k + 1) % hole.len()) as u32;
+            let key = if a <= b { (a, b) } else { (b, a) };
+            assert!(edges.contains(&key), "hole edge {key:?} must be an edge of the triangulation");
+        }
+    }
+
+    // Winding must not matter: the caller gets its rings from `trace_on_face`, whose order comes
+    // from the geometry rather than from any orientation convention.
+    #[test]
+    fn the_hole_triangulates_whichever_way_round_it_is_given() {
+        let outer = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        ];
+        let hole = [
+            Vec3::new(0.2, 0.2, 0.0),
+            Vec3::new(0.4, 0.2, 0.0),
+            Vec3::new(0.3, 0.4, 0.0),
+        ];
+        let mut reversed = hole;
+        reversed.reverse();
+        let a = triangulate_with_hole(&outer, &hole).expect("forward");
+        let b = triangulate_with_hole(&outer, &reversed).expect("reversed");
+        let area = |tris: &[[u32; 3]], h: &[Vec3; 3]| -> f64 {
+            let point = |id: u32| -> Vec3 {
+                if (id as usize) < outer.len() { outer[id as usize] } else { h[id as usize - outer.len()] }
+            };
+            tris.iter()
+                .map(|t| {
+                    let (p, q, r) = (point(t[0]), point(t[1]), point(t[2]));
+                    q.sub(p).cross(r.sub(p)).dot(Vec3::new(0.0, 0.0, 1.0)).abs() / 2.0
+                })
+                .sum()
+        };
+        assert!((area(&a, &hole) - area(&b, &reversed)).abs() < 1.0e-12, "same area either way round");
     }
 
 }
