@@ -1478,23 +1478,6 @@ pub fn cut_lattice(
         members.sort_unstable();
     }
 
-    let mut pierced_owners: BTreeMap<[u32; 3], (u8, u8)> = BTreeMap::new();
-    if !curve_pierce.is_empty() {
-        for (index, tet) in lattice.tets.iter().enumerate() {
-            let escalated = per_cell[index].escalation.is_some();
-            for slots in TET_FACES {
-                let mut corners = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
-                corners.sort_by_key(|node| keys[*node as usize]);
-                if !curve_pierce.contains_key(&corners) {
-                    continue;
-                }
-                let entry = pierced_owners.entry(corners).or_insert((0, 0));
-                entry.0 += 1;
-                entry.1 += u8::from(escalated);
-            }
-        }
-    }
-
     // --- concatenate in cell order ---
     // Serial, in ascending cell order, so the §7.5 samples are taken in a fixed
     // sequence and R-P2 holds whatever the thread count is.
@@ -1645,6 +1628,29 @@ pub fn cut_lattice(
             }
         }
     }
+    // P-3.3: for each face a locked curve pierces, how many of its (at most two) owning cells
+    // escalated. Only a face escalated on *both* sides can have its triangulation changed by the
+    // junction path alone - the other side would keep §5.2's straight chord and the two would stop
+    // matching, which is how the two earlier crease attempts cracked the mesh. Built once the
+    // per-cell results are final, so the condition reads the escalation the mesh will actually
+    // have - P-3.13 step 3 escalated cells here and this had to see it (§6.24).
+    let mut pierced_owners: BTreeMap<[u32; 3], (u8, u8)> = BTreeMap::new();
+    if !curve_pierce.is_empty() {
+        for (index, tet) in lattice.tets.iter().enumerate() {
+            let escalated = per_cell[index].escalation.is_some();
+            for slots in TET_FACES {
+                let mut corners = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+                corners.sort_by_key(|node| keys[*node as usize]);
+                if !curve_pierce.contains_key(&corners) {
+                    continue;
+                }
+                let entry = pierced_owners.entry(corners).or_insert((0, 0));
+                entry.0 += 1;
+                entry.1 += u8::from(escalated);
+            }
+        }
+    }
+
     // **P-3.13 step 2, the census that decides whether the face-side wiring can be conforming.**
     // A face carrying an interior-only loop may only be re-triangulated if *every* cell owning it
     // derives the same triangulation - the condition P-3.3 proved for the crease fan and the one
@@ -2589,6 +2595,12 @@ pub fn cut_lattice(
              on 'a component enters this cell and crosses none of its edges' is the rule that \
              would reach them, and this is its size"
         ));
+        // Measured behind a prototype gate and removed once it had answered (§6.24): escalating
+        // these cells is CONFORMING - `[V1]`/`[V3]`/`[V9]` pass on both cases - and still loses,
+        // because the centroid fan cannot mesh the population it delivers. a8 92.011 -> 90.829 %
+        // with `[JCT-FALLBACK]` 397 -> 4,141; a6a 99.539 -> 99.488 % with 158 -> 210. The delivery
+        // mechanism is sound and the mesher behind it is not, which is why §7.2's mesher has to
+        // replace the fan for these cells rather than be added beside it.
     }
     if hidden_recovered > 0 {
         println!(
