@@ -508,6 +508,70 @@ pub fn subdivide_cell(
     quantum: f64,
     tol: f64,
 ) -> Option<CellSubdivision> {
+    subdivide_cell_by(boundary, nodes, quantum, tol, |arena, to_local| {
+        let mut planes: Vec<(Plane, i32)> = Vec::new();
+        for (component, ids) in cut_nodes {
+            let mapped: Vec<u32> =
+                ids.iter().filter_map(|id| to_local.get(id).copied()).collect();
+            for plane in planes_through_cut_nodes(&mapped, arena, tol) {
+                planes.push((plane, *component));
+            }
+        }
+        planes
+    })
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Subdivide one escalated cell by the planes its surface FRAGMENT lies in, rather than by
+//   the planes its edge crossings fit - §7.2's stated input, and the one case crossings cannot
+//   express.
+// Inputs: the cell's closed boundary soup, the fragment's triangles per component, the global node
+//   table, the key quantum and the tolerance.
+// Returns: the subdivision, or None where the crossing-driven entry point would also decline.
+// Side effects: None.
+// Notes: Identical to `subdivide_cell` in everything except where the planes come from, which is
+//   the whole point: a body that crosses no edge of the cell leaves no crossing to fit a plane to
+//   (PLAN §6.14), while its triangles lie in perfectly good planes. The refusals are the same and
+//   they are what keep it conforming - most importantly, **the boundary must come back triangle for
+//   triangle**. A fragment's plane cuts the face it passes through, so this will decline every
+//   sub-cell body until the face's own triangulation already carries the trace as an edge
+//   (`trace_on_face` + `chain_trace` + `triangulate_with_hole`). That refusal is the honest
+//   statement of what is still missing, not a limitation to work around.
+pub fn subdivide_cell_by_fragment(
+    boundary: &[[u32; 3]],
+    fragment: &[(i32, Vec<[Vec3; 3]>)],
+    nodes: &[Vec3],
+    quantum: f64,
+    tol: f64,
+) -> Option<CellSubdivision> {
+    subdivide_cell_by(boundary, nodes, quantum, tol, |arena, _| {
+        let mut planes: Vec<(Plane, i32)> = Vec::new();
+        for (component, tris) in fragment {
+            for plane in planes_from_fragment(tris, arena.quantum) {
+                planes.push((plane, *component));
+            }
+        }
+        planes
+    })
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: The body both entry points share - everything except where the constraint planes come
+//   from.
+// Inputs: the boundary soup, the node table, the quantum, the tolerance, and a closure producing
+//   the planes from the local arena and the global-to-local map.
+// Returns: the subdivision, or None on any of the refusals.
+// Side effects: None.
+// Notes: Factored out when the fragment-driven entry point landed, so the two cannot drift. Every
+//   refusal below is load-bearing and each was added in response to a measured failure; duplicating
+//   them into a second function is how one of them would quietly go missing.
+fn subdivide_cell_by(
+    boundary: &[[u32; 3]],
+    nodes: &[Vec3],
+    quantum: f64,
+    tol: f64,
+    make_planes: impl FnOnce(&NodeArena, &BTreeMap<u32, u32>) -> Vec<(Plane, i32)>,
+) -> Option<CellSubdivision> {
     // A local arena over just this cell's nodes, keeping global ids. Building one over the whole
     // mesh per cell would be O(N log N) per cell, and the cell only ever touches its own nodes.
     let mut local: Vec<u32> = boundary.iter().flatten().copied().collect();
@@ -524,13 +588,7 @@ pub fn subdivide_cell(
         .collect();
     let before = arena.points.len();
 
-    let mut planes: Vec<(Plane, i32)> = Vec::new();
-    for (component, ids) in cut_nodes {
-        let mapped: Vec<u32> = ids.iter().filter_map(|id| to_local.get(id).copied()).collect();
-        for plane in planes_through_cut_nodes(&mapped, &arena, tol) {
-            planes.push((plane, *component));
-        }
-    }
+    let planes = make_planes(&arena, &to_local);
     if planes.is_empty() {
         return None;
     }
@@ -1446,6 +1504,111 @@ mod tests {
         assert!(
             (total - 1.0 / 6.0).abs() < 1.0e-9,
             "pieces must sum to the unit tet's volume, got {total}"
+        );
+    }
+
+    // The cell-level entry point, with the boundary already carrying the trace as an edge - which
+    // is the state the face side has to deliver. Then the fragment drives the whole cut: two
+    // pieces, the plane is a face of both, the boundary comes back triangle for triangle, and the
+    // volumes are the exact 1/48 and 7/48 the geometry says. This is the composition PLAN §6.24
+    // says has to work before escalating anything into it.
+    #[test]
+    fn a_fragment_cuts_the_cell_when_the_boundary_already_carries_the_trace() {
+        // A unit tet whose faces are pre-split along z = 0.5, as the two cells sharing each face
+        // would have split it. 4..6 are the crossings on AD, BD and CD.
+        let points = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(0.0, 0.0, 0.5),
+            Vec3::new(0.5, 0.0, 0.5),
+            Vec3::new(0.0, 0.5, 0.5),
+        ];
+        let boundary = [
+            [0, 2, 1],
+            [5, 3, 4],
+            [0, 1, 5],
+            [0, 5, 4],
+            [4, 3, 6],
+            [0, 4, 6],
+            [0, 6, 2],
+            [6, 3, 5],
+            [1, 2, 6],
+            [1, 6, 5],
+        ];
+        let fragment = vec![(
+            7,
+            vec![[points[4], points[5], points[6]]],
+        )];
+        let out = subdivide_cell_by_fragment(&boundary, &fragment, &points, QUANTUM, 1.0e-9)
+            .expect("the fragment must cut a cell whose boundary already carries its trace");
+        assert_eq!(out.pieces.len(), 2, "one plane through the cell gives two pieces");
+
+        let volume = |soup: &[[u32; 3]]| -> f64 {
+            soup.iter()
+                .map(|t| {
+                    let (a, b, c) = (
+                        points[t[0] as usize],
+                        points[t[1] as usize],
+                        points[t[2] as usize],
+                    );
+                    a.dot(b.cross(c)) / 6.0
+                })
+                .sum()
+        };
+        let mut volumes: Vec<f64> = out.pieces.iter().map(|p| volume(p).abs()).collect();
+        volumes.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert!(
+            (volumes[0] - 1.0 / 48.0).abs() < 1.0e-12 && (volumes[1] - 7.0 / 48.0).abs() < 1.0e-12,
+            "the plane z = 0.5 cuts the unit tet into 1/48 and 7/48, got {volumes:?}"
+        );
+
+        // Every cap is in the fragment's plane and carries the component it came from - that is
+        // what the caller tags as an interface triangle.
+        assert!(!out.caps.is_empty(), "the cut must produce cap triangles");
+        for (tri, component) in &out.caps {
+            assert_eq!(*component, 7, "a cap carries its fragment's component");
+            for id in tri {
+                assert!(
+                    (points[*id as usize].z - 0.5).abs() < 1.0e-12,
+                    "a cap must lie in the fragment's plane"
+                );
+            }
+        }
+    }
+
+    // The refusal, and the reason for it, pinned so nobody weakens the check to make the sub-cell
+    // body pass. A fragment strictly inside a cell whose faces are WHOLE is declined - not because
+    // the kernel cannot cut it, which the same fragment on the same cell proves it can, but because
+    // the cut would re-split boundary triangles the neighbour keeps whole. That is a crack, and the
+    // way out is the face's own triangulation carrying the trace first, not a looser guard.
+    #[test]
+    fn the_subcell_body_is_refused_until_the_face_carries_its_trace() {
+        let points = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+        ];
+        let boundary = [[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]];
+        let tris = vec![[
+            Vec3::new(0.05, 0.05, 0.25),
+            Vec3::new(0.20, 0.05, 0.25),
+            Vec3::new(0.05, 0.20, 0.25),
+        ]];
+        assert!(
+            subdivide_cell_by_fragment(&boundary, &[(1, tris.clone())], &points, QUANTUM, 1.0e-9)
+                .is_none(),
+            "a fragment that would re-cut the cell's own boundary must be refused"
+        );
+        // ... and the refusal is the boundary check, not an inability to cut: the same fragment
+        // subdivides the same cell perfectly well when nothing outside it has to agree.
+        let mut arena = NodeArena::new(points.clone(), QUANTUM);
+        let cell = cell_of_tet([0, 1, 2, 3], &arena);
+        assert!(
+            subdivide_by_fragment(&cell, &tris, &mut arena, TOL).len() >= 2,
+            "the kernel itself cuts this cell; only the shared boundary stops the wrapper"
         );
     }
 
