@@ -978,6 +978,105 @@ pub fn triangulate_with_hole(outer: &[Vec3], hole: &[Vec3]) -> Option<Vec<[u32; 
     (!out.is_empty()).then_some(out)
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Chain a face's trace segments into ordered closed loops.
+// Inputs: the segments from `trace_on_face`, and the quantum that decides when two endpoints are
+//   the same point.
+// Returns: one ring per closed loop, each starting at its lowest-keyed point; None if any segment
+//   fails to close into one.
+// Side effects: None.
+// Notes: `trace_on_face` returns one chord per surface triangle, in canonical order but otherwise
+//   unrelated — `triangulate_with_hole` needs a ring. Endpoints are matched on the quantised key
+//   rather than on exact equality because two adjacent surface triangles compute their shared
+//   crossing from different arithmetic and agree only to within it; that is the same reason the
+//   node arena quantises.
+//
+//   **Refusing to return an open chain is a correctness requirement, not tidiness.** A trace that
+//   stays strictly inside a face is closed — it cannot reach the face's boundary, since reaching it
+//   would mean crossing a lattice edge and the whole population is defined by not doing that
+//   (PLAN §6.17). An open chain therefore means the trace is incomplete, and triangulating a hole
+//   from it would put a spurious edge across the face. The caller must fall back, not patch it.
+//
+//   A face may carry several loops - two struts passing through one face - so this returns a Vec.
+//   Each ring starts at its lowest-keyed point and runs in the direction of its lower-keyed
+//   neighbour, so the ring is a function of the geometry and both cells derive it identically.
+pub fn chain_trace(segments: &[[Vec3; 2]], quantum: f64) -> Option<Vec<Vec<Vec3>>> {
+    if segments.is_empty() {
+        return Some(Vec::new());
+    }
+    let q = quantum.max(f64::MIN_POSITIVE);
+    let key = |p: Vec3| -> (i64, i64, i64) {
+        (
+            (p.x / q).round() as i64,
+            (p.y / q).round() as i64,
+            (p.z / q).round() as i64,
+        )
+    };
+    let mut points: std::collections::BTreeMap<(i64, i64, i64), Vec3> =
+        std::collections::BTreeMap::new();
+    let mut links: std::collections::BTreeMap<(i64, i64, i64), Vec<(i64, i64, i64)>> =
+        std::collections::BTreeMap::new();
+    for segment in segments {
+        let (a, b) = (key(segment[0]), key(segment[1]));
+        if a == b {
+            continue;
+        }
+        points.entry(a).or_insert(segment[0]);
+        points.entry(b).or_insert(segment[1]);
+        let ends = links.entry(a).or_default();
+        if !ends.contains(&b) {
+            ends.push(b);
+        }
+        let ends = links.entry(b).or_default();
+        if !ends.contains(&a) {
+            ends.push(a);
+        }
+    }
+    if links.is_empty() {
+        return Some(Vec::new());
+    }
+    // Every point on a closed loop has exactly two neighbours. Anything else is an open chain or a
+    // junction, and neither can be triangulated as a hole.
+    if links.values().any(|ends| ends.len() != 2) {
+        return None;
+    }
+    let mut visited: std::collections::BTreeSet<(i64, i64, i64)> = std::collections::BTreeSet::new();
+    let mut rings: Vec<Vec<Vec3>> = Vec::new();
+    let starts: Vec<(i64, i64, i64)> = links.keys().copied().collect();
+    for start in starts {
+        if visited.contains(&start) {
+            continue;
+        }
+        let mut ring: Vec<Vec3> = Vec::new();
+        let mut current = start;
+        // Of the two neighbours, take the lower-keyed one, so the direction is the geometry's.
+        let mut previous: Option<(i64, i64, i64)> = None;
+        loop {
+            visited.insert(current);
+            ring.push(points[&current]);
+            let ends = &links[&current];
+            let next = match previous {
+                None => ends.iter().min().copied()?,
+                Some(prev) => *ends.iter().find(|end| **end != prev)?,
+            };
+            if next == start {
+                break;
+            }
+            if visited.contains(&next) {
+                // Re-entered the loop somewhere other than its start: not a simple ring.
+                return None;
+            }
+            previous = Some(current);
+            current = next;
+        }
+        if ring.len() < 3 {
+            return None;
+        }
+        rings.push(ring);
+    }
+    Some(rings)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1602,6 +1701,68 @@ mod tests {
                 .sum()
         };
         assert!((area(&a, &hole) - area(&b, &reversed)).abs() < 1.0e-12, "same area either way round");
+    }
+
+
+    // The segments come back one per surface triangle, in canonical but otherwise unrelated order.
+    // Chaining has to recover the ring regardless.
+    #[test]
+    fn scrambled_segments_chain_into_one_ring() {
+        let p = |x: f64, y: f64| Vec3::new(x, y, 0.0);
+        let square = [
+            [p(0.4, 0.2), p(0.4, 0.4)],
+            [p(0.2, 0.2), p(0.4, 0.2)],
+            [p(0.2, 0.4), p(0.2, 0.2)],
+            [p(0.4, 0.4), p(0.2, 0.4)],
+        ];
+        let rings = chain_trace(&square, QUANTUM).expect("a closed square chains");
+        assert_eq!(rings.len(), 1);
+        assert_eq!(rings[0].len(), 4, "four distinct corners");
+    }
+
+    // Two struts through one face give two loops, and they must come back separately - merging them
+    // would put an edge across the face between two unrelated bodies.
+    #[test]
+    fn two_bodies_through_one_face_give_two_rings() {
+        let p = |x: f64, y: f64| Vec3::new(x, y, 0.0);
+        let tri = |ox: f64| {
+            [
+                [p(ox, 0.1), p(ox + 0.1, 0.1)],
+                [p(ox + 0.1, 0.1), p(ox, 0.2)],
+                [p(ox, 0.2), p(ox, 0.1)],
+            ]
+        };
+        let mut segments = tri(0.1).to_vec();
+        segments.extend(tri(0.5));
+        let rings = chain_trace(&segments, QUANTUM).expect("two disjoint loops chain");
+        assert_eq!(rings.len(), 2, "one ring per body");
+        assert!(rings.iter().all(|r| r.len() == 3));
+    }
+
+    // An open chain means the trace is incomplete. Triangulating a hole from it would put a
+    // spurious edge across the face, so the caller must be told to fall back rather than handed a
+    // ring that closes a gap that is not there.
+    #[test]
+    fn an_open_chain_is_refused_rather_than_closed() {
+        let p = |x: f64, y: f64| Vec3::new(x, y, 0.0);
+        let open = [[p(0.2, 0.2), p(0.4, 0.2)], [p(0.4, 0.2), p(0.4, 0.4)]];
+        assert!(chain_trace(&open, QUANTUM).is_none(), "an open chain must be refused");
+    }
+
+    // Endpoints computed by two adjacent surface triangles agree only to within the quantum, so
+    // matching has to be quantised - exact equality would shatter every ring into open chains.
+    #[test]
+    fn endpoints_that_differ_below_the_quantum_still_chain() {
+        let p = |x: f64, y: f64| Vec3::new(x, y, 0.0);
+        let eps = QUANTUM * 0.25;
+        let ring = [
+            [p(0.2, 0.2), p(0.4, 0.2)],
+            [p(0.4 + eps, 0.2), p(0.4, 0.4)],
+            [p(0.4, 0.4 + eps), p(0.2, 0.2 - eps)],
+        ];
+        let rings = chain_trace(&ring, QUANTUM).expect("near-equal endpoints must still chain");
+        assert_eq!(rings.len(), 1);
+        assert_eq!(rings[0].len(), 3);
     }
 
 }
