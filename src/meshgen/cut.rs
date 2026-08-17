@@ -1566,6 +1566,7 @@ pub fn cut_lattice(
     // when a consumer takes the trace, not when it is computed.
     let face_trace_on = std::env::var_os("RUSTMSPT_FACE_TRACE").is_some();
     let mut face_trace: BTreeMap<[u32; 3], SmallVec<[Vec3; 4]>> = BTreeMap::new();
+    let mut face_trace_inside: BTreeSet<[u32; 3]> = BTreeSet::new();
     let mut face_trace_faces = 0usize;
     let mut face_trace_reaching = 0usize;
     let mut face_trace_interior = 0usize;
@@ -1635,11 +1636,146 @@ pub fn cut_lattice(
                         face_trace_reaching += 1;
                     } else {
                         face_trace_interior += 1;
+                        face_trace_inside.insert(corners);
                     }
                     face_trace_nodes += ids.len();
                     face_trace_faces += 1;
                     face_trace.insert(corners, ids);
                 }
+            }
+        }
+    }
+    // **P-3.13 step 2, the census that decides whether the face-side wiring can be conforming.**
+    // A face carrying an interior-only loop may only be re-triangulated if *every* cell owning it
+    // derives the same triangulation - the condition P-3.3 proved for the crease fan and the one
+    // P-3.12 violated, which is why it cracked `[V3]` on two of three cases. The sufficient version
+    // of it here is that both owners are in the population the new path will claim: a cell with no
+    // crossed edge that nevertheless carries a trace on one of its faces. Such a cell has nothing
+    // for §5.2's table to cut, so it is emitted whole today and is free to be re-triangulated; a
+    // cell *with* a crossed edge takes the table and would keep the face's plain triangle.
+    // Print-only. The number that matters is `both`, because the difference between it and
+    // `interior` is the part of the population the guard has to decline.
+    let mut subcell_cells = 0usize;
+    let mut subcell_clean = 0usize;
+    let mut subcell_ready = 0usize;
+    // Every interior face classified by what owns it, exhaustively - the four buckets sum to the
+    // interior count, so nothing is inferred by subtraction.
+    let mut face_all_clean = 0usize;
+    let mut face_all_escalated = 0usize;
+    let mut face_mixed = 0usize;
+    let mut face_has_table = 0usize;
+    let mut cells_interior_escalated = 0usize;
+    let mut cells_interior_uncut = 0usize;
+    let mut cells_interior_table = 0usize;
+    if face_trace_on {
+        let traced_faces = |tet: &[u32; 4]| -> SmallVec<[[u32; 3]; 4]> {
+            TET_FACES
+                .iter()
+                .filter_map(|slots| {
+                    let mut corners = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+                    corners.sort_by_key(|node| keys[*node as usize]);
+                    face_trace.contains_key(&corners).then_some(corners)
+                })
+                .collect()
+        };
+        let uncut_cell = |tet: &[u32; 4]| -> bool {
+            (0..4).all(|a| {
+                ((a + 1)..4).all(|b| {
+                    let (x, y) = (tet[a], tet[b]);
+                    let edge = if x <= y { [x, y] } else { [y, x] };
+                    !all_components
+                        .iter()
+                        .any(|component| cut_index.contains_key(&(edge, *component)))
+                })
+            })
+        };
+        let mut clean: Vec<bool> = vec![false; lattice.tets.len()];
+        for (index, tet) in lattice.tets.iter().enumerate() {
+            let faces = traced_faces(tet);
+            if faces.is_empty() || !uncut_cell(tet) {
+                continue;
+            }
+            subcell_cells += 1;
+            // A cell all of whose traced faces stay interior is one the new path can take whole.
+            // One face reaching the boundary means the surface leaves through a lattice edge that
+            // carries no crossing - which happens when S7 snapped the crossing onto a vertex, so
+            // the cell is handled by the on-cut path and keeps its faces plain. Mixing the two on
+            // one cell is what would leave a loop unrepresented on the face it exits through.
+            if faces.iter().all(|face| face_trace_inside.contains(face)) {
+                clean[index] = true;
+                subcell_clean += 1;
+            }
+        }
+        // **Every interior face, by what owns it.** Two owner conditions can deliver a shared
+        // triangulation: both owners clean (nothing cut, so the new path controls both), or both
+        // escalated (P-3.3's proven condition, already served by §7.3's face cache). Anything else
+        // has an owner that takes §5.2's table, which reads the face's *edge crossings* - and an
+        // interior loop crosses no edge, so that owner keeps the plain triangle whatever the other
+        // one does. Counted exhaustively rather than by subtraction, because the interesting
+        // possibility is the fourth bucket being the large one.
+        let mut owners: BTreeMap<[u32; 3], (u8, u8, u8)> = BTreeMap::new();
+        for (index, tet) in lattice.tets.iter().enumerate() {
+            let escalated = per_cell[index].escalation.is_some();
+            for slots in TET_FACES {
+                let mut corners = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+                corners.sort_by_key(|node| keys[*node as usize]);
+                if !face_trace_inside.contains(&corners) {
+                    continue;
+                }
+                let entry = owners.entry(corners).or_insert((0, 0, 0));
+                entry.0 += 1;
+                entry.1 += u8::from(escalated);
+                entry.2 += u8::from(clean[index] && !escalated);
+            }
+        }
+        for (all, escalated, clean_owners) in owners.values() {
+            if clean_owners == all {
+                face_all_clean += 1;
+            } else if escalated == all {
+                face_all_escalated += 1;
+            } else if escalated + clean_owners == *all {
+                face_mixed += 1;
+            } else {
+                face_has_table += 1;
+            }
+        }
+        // **The cells behind the fourth bucket, and the rule that would reach them.** A cell that
+        // takes §5.2's table has a crossed edge - so a component crossing its edges is cut - while
+        // a *different* component passes through one of its faces without crossing any edge of the
+        // cell at all. `crossing_components` sees only the first, so no junction is declared and
+        // the table represents the second nowhere. That is computable from the cell alone: a
+        // component whose surface enters the cell but crosses none of its six edges cannot be
+        // expressed by any row of the table. Counted here as the size of that escalation trigger.
+        for (index, tet) in lattice.tets.iter().enumerate() {
+            let interior = TET_FACES.iter().any(|slots| {
+                let mut corners = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+                corners.sort_by_key(|node| keys[*node as usize]);
+                face_trace_inside.contains(&corners)
+            });
+            if !interior {
+                continue;
+            }
+            if per_cell[index].escalation.is_some() {
+                cells_interior_escalated += 1;
+            } else if uncut_cell(tet) {
+                cells_interior_uncut += 1;
+            } else {
+                cells_interior_table += 1;
+            }
+        }
+        // **The set the wiring can actually claim.** A clean cell may still be unreachable: if one
+        // of its faces is shared with a cell that keeps the plain triangle, the loop on that face
+        // cannot become an edge, and a piece boundary crossing it is exactly the hanging node
+        // P-3.12 produced. So the claimable cell is one that is clean *and* every one of its
+        // traced faces has clean owners on both sides. This is the honest size of the step.
+        for (index, tet) in lattice.tets.iter().enumerate() {
+            if !clean[index] {
+                continue;
+            }
+            if traced_faces(tet).iter().all(|face| {
+                owners.get(face).map(|(all, _, mine)| mine == all).unwrap_or(false)
+            }) {
+                subcell_ready += 1;
             }
         }
     }
@@ -2429,6 +2565,29 @@ pub fn cut_lattice(
              as points, not interned: a node nothing references is a hanging node. {face_trace_reaching} \
              reach the face's boundary (§5.2 already has the chord as an edge); {face_trace_interior} \
              stay strictly inside it - the sub-cell body, and the population §7.2 exists for"
+        ));
+        mesh.warnings.push(format!(
+            "[FACE-TRACE] {subcell_cells} cell(s) carry a trace with no crossed edge at all, \
+             {subcell_clean} of them on interior-only faces throughout - the population the \
+             fragment mesher claims - and {subcell_ready} of those are enclosed by faces whose \
+             other owner is also clean, which is the set the wiring can claim without leaving a \
+             hanging node (P-3.3's condition, P-3.12's failure)"
+        ));
+        mesh.warnings.push(format!(
+            "[FACE-TRACE] every interior face by owner: {face_all_clean} all-clean, \
+             {face_all_escalated} all-escalated, {face_mixed} mixed clean/escalated, and \
+             {face_has_table} with an owner that takes §5.2's table. The table reads the face's \
+             EDGE crossings and an interior loop crosses no edge, so that owner keeps the plain \
+             triangle whatever its neighbour does - a face-side fix cannot reach the fourth bucket"
+        ));
+        mesh.warnings.push(format!(
+            "[FACE-TRACE] the cells owning an interior face: {cells_interior_table} take §5.2's \
+             table, {cells_interior_escalated} escalate, {cells_interior_uncut} have nothing cut. \
+             The first group is the one no mechanism reaches today: a component crosses their \
+             edges and is cut, while ANOTHER component passes through a face without crossing any \
+             edge, so `crossing_components` never sees it and no junction is declared. Escalating \
+             on 'a component enters this cell and crosses none of its edges' is the rule that \
+             would reach them, and this is its size"
         ));
     }
     if hidden_recovered > 0 {
