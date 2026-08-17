@@ -4652,10 +4652,18 @@ fn check_v13(
                                     .collect();
                                 ps.sort_unstable();
                                 ps.dedup();
-                                ps.len() > 1
-                                    && f.nodes.iter().all(|n| {
-                                        origin.get(*n).copied().unwrap_or(0) == 0
-                                    })
+                                // P-3.8: the puzzling combination — a structurally displaced
+                                // boundary INSIDE one parent cell standing on lattice corners. A
+                                // cap's corners are on the surface by construction, so this is not
+                                // a cap, and it is half of a8's structural residue.
+                                ps.len() == 1
+                                    && f.deviation_max
+                                        > 0.25 * f.local_h.max(f64::MIN_POSITIVE)
+                                    && origin
+                                        .get(f.nodes[f.worst_corner])
+                                        .copied()
+                                        .unwrap_or(0)
+                                        == 0
                             })
                             .map(|(i, f)| (f.area, i))
                             .collect();
@@ -4688,7 +4696,7 @@ fn check_v13(
                             }
                         }
                         println!(
-                            "[V13-DIAG] {} off-surface face(s) between parent cells with all-lattice corners; \
+                            "[V13-DIAG] {} structurally displaced face(s) INSIDE one parent cell on a lattice corner; \
                              {} of them ({:.5} of area) have corners on BOTH sides of the surface - the face is \
                              crossed and the crossing was lost",
                             worst.len(),
@@ -4810,6 +4818,50 @@ fn check_v13(
                     if total > 0.0 {
                         s.metric(&format!("on_surface_area_frac_at_{label}pct_h"), on / total);
                     }
+                }
+                // **P-3.8: decompose the STRUCTURAL core on its own.** P-3.7 showed the residue is
+                // three different populations wearing one number, and that the part which matters
+                // is the boundary sitting more than a quarter of an element off the geometry -
+                // real displacement, not a placement that is nearly right. Everything measured so
+                // far has been over the whole off-surface set, which on a1 and a4 is entirely
+                // near-miss and on a8 is a mixture. This restricts the same questions to the
+                // structural part, so the next fix is aimed at what is actually left.
+                {
+                    let structural = |f: &BoundaryFace| {
+                        f.deviation_max > 0.25 * f.local_h.max(f64::MIN_POSITIVE)
+                    };
+                    let mut total = 0.0f64;
+                    let (mut lattice_c, mut interned_c) = (0.0f64, 0.0f64);
+                    let (mut between, mut within) = (0.0f64, 0.0f64);
+                    for (f, cells) in boundary.iter().zip(boundary_owners.iter()) {
+                        if !structural(f) {
+                            continue;
+                        }
+                        total += f.area;
+                        if origin.get(f.nodes[f.worst_corner]).copied().unwrap_or(0) == 0 {
+                            lattice_c += f.area;
+                        } else {
+                            interned_c += f.area;
+                        }
+                        if let Some(parent) = cell_i64(view.doc, "parent_cell") {
+                            let mut ps: Vec<i64> = cells
+                                .iter()
+                                .map(|c| parent.get(*c).copied().unwrap_or(-1))
+                                .collect();
+                            ps.sort_unstable();
+                            ps.dedup();
+                            if ps.len() > 1 {
+                                between += f.area;
+                            } else {
+                                within += f.area;
+                            }
+                        }
+                    }
+                    s.metric("structural_off_surface_area", total);
+                    s.metric("structural_worst_corner_lattice", lattice_c);
+                    s.metric("structural_worst_corner_interned", interned_c);
+                    s.metric("structural_between_parent_cells", between);
+                    s.metric("structural_within_one_parent_cell", within);
                 }
                 s.metric("interned_corner_off_under_tenth_h", interned_bins[0]);
                 s.metric("interned_corner_off_tenth_to_third_h", interned_bins[1]);
