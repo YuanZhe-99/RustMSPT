@@ -622,9 +622,20 @@ optional and not conditional on the work having gone well.
 1. **What finished** — the step just completed, with the numbers that say so.
 2. **What is next** — the specific next step, not a direction. "Diagnose a8's 0.263 of off-surface
    area" is a next step; "keep improving P3" is not.
-3. **Why I stopped here** — context exhaustion, a measurement that has to run, a decision that is
-   the owner's, work genuinely finished, or a blocker. Say which. Never let stopping look like
+3. **Where things stand** — and this field has two forms, depending on whether the turn ends the
+   work.
+
+   *If stopping:* say why. Context exhaustion, a measurement that has to run, a decision that is
+   the owner's, work genuinely finished, or a blocker — say which. Never let stopping look like
    completion, and never let completion look like stopping.
+
+   *If not stopping:* report the **state**, not a reason. What is committed, what is verified, what
+   is in flight. Do not answer the stopping question at all — a turn that continues has no stopping
+   reason, and inventing one produces filler. "Commit boundary" was the filler this rule generated
+   on six consecutive turns: literally true (tree coherent, tests green, default path unchanged) but
+   answering a question nobody had asked, while the same reply said "I haven't stopped". If the
+   honest content of this field is "I finished a unit of work and am starting the next", write that
+   or write nothing.
 4. **What I need from you, if anything** — a decision between named options with their trade-offs,
    or explicitly *nothing, proceeding*.
 
