@@ -1567,6 +1567,8 @@ pub fn cut_lattice(
     let face_trace_on = std::env::var_os("RUSTMSPT_FACE_TRACE").is_some();
     let mut face_trace: BTreeMap<[u32; 3], SmallVec<[Vec3; 4]>> = BTreeMap::new();
     let mut face_trace_faces = 0usize;
+    let mut face_trace_reaching = 0usize;
+    let mut face_trace_interior = 0usize;
     let mut face_trace_nodes = 0usize;
     if face_trace_on {
         let mut seen: BTreeSet<[u32; 3]> = BTreeSet::new();
@@ -1603,6 +1605,37 @@ pub fn cut_lattice(
                     }
                 }
                 if !ids.is_empty() {
+                    // **Which traces need new machinery, and which are already expressible.** A
+                    // trace that reaches the face's boundary terminates on a lattice edge, so that
+                    // edge carries a crossing and §5.2's table already has the chord as an edge -
+                    // those faces are handled and re-triangulating them would rework most of the
+                    // mesh for nothing. A trace that stays strictly INSIDE the face is the
+                    // sub-cell body seen from the face (PLAN §6.17): no edge is crossed, so no
+                    // table row expresses it, and this is the population §7.2's mesher exists for.
+                    let on_boundary = |p: Vec3| -> bool {
+                        let normal = face[1].sub(face[0]).cross(face[2].sub(face[0]));
+                        let scale = normal.dot(normal).sqrt();
+                        (0..3).any(|k| {
+                            let (u, v) = (face[k], face[(k + 1) % 3]);
+                            let along = v.sub(u);
+                            let len2 = along.dot(along);
+                            if len2 <= 0.0 {
+                                return false;
+                            }
+                            let rel = p.sub(u);
+                            let t = rel.dot(along) / len2;
+                            if !(-0.001..=1.001).contains(&t) {
+                                return false;
+                            }
+                            let off = rel.sub(along.scale(t));
+                            off.dot(off) <= 1.0e-12 * scale
+                        })
+                    };
+                    if ids.iter().any(|p| on_boundary(*p)) {
+                        face_trace_reaching += 1;
+                    } else {
+                        face_trace_interior += 1;
+                    }
                     face_trace_nodes += ids.len();
                     face_trace_faces += 1;
                     face_trace.insert(corners, ids);
@@ -2393,7 +2426,9 @@ pub fn cut_lattice(
         mesh.warnings.push(format!(
             "[FACE-TRACE] {face_trace_faces} lattice face(s) carry a surface trace, {face_trace_nodes} \
              point(s) on them - a pure function of the face, so both cells derive the same set. Held \
-             as points, not interned: a node nothing references is a hanging node (P-3.13 step 1)"
+             as points, not interned: a node nothing references is a hanging node. {face_trace_reaching} \
+             reach the face's boundary (§5.2 already has the chord as an edge); {face_trace_interior} \
+             stay strictly inside it - the sub-cell body, and the population §7.2 exists for"
         ));
     }
     if hidden_recovered > 0 {
