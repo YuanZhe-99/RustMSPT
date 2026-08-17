@@ -584,6 +584,10 @@ fn orient_face_outward(tris: &[[u32; 3]], tet: [u32; 4], points: &[Vec3]) -> Vec
         .collect()
 }
 
+/// P-3.9's counters: cap-loop nodes inside §7.6's own on-surface set against those outside it.
+static CAP_LOOP_LATTICE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static CAP_LOOP_INTERNED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 // AI-FUNC-SUMMARY:
 // Purpose: The frozen §5.2 face-split table - how one parent face is triangulated after the cut.
 // Inputs: the face's cut state in the canonical frame, and the key table for Rule SNK.
@@ -2314,6 +2318,20 @@ pub fn cut_lattice(
     mesh.stats.n_seeded_pieces = seeded_pieces;
     mesh.stats.n_seed_uncertain = seed_uncertain;
 
+    {
+        let lat = CAP_LOOP_LATTICE.swap(0, std::sync::atomic::Ordering::Relaxed);
+        let int = CAP_LOOP_INTERNED.swap(0, std::sync::atomic::Ordering::Relaxed);
+        if lat + int > 0 {
+            mesh.warnings.push(format!(
+                "[CAP-LOOP] {} cap loop node(s): {int} on the cut's own surface set, {lat} NOT \
+                 ({:.1} %) - a loop node outside that set is one the split had no on-surface reason \
+                 to route through, so this is how often the cap is forced onto the mesh rather than \
+                 the geometry (P-3.9)",
+                lat + int,
+                100.0 * lat as f64 / (lat + int) as f64
+            ));
+        }
+    }
     if hidden_recovered > 0 {
         println!(
             "[S8/G6-3] {hidden_recovered} cut child(ren) recovered a body whose surface runs \
@@ -4634,6 +4652,26 @@ fn split_escalated_cell(
             // once; two where it passes through twice, which is a lattice cell straddling
             // a thin plate - the material between the walls is bounded by both of them.
             let mut all_caps: SmallVec<[[u32; 3]; 16]> = SmallVec::new();
+            // **P-3.9: what are cap loops made of?** §7.6's split partitions whole triangles, so a
+            // cap can only follow edges that already exist — and P-3.8 measured the consequence:
+            // 93.7 % of a8's structural residue stands on lattice corners, half of it inside a
+            // single parent cell where a cap's corners should be on the surface by construction.
+            // This counts the loop nodes directly. A cut node is on the surface by root-finding; a
+            // lattice node is only on it if S7 snapped it there. The ratio says whether the fix is
+            // small (loops are nearly all cut nodes, with occasional strays) or structural (loops
+            // are routinely forced onto the lattice).
+            for cycle in &cycles {
+                for node in cycle {
+                    // `surface` is what §7.6 considers on this component: its cut nodes, the
+                    // meeting points, and the vertices S7 put on the patch. A loop node outside
+                    // that set is one the split had no on-surface reason to route through.
+                    if surface.contains(node) {
+                        CAP_LOOP_INTERNED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    } else {
+                        CAP_LOOP_LATTICE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+            }
             for cycle in &cycles {
                 // The cap is this component's surface inside the cell, and the *other*
                 // surface crosses it along the intersection curve - through the meeting
