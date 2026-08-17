@@ -107,7 +107,7 @@ pub struct NodeArena {
     pub points: Vec<Vec3>,
     pub keys: Vec<NodeKey>,
     index: BTreeMap<NodeKey, u32>,
-    quantum: f64,
+    pub quantum: f64,
 }
 
 impl NodeArena {
@@ -646,6 +646,87 @@ pub fn subdivide_cell(
     Some(out)
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: The distinct supporting planes of a surface fragment, so §7.2's kernel can be driven by
+//   the geometry itself instead of by edge crossings.
+// Inputs: the fragment's triangles in world coordinates, and the quantum used to decide when two
+//   planes are the same one.
+// Returns: one `Plane` per distinct supporting plane, in a canonical order.
+// Side effects: None.
+// Notes: **This is the input SPEC §7.2 always specified and the kernel has never had.** Its stated
+//   inputs are "the cell's tet, its clipped surface fragments, and its curve segments" — edge
+//   crossings are absent from that list, which is exactly why it can represent a body that crosses
+//   no edge. `planes_through_cut_nodes` builds planes from crossing NODES and therefore cannot:
+//   with no crossings there is nothing to fit a plane to.
+//
+//   Three properties matter and all three come from the same canonicalisation. A plane is stored
+//   with its normal pointing to the positive-`d` side and quantised before comparison, so (a) the
+//   two triangles of a folded sheet give **one** plane rather than two facing opposite ways,
+//   (b) a fragment triangulated differently by two cells still yields the same plane set, and
+//   (c) the order is a function of the geometry, not of the traversal — which is what R-P2 needs
+//   and what makes the resulting subdivision reproducible.
+//
+//   Every piece `subdivide` returns from these planes is **convex**, hence star-shaped, hence
+//   fannable — which is the property PLAN §6.23 found the centroid fan losing on traced pieces.
+pub fn planes_from_fragment(tris: &[[Vec3; 3]], quantum: f64) -> Vec<Plane> {
+    let key = |value: f64| -> i64 {
+        let q = quantum.max(f64::MIN_POSITIVE);
+        (value / q).round() as i64
+    };
+    let mut seen: std::collections::BTreeMap<[i64; 4], Plane> = std::collections::BTreeMap::new();
+    for triangle in tris {
+        let Some(plane) = Plane::of_triangle(*triangle) else {
+            continue;
+        };
+        let d = plane.point.dot(plane.normal);
+        // Point the normal at the positive-d side, so a plane and its mirror collapse into one.
+        // At d == 0 the sign is decided by the first non-zero component instead, on the same rule.
+        let flip = if d < 0.0 {
+            true
+        } else if d > 0.0 {
+            false
+        } else {
+            let n = plane.normal;
+            let lead = if n.x != 0.0 {
+                n.x
+            } else if n.y != 0.0 {
+                n.y
+            } else {
+                n.z
+            };
+            lead < 0.0
+        };
+        let normal = if flip { plane.normal.scale(-1.0) } else { plane.normal };
+        let d = if flip { -d } else { d };
+        let id = [key(normal.x), key(normal.y), key(normal.z), key(d)];
+        seen.entry(id).or_insert(Plane {
+            point: normal.scale(d),
+            normal,
+        });
+    }
+    seen.into_values().collect()
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Subdivide a convex cell by a surface fragment rather than by crossing nodes.
+// Inputs: the cell, the fragment's triangles, the shared node arena, and the clip tolerance.
+// Returns: the convex pieces the fragment's supporting planes cut the cell into.
+// Side effects: Interns clip points into the arena.
+// Notes: Over-cuts by construction — a supporting plane is infinite while the triangle that
+//   produced it is not — so a fragment that only grazes a corner still splits the whole cell. That
+//   is intentional and is why the caller must classify each piece and merge: the pieces are the
+//   finest partition the fragment can induce, and any coarser one is a union of them. Convexity is
+//   what makes that safe, since a union of convex pieces sharing faces is meshed by meshing each.
+pub fn subdivide_by_fragment(
+    cell: &ConvexCell,
+    tris: &[[Vec3; 3]],
+    arena: &mut NodeArena,
+    tol: f64,
+) -> Vec<ConvexCell> {
+    let planes = planes_from_fragment(tris, arena.quantum);
+    subdivide(cell, &planes, arena, tol)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -957,4 +1038,113 @@ mod tests {
         assert!(above.is_none());
         assert_eq!(arena.points.len(), before, "a missed plane interns no node");
     }
+
+    // A fragment lying in ONE plane, however many triangles it is cut into, must give exactly one
+    // supporting plane - including when some of those triangles face the other way. This is what
+    // lets two cells that triangulate the same fragment differently still clip identically.
+    #[test]
+    fn a_folded_sheet_and_a_split_one_give_the_same_single_plane() {
+        let flat = [
+            [Vec3::new(0.0, 0.0, 0.5), Vec3::new(1.0, 0.0, 0.5), Vec3::new(0.0, 1.0, 0.5)],
+            // Same plane, opposite winding, and a different triangulation of the same region.
+            [Vec3::new(1.0, 0.0, 0.5), Vec3::new(0.0, 1.0, 0.5), Vec3::new(1.0, 1.0, 0.5)],
+            [Vec3::new(1.0, 1.0, 0.5), Vec3::new(0.0, 1.0, 0.5), Vec3::new(1.0, 0.0, 0.5)],
+        ];
+        let planes = planes_from_fragment(&flat, QUANTUM);
+        assert_eq!(planes.len(), 1, "one plane, whatever the triangulation or winding");
+        assert!(
+            (planes[0].normal.z.abs() - 1.0).abs() < 1.0e-9,
+            "the plane is z = 0.5, got normal {:?}",
+            planes[0].normal
+        );
+    }
+
+    // The property the whole approach turns on: a body crossing NO edge of the cell still cuts it.
+    // `planes_through_cut_nodes` cannot do this - with no crossings there are no nodes to fit a
+    // plane to - and it is why PLAN §6.14's sub-cell body has been unreachable.
+    #[test]
+    fn a_fragment_that_touches_no_edge_still_subdivides_the_cell() {
+        let (mut arena, cell) = unit_tet();
+        // A small triangle strictly inside the tet, near its centroid, touching no edge.
+        let fragment = [[
+            Vec3::new(0.20, 0.20, 0.20),
+            Vec3::new(0.30, 0.22, 0.20),
+            Vec3::new(0.22, 0.30, 0.26),
+        ]];
+        let pieces = subdivide_by_fragment(&cell, &fragment, &mut arena, TOL);
+        assert!(
+            pieces.len() >= 2,
+            "the fragment's plane must cut the cell even though it crosses no edge, got {}",
+            pieces.len()
+        );
+        // And the pieces must add back up to the parent - the same guard §6 puts on every cut.
+        let volume = |c: &ConvexCell| -> f64 {
+            tetrahedralise(c, &arena)
+                .iter()
+                .map(|t| {
+                    let (a, b, cc, d) = (
+                        arena.points[t[0] as usize],
+                        arena.points[t[1] as usize],
+                        arena.points[t[2] as usize],
+                        arena.points[t[3] as usize],
+                    );
+                    b.sub(a).cross(cc.sub(a)).dot(d.sub(a)).abs() / 6.0
+                })
+                .sum()
+        };
+        let total: f64 = pieces.iter().map(volume).sum();
+        assert!(
+            (total - 1.0 / 6.0).abs() < 1.0e-9,
+            "pieces must sum to the unit tet's volume, got {total}"
+        );
+    }
+
+    // Every piece a fragment induces is convex, so it is star-shaped from any interior point and a
+    // fan meshes it. That is precisely the property PLAN §6.23 found the centroid fan losing on
+    // traced pieces - 1,628 cells rejected with "a node lies inside a fan face it is not a vertex
+    // of" - and it is the reason this route answers that obstacle by construction rather than by a
+    // guard.
+    #[test]
+    fn every_piece_a_fragment_induces_is_convex() {
+        let (mut arena, cell) = unit_tet();
+        let fragment = [
+            [Vec3::new(0.0, 0.0, 0.4), Vec3::new(1.0, 0.0, 0.4), Vec3::new(0.0, 1.0, 0.4)],
+            [Vec3::new(0.3, 0.0, 0.0), Vec3::new(0.3, 1.0, 0.0), Vec3::new(0.3, 0.0, 1.0)],
+        ];
+        let pieces = subdivide_by_fragment(&cell, &fragment, &mut arena, TOL);
+        assert!(pieces.len() >= 3, "two crossing planes cut a tet into at least 3, got {}", pieces.len());
+        for piece in &pieces {
+            let nodes: Vec<u32> = {
+                let mut n: Vec<u32> = piece.faces.iter().flatten().copied().collect();
+                n.sort_unstable();
+                n.dedup();
+                n
+            };
+            for face in &piece.faces {
+                let (a, b, c) = (
+                    arena.points[face[0] as usize],
+                    arena.points[face[1] as usize],
+                    arena.points[face[2 % face.len()] as usize],
+                );
+                let normal = b.sub(a).cross(c.sub(a));
+                if normal.dot(normal) <= 0.0 {
+                    continue;
+                }
+                // Convex: every node of the piece is on one side of every face's plane.
+                let mut lo = 0.0f64;
+                let mut hi = 0.0f64;
+                for node in &nodes {
+                    let d = normal.dot(arena.points[*node as usize].sub(a));
+                    lo = lo.min(d);
+                    hi = hi.max(d);
+                }
+                let scale = normal.dot(normal).sqrt();
+                assert!(
+                    lo >= -1.0e-9 * scale || hi <= 1.0e-9 * scale,
+                    "a piece is not convex: face straddled by {lo} .. {hi}"
+                );
+            }
+        }
+    }
+
 }
