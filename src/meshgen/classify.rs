@@ -638,6 +638,25 @@ impl PointClassifier {
     }
 
     // AI-FUNC-SUMMARY: The slot a component id occupies, if it is a classified solid; returns Option<usize>; side effects: none.
+    // AI-FUNC-SUMMARY:
+    // Purpose: One component's surface triangles, for callers that need the geometry itself rather
+    //   than an inside/outside answer.
+    // Inputs: the component's slot.
+    // Returns: its triangles, or an empty slice for a slot that is not a closed solid.
+    // Side effects: None.
+    // Notes: `SPEC_meshgen_geometry.md` §7.2's mesher takes "the cell's tet, its clipped surface
+    //   fragments, and its curve segments" — so something has to hand it the surface, and the
+    //   classifier is already holding exactly that. Exposing it here rather than threading the
+    //   arranged surface through `CutOptions` keeps one owner for the geometry and keeps the two
+    //   consistent by construction: a fragment cut from these triangles cannot disagree with the
+    //   `inside` answers used to label the pieces it produces.
+    pub fn triangles_of(&self, slot: usize) -> &[[Vec3; 3]] {
+        self.solids
+            .get(slot)
+            .map(|solid| solid.triangles.as_slice())
+            .unwrap_or(&[])
+    }
+
     pub fn slot_of(&self, component: i32) -> Option<usize> {
         self.solids.iter().position(|solid| solid.x == component)
     }

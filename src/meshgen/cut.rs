@@ -1553,6 +1553,63 @@ pub fn cut_lattice(
     // meshes rather than argued from the signature. Nothing consumes its triangles yet: this run
     // must be a no-op, and `face_cache_conflicts` is the number that says whether the switch is
     // safe to make.
+    // **P-3.13 step 1 (`RUSTMSPT_FACE_TRACE=1`): intern the surface's trace on each lattice face.**
+    // §7.2's mesher needs the fragment; conformity needs the *face* to own the nodes the fragment
+    // puts on it. `trace_on_face` is a pure function of the face and the surface (cdt.rs), so both
+    // cells derive the same segments - this map turns them into interned nodes once, keyed by the
+    // face's three corners exactly as `face_steiner` and `curve_pierce` are. Nothing consumes it
+    // yet: this step must be a **no-op**, and the numbers it reports are what say the population is
+    // real and the keying is sound before anything is wired to it.
+    // Stored as POINTS, not node ids. Interning a node the mesh does not yet reference leaves it
+    // sitting on a lattice face with nothing using it, and `[V3]` rightly calls that a hanging
+    // node - measured: a8 fails `[V3]` outright with 561,929 such orphans. The interning happens
+    // when a consumer takes the trace, not when it is computed.
+    let face_trace_on = std::env::var_os("RUSTMSPT_FACE_TRACE").is_some();
+    let mut face_trace: BTreeMap<[u32; 3], SmallVec<[Vec3; 4]>> = BTreeMap::new();
+    let mut face_trace_faces = 0usize;
+    let mut face_trace_nodes = 0usize;
+    if face_trace_on {
+        let mut seen: BTreeSet<[u32; 3]> = BTreeSet::new();
+        for tet in lattice.tets.iter() {
+            for slots in TET_FACES {
+                let mut corners = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+                corners.sort_by_key(|node| keys[*node as usize]);
+                if !seen.insert(corners) {
+                    continue;
+                }
+                let face = [
+                    mesh.nodes[corners[0] as usize],
+                    mesh.nodes[corners[1] as usize],
+                    mesh.nodes[corners[2] as usize],
+                ];
+                let mut ids: SmallVec<[Vec3; 4]> = SmallVec::new();
+                let mut seen_keys: SmallVec<[NodeKey; 4]> = SmallVec::new();
+                for component in &all_components {
+                    let Some(slot) = classifier.slot_of(*component) else { continue };
+                    let tris = classifier.triangles_of(slot);
+                    if tris.is_empty() {
+                        continue;
+                    }
+                    for segment in crate::meshgen::cdt::trace_on_face(face, tris, options.eps) {
+                        for point in segment {
+                            // Deduplicated per face by node key, so the two cells sharing it get
+                            // the same point set whatever order their triangles arrive in.
+                            let key = node_key(point, order_quantum);
+                            if !seen_keys.contains(&key) {
+                                seen_keys.push(key);
+                                ids.push(point);
+                            }
+                        }
+                    }
+                }
+                if !ids.is_empty() {
+                    face_trace_nodes += ids.len();
+                    face_trace_faces += 1;
+                    face_trace.insert(corners, ids);
+                }
+            }
+        }
+    }
     let mut face_cache = crate::meshgen::facecache::FaceTriCache::new();
     let mut face_cache_conflicts = 0usize;
     // P-3.3's census, print-only: how many faces a locked curve pierces are nevertheless
@@ -2331,6 +2388,13 @@ pub fn cut_lattice(
                 100.0 * lat as f64 / (lat + int) as f64
             ));
         }
+    }
+    if face_trace_faces > 0 {
+        mesh.warnings.push(format!(
+            "[FACE-TRACE] {face_trace_faces} lattice face(s) carry a surface trace, {face_trace_nodes} \
+             point(s) on them - a pure function of the face, so both cells derive the same set. Held \
+             as points, not interned: a node nothing references is a hanging node (P-3.13 step 1)"
+        ));
     }
     if hidden_recovered > 0 {
         println!(
