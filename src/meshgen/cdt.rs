@@ -727,6 +727,111 @@ pub fn subdivide_by_fragment(
     subdivide(cell, &planes, arena, tol)
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: The surface's trace on one lattice face — where a fragment meets the face, as segments.
+// Inputs: the face's three corners, the surface triangles to test, and a tolerance.
+// Returns: the intersection segments, clipped to the face, in a canonical order.
+// Side effects: None.
+// Notes: **This is the piece that makes a fragment-driven cut conforming, and it works because of
+//   what it does NOT depend on.** The trace on a face is a function of the face and the surface
+//   alone — not of which cell you look at it from, not of how either cell clipped its own fragment,
+//   not of the traversal. So the two cells sharing a face derive the same trace, intern the same
+//   nodes for it, and their cuts meet. That is invariant J1's requirement, and four separate
+//   attempts this session failed by computing the equivalent quantity per *cell* instead
+//   (PLAN §6.23): the trace has to come from the face.
+//
+//   Each surface triangle contributes at most one segment: the chord where it crosses the face's
+//   plane, clipped to the face's own triangle. A triangle lying *in* the plane contributes nothing
+//   — its trace is an area, not a curve, and the coincident-surface case is §6's, not this one.
+//   Endpoints are ordered within each segment and the segments among themselves, so the result is a
+//   function of the geometry rather than of the order the caller supplies triangles in.
+pub fn trace_on_face(face: [Vec3; 3], tris: &[[Vec3; 3]], tol: f64) -> Vec<[Vec3; 2]> {
+    let normal = face[1].sub(face[0]).cross(face[2].sub(face[0]));
+    let area2 = normal.dot(normal);
+    if area2 <= 0.0 {
+        return Vec::new();
+    }
+    let scale = area2.sqrt();
+    // Inward half-planes of the face, for clipping a chord to it.
+    let inside_face = |p: Vec3| -> bool {
+        let edge = |u: Vec3, v: Vec3| normal.dot(v.sub(u).cross(p.sub(u))) >= -tol * scale;
+        edge(face[0], face[1]) && edge(face[1], face[2]) && edge(face[2], face[0])
+    };
+    let mut out: Vec<[Vec3; 2]> = Vec::new();
+    for triangle in tris {
+        let d: [f64; 3] = [
+            normal.dot(triangle[0].sub(face[0])) / scale,
+            normal.dot(triangle[1].sub(face[0])) / scale,
+            normal.dot(triangle[2].sub(face[0])) / scale,
+        ];
+        // Wholly on one side, or lying in the plane: no chord.
+        if d.iter().all(|x| *x > tol) || d.iter().all(|x| *x < -tol) {
+            continue;
+        }
+        if d.iter().all(|x| x.abs() <= tol) {
+            continue;
+        }
+        let mut hits: Vec<Vec3> = Vec::new();
+        for k in 0..3 {
+            let (a, b) = (k, (k + 1) % 3);
+            if d[a].abs() <= tol {
+                hits.push(triangle[a]);
+            } else if (d[a] > tol && d[b] < -tol) || (d[a] < -tol && d[b] > tol) {
+                let t = d[a] / (d[a] - d[b]);
+                hits.push(triangle[a].add(triangle[b].sub(triangle[a]).scale(t)));
+            }
+        }
+        if hits.len() < 2 {
+            continue;
+        }
+        // Clip the chord to the face by walking its parameter against the three edges.
+        let (p, q) = (hits[0], hits[hits.len() - 1]);
+        let along = q.sub(p);
+        if along.dot(along) <= 0.0 {
+            continue;
+        }
+        let (mut lo, mut hi) = (0.0f64, 1.0f64);
+        for k in 0..3 {
+            let (u, v) = (face[k], face[(k + 1) % 3]);
+            let inward = normal.cross(v.sub(u));
+            let denom = inward.dot(along);
+            let value = inward.dot(p.sub(u));
+            if denom.abs() <= f64::MIN_POSITIVE {
+                if value < -tol * scale * scale {
+                    lo = 1.0;
+                    hi = 0.0;
+                }
+                continue;
+            }
+            let t = -value / denom;
+            if denom > 0.0 {
+                lo = lo.max(t);
+            } else {
+                hi = hi.min(t);
+            }
+        }
+        if lo >= hi {
+            continue;
+        }
+        let (a, b) = (p.add(along.scale(lo)), p.add(along.scale(hi)));
+        if !inside_face(a.add(b.sub(a).scale(0.5))) {
+            continue;
+        }
+        // Canonical endpoint order, so the segment is a function of the geometry.
+        let key = |v: Vec3| (v.x.to_bits(), v.y.to_bits(), v.z.to_bits());
+        out.push(if key(a) <= key(b) { [a, b] } else { [b, a] });
+    }
+    out.sort_by(|l, r| {
+        let key = |v: Vec3| (v.x.to_bits(), v.y.to_bits(), v.z.to_bits());
+        (key(l[0]), key(l[1])).cmp(&(key(r[0]), key(r[1])))
+    });
+    out.dedup_by(|l, r| {
+        let key = |v: Vec3| (v.x.to_bits(), v.y.to_bits(), v.z.to_bits());
+        key(l[0]) == key(r[0]) && key(l[1]) == key(r[1])
+    });
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1145,6 +1250,114 @@ mod tests {
                 );
             }
         }
+    }
+
+
+    // The conformity property, stated as a test: the trace on a face is the same whichever cell
+    // asks for it, because it is computed from the face and the surface and nothing else. Two
+    // "cells" here are two different orderings and supersets of the triangle list - the difference
+    // a real pair of neighbours would present.
+    #[test]
+    fn the_trace_on_a_face_is_the_same_from_either_side() {
+        let face = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        ];
+        let wall = |y: f64| [
+            [Vec3::new(-1.0, y, -1.0), Vec3::new(2.0, y, -1.0), Vec3::new(-1.0, y, 2.0)],
+            [Vec3::new(2.0, y, -1.0), Vec3::new(2.0, y, 2.0), Vec3::new(-1.0, y, 2.0)],
+        ];
+        let mut a = wall(0.4).to_vec();
+        // The neighbour sees the same wall plus a triangle far away, in a different order.
+        let mut b = vec![[
+            Vec3::new(5.0, 5.0, 5.0),
+            Vec3::new(6.0, 5.0, 5.0),
+            Vec3::new(5.0, 6.0, 5.0),
+        ]];
+        b.extend(wall(0.4).iter().rev().copied());
+        a.reverse();
+        let ta = trace_on_face(face, &a, TOL);
+        let tb = trace_on_face(face, &b, TOL);
+        assert!(!ta.is_empty(), "the wall crosses the face, so there is a trace");
+        assert_eq!(ta.len(), tb.len(), "same trace from either side");
+        for (l, r) in ta.iter().zip(tb.iter()) {
+            for k in 0..2 {
+                assert!(
+                    l[k].sub(r[k]).dot(l[k].sub(r[k])) < 1.0e-20,
+                    "trace endpoints must agree exactly: {:?} vs {:?}",
+                    l[k],
+                    r[k]
+                );
+            }
+        }
+    }
+
+    // A body passing through the face's interior leaves a trace that never reaches the face's
+    // boundary - which is what "it crosses no edge of the cell" means, seen from the face. This is
+    // the shape PLAN §6.17 measured on a8 and a6a for every one of their sub-cell cells.
+    #[test]
+    fn a_body_through_the_interior_traces_inside_the_face_only() {
+        let face = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        ];
+        // A thin prism crossing the face well inside it.
+        let tris = [
+            [Vec3::new(0.2, 0.2, -1.0), Vec3::new(0.3, 0.2, 1.0), Vec3::new(0.2, 0.3, 1.0)],
+            [Vec3::new(0.2, 0.2, -1.0), Vec3::new(0.2, 0.3, 1.0), Vec3::new(0.2, 0.3, -1.0)],
+        ];
+        let trace = trace_on_face(face, &tris, TOL);
+        assert!(!trace.is_empty(), "the prism crosses the face");
+        for segment in &trace {
+            for point in segment {
+                assert!(
+                    point.x > 1.0e-9 && point.y > 1.0e-9 && point.x + point.y < 1.0 - 1.0e-9,
+                    "the trace must stay strictly inside the face, got {point:?}"
+                );
+            }
+        }
+    }
+
+    // A surface lying IN the face's plane has an area for a trace, not a curve. That is §6's
+    // coincident-surface case and must not be reported here as a chord.
+    #[test]
+    fn a_coplanar_surface_traces_nothing() {
+        let face = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        ];
+        let tris = [[
+            Vec3::new(0.1, 0.1, 0.0),
+            Vec3::new(0.6, 0.1, 0.0),
+            Vec3::new(0.1, 0.6, 0.0),
+        ]];
+        assert!(trace_on_face(face, &tris, TOL).is_empty());
+    }
+
+    // A surface that misses the face entirely, and one that crosses its plane but outside its
+    // triangle, must both trace nothing - the clip to the face is what makes the trace local.
+    #[test]
+    fn a_surface_beside_the_face_traces_nothing() {
+        let face = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        ];
+        let away = [[
+            Vec3::new(5.0, 5.0, -1.0),
+            Vec3::new(6.0, 5.0, 1.0),
+            Vec3::new(5.0, 6.0, 1.0),
+        ]];
+        assert!(trace_on_face(face, &away, TOL).is_empty(), "crosses the plane, misses the triangle");
+        let far = [[
+            Vec3::new(0.2, 0.2, 1.0),
+            Vec3::new(0.3, 0.2, 2.0),
+            Vec3::new(0.2, 0.3, 2.0),
+        ]];
+        assert!(trace_on_face(face, &far, TOL).is_empty(), "never reaches the plane");
     }
 
 }
