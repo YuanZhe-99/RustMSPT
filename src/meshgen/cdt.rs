@@ -786,6 +786,81 @@ pub fn subdivide_by_fragment(
 }
 
 // AI-FUNC-SUMMARY:
+// Purpose: The surface fragment inside one lattice cell — the last of §7.2's three stated inputs
+//   that the pipeline has never produced.
+// Inputs: the cell's four corners, the candidate triangles, and a tolerance.
+// Returns: those candidates whose intersection with the tet has positive area, in the order given.
+// Side effects: None.
+// Notes: **Measure-zero contact is not fragment, and excluding it is geometry rather than tuning.**
+//   A triangle that meets the tet only along an edge or at a corner has no material inside it, and
+//   `planes_from_fragment` would still hand back its supporting plane — which cuts the whole cell,
+//   because a supporting plane is infinite while the triangle is not. One tangent triangle can
+//   therefore double the piece count for nothing. The fragment is the part of the surface *in* the
+//   cell, so a contact of zero area is not part of it.
+//
+//   The originals come back rather than the clipped polygons: the only consumer is
+//   `planes_from_fragment`, a clipped piece has the same supporting plane as the triangle it came
+//   from, and a sliver of a clipped piece has a numerically worse normal than the whole triangle
+//   does. Input order is preserved and the caller's input order is fixed, which is what R-P2 needs.
+pub fn fragment_in_cell(tet: [Vec3; 4], tris: &[[Vec3; 3]], tol: f64) -> Vec<[Vec3; 3]> {
+    // The tet's four faces, each as an inward half-space. Built from the cell's own corners so a
+    // degenerate or inverted tet simply keeps nothing rather than keeping everything.
+    let mut halfspaces: Vec<(Vec3, f64)> = Vec::with_capacity(4);
+    for skip in 0..4 {
+        let face: Vec<Vec3> = (0..4).filter(|s| *s != skip).map(|s| tet[s]).collect();
+        let normal = face[1].sub(face[0]).cross(face[2].sub(face[0]));
+        let length = normal.dot(normal).sqrt();
+        if length <= 0.0 {
+            return Vec::new();
+        }
+        let normal = normal.scale(1.0 / length);
+        // Point it at the corner that is not on this face, so "inside" is positive.
+        let inward = if normal.dot(tet[skip].sub(face[0])) < 0.0 { normal.scale(-1.0) } else { normal };
+        halfspaces.push((inward, inward.dot(face[0])));
+    }
+
+    let mut out: Vec<[Vec3; 3]> = Vec::new();
+    for triangle in tris {
+        let mut polygon: Vec<Vec3> = triangle.to_vec();
+        for (normal, offset) in &halfspaces {
+            if polygon.is_empty() {
+                break;
+            }
+            let mut next: Vec<Vec3> = Vec::with_capacity(polygon.len() + 1);
+            for slot in 0..polygon.len() {
+                let (a, b) = (polygon[slot], polygon[(slot + 1) % polygon.len()]);
+                let (da, db) = (normal.dot(a) - offset, normal.dot(b) - offset);
+                if da >= 0.0 {
+                    next.push(a);
+                }
+                // A crossing, and only a strict one: an endpoint exactly on the plane is already
+                // carried by the branch above and adding it twice makes a duplicate vertex.
+                if (da > 0.0 && db < 0.0) || (da < 0.0 && db > 0.0) {
+                    let t = da / (da - db);
+                    next.push(a.add(b.sub(a).scale(t)));
+                }
+            }
+            polygon = next;
+        }
+        if polygon.len() < 3 {
+            continue;
+        }
+        // Positive area, measured on the polygon itself. `tol` is a length, so it is squared here
+        // to compare against one - the caller passes the same tolerance the rest of §7.2 uses.
+        let mut area2 = Vec3::new(0.0, 0.0, 0.0);
+        for slot in 1..polygon.len() - 1 {
+            area2 = area2.add(
+                polygon[slot].sub(polygon[0]).cross(polygon[slot + 1].sub(polygon[0])),
+            );
+        }
+        if area2.dot(area2).sqrt() * 0.5 > tol * tol {
+            out.push(*triangle);
+        }
+    }
+    out
+}
+
+// AI-FUNC-SUMMARY:
 // Purpose: The surface's trace on one lattice face — where a fragment meets the face, as segments.
 // Inputs: the face's three corners, the surface triangles to test, and a tolerance.
 // Returns: the intersection segments, clipped to the face, in a canonical order.
@@ -1609,6 +1684,117 @@ mod tests {
         assert!(
             subdivide_by_fragment(&cell, &tris, &mut arena, TOL).len() >= 2,
             "the kernel itself cuts this cell; only the shared boundary stops the wrapper"
+        );
+    }
+
+    // The three inputs SPEC §7.2 names are the tet, the fragment and the curve segments. The tet
+    // the pipeline has; the fragment it has never produced. A triangle beyond one of the cell's own
+    // face planes is no part of it.
+    #[test]
+    fn a_triangle_outside_the_cell_is_no_part_of_its_fragment() {
+        let tet = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+        ];
+        let tris = [[
+            Vec3::new(0.0, 0.0, 2.0),
+            Vec3::new(1.0, 0.0, 2.0),
+            Vec3::new(0.0, 1.0, 2.0),
+        ]];
+        assert!(fragment_in_cell(tet, &tris, TOL).is_empty());
+    }
+
+    // A triangle that passes through the cell comes back WHOLE, not clipped: the only consumer is
+    // `planes_from_fragment`, a clipped piece has the same supporting plane, and a sliver of one
+    // has a numerically worse normal than the triangle it came from.
+    #[test]
+    fn a_triangle_through_the_cell_comes_back_whole() {
+        let tet = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+        ];
+        let tris = [[
+            Vec3::new(-1.0, -1.0, 0.25),
+            Vec3::new(2.0, -1.0, 0.25),
+            Vec3::new(-1.0, 2.0, 0.25),
+        ]];
+        let fragment = fragment_in_cell(tet, &tris, TOL);
+        assert_eq!(fragment.len(), 1);
+        assert_eq!(fragment[0], tris[0], "the original triangle, not a clipped piece");
+    }
+
+    // **Measure-zero contact is not fragment**, and this is the test that keeps it that way. A
+    // triangle meeting the tet only at one corner has no material inside it, but its supporting
+    // plane is infinite and would cut the whole cell - one tangent triangle doubling the piece
+    // count for nothing. Excluding it is geometry, not a threshold: the fragment is the part of the
+    // surface IN the cell.
+    #[test]
+    fn a_triangle_touching_only_a_corner_is_not_fragment() {
+        let tet = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+        ];
+        let tris = [[
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(-1.0, 0.0, 0.0),
+            Vec3::new(0.0, -1.0, 0.0),
+        ]];
+        assert!(
+            fragment_in_cell(tet, &tris, TOL).is_empty(),
+            "a corner touch has zero area and contributes no plane"
+        );
+    }
+
+    // Why the clip has to exist at all, stated as a measurement rather than an assertion: the
+    // kernel is driven by the fragment's PLANES, and handing it the whole surface hands it a plane
+    // per distant patch. Every one of those cuts the cell, because a supporting plane is infinite.
+    #[test]
+    fn clipping_to_the_cell_is_what_makes_the_plane_set_small() {
+        let tet = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+        ];
+        // Two triangles of one strut crossing the cell, coplanar at z = 0.3 ...
+        let mut tris = vec![
+            [
+                Vec3::new(-1.0, -1.0, 0.3),
+                Vec3::new(2.0, -1.0, 0.3),
+                Vec3::new(2.0, 2.0, 0.3),
+            ],
+            [
+                Vec3::new(-1.0, -1.0, 0.3),
+                Vec3::new(2.0, 2.0, 0.3),
+                Vec3::new(-1.0, 2.0, 0.3),
+            ],
+        ];
+        // ... and six more patches of the same surface, each far away and in its own plane.
+        for (axis, at) in [(0usize, 5.0), (0, 6.0), (1, 5.0), (1, 6.0), (2, 5.0), (2, 6.0)] {
+            let mut corner = [Vec3::new(0.0, 0.0, 0.0); 3];
+            for (slot, point) in corner.iter_mut().enumerate() {
+                let mut p = [0.0, 0.0, 0.0];
+                p[axis] = at;
+                p[(axis + 1) % 3] = slot as f64;
+                p[(axis + 2) % 3] = (slot % 2) as f64;
+                *point = Vec3::new(p[0], p[1], p[2]);
+            }
+            tris.push(corner);
+        }
+        let whole = planes_from_fragment(&tris, QUANTUM).len();
+        let fragment = fragment_in_cell(tet, &tris, TOL);
+        let clipped = planes_from_fragment(&fragment, QUANTUM).len();
+        assert_eq!(fragment.len(), 2, "only the strut's two triangles meet the cell");
+        assert_eq!(clipped, 1, "and they are coplanar, so they are one constraint");
+        assert!(
+            whole > clipped,
+            "the unclipped surface must offer more planes ({whole}) than the fragment ({clipped})"
         );
     }
 
