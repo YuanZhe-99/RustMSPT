@@ -490,7 +490,7 @@ pub struct CellSubdivision {
 //   hand back pieces and caps in the shape the existing §7.6 path uses.
 // Inputs: the cell's closed boundary soup, the cut nodes per component, the global node table, the
 //   key quantum and the coplanarity/on-plane tolerance.
-// Returns: the subdivision, or None when the cell is one the kernel must decline.
+// Returns: the subdivision, or the named reason the kernel declined it.
 // Side effects: None - it interns into a *local* arena and returns nothing new.
 // Notes: **It declines rather than inventing a node, and that is the integration's safety rule.**
 //   A plane fitted through cut nodes re-derives the nodes already on every shared face, so the
@@ -507,7 +507,7 @@ pub fn subdivide_cell(
     nodes: &[Vec3],
     quantum: f64,
     tol: f64,
-) -> Option<CellSubdivision> {
+) -> Result<CellSubdivision, &'static str> {
     subdivide_cell_by(boundary, nodes, quantum, tol, |arena, to_local| {
         let mut planes: Vec<(Plane, i32)> = Vec::new();
         for (component, ids) in cut_nodes {
@@ -527,7 +527,8 @@ pub fn subdivide_cell(
 //   express.
 // Inputs: the cell's closed boundary soup, the fragment's triangles per component, the global node
 //   table, the key quantum and the tolerance.
-// Returns: the subdivision, or None where the crossing-driven entry point would also decline.
+// Returns: the subdivision, or the named reason it declined - the refusal rate per reason is
+//   what says which capability is still missing, so it is data rather than a bool.
 // Side effects: None.
 // Notes: Identical to `subdivide_cell` in everything except where the planes come from, which is
 //   the whole point: a body that crosses no edge of the cell leaves no crossing to fit a plane to
@@ -543,7 +544,7 @@ pub fn subdivide_cell_by_fragment(
     nodes: &[Vec3],
     quantum: f64,
     tol: f64,
-) -> Option<CellSubdivision> {
+) -> Result<CellSubdivision, &'static str> {
     subdivide_cell_by(boundary, nodes, quantum, tol, |arena, _| {
         let mut planes: Vec<(Plane, i32)> = Vec::new();
         for (component, tris) in fragment {
@@ -560,7 +561,7 @@ pub fn subdivide_cell_by_fragment(
 //   from.
 // Inputs: the boundary soup, the node table, the quantum, the tolerance, and a closure producing
 //   the planes from the local arena and the global-to-local map.
-// Returns: the subdivision, or None on any of the refusals.
+// Returns: the subdivision, or the refusal that fired, named.
 // Side effects: None.
 // Notes: Factored out when the fragment-driven entry point landed, so the two cannot drift. Every
 //   refusal below is load-bearing and each was added in response to a measured failure; duplicating
@@ -571,7 +572,7 @@ fn subdivide_cell_by(
     quantum: f64,
     tol: f64,
     make_planes: impl FnOnce(&NodeArena, &BTreeMap<u32, u32>) -> Vec<(Plane, i32)>,
-) -> Option<CellSubdivision> {
+) -> Result<CellSubdivision, &'static str> {
     // A local arena over just this cell's nodes, keeping global ids. Building one over the whole
     // mesh per cell would be O(N log N) per cell, and the cell only ever touches its own nodes.
     let mut local: Vec<u32> = boundary.iter().flatten().copied().collect();
@@ -590,7 +591,7 @@ fn subdivide_cell_by(
 
     let planes = make_planes(&arena, &to_local);
     if planes.is_empty() {
-        return None;
+        return Err("no constraint plane");
     }
 
     let cell = ConvexCell {
@@ -606,16 +607,16 @@ fn subdivide_cell_by(
             .collect(),
     };
     if cell.faces.len() != boundary.len() {
-        return None;
+        return Err("boundary references a node outside the cell");
     }
     let only_planes: Vec<Plane> = planes.iter().map(|(p, _)| *p).collect();
     let pieces = subdivide(&cell, &only_planes, &mut arena, tol);
     if arena.points.len() != before {
         // A plane left the patch that defined it and wanted a node no neighbour has.
-        return None;
+        return Err("the clip wanted a node the neighbour does not have");
     }
     if pieces.len() < 2 {
-        return None;
+        return Err("the planes do not separate the cell");
     }
     // **Interning no new node is not enough, and a8 proved it: `[V3]` failed anyway.** A plane
     // through existing nodes still *splits an existing boundary triangle* into two, and the
@@ -650,12 +651,12 @@ fn subdivide_cell_by(
                 continue;
             }
             if face.len() != 3 {
-                return None;
+                return Err("a piece face outside every plane is not a triangle");
             }
             let mut k = [back(face[0]), back(face[1]), back(face[2])];
             k.sort_unstable();
             if !original.contains(&k) {
-                return None;
+                return Err("the cut re-split a shared boundary triangle");
             }
         }
     }
@@ -697,11 +698,11 @@ fn subdivide_cell_by(
             }
         }
         if soup.len() < 4 {
-            return None;
+            return Err("a piece has fewer than four faces");
         }
         out.pieces.push(soup);
     }
-    Some(out)
+    Ok(out)
 }
 
 // AI-FUNC-SUMMARY:
@@ -1656,8 +1657,12 @@ mod tests {
     // The refusal, and the reason for it, pinned so nobody weakens the check to make the sub-cell
     // body pass. A fragment strictly inside a cell whose faces are WHOLE is declined - not because
     // the kernel cannot cut it, which the same fragment on the same cell proves it can, but because
-    // the cut would re-split boundary triangles the neighbour keeps whole. That is a crack, and the
-    // way out is the face's own triangulation carrying the trace first, not a looser guard.
+    // the cut would need NODES THAT DO NOT EXIST: the fragment's plane meets the face somewhere no
+    // node has been interned, and a node invented here exists in this cell and not in the
+    // neighbour, which is a crack. Naming the refusal is what identified it - the guard that fires
+    // is the arena's, one earlier than the shared-boundary check this comment used to claim. The
+    // way out is putting the trace on the face first (`trace_on_face` -> `chain_trace` ->
+    // `triangulate_with_hole`), not a looser guard.
     #[test]
     fn the_subcell_body_is_refused_until_the_face_carries_its_trace() {
         let points = vec![
@@ -1674,8 +1679,10 @@ mod tests {
         ]];
         assert!(
             subdivide_cell_by_fragment(&boundary, &[(1, tris.clone())], &points, QUANTUM, 1.0e-9)
-                .is_none(),
-            "a fragment that would re-cut the cell's own boundary must be refused"
+                .err()
+                == Some("the clip wanted a node the neighbour does not have"),
+            "a fragment needing a node the neighbour does not have must be refused, and the \
+             refusal must name that rather than some later guard"
         );
         // ... and the refusal is the boundary check, not an inability to cut: the same fragment
         // subdivides the same cell perfectly well when nothing outside it has to agree.

@@ -4835,6 +4835,107 @@ fn split_escalated_cell(
         return None;
     }
 
+    // **P-3.13 step 4: an escalated cell is cut by its own surface FRAGMENT first.** §6.24's
+    // measurements fixed the order - §7.2's mesher has to replace the centroid fan for escalated
+    // cells before the sub-cell population is escalated into it - and this is the first half. It
+    // differs from the handle below in one thing: the planes come from the surface clipped to this
+    // cell rather than from its edge crossings, which is §7.2's stated input and the only one that
+    // can express a body crossing no edge.
+    //
+    // **Default, not a handle, because it is strictly better or identical on all nine cases.**
+    // a8 92.011 -> 92.038 %, a3 92.743 -> 92.784 %, the other seven identical to the digit, for
+    // +52 elements across the whole suite (0.001 %) with `[V1]`/`[V3]`/`[V9]` PASS throughout and
+    // `undecl` down on both cases that moved. R3 forbids a switch that chooses between a better
+    // mesh and a worse one, which is exactly what leaving this gated would be. It costs a8 12.8 %
+    // wall time - `fragment_in_cell` scans the component per cell - and that is an index away from
+    // being free, but an optimisation rather than a correctness question.
+    //
+    // Every refusal is the wrapper's, so a cell it turns down still gets the soup split below;
+    // 86-90 % of them are the one refusal the face side removes (§6.25).
+    {
+        let corners = [
+            nodes[tet[0] as usize],
+            nodes[tet[1] as usize],
+            nodes[tet[2] as usize],
+            nodes[tet[3] as usize],
+        ];
+        // The clip's area threshold in the cell's own units: a contact below 1e-12 of the cell's
+        // cross-section is the measure-zero touch `fragment_in_cell` exists to drop, and an
+        // absolute tolerance would mean something different at every element size.
+        let mut edge = f64::INFINITY;
+        for a in 0..4 {
+            for b in (a + 1)..4 {
+                let d = corners[b].sub(corners[a]);
+                edge = edge.min(d.dot(d).sqrt());
+            }
+        }
+        let mut fragment: Vec<(i32, Vec<[Vec3; 3]>)> = Vec::new();
+        for component in all_components {
+            let Some(slot) = classifier.slot_of(*component) else { continue };
+            let tris = crate::meshgen::cdt::fragment_in_cell(
+                corners,
+                classifier.triangles_of(slot),
+                edge * 1.0e-6,
+            );
+            if !tris.is_empty() {
+                fragment.push((*component, tris));
+            }
+        }
+        let taken = if fragment.is_empty() {
+            Err("no fragment in this cell")
+        } else {
+            crate::meshgen::cdt::subdivide_cell_by_fragment(
+                boundary,
+                &fragment,
+                nodes,
+                volume_tolerance.max(f64::MIN_POSITIVE) * 1.0e-6,
+                1.0e-9,
+            )
+        };
+        // The refusal rate PER REASON is what says which capability is still missing, so it is
+        // reported as the reason rather than as a count of failures.
+        let mut outcome = match &taken {
+            Err(reason) => format!("REFUSED {reason}"),
+            Ok(_) => String::new(),
+        };
+        let mut accepted = None;
+        if let Ok(subdivision) = taken {
+            let pieces: Vec<SmallVec<[[u32; 3]; 16]>> = subdivision
+                .pieces
+                .iter()
+                .map(|soup| soup.iter().copied().collect())
+                .collect();
+            // The same guard §6 puts on every cut: the pieces must add up to the parent. Reported
+            // separately from the wrapper's refusals, because "the kernel produced a subdivision
+            // that does not conserve volume" and "the kernel declined" are different failures and
+            // conflating them is how a gate reads as working when nothing takes it.
+            let total: f64 = pieces
+                .iter()
+                .map(|piece| fan_volume(piece, polygon_soup_centroid(piece, nodes), nodes))
+                .sum();
+            if (total - parent_volume).abs() <= volume_tolerance * parent_volume {
+                outcome = format!("TAKEN {} piece(s)", pieces.len());
+                accepted = Some((pieces, subdivision.caps));
+            } else {
+                outcome = format!(
+                    "VOLUME {} piece(s) sum {:.6e} against {:.6e}",
+                    pieces.len(),
+                    total,
+                    parent_volume
+                );
+            }
+        }
+        if std::env::var_os("RUSTMSPT_JCT_DIAG").is_some() {
+            println!(
+                "[CDT-FRAG] cell {index}: {} component(s) in the fragment, {outcome}",
+                fragment.len()
+            );
+        }
+        if let Some(out) = accepted {
+            return Some(out);
+        }
+    }
+
     // **P-3 gate handle (`RUSTMSPT_CDT=1`): route the cell through the §7.2-§7.4 kernel.**
     // Not a setting - which mesher a cell gets is not a matter of taste (R3) - and it must not
     // survive the gate. It sits here rather than replacing the path below because the kernel
@@ -4845,7 +4946,7 @@ fn split_escalated_cell(
             .iter()
             .map(|(component, set)| (*component, set.iter().copied().collect()))
             .collect();
-        if let Some(subdivision) = crate::meshgen::cdt::subdivide_cell(
+        if let Ok(subdivision) = crate::meshgen::cdt::subdivide_cell(
             boundary,
             &cut_nodes,
             nodes,
