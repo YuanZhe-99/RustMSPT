@@ -4926,8 +4926,24 @@ fn split_escalated_cell(
             }
         }
         if std::env::var_os("RUSTMSPT_JCT_DIAG").is_some() {
+            let planes: usize = fragment
+                .iter()
+                .map(|(_, tris)| {
+                    crate::meshgen::cdt::planes_from_fragment(
+                        tris,
+                        volume_tolerance.max(f64::MIN_POSITIVE) * 1.0e-6,
+                    )
+                    .len()
+                })
+                .sum();
+            // An edge crossed MORE than twice was the obvious explanation for a mesher wanting a
+            // node at a point the surface really does reach - `cut_index` and `second_index` hold
+            // at most two crossings per (edge, component), so a third would have no node at all.
+            // Measured and refuted: ZERO of a8's 4,377 escalated cells have such an edge. The probe
+            // and the parameter it needed were removed once it had answered.
             println!(
-                "[CDT-FRAG] cell {index}: {} component(s) in the fragment, {outcome}",
+                "[CDT-FRAG] cell {index}: {} component(s) {planes} plane(s) in the fragment, \
+                 {outcome}",
                 fragment.len()
             );
         }

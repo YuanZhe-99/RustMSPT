@@ -508,7 +508,7 @@ pub fn subdivide_cell(
     quantum: f64,
     tol: f64,
 ) -> Result<CellSubdivision, &'static str> {
-    subdivide_cell_by(boundary, nodes, quantum, tol, |arena, to_local| {
+    subdivide_cell_by(boundary, nodes, quantum, tol, &[], |arena, to_local| {
         let mut planes: Vec<(Plane, i32)> = Vec::new();
         for (component, ids) in cut_nodes {
             let mapped: Vec<u32> =
@@ -545,7 +545,8 @@ pub fn subdivide_cell_by_fragment(
     quantum: f64,
     tol: f64,
 ) -> Result<CellSubdivision, &'static str> {
-    subdivide_cell_by(boundary, nodes, quantum, tol, |arena, _| {
+    let patch: Vec<[Vec3; 3]> = fragment.iter().flat_map(|(_, tris)| tris.iter().copied()).collect();
+    subdivide_cell_by(boundary, nodes, quantum, tol, &patch, |arena, _| {
         let mut planes: Vec<(Plane, i32)> = Vec::new();
         for (component, tris) in fragment {
             for plane in planes_from_fragment(tris, arena.quantum) {
@@ -571,6 +572,7 @@ fn subdivide_cell_by(
     nodes: &[Vec3],
     quantum: f64,
     tol: f64,
+    patch: &[[Vec3; 3]],
     make_planes: impl FnOnce(&NodeArena, &BTreeMap<u32, u32>) -> Vec<(Plane, i32)>,
 ) -> Result<CellSubdivision, &'static str> {
     // A local arena over just this cell's nodes, keeping global ids. Building one over the whole
@@ -611,9 +613,114 @@ fn subdivide_cell_by(
     }
     let only_planes: Vec<Plane> = planes.iter().map(|(p, _)| *p).collect();
     let pieces = subdivide(&cell, &only_planes, &mut arena, tol);
+    // **Every new node the clip wants is on this cell's SHARED boundary - measured, not assumed.**
+    // The guard refuses any arena growth, on the argument that a node invented here exists in this
+    // cell and not in the neighbour. That argument is exactly right about a node on the boundary
+    // and says nothing about one strictly INSIDE the cell, which no neighbour can see - and interior
+    // nodes arise by construction once there are two planes, since the second crosses the face the
+    // first one cut. So the test looked over-strict, and was relaxed to "no new node in the plane of
+    // any boundary triangle" and measured: **the refusal counts did not move by one cell** on a8
+    // (3,764), a3 (975) or a6a (459). Every blocked cell needs nodes on a face it shares.
+    //
+    // That is worth more than the relaxation would have been. It says the only way to reach these
+    // cells is to put those nodes on the face FIRST, once, so both cells receive them - §7.3's
+    // `FaceTriCache` and the `trace_on_face` -> `chain_trace` -> `triangulate_with_hole` chain - and
+    // it rules out loosening this guard as a route. The simple test is kept because it is
+    // equivalent here and cheaper.
     if arena.points.len() != before {
-        // A plane left the patch that defined it and wanted a node no neighbour has.
-        return Err("the clip wanted a node the neighbour does not have");
+        // **Where the missing node is decides which mechanism has to supply it**, so the refusal
+        // says which. The cell's boundary lies in four planes; a point in exactly one of them is
+        // strictly inside a shared FACE, and one in two of them is on a shared lattice EDGE. A face
+        // is shared by two cells and its triangulation is §7.3's `FaceTriCache` to fix; an edge is
+        // shared by every cell around it and a node on one is `cut_index`'s business. Conflating
+        // the two is how a face-side fix gets built for a population that needed an edge-side one.
+        let mut boundary_planes: Vec<Plane> = Vec::new();
+        for t in boundary {
+            let Some(plane) = Plane::of_triangle([
+                nodes[t[0] as usize],
+                nodes[t[1] as usize],
+                nodes[t[2] as usize],
+            ]) else {
+                continue;
+            };
+            // Deduplicated: a tet's boundary is four planes however many triangles carry them, and
+            // counting one plane twice would read every face-interior point as an edge point.
+            if !boundary_planes.iter().any(|seen| {
+                seen.normal.sub(plane.normal).dot(seen.normal.sub(plane.normal)) <= tol
+                    && seen.distance(plane.point).abs() <= tol
+            }) {
+                boundary_planes.push(plane);
+            }
+        }
+        // **And whether the surface actually reaches that point.** A supporting plane is infinite
+        // while the patch that produced it is not, so a plane can cross a lattice edge the surface
+        // never touches - the OVER-CUT. The two have completely different fixes: an over-cut needs
+        // the cut bounded to the patch (a PLC mesher), while a node the surface really does reach
+        // means a crossing that should already have been interned and was not. Distinguishing them
+        // is the difference between building the right thing and the wrong one.
+        let reaches = |point: Vec3| -> bool {
+            patch.iter().any(|t| {
+                let (u, v) = (t[1].sub(t[0]), t[2].sub(t[0]));
+                let normal = u.cross(v);
+                let area2 = normal.dot(normal);
+                if area2 <= 0.0 {
+                    return false;
+                }
+                let rel = point.sub(t[0]);
+                if normal.dot(rel).abs() > tol * area2.sqrt() {
+                    return false;
+                }
+                // Barycentric, by the areas of the three sub-triangles against the whole.
+                let a = u.cross(rel).dot(normal) / area2;
+                let b = rel.cross(v).dot(normal) / area2;
+                a >= -1.0e-9 && b >= -1.0e-9 && a + b <= 1.0 + 1.0e-9
+            })
+        };
+        // The cell's own scale, so "close to an existing node" means the same thing at every
+        // element size. A wanted node that sits on top of one the cell already has is a
+        // near-duplicate the arena's quantum failed to absorb - a numerical question with a cheap
+        // answer - while one standing alone is a crossing the pipeline never interned, which is
+        // not. Reporting them as one number would hide a cheap fix inside an expensive diagnosis.
+        let mut scale: f64 = 0.0;
+        for a in 0..before {
+            for b in (a + 1)..before {
+                let d = arena.points[a].sub(arena.points[b]);
+                scale = scale.max(d.dot(d).sqrt());
+            }
+        }
+        let (mut on_face, mut on_edge, mut off_patch, mut duplicate) = (false, false, false, false);
+        for id in before..arena.points.len() {
+            let point = arena.points[id];
+            let planes = boundary_planes
+                .iter()
+                .filter(|plane| plane.distance(point).abs() <= tol)
+                .count();
+            match planes {
+                0 => {}
+                1 => on_face = true,
+                _ => on_edge = true,
+            }
+            if !patch.is_empty() && !reaches(point) {
+                off_patch = true;
+            }
+            let nearest = (0..before)
+                .map(|other| {
+                    let d = arena.points[other].sub(point);
+                    d.dot(d).sqrt()
+                })
+                .fold(f64::INFINITY, f64::min);
+            if scale > 0.0 && nearest < scale * 1.0e-6 {
+                duplicate = true;
+            }
+        }
+        return Err(match (on_face, on_edge, off_patch) {
+            _ if duplicate => "a NEAR-DUPLICATE of a node the cell already has",
+            (_, _, true) => "the plane OVER-CUT: a node where the surface does not reach",
+            (true, true, false) => "the clip wanted nodes on both a shared face and a shared edge",
+            (false, true, false) => "the clip wanted a node on a shared EDGE",
+            (true, false, false) => "the clip wanted a node inside a shared FACE",
+            (false, false, false) => "the clip wanted a node strictly inside the cell",
+        });
     }
     if pieces.len() < 2 {
         return Err("the planes do not separate the cell");
@@ -1657,12 +1764,14 @@ mod tests {
     // The refusal, and the reason for it, pinned so nobody weakens the check to make the sub-cell
     // body pass. A fragment strictly inside a cell whose faces are WHOLE is declined - not because
     // the kernel cannot cut it, which the same fragment on the same cell proves it can, but because
-    // the cut would need NODES THAT DO NOT EXIST: the fragment's plane meets the face somewhere no
-    // node has been interned, and a node invented here exists in this cell and not in the
-    // neighbour, which is a crack. Naming the refusal is what identified it - the guard that fires
-    // is the arena's, one earlier than the shared-boundary check this comment used to claim. The
-    // way out is putting the trace on the face first (`trace_on_face` -> `chain_trace` ->
-    // `triangulate_with_hole`), not a looser guard.
+    // the cut would need NODES THAT DO NOT EXIST, and the refusal says exactly where: on a shared
+    // lattice EDGE. That is the over-cut in its sharpest form - the strut's supporting plane is
+    // INFINITE while the strut is not, so the plane crosses the tet's edges even though the surface
+    // never does. A node invented there exists in this cell and not in the five others around that
+    // edge, which is a crack. Naming the refusal is what identified this: the guard that fires is
+    // the arena's, one earlier than the shared-boundary check this comment used to claim, and the
+    // node it wants is on an edge rather than inside a face - so the face's own triangulation would
+    // not supply it either.
     #[test]
     fn the_subcell_body_is_refused_until_the_face_carries_its_trace() {
         let points = vec![
@@ -1677,10 +1786,10 @@ mod tests {
             Vec3::new(0.20, 0.05, 0.25),
             Vec3::new(0.05, 0.20, 0.25),
         ]];
-        assert!(
+        assert_eq!(
             subdivide_cell_by_fragment(&boundary, &[(1, tris.clone())], &points, QUANTUM, 1.0e-9)
-                .err()
-                == Some("the clip wanted a node the neighbour does not have"),
+                .err(),
+            Some("the plane OVER-CUT: a node where the surface does not reach"),
             "a fragment needing a node the neighbour does not have must be refused, and the \
              refusal must name that rather than some later guard"
         );
