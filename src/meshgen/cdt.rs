@@ -1479,6 +1479,102 @@ pub fn constrained_tets(
 }
 
 // AI-FUNC-SUMMARY:
+// Purpose: Group a cell's tets into `SPEC_meshgen_geometry.md` §7.5's sub-regions — the connected
+//   components of the tets NOT separated by a constraint face.
+// Inputs: the tets, the constraint facets as index polygons, the point table and a tolerance.
+// Returns: a region id per tet, numbered by the order the regions are first met.
+// Side effects: None.
+// Notes: **This is where the over-cut stops mattering, and it is worth stating plainly.** A facet
+//   that does not separate the cell - a strut face ending at a rim inside it - leaves ONE region,
+//   because material flows around the rim and the flood fill goes with it. The plane-driven route
+//   could not express that at all: an infinite plane always separates, so a rim became a spurious
+//   material boundary and the cell was refused rather than meshed (PLAN §6.26). Here the same
+//   geometry simply produces one region and one label.
+//
+//   A face is a constraint exactly when it lies in a facet's plane AND its centroid is inside that
+//   facet's outline. The outline test is what distinguishes a face on the facet from a face merely
+//   coplanar with it somewhere else - which is the same distinction `fragment_in_cell` makes for
+//   triangles, for the same reason.
+pub fn regions_by_constraint(
+    tets: &[[u32; 4]],
+    facets: &[Vec<u32>],
+    points: &[Vec3],
+    tol: f64,
+) -> Vec<u32> {
+    // Each facet's plane once, so the per-face test is a handful of dot products.
+    let planes: Vec<(Vec3, f64, &Vec<u32>)> = facets
+        .iter()
+        .filter_map(|facet| {
+            if facet.len() < 3 {
+                return None;
+            }
+            let corner = |slot: usize| points[facet[slot] as usize];
+            let mut normal = Vec3::new(0.0, 0.0, 0.0);
+            for slot in 1..facet.len() - 1 {
+                normal =
+                    normal.add(corner(slot).sub(corner(0)).cross(corner(slot + 1).sub(corner(0))));
+            }
+            let length = normal.dot(normal).sqrt();
+            if length <= 0.0 {
+                return None;
+            }
+            let normal = normal.scale(1.0 / length);
+            Some((normal, normal.dot(corner(0)), facet))
+        })
+        .collect();
+    let blocked = |face: [u32; 3]| -> bool {
+        let p = [
+            points[face[0] as usize],
+            points[face[1] as usize],
+            points[face[2] as usize],
+        ];
+        let centre = p[0].add(p[1]).add(p[2]).scale(1.0 / 3.0);
+        planes.iter().any(|(normal, offset, facet)| {
+            p.iter().all(|q| (normal.dot(*q) - offset).abs() <= tol)
+                && inside_polygon(centre, facet, points, *normal, tol)
+        })
+    };
+
+    let mut carried: BTreeMap<[u32; 3], Vec<usize>> = BTreeMap::new();
+    for (at, tet) in tets.iter().enumerate() {
+        for face in tet_faces(*tet) {
+            let mut key = face;
+            key.sort_unstable();
+            carried.entry(key).or_default().push(at);
+        }
+    }
+
+    let mut region: Vec<u32> = vec![u32::MAX; tets.len()];
+    let mut next = 0u32;
+    for seed in 0..tets.len() {
+        if region[seed] != u32::MAX {
+            continue;
+        }
+        let mut frontier = vec![seed];
+        while let Some(at) = frontier.pop() {
+            if region[at] != u32::MAX {
+                continue;
+            }
+            region[at] = next;
+            for face in tet_faces(tets[at]) {
+                let mut key = face;
+                key.sort_unstable();
+                if blocked(key) {
+                    continue;
+                }
+                for other in carried.get(&key).into_iter().flatten() {
+                    if region[*other] == u32::MAX {
+                        frontier.push(*other);
+                    }
+                }
+            }
+        }
+        next += 1;
+    }
+    region
+}
+
+// AI-FUNC-SUMMARY:
 // Purpose: Whether a coplanar point lies inside a convex polygon.
 // Inputs: the point, the polygon's indices, the point table, the polygon's unit normal, and a
 //   tolerance.
@@ -2029,6 +2125,88 @@ mod tests {
                 b.sub(a).cross(c.sub(a)).dot(d.sub(a)).abs() / 6.0
             })
             .sum()
+    }
+
+    // Nothing constrains the cell, so it is one region however many tets it happens to have.
+    #[test]
+    fn a_cell_with_no_constraint_is_one_region() {
+        let points = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(0.2, 0.2, 0.2),
+        ];
+        let tets = delaunay_tets(&points, &keys_of(&points)).expect("tetrahedralisable");
+        let regions = regions_by_constraint(&tets, &[], &points, 1.0e-9);
+        assert!(regions.iter().all(|r| *r == 0), "one region, got {regions:?}");
+    }
+
+    // A facet that cuts right across the cell separates it into two, which is the ordinary case and
+    // the one that produces a material boundary.
+    #[test]
+    fn a_facet_across_the_cell_gives_two_regions() {
+        let points = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(0.0, 0.0, 0.5),
+            Vec3::new(0.5, 0.0, 0.5),
+            Vec3::new(0.0, 0.5, 0.5),
+        ];
+        let tets = delaunay_tets(&points, &keys_of(&points)).expect("tetrahedralisable");
+        let facet = vec![vec![4u32, 5, 6]];
+        let regions = regions_by_constraint(&tets, &facet, &points, 1.0e-9);
+        let distinct: std::collections::BTreeSet<u32> = regions.iter().copied().collect();
+        assert_eq!(distinct.len(), 2, "the facet separates the cell, got {regions:?}");
+        // And the split is the geometry's: everything above z = 0.5 on one side of it.
+        for (at, tet) in tets.iter().enumerate() {
+            let above = tet
+                .iter()
+                .all(|id| points[*id as usize].z >= 0.5 - 1.0e-12);
+            if above {
+                assert_ne!(
+                    regions[at], regions[0],
+                    "a tet above the facet must not share the region below it"
+                );
+            }
+        }
+    }
+
+    // **The case the plane-driven route could not express at all.** A facet that ENDS inside the
+    // cell does not separate it: material flows around the rim, so the flood fill goes with it and
+    // the cell is one region with one label. An infinite plane always separates, which is why the
+    // same geometry was a spurious material boundary there and a refusal here (PLAN §6.26).
+    #[test]
+    fn a_facet_that_ends_inside_the_cell_leaves_one_region() {
+        let points = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(0.30, 0.05, 0.05),
+            Vec3::new(0.05, 0.30, 0.05),
+            Vec3::new(0.05, 0.05, 0.30),
+        ];
+        let tets = delaunay_tets(&points, &keys_of(&points)).expect("tetrahedralisable");
+        let facet = vec![vec![4u32, 5, 6]];
+        // The facet really is a face of this mesh - otherwise the test would pass vacuously.
+        assert!(
+            tets.iter().any(|t| tet_faces(*t).iter().any(|f| {
+                let mut k = *f;
+                k.sort_unstable();
+                k == [4, 5, 6]
+            })),
+            "the facet must be present for this test to mean anything"
+        );
+        let regions = regions_by_constraint(&tets, &facet, &points, 1.0e-9);
+        let distinct: std::collections::BTreeSet<u32> = regions.iter().copied().collect();
+        assert_eq!(
+            distinct.len(),
+            1,
+            "a facet with a free rim must not separate the cell, got {regions:?}"
+        );
     }
 
     // A bare face is one triangle, and that is the case the cut takes 250,258 times on a8 - so it
