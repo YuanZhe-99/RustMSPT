@@ -1670,6 +1670,9 @@ pub fn cut_lattice(
     let mut face_all_escalated = 0usize;
     let mut face_mixed = 0usize;
     let mut face_has_table = 0usize;
+    let mut cells_with_a_trace = 0usize;
+    let mut escalated_with_traces = 0usize;
+    let mut escalated_fully_surrounded = 0usize;
     let mut cells_interior_escalated = 0usize;
     let mut cells_interior_uncut = 0usize;
     let mut cells_interior_table = 0usize;
@@ -1698,6 +1701,11 @@ pub fn cut_lattice(
         let mut clean: Vec<bool> = vec![false; lattice.tets.len()];
         for (index, tet) in lattice.tets.iter().enumerate() {
             let faces = traced_faces(tet);
+            if !faces.is_empty() {
+                // Every cell the surface passes through - the population §7.1's triage would have
+                // to cover for §7.4's face triangulation to be deliverable everywhere it differs.
+                cells_with_a_trace += 1;
+            }
             if faces.is_empty() || !uncut_cell(tet) {
                 continue;
             }
@@ -1745,6 +1753,54 @@ pub fn cut_lattice(
                 face_has_table += 1;
             }
         }
+        // **Can §7.4's face triangulation ever be delivered, given who owns the faces?** An
+        // augmented face - one carrying the surface's trace as edges - may only be used where
+        // EVERY owner will use the same one. A face carrying a trace is traced from both sides by
+        // construction, so the condition reduces to "both owners take the new path". Counted here
+        // against the population that takes it today, the escalated cells, because if almost none
+        // of them are surrounded by escalated cells then restricting §7.4 to escalation is dead and
+        // the path has to be offered to every cell the surface passes through instead.
+        //
+        // Indexed once rather than scanned per face: the obvious nested loop is quadratic in the
+        // lattice and would not finish on a8's 924,636 cells.
+        let mut traced_owners: BTreeMap<[u32; 3], (u16, u16)> = BTreeMap::new();
+        for (index, tet) in lattice.tets.iter().enumerate() {
+            let escalated = per_cell[index].escalation.is_some();
+            for slots in TET_FACES {
+                let mut corners = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+                corners.sort_by_key(|node| keys[*node as usize]);
+                if !face_trace.contains_key(&corners) {
+                    continue;
+                }
+                let entry = traced_owners.entry(corners).or_insert((0, 0));
+                entry.0 += 1;
+                entry.1 += u16::from(escalated);
+            }
+        }
+        for (index, tet) in lattice.tets.iter().enumerate() {
+            if per_cell[index].escalation.is_none() {
+                continue;
+            }
+            let mut traced = 0usize;
+            let mut all_escalated = true;
+            for slots in TET_FACES {
+                let mut corners = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+                corners.sort_by_key(|node| keys[*node as usize]);
+                let Some((owners, escalated)) = traced_owners.get(&corners) else { continue };
+                traced += 1;
+                if owners != escalated {
+                    all_escalated = false;
+                }
+            }
+            if traced == 0 {
+                continue;
+            }
+            escalated_with_traces += 1;
+            if all_escalated {
+                escalated_fully_surrounded += 1;
+            }
+        }
+
         // **The cells behind the fourth bucket, and the rule that would reach them.** A cell that
         // takes §5.2's table has a crossed edge - so a component crossing its edges is cut - while
         // a *different* component passes through one of its faces without crossing any edge of the
@@ -1782,6 +1838,22 @@ pub fn cut_lattice(
                 owners.get(face).map(|(all, _, mine)| mine == all).unwrap_or(false)
             }) {
                 subcell_ready += 1;
+            }
+        }
+    }
+    // For the §7.4 diagnostic only: who owns each lattice face, and how many of them escalated.
+    // An augmented face triangulation may only be used where every owner uses the same one, so this
+    // is what says whether §7.1's triage can stay as frozen or has to widen.
+    let mut plc_face_owners: BTreeMap<[u32; 3], (u16, u16)> = BTreeMap::new();
+    if std::env::var_os("RUSTMSPT_PLC_DIAG").is_some() {
+        for (index, tet) in lattice.tets.iter().enumerate() {
+            let escalated = per_cell[index].escalation.is_some();
+            for slots in TET_FACES {
+                let mut corners = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+                corners.sort_by_key(|node| keys[*node as usize]);
+                let entry = plc_face_owners.entry(corners).or_insert((0, 0));
+                entry.0 += 1;
+                entry.1 += u16::from(escalated);
             }
         }
     }
@@ -2307,6 +2379,7 @@ pub fn cut_lattice(
                         &keys,
                         options.volume_tolerance,
                         &meeting_nodes,
+                        &plc_face_owners,
                     ))
                     .flatten();
                     match split {
@@ -2594,6 +2667,14 @@ pub fn cut_lattice(
              edge, so `crossing_components` never sees it and no junction is declared. Escalating \
              on 'a component enters this cell and crosses none of its edges' is the rule that \
              would reach them, and this is its size"
+        ));
+        mesh.warnings.push(format!(
+            "[FACE-TRACE] of {escalated_with_traces} escalated cell(s) carrying a trace, \
+             {escalated_fully_surrounded} have every traced face owned only by escalated cells. \
+             That is the population §7.4's face triangulation could be delivered to if the path \
+             stays restricted to escalation; the rest need it offered to every cell the surface \
+             passes through - which is {cells_with_a_trace} cell(s) of {} in this lattice"
+             , lattice.tets.len()
         ));
         // Measured behind a prototype gate and removed once it had answered (§6.24): escalating
         // these cells is CONFORMING - `[V1]`/`[V3]`/`[V9]` pass on both cases - and still loses,
@@ -4774,6 +4855,7 @@ fn split_escalated_cell(
     keys: &[NodeKey],
     volume_tolerance: f64,
     meeting_nodes: &[(u32, [i32; 2])],
+    face_owners: &BTreeMap<[u32; 3], (u16, u16)>,
 ) -> Option<(Vec<SmallVec<[[u32; 3]; 16]>>, Vec<([u32; 3], i32)>)> {
     let mut crossing: Vec<(i32, BTreeSet<u32>)> = Vec::new();
     for component in all_components {
@@ -4987,6 +5069,65 @@ fn split_escalated_cell(
             }
             Ok(out)
         })();
+        // **How much of the augmented boundary actually DIFFERS from the frozen one, and who owns
+        // those faces.** In the ordinary case the surface's trace on a face is the very chord
+        // §5.2's table already draws between that face's two crossings, so the augmented
+        // triangulation is the frozen one and there is nothing to deliver. It differs only where
+        // the trace is something the table cannot express - a loop strictly inside the face, or a
+        // polyline with interior vertices because several surface triangles cross it. That much
+        // smaller set is what decides whether §7.1's triage can stay as frozen.
+        let mut faces_changed = 0usize;
+        let mut faces_changed_shared_with_unescalated = 0usize;
+        if let Ok(augmented) = &augmented {
+            let canon = |t: &[u32; 3]| {
+                let mut k = *t;
+                k.sort_unstable();
+                k
+            };
+            let frozen_here: std::collections::BTreeSet<[u32; 3]> = boundary
+                .iter()
+                .filter_map(|t| {
+                    Some(canon(&[
+                        *to_local.get(&t[0])?,
+                        *to_local.get(&t[1])?,
+                        *to_local.get(&t[2])?,
+                    ]))
+                })
+                .collect();
+            let augmented_here: std::collections::BTreeSet<[u32; 3]> =
+                augmented.iter().map(canon).collect();
+            if frozen_here != augmented_here {
+                // Which of the cell's four lattice faces the difference falls on.
+                if let Some(halfspaces) = crate::meshgen::cdt::tet_halfspaces_of(corners) {
+                    for (slot, (normal, offset)) in halfspaces.iter().enumerate() {
+                        let on_face = |t: &[u32; 3]| {
+                            t.iter().all(|id| {
+                                (normal.dot(arena.points[*id as usize]) - offset).abs()
+                                    <= edge * 1.0e-9
+                            })
+                        };
+                        let a: std::collections::BTreeSet<[u32; 3]> =
+                            frozen_here.iter().filter(|t| on_face(t)).copied().collect();
+                        let b: std::collections::BTreeSet<[u32; 3]> =
+                            augmented_here.iter().filter(|t| on_face(t)).copied().collect();
+                        if a == b {
+                            continue;
+                        }
+                        faces_changed += 1;
+                        let mut key = [tet[0]; 3];
+                        for (at, s) in (0..4).filter(|s| *s != slot).enumerate() {
+                            key[at] = tet[s];
+                        }
+                        key.sort_by_key(|node| keys[*node as usize]);
+                        if let Some((owners, escalated)) = face_owners.get(&key) {
+                            if owners != escalated {
+                                faces_changed_shared_with_unescalated += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
         let with_face = match (&augmented, facets_local.is_empty()) {
             (Err(reason), _) => format!("the face side refused: {reason}"),
             (Ok(_), true) => "no facet in this cell".to_string(),
@@ -5024,7 +5165,9 @@ fn split_escalated_cell(
         }
         println!(
             "[PLC] cell {index}: {} facet(s), {on_boundary} new on the boundary, {interior} new \
-             inside, frozen: {outcome} | with the face side: {with_face}",
+             inside, {faces_changed} face(s) changed of which \
+             {faces_changed_shared_with_unescalated} shared with an unescalated cell, frozen: \
+             {outcome} | with the face side: {with_face}",
             facets_local.len()
         );
     }
