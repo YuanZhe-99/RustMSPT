@@ -313,6 +313,38 @@ pub fn orient3d_filtered(a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> (i8, bool, f64, 
     }
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Exact in-sphere test — is `e` inside the circumsphere of the tet (a, b, c, d)?
+// Inputs: five 3D points.
+// Returns: +1 strictly inside, -1 strictly outside, 0 cospherical or (a,b,c,d) coplanar.
+// Side effects: None.
+// Notes: **The answer does not depend on the caller's winding, and that is the point of the
+//   wrapper.** `robust::insphere` requires (a, b, c, d) to be positively oriented *in the robust
+//   crate's convention*, which N10 records as sign-opposite to this project's, and it returns the
+//   wrong sign for a negatively oriented tet rather than an error. Swapping two vertices flips both
+//   the orientation and the sign of the result, so normalising the orientation here makes the
+//   result a function of the five points alone. A caller that had to remember the convention would
+//   get it wrong exactly once, silently, in the tie cases that matter most.
+//
+//   Four coplanar points have no circumsphere, so that is 0 rather than a guess: a degenerate tet
+//   must never enter a tetrahedralisation, and returning a side for one would hide it.
+//
+//   Needed by `SPEC_meshgen_geometry.md` §7.4's constrained incremental tetrahedralisation, which
+//   is the one primitive this module did not already have.
+pub fn insphere(a: Vec3, b: Vec3, c: Vec3, d: Vec3, e: Vec3) -> i8 {
+    let at = |p: Vec3| robust::Coord3D { x: p.x, y: p.y, z: p.z };
+    let orientation = robust::orient3d(at(a), at(b), at(c), at(d));
+    if orientation == 0.0 {
+        return 0;
+    }
+    let value = if orientation > 0.0 {
+        robust::insphere(at(a), at(b), at(c), at(d), at(e))
+    } else {
+        robust::insphere(at(b), at(a), at(c), at(d), at(e))
+    };
+    sign_i8(value)
+}
+
 // AI-FUNC-SUMMARY: Double-double orient3d determinant value in the project sign convention; returns DoubleDouble; side effects: none.
 pub fn orient3d_dd_value(a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> DoubleDouble {
     orient3d_dd_value_permanent(a, b, c, d).0
@@ -957,4 +989,116 @@ fn circumradius(p: [Vec3; 4]) -> f64 {
 pub fn node_key(p: Vec3, q: f64) -> (i64, i64, i64) {
     let f = |x: f64| (x / q).round() as i64;
     (f(p.x), f(p.y), f(p.z))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The tet the rest of these use: the unit corner tet, positively oriented in the usual
+    // right-handed sense. Its circumcentre is (0.5, 0.5, 0.5) and its circumradius sqrt(3)/2.
+    fn unit_tet() -> [Vec3; 4] {
+        [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+        ]
+    }
+
+    #[test]
+    fn a_point_inside_the_circumsphere_reads_inside() {
+        let t = unit_tet();
+        // The centroid is 0.433 from the circumcentre against a radius of 0.866.
+        assert_eq!(insphere(t[0], t[1], t[2], t[3], Vec3::new(0.25, 0.25, 0.25)), 1);
+        // And the circumcentre itself, which is as inside as a point gets.
+        assert_eq!(insphere(t[0], t[1], t[2], t[3], Vec3::new(0.5, 0.5, 0.5)), 1);
+    }
+
+    #[test]
+    fn a_point_outside_the_circumsphere_reads_outside() {
+        let t = unit_tet();
+        assert_eq!(insphere(t[0], t[1], t[2], t[3], Vec3::new(10.0, 10.0, 10.0)), -1);
+        // A tet's own vertices are ON its circumsphere, so a point just beyond one is outside.
+        assert_eq!(insphere(t[0], t[1], t[2], t[3], Vec3::new(1.5, 0.0, 0.0)), -1);
+    }
+
+    // **The property the wrapper exists for.** `robust::insphere` requires its first four points to
+    // be positively oriented in the robust crate's own convention and returns the WRONG SIGN
+    // otherwise - silently. A caller that had to remember that would get it wrong once, in a tie
+    // case, and the failure would look like a meshing bug rather than a predicate bug.
+    #[test]
+    fn the_answer_does_not_depend_on_the_tets_winding() {
+        let t = unit_tet();
+        let inside = Vec3::new(0.25, 0.25, 0.25);
+        let outside = Vec3::new(10.0, 10.0, 10.0);
+        for probe in [inside, outside] {
+            let reference = insphere(t[0], t[1], t[2], t[3], probe);
+            assert_eq!(insphere(t[1], t[0], t[2], t[3], probe), reference, "one swap");
+            assert_eq!(insphere(t[0], t[2], t[1], t[3], probe), reference, "another swap");
+            assert_eq!(insphere(t[3], t[2], t[1], t[0], probe), reference, "reversed");
+            assert_eq!(insphere(t[1], t[2], t[0], t[3], probe), reference, "a rotation");
+        }
+    }
+
+    // A tie is reported as a tie, not rounded to a side. §7.4 breaks cospherical ties by smallest
+    // `NodeKey`, which it can only do if the predicate says a tie happened.
+    #[test]
+    fn five_cospherical_points_are_a_tie() {
+        let sphere = [
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(-1.0, 0.0, 0.0),
+        ];
+        assert_eq!(
+            insphere(sphere[0], sphere[1], sphere[2], sphere[3], Vec3::new(0.0, -1.0, 0.0)),
+            0
+        );
+    }
+
+    // Four coplanar points have no circumsphere, so there is no side to report. Returning one would
+    // hide a degenerate tet inside a triangulation that must never contain it.
+    #[test]
+    fn a_coplanar_tet_has_no_circumsphere() {
+        assert_eq!(
+            insphere(
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(0.0, 1.0, 0.0),
+                Vec3::new(1.0, 1.0, 0.0),
+                Vec3::new(0.5, 0.5, 1.0)
+            ),
+            0
+        );
+    }
+
+    // Exactness, stated where it matters: a point four ULP inside the sphere and one four ULP
+    // outside it must read differently. This is the regime a naive determinant cannot resolve, and
+    // the regime a Delaunay insertion spends all its time in.
+    #[test]
+    fn the_test_resolves_a_point_a_few_ulp_from_the_sphere() {
+        let sphere = [
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(-1.0, 0.0, 0.0),
+        ];
+        let inside = insphere(
+            sphere[0],
+            sphere[1],
+            sphere[2],
+            sphere[3],
+            Vec3::new(0.0, -(1.0 - 1.0e-15), 0.0),
+        );
+        let outside = insphere(
+            sphere[0],
+            sphere[1],
+            sphere[2],
+            sphere[3],
+            Vec3::new(0.0, -(1.0 + 1.0e-15), 0.0),
+        );
+        assert_eq!(inside, 1, "a point inside the sphere by 1e-15");
+        assert_eq!(outside, -1, "a point outside the sphere by 1e-15");
+    }
 }
