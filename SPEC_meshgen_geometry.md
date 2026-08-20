@@ -1,6 +1,6 @@
 # SPEC — Mesh generation: geometry and topology freeze (subtask G0-1)
 
-**Status:** frozen (rev 1.4; §1.2 gained Rule K-O on 2026-07-31 — an ordering key must separate the nodes it orders, which the weld grid does not for constructed crossings — see §14 [10] and §15 D-16; G2-3 degeneracy boundary and C10 ownership clarified 2026-07-28; §3.7's informative quality prediction corrected 2026-07-30 — see the note there and §14 [8]; §8.2's informative measured band-cell row corrected 2026-07-31 — see the note there and §14 [9]). Normative for all `src/meshgen/` work.
+**Status:** frozen (rev 1.5; §7.1's triage widened 2026-08-20 — a cell the surface's trace crosses is offered §7.2 ahead of §6's table, additive, see the note there; rev 1.4: §1.2 gained Rule K-O on 2026-07-31 — an ordering key must separate the nodes it orders, which the weld grid does not for constructed crossings — see §14 [10] and §15 D-16; G2-3 degeneracy boundary and C10 ownership clarified 2026-07-28; §3.7's informative quality prediction corrected 2026-07-30 — see the note there and §14 [8]; §8.2's informative measured band-cell row corrected 2026-07-31 — see the note there and §14 [9]). Normative for all `src/meshgen/` work.
 **Date:** 2026-07-31
 **Subtask:** G0-1 (Phase G0, tier T3) of [`PLAN_mesh_generation.md`](PLAN_mesh_generation.md).
 **Scope (from the plan's G0-1 acceptance):** Freudenthal node orderings +
@@ -526,6 +526,26 @@ an acceptance gate, and they justify keeping S9 mandatory rather than optional.
 After S7, a cell is a **junction cell** iff it is crossed by ≥ 2 active patches
 **or** contains a segment of an intersection curve. Everything else uses §5/§6.
 The escalation targets of §4.4, §5.2 and Invariant K1 also land here.
+
+**Amended 2026-08-20 (rev 1.5), additive.** A cell whose faces the surface's
+trace crosses is **also** offered §7.2's mesher, ahead of §6's table, and falls
+back to §6 wherever §7.2 declines. The rule above is unchanged for everything
+the trace does not touch.
+
+The reason is **conformity, not expressiveness**. §7.2's constraints are the
+surface fragments clipped to the cell, and a fragment's boundary on a shared face
+must be an edge of that face's triangulation. §5.2 draws one chord per face,
+between that face's two crossings; a curved surface crosses one lattice face with
+several triangles, so its trace there is a polyline with interior vertices and the
+chord is not the fragment's boundary. Measured on the acceptance suite, the two
+triangulations differ on **99.2 %** of A-8's junction cells — so a face
+triangulation carrying the trace cannot be delivered to one owner and withheld
+from the other, and the triage has to cover both. The population the trace touches
+is 18.4 % of A-8's lattice, 19.3 % of A-6a's and 17.8 % of A-3's.
+
+§6's table is unchanged and remains normative where it runs: it partitions the
+parent exactly and its conformity with §5.2 is verified over 4 800 randomised
+cuts (§14 [5]). This amendment changes **which cells reach it**, not what it does.
 
 ### 7.2 Inputs
 
