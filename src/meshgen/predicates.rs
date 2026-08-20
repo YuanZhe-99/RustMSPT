@@ -314,6 +314,29 @@ pub fn orient3d_filtered(a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> (i8, bool, f64, 
 }
 
 // AI-FUNC-SUMMARY:
+// Purpose: Exact in-circle test in a projected plane — is `d` inside the circle through a, b, c?
+// Inputs: four points assumed coplanar, and the projection axis to read them in.
+// Returns: +1 strictly inside, -1 strictly outside, 0 cocircular or a, b, c collinear.
+// Side effects: None.
+// Notes: The 2D companion of `insphere`, and it needs the same care for the same reason:
+//   `robust::incircle` reverses its sign when the three points are given clockwise, silently.
+//   Normalising the winding here makes the answer a function of the four points and the axis alone.
+//   Three collinear points have no circumcircle, so that is 0 rather than a guess.
+pub fn incircle_axis(a: Vec3, b: Vec3, c: Vec3, d: Vec3, axis: ProjectionAxis) -> i8 {
+    let at = |p: Vec3| project_to_2d(p, axis);
+    let winding = orient2d_axis(a, b, c, axis);
+    if winding == 0.0 {
+        return 0;
+    }
+    let value = if winding > 0.0 {
+        robust::incircle(at(a), at(b), at(c), at(d))
+    } else {
+        robust::incircle(at(b), at(a), at(c), at(d))
+    };
+    sign_i8(value)
+}
+
+// AI-FUNC-SUMMARY:
 // Purpose: Exact in-sphere test — is `e` inside the circumsphere of the tet (a, b, c, d)?
 // Inputs: five 3D points.
 // Returns: +1 strictly inside, -1 strictly outside, 0 cospherical or (a,b,c,d) coplanar.
@@ -1004,6 +1027,52 @@ mod tests {
             Vec3::new(0.0, 1.0, 0.0),
             Vec3::new(0.0, 0.0, 1.0),
         ]
+    }
+
+    // The 2D companion, and the same winding trap: `robust::incircle` reverses its sign for a
+    // clockwise triangle without saying so.
+    #[test]
+    fn the_in_circle_test_does_not_depend_on_the_triangles_winding() {
+        let (a, b, c) = (
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        );
+        let inside = Vec3::new(0.25, 0.25, 0.0);
+        let outside = Vec3::new(5.0, 5.0, 0.0);
+        assert_eq!(incircle_axis(a, b, c, inside, ProjectionAxis::Z), 1);
+        assert_eq!(incircle_axis(a, b, c, outside, ProjectionAxis::Z), -1);
+        for probe in [inside, outside] {
+            let reference = incircle_axis(a, b, c, probe, ProjectionAxis::Z);
+            assert_eq!(incircle_axis(b, a, c, probe, ProjectionAxis::Z), reference);
+            assert_eq!(incircle_axis(c, b, a, probe, ProjectionAxis::Z), reference);
+            assert_eq!(incircle_axis(b, c, a, probe, ProjectionAxis::Z), reference);
+        }
+    }
+
+    // Four points on one circle are a tie, and three collinear ones have no circle at all - both
+    // reported rather than rounded to a side.
+    #[test]
+    fn cocircular_and_collinear_inputs_report_no_side() {
+        let circle = [
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(-1.0, 0.0, 0.0),
+        ];
+        assert_eq!(
+            incircle_axis(circle[0], circle[1], circle[2], Vec3::new(0.0, -1.0, 0.0), ProjectionAxis::Z),
+            0
+        );
+        assert_eq!(
+            incircle_axis(
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(2.0, 0.0, 0.0),
+                Vec3::new(0.5, 1.0, 0.0),
+                ProjectionAxis::Z
+            ),
+            0
+        );
     }
 
     #[test]

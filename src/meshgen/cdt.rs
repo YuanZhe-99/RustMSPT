@@ -1087,6 +1087,274 @@ pub fn delaunay_tets(points: &[Vec3], keys: &[NodeKey]) -> Option<Vec<[u32; 4]>>
 }
 
 // AI-FUNC-SUMMARY:
+// Purpose: Triangulate one lattice face so that every given segment is an edge of the result —
+//   the face-side half of `SPEC_meshgen_geometry.md` §7.4, and what lets a cell's constrained
+//   tetrahedralisation meet its neighbour's.
+// Inputs: the face's three corners, every vertex on it (corners included), their keys, and the
+//   constraint segments as index pairs.
+// Returns: the triangles as index triples wound with the face's normal, or None on a refusal.
+// Side effects: None — it adds no points.
+// Notes: **In 2D a constrained Delaunay triangulation always exists without Steiner points**, which
+//   is why this half of §7.4 has no refusal case worth designing around while the 3D half does. A
+//   segment is recovered by flipping the edges that cross it (Anglada): pop a crossing edge, flip
+//   it if its quad is convex and push it back if not, and the loop terminates because every flip
+//   strictly reduces the number of crossings that remain.
+//
+//   **The result is a function of the face and the surface, not of the cell asking.** The points
+//   come from `trace_on_face`, which reads only the face and the surface; insertion is in ascending
+//   `NodeKey` order; cocircular ties fall to the earliest-inserted configuration; and the crossing
+//   list is sorted canonically before it is worked. So the two cells sharing a face derive the same
+//   triangulation without communicating, which is invariant J1 and the thing four earlier attempts
+//   got wrong by computing the equivalent quantity per cell (PLAN §6.23).
+//
+//   Every point must lie within the face: the triangulation fills the convex hull of the points,
+//   and the face is that hull only if nothing sticks out of it.
+pub fn constrained_face_triangulation(
+    face: [Vec3; 3],
+    points: &[Vec3],
+    keys: &[NodeKey],
+    segments: &[[u32; 2]],
+) -> Option<Vec<[u32; 3]>> {
+    if points.len() < 3 || points.len() != keys.len() {
+        return None;
+    }
+    let axis = crate::meshgen::predicates::best_projection_axis(face[0], face[1], face[2]);
+    let reference = face[1].sub(face[0]).cross(face[2].sub(face[0]));
+    if reference.dot(reference) <= 0.0 {
+        return None;
+    }
+    // The face is convex, so "inside it" is the same sign against all three edges. A point outside
+    // would put area in the result that is not part of the face.
+    let outward = crate::meshgen::predicates::orient2d_axis(face[0], face[1], face[2], axis);
+    for point in points {
+        for slot in 0..3 {
+            let side =
+                crate::meshgen::predicates::orient2d_axis(face[slot], face[(slot + 1) % 3], *point, axis);
+            if side * outward < 0.0 {
+                return None;
+            }
+        }
+    }
+
+    // --- Delaunay, over a local super-triangle ---
+    let (mut lo, mut hi) = (points[0], points[0]);
+    for p in points {
+        lo = Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z));
+        hi = Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
+    }
+    let centre = lo.add(hi).scale(0.5);
+    let span = hi.sub(lo);
+    let reach = span.dot(span).sqrt().max(f64::MIN_POSITIVE) * 1000.0;
+    let unit = reference.scale(1.0 / reference.dot(reference).sqrt());
+    let along = face[1].sub(face[0]);
+    let along = along.scale(1.0 / along.dot(along).sqrt());
+    let across = unit.cross(along);
+    let mut work: Vec<Vec3> = points.to_vec();
+    let base = work.len() as u32;
+    for angle in [0.0_f64, 2.094_395_102_393_195_5, 4.188_790_204_786_391] {
+        work.push(centre.add(along.scale(angle.cos() * reach)).add(across.scale(angle.sin() * reach)));
+    }
+    let mut tris: Vec<[u32; 3]> = vec![[base, base + 1, base + 2]];
+
+    let mut order: Vec<u32> = (0..points.len() as u32).collect();
+    order.sort_by_key(|id| keys[*id as usize]);
+    order.dedup_by_key(|id| keys[*id as usize]);
+    for id in order {
+        let point = work[id as usize];
+        let cavity: Vec<usize> = (0..tris.len())
+            .filter(|at| {
+                let t = tris[*at];
+                crate::meshgen::predicates::incircle_axis(
+                    work[t[0] as usize],
+                    work[t[1] as usize],
+                    work[t[2] as usize],
+                    point,
+                    axis,
+                ) > 0
+            })
+            .collect();
+        if cavity.is_empty() {
+            continue;
+        }
+        let mut carried: BTreeMap<[u32; 2], usize> = BTreeMap::new();
+        for at in &cavity {
+            for edge in tri_edges(tris[*at]) {
+                *carried.entry(sorted_edge(edge)).or_insert(0) += 1;
+            }
+        }
+        let mut next: Vec<[u32; 3]> = tris
+            .iter()
+            .enumerate()
+            .filter(|(at, _)| !cavity.contains(at))
+            .map(|(_, t)| *t)
+            .collect();
+        for at in &cavity {
+            for edge in tri_edges(tris[*at]) {
+                if carried.get(&sorted_edge(edge)).copied().unwrap_or(0) != 1 {
+                    continue;
+                }
+                if edge[0] == id || edge[1] == id {
+                    continue;
+                }
+                next.push([edge[0], edge[1], id]);
+            }
+        }
+        tris = next;
+    }
+    tris.retain(|t| t.iter().all(|id| *id < base));
+    if tris.is_empty() {
+        return None;
+    }
+
+    // --- segment recovery by flipping (Anglada) ---
+    for segment in segments {
+        let (a, b) = (segment[0], segment[1]);
+        if a == b || a >= base || b >= base {
+            return None;
+        }
+        let mut guard = 0usize;
+        loop {
+            if has_edge(&tris, a, b) {
+                break;
+            }
+            let mut crossing: Vec<[u32; 2]> = Vec::new();
+            for t in &tris {
+                for edge in tri_edges(*t) {
+                    let key = sorted_edge(edge);
+                    if crossing.contains(&key) {
+                        continue;
+                    }
+                    if crosses(key, [a, b], &work, axis) {
+                        crossing.push(key);
+                    }
+                }
+            }
+            // Canonical order, so the flip sequence is a function of the geometry.
+            crossing.sort_unstable();
+            let Some(flipped) = crossing
+                .iter()
+                .find_map(|edge| flip_edge(&mut tris, *edge, &work, axis).then_some(*edge))
+            else {
+                // Nothing crossing the segment can be flipped: every quad is non-convex, which for
+                // a planar straight-line graph means the segment passes through a vertex. That is a
+                // caller error - the point should have been supplied - not a geometry the flip
+                // algorithm has to handle.
+                return None;
+            };
+            let _ = flipped;
+            guard += 1;
+            if guard > tris.len() * tris.len() + 16 {
+                return None;
+            }
+        }
+    }
+
+    // --- wind every triangle with the face ---
+    let mut out: Vec<[u32; 3]> = Vec::with_capacity(tris.len());
+    for t in tris {
+        let (p, q, r) = (
+            points[t[0] as usize],
+            points[t[1] as usize],
+            points[t[2] as usize],
+        );
+        let normal = q.sub(p).cross(r.sub(p));
+        if normal.dot(normal) <= 0.0 {
+            return None;
+        }
+        let mut t = t;
+        if normal.dot(reference) < 0.0 {
+            t.swap(1, 2);
+        }
+        let at = (0..3).min_by_key(|slot| t[*slot]).unwrap_or(0);
+        out.push([t[at], t[(at + 1) % 3], t[(at + 2) % 3]]);
+    }
+    out.sort_unstable();
+    out.dedup();
+    Some(out)
+}
+
+// AI-FUNC-SUMMARY: A triangle's three edges in order; returns them; side effects: none.
+fn tri_edges(t: [u32; 3]) -> [[u32; 2]; 3] {
+    [[t[0], t[1]], [t[1], t[2]], [t[2], t[0]]]
+}
+
+// AI-FUNC-SUMMARY: An edge with its endpoints in ascending order; returns it; side effects: none.
+fn sorted_edge(e: [u32; 2]) -> [u32; 2] {
+    if e[0] <= e[1] { e } else { [e[1], e[0]] }
+}
+
+// AI-FUNC-SUMMARY: Whether some triangle carries the edge (a, b); returns bool; side effects: none.
+fn has_edge(tris: &[[u32; 3]], a: u32, b: u32) -> bool {
+    tris.iter()
+        .any(|t| tri_edges(*t).iter().any(|e| sorted_edge(*e) == sorted_edge([a, b])))
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Whether two segments cross properly — sharing an endpoint does not count.
+// Inputs: the two edges as index pairs, the point table, and the projection axis.
+// Returns: bool.
+// Side effects: None.
+// Notes: Proper crossing only. Touching at an endpoint is how a segment meets the edges of the
+//   triangles it ends in, and treating that as a crossing would put those edges on the flip list
+//   forever.
+fn crosses(e: [u32; 2], f: [u32; 2], points: &[Vec3], axis: crate::meshgen::predicates::ProjectionAxis) -> bool {
+    if e.iter().any(|id| f.contains(id)) {
+        return false;
+    }
+    let at = |id: u32| points[id as usize];
+    let side = |p: u32, q: u32, r: u32| {
+        crate::meshgen::predicates::orient2d_axis(at(p), at(q), at(r), axis)
+    };
+    let (d1, d2) = (side(e[0], e[1], f[0]), side(e[0], e[1], f[1]));
+    let (d3, d4) = (side(f[0], f[1], e[0]), side(f[0], f[1], e[1]));
+    d1 * d2 < 0.0 && d3 * d4 < 0.0
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Flip one interior edge, if the quad around it is convex.
+// Inputs: the triangles (modified in place), the edge, the point table and the projection axis.
+// Returns: whether the flip happened.
+// Side effects: Replaces the two triangles sharing the edge with the two across the other diagonal.
+// Notes: A non-convex quad cannot be flipped without inverting a triangle, so it is left alone and
+//   the caller tries another edge - which is what makes Anglada's loop terminate rather than thrash.
+fn flip_edge(
+    tris: &mut Vec<[u32; 3]>,
+    edge: [u32; 2],
+    points: &[Vec3],
+    axis: crate::meshgen::predicates::ProjectionAxis,
+) -> bool {
+    let carrying: Vec<usize> = (0..tris.len())
+        .filter(|at| tri_edges(tris[*at]).iter().any(|e| sorted_edge(*e) == edge))
+        .collect();
+    if carrying.len() != 2 {
+        return false;
+    }
+    let apex = |t: [u32; 3]| -> Option<u32> {
+        t.iter().copied().find(|id| !edge.contains(id))
+    };
+    let (Some(e), Some(f)) = (apex(tris[carrying[0]]), apex(tris[carrying[1]])) else {
+        return false;
+    };
+    if e == f {
+        return false;
+    }
+    let at = |id: u32| points[id as usize];
+    let side = |p: u32, q: u32, r: u32| {
+        crate::meshgen::predicates::orient2d_axis(at(p), at(q), at(r), axis)
+    };
+    // Convex exactly when the old diagonal's endpoints straddle the new one.
+    if side(e, f, edge[0]) * side(e, f, edge[1]) >= 0.0 {
+        return false;
+    }
+    let (first, second) = (carrying[0].max(carrying[1]), carrying[0].min(carrying[1]));
+    tris.remove(first);
+    tris.remove(second);
+    tris.push([e, f, edge[0]]);
+    tris.push([f, e, edge[1]]);
+    true
+}
+
+// AI-FUNC-SUMMARY:
 // Purpose: Tetrahedralise one cell so that its frozen boundary and its surface facets are both
 //   faces of the result — `SPEC_meshgen_geometry.md` §7.4's constrained tetrahedralisation.
 // Inputs: the points and keys, the frozen boundary triangulation, and the constraint facets as
@@ -1747,6 +2015,182 @@ mod tests {
                 b.sub(a).cross(c.sub(a)).dot(d.sub(a)).abs() / 6.0
             })
             .sum()
+    }
+
+    // A bare face is one triangle, and that is the case the cut takes 250,258 times on a8 - so it
+    // must not gain a vertex, a diagonal, or an opinion.
+    #[test]
+    fn a_face_with_no_constraints_is_itself() {
+        let face = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        ];
+        let points = face.to_vec();
+        let tris = constrained_face_triangulation(face, &points, &keys_of(&points), &[])
+            .expect("a bare face triangulates");
+        assert_eq!(tris.len(), 1);
+    }
+
+    // **The property the whole face side exists for.** A chord across the face must come back as an
+    // EDGE of the triangulation - not merely covered by it - because that is what lets the cell's
+    // constrained tetrahedralisation stop on the surface instead of straddling it.
+    #[test]
+    fn a_chord_across_the_face_comes_back_as_an_edge() {
+        let face = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        ];
+        let mut points = face.to_vec();
+        points.push(Vec3::new(0.5, 0.0, 0.0));
+        points.push(Vec3::new(0.0, 0.5, 0.0));
+        let tris = constrained_face_triangulation(
+            face,
+            &points,
+            &keys_of(&points),
+            &[[3, 4]],
+        )
+        .expect("a chord is recoverable");
+        assert!(
+            tris.iter().any(|t| {
+                let mut on = t.iter().filter(|id| **id == 3 || **id == 4).count();
+                on = on.min(2);
+                on == 2
+            }),
+            "the chord (3, 4) must be an edge of some triangle"
+        );
+        // And the triangulation still covers the face exactly - no gap, no overlap.
+        let area: f64 = tris
+            .iter()
+            .map(|t| {
+                let (a, b, c) = (points[t[0] as usize], points[t[1] as usize], points[t[2] as usize]);
+                let n = b.sub(a).cross(c.sub(a));
+                n.dot(n).sqrt() * 0.5
+            })
+            .sum();
+        assert!((area - 0.5).abs() < 1.0e-12, "the face's area is 0.5, got {area}");
+    }
+
+    // The interior loop, which `triangulate_with_hole` handled as a special case and this handles
+    // as an ordinary one: a closed ring of constraint segments strictly inside the face. Every ring
+    // edge must survive, and the face must still be covered exactly - the ring is a constraint, not
+    // a hole to be removed.
+    #[test]
+    fn an_interior_loop_survives_as_edges_of_the_face() {
+        let face = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(4.0, 0.0, 0.0),
+            Vec3::new(0.0, 4.0, 0.0),
+        ];
+        let mut points = face.to_vec();
+        for corner in [
+            Vec3::new(1.0, 1.0, 0.0),
+            Vec3::new(2.0, 1.0, 0.0),
+            Vec3::new(1.0, 2.0, 0.0),
+        ] {
+            points.push(corner);
+        }
+        let segments = [[3u32, 4], [4, 5], [5, 3]];
+        let tris = constrained_face_triangulation(face, &points, &keys_of(&points), &segments)
+            .expect("an interior loop is recoverable");
+        for segment in &segments {
+            assert!(
+                tris.iter().any(|t| {
+                    tri_edges(*t)
+                        .iter()
+                        .any(|e| sorted_edge(*e) == sorted_edge(*segment))
+                }),
+                "loop edge {segment:?} must survive"
+            );
+        }
+        let area: f64 = tris
+            .iter()
+            .map(|t| {
+                let (a, b, c) = (points[t[0] as usize], points[t[1] as usize], points[t[2] as usize]);
+                let n = b.sub(a).cross(c.sub(a));
+                n.dot(n).sqrt() * 0.5
+            })
+            .sum();
+        assert!((area - 8.0).abs() < 1.0e-12, "the face's area is 8, got {area}");
+    }
+
+    // **Invariant J1, as a test.** The two cells sharing a face pass their own point lists in their
+    // own orders; the triangulation they get must be the same one, compared by COORDINATES since
+    // the indices are what differ. Four earlier attempts in this project failed by computing the
+    // equivalent quantity per cell (PLAN §6.23), and this is the property they were missing.
+    #[test]
+    fn both_cells_derive_the_same_face_triangulation() {
+        let face = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(4.0, 0.0, 0.0),
+            Vec3::new(0.0, 4.0, 0.0),
+        ];
+        let base = vec![
+            face[0],
+            face[1],
+            face[2],
+            Vec3::new(2.0, 0.0, 0.0),
+            Vec3::new(0.0, 2.0, 0.0),
+            Vec3::new(1.0, 1.0, 0.0),
+        ];
+        let geometric = |tris: &[[u32; 3]], points: &[Vec3]| -> Vec<[NodeKey; 3]> {
+            let mut out: Vec<[NodeKey; 3]> = tris
+                .iter()
+                .map(|t| {
+                    let mut k = [
+                        node_key(points[t[0] as usize], QUANTUM),
+                        node_key(points[t[1] as usize], QUANTUM),
+                        node_key(points[t[2] as usize], QUANTUM),
+                    ];
+                    k.sort_unstable();
+                    k
+                })
+                .collect();
+            out.sort_unstable();
+            out
+        };
+        let reference = geometric(
+            &constrained_face_triangulation(face, &base, &keys_of(&base), &[[3, 5], [5, 4]])
+                .expect("triangulable"),
+            &base,
+        );
+        // The neighbour presents the same face with its points in a different order, and names the
+        // same two segments by its own indices.
+        for shift in 1..base.len() {
+            let shuffled: Vec<Vec3> =
+                (0..base.len()).map(|slot| base[(slot + shift) % base.len()]).collect();
+            let find = |p: Vec3| {
+                shuffled
+                    .iter()
+                    .position(|q| q.sub(p).dot(q.sub(p)) < 1.0e-24)
+                    .expect("the same points") as u32
+            };
+            let segments = [[find(base[3]), find(base[5])], [find(base[5]), find(base[4])]];
+            let tris =
+                constrained_face_triangulation(face, &shuffled, &keys_of(&shuffled), &segments)
+                    .expect("triangulable");
+            assert_eq!(
+                geometric(&tris, &shuffled),
+                reference,
+                "the neighbour's ordering (shift {shift}) gave a different face"
+            );
+        }
+    }
+
+    // A point outside the face is refused rather than triangulated: the result fills the convex
+    // hull of the points, and a point beyond the face would put area in it that the face does not
+    // have - which the cell either side would then disagree about.
+    #[test]
+    fn a_point_outside_the_face_is_refused() {
+        let face = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        ];
+        let mut points = face.to_vec();
+        points.push(Vec3::new(1.0, 1.0, 0.0));
+        assert!(constrained_face_triangulation(face, &points, &keys_of(&points), &[]).is_none());
     }
 
     // The simplest cell there is: a tet with nothing crossing it. One element, and its four faces
