@@ -894,6 +894,219 @@ pub fn subdivide_by_fragment(
 }
 
 // AI-FUNC-SUMMARY:
+// Purpose: The Delaunay tetrahedralisation of a point set — the substrate `SPEC_meshgen_geometry.md`
+//   §7.4's constrained incremental tetrahedralisation is built on.
+// Inputs: the points and their quantised keys, indexed alike.
+// Returns: the tets as index quadruples, each positively oriented, in a canonical order; None when
+//   the points are degenerate or an insertion produced an inconsistent cavity.
+// Side effects: None — the four super-tet vertices are local and every tet touching one is dropped.
+// Notes: **Bowyer-Watson, with the two determinism rules §7.4 states.** Points are inserted in
+//   ascending `NodeKey` order, so the sequence is a function of the geometry and not of the
+//   caller's indexing; and a point exactly ON a circumsphere is treated as NOT in the cavity, which
+//   is the strict form of the in-sphere test. Both matter for the same reason: a cospherical set —
+//   the eight corners of a cube, which is the ordinary case here, not a contrived one — admits
+//   several valid triangulations, and R-P2 needs the same one every run. Strict exclusion makes the
+//   earliest-inserted configuration win, and insertion order is key order, which is §7.4's
+//   "ties broken by smallest NodeKey" in the only form that is also transitive.
+//
+//   **The cavity is flood-filled from the tet containing the point, never collected by scanning.**
+//   Scanning finds the same set in exact arithmetic and a *disconnected* one the moment a predicate
+//   disagrees with itself, and a disconnected cavity re-triangulates into overlapping tets that no
+//   later check would obviously catch. Flooding through shared faces cannot leave the region
+//   reachable from the seed, so the failure mode becomes "the cavity is smaller than it should be",
+//   which the orientation check below does catch.
+//
+//   Every emitted tet is verified positively oriented before it is kept, and the whole
+//   tetrahedralisation is refused if any is not. This is a kernel that must decline rather than
+//   hand back something subtly wrong (§7.2's integration rule).
+pub fn delaunay_tets(points: &[Vec3], keys: &[NodeKey]) -> Option<Vec<[u32; 4]>> {
+    if points.len() < 4 || points.len() != keys.len() {
+        return None;
+    }
+    // A super-tet that strictly contains every point, far enough out that it does not decide any
+    // in-sphere question among the real points. Its vertices are appended to a LOCAL copy of the
+    // point list and every tet touching one is dropped at the end, so no identity escapes (§7.2).
+    let (mut lo, mut hi) = (points[0], points[0]);
+    for p in points {
+        lo = Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z));
+        hi = Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
+    }
+    let centre = lo.add(hi).scale(0.5);
+    let span = hi.sub(lo);
+    let reach = span.dot(span).sqrt().max(f64::MIN_POSITIVE) * 1000.0;
+    let mut work: Vec<Vec3> = points.to_vec();
+    let base = work.len() as u32;
+    for corner in [
+        Vec3::new(1.0, 1.0, 1.0),
+        Vec3::new(1.0, -1.0, -1.0),
+        Vec3::new(-1.0, 1.0, -1.0),
+        Vec3::new(-1.0, -1.0, 1.0),
+    ] {
+        work.push(centre.add(corner.scale(reach)));
+    }
+    let oriented = |t: [u32; 4], points: &[Vec3]| -> Option<[u32; 4]> {
+        let (a, b, c, d) = (
+            points[t[0] as usize],
+            points[t[1] as usize],
+            points[t[2] as usize],
+            points[t[3] as usize],
+        );
+        match crate::meshgen::predicates::orient3d_filtered(a, b, c, d).0 {
+            0 => None,
+            s if s > 0 => Some(t),
+            _ => Some([t[1], t[0], t[2], t[3]]),
+        }
+    };
+    let mut tets: Vec<[u32; 4]> = vec![oriented([base, base + 1, base + 2, base + 3], &work)?];
+
+    // Ascending key order, so the sequence is a function of the geometry (§7.4).
+    let mut order: Vec<u32> = (0..points.len() as u32).collect();
+    order.sort_by_key(|id| keys[*id as usize]);
+    order.dedup_by_key(|id| keys[*id as usize]);
+
+    for id in order {
+        let point = work[id as usize];
+        // The cavity: tets whose circumsphere strictly contains the point, flooded from one that
+        // does. Any tet containing the point on its boundary also has it on its circumsphere's
+        // interior or surface, so the seed search and the in-sphere test agree about where to start.
+        let seed = tets.iter().position(|t| {
+            crate::meshgen::predicates::insphere(
+                work[t[0] as usize],
+                work[t[1] as usize],
+                work[t[2] as usize],
+                work[t[3] as usize],
+                point,
+            ) > 0
+        });
+        let Some(seed) = seed else {
+            // Outside every circumsphere: the point is already a vertex of the triangulation or
+            // coincides with one, and there is nothing to insert.
+            continue;
+        };
+        let mut cavity: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+        let mut frontier = vec![seed];
+        while let Some(at) = frontier.pop() {
+            if !cavity.insert(at) {
+                continue;
+            }
+            for other in 0..tets.len() {
+                if cavity.contains(&other) || !share_a_face(tets[at], tets[other]) {
+                    continue;
+                }
+                let t = tets[other];
+                if crate::meshgen::predicates::insphere(
+                    work[t[0] as usize],
+                    work[t[1] as usize],
+                    work[t[2] as usize],
+                    work[t[3] as usize],
+                    point,
+                ) > 0
+                {
+                    frontier.push(other);
+                }
+            }
+        }
+        // The cavity's boundary: a face carried by exactly one cavity tet. Counted on the sorted
+        // triple so two tets naming the same face in opposite windings are recognised as one.
+        let mut faces: BTreeMap<[u32; 3], usize> = BTreeMap::new();
+        for at in &cavity {
+            for face in tet_faces(tets[*at]) {
+                let mut key = face;
+                key.sort_unstable();
+                *faces.entry(key).or_insert(0) += 1;
+            }
+        }
+        let mut next: Vec<[u32; 4]> = Vec::new();
+        for (at, tet) in tets.iter().enumerate() {
+            if !cavity.contains(&at) {
+                next.push(*tet);
+            }
+        }
+        for at in &cavity {
+            for face in tet_faces(tets[*at]) {
+                let mut key = face;
+                key.sort_unstable();
+                if faces.get(&key).copied().unwrap_or(0) != 1 {
+                    continue;
+                }
+                // A face of the cavity's boundary, wound outward from the cavity by construction,
+                // so the new tet closes onto the point with a consistent orientation.
+                let Some(tet) = oriented([face[0], face[1], face[2], id], &work) else {
+                    // The point is coplanar with a boundary face: a flat tet, which must never
+                    // enter the triangulation. Nothing else can be salvaged from this insertion.
+                    return None;
+                };
+                next.push(tet);
+            }
+        }
+        tets = next;
+    }
+
+    // Drop everything touching the super-tet, then canonicalise: each tet rotated to start at its
+    // smallest vertex with the orientation preserved, and the list sorted. R-P2 needs the output to
+    // be a function of the input, and the insertion order alone does not give that.
+    let mut out: Vec<[u32; 4]> = Vec::new();
+    for tet in tets {
+        if tet.iter().any(|id| *id >= base) {
+            continue;
+        }
+        // Slot 0 is the smallest vertex and slot 1 the smallest of the rest; the remaining two are
+        // then ordered by requiring positive orientation. That is unique given the four vertices,
+        // so the same tet written any of its 24 ways canonicalises to one form - and swapping the
+        // LAST two is the only orientation fix that leaves slots 0 and 1 alone.
+        let mut rest: Vec<u32> = tet.iter().copied().filter(|id| *id != tet_min(tet)).collect();
+        rest.sort_unstable();
+        if rest.len() != 3 {
+            // A repeated vertex: a degenerate tet that must not be emitted.
+            return None;
+        }
+        let mut rotated = [tet_min(tet), rest[0], rest[1], rest[2]];
+        match crate::meshgen::predicates::orient3d_filtered(
+            points[rotated[0] as usize],
+            points[rotated[1] as usize],
+            points[rotated[2] as usize],
+            points[rotated[3] as usize],
+        )
+        .0
+        {
+            0 => return None,
+            s if s < 0 => rotated.swap(2, 3),
+            _ => {}
+        }
+        out.push(rotated);
+    }
+    out.sort_unstable();
+    out.dedup();
+    // An empty result means every tet touched the super-tet, which means the real points span no
+    // volume - they are coplanar or worse. That is a refusal, not an answer: an empty list reads as
+    // "nothing to do" at the call site and would let a degenerate cell pass silently.
+    if out.is_empty() {
+        return None;
+    }
+    Some(out)
+}
+
+// AI-FUNC-SUMMARY: The smallest vertex id of a tet; returns u32; side effects: none.
+fn tet_min(t: [u32; 4]) -> u32 {
+    t.iter().copied().min().unwrap_or(t[0])
+}
+
+// AI-FUNC-SUMMARY: The four faces of a tet, each wound outward; returns them; side effects: none.
+fn tet_faces(t: [u32; 4]) -> [[u32; 3]; 4] {
+    [
+        [t[1], t[2], t[3]],
+        [t[0], t[3], t[2]],
+        [t[0], t[1], t[3]],
+        [t[0], t[2], t[1]],
+    ]
+}
+
+// AI-FUNC-SUMMARY: Whether two tets share three vertices; returns bool; side effects: none.
+fn share_a_face(a: [u32; 4], b: [u32; 4]) -> bool {
+    a.iter().filter(|id| b.contains(id)).count() == 3
+}
+
+// AI-FUNC-SUMMARY:
 // Purpose: The surface fragment inside one lattice cell — the last of §7.2's three stated inputs
 //   that the pipeline has never produced.
 // Inputs: the cell's four corners, the candidate triangles, and a tolerance.
@@ -1324,6 +1537,183 @@ mod tests {
 
     const QUANTUM: f64 = 1.0e-12;
     const TOL: f64 = 1.0e-12;
+
+    // Helpers for the tetrahedralisation tests: keys at the module's usual quantum, and the volume
+    // of a tet list read straight off the points.
+    fn keys_of(points: &[Vec3]) -> Vec<NodeKey> {
+        points.iter().map(|p| node_key(*p, QUANTUM)).collect()
+    }
+
+    fn tets_volume(tets: &[[u32; 4]], points: &[Vec3]) -> f64 {
+        tets.iter()
+            .map(|t| {
+                let (a, b, c, d) = (
+                    points[t[0] as usize],
+                    points[t[1] as usize],
+                    points[t[2] as usize],
+                    points[t[3] as usize],
+                );
+                b.sub(a).cross(c.sub(a)).dot(d.sub(a)).abs() / 6.0
+            })
+            .sum()
+    }
+
+    #[test]
+    fn four_points_tetrahedralise_to_one_tet() {
+        let points = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+        ];
+        let tets = delaunay_tets(&points, &keys_of(&points)).expect("a tet is tetrahedralisable");
+        assert_eq!(tets.len(), 1);
+        assert!((tets_volume(&tets, &points) - 1.0 / 6.0).abs() < 1.0e-15);
+    }
+
+    // The honest test of a tetrahedralisation is that it fills the hull: too little is a gap, too
+    // much is an overlap. A cube is the case worth using because its eight corners are COSPHERICAL,
+    // which is where a naive in-sphere test and an arbitrary tie rule both fall over.
+    #[test]
+    fn the_cube_is_filled_exactly_despite_its_corners_being_cospherical() {
+        let mut points = Vec::new();
+        for x in [0.0, 1.0] {
+            for y in [0.0, 1.0] {
+                for z in [0.0, 1.0] {
+                    points.push(Vec3::new(x, y, z));
+                }
+            }
+        }
+        let tets = delaunay_tets(&points, &keys_of(&points)).expect("a cube is tetrahedralisable");
+        assert!(
+            (tets_volume(&tets, &points) - 1.0).abs() < 1.0e-15,
+            "the tets must fill the cube exactly, got {}",
+            tets_volume(&tets, &points)
+        );
+    }
+
+    // Every tet positively oriented, and no tet degenerate. A flat tet has no interior, contributes
+    // no volume, and breaks every downstream orientation argument.
+    #[test]
+    fn every_tet_comes_back_positively_oriented() {
+        let mut points = vec![Vec3::new(0.5, 0.5, 0.5)];
+        for x in [0.0, 1.0] {
+            for y in [0.0, 1.0] {
+                for z in [0.0, 1.0] {
+                    points.push(Vec3::new(x, y, z));
+                }
+            }
+        }
+        let tets = delaunay_tets(&points, &keys_of(&points)).expect("tetrahedralisable");
+        for t in &tets {
+            let sign = crate::meshgen::predicates::orient3d_filtered(
+                points[t[0] as usize],
+                points[t[1] as usize],
+                points[t[2] as usize],
+                points[t[3] as usize],
+            )
+            .0;
+            assert_eq!(sign, 1, "tet {t:?} is not positively oriented");
+        }
+        assert!((tets_volume(&tets, &points) - 1.0).abs() < 1.0e-15);
+    }
+
+    // The Delaunay property itself, stated as the test: no point of the set lies strictly inside
+    // any tet's circumsphere. Points ON a circumsphere are permitted and are the cospherical case.
+    #[test]
+    fn no_point_lies_strictly_inside_another_tets_circumsphere() {
+        let points = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(0.9, 0.8, 0.7),
+            Vec3::new(0.3, 0.1, 0.6),
+            Vec3::new(0.7, 0.2, 0.1),
+        ];
+        let tets = delaunay_tets(&points, &keys_of(&points)).expect("tetrahedralisable");
+        for t in &tets {
+            for (id, probe) in points.iter().enumerate() {
+                if t.contains(&(id as u32)) {
+                    continue;
+                }
+                assert!(
+                    crate::meshgen::predicates::insphere(
+                        points[t[0] as usize],
+                        points[t[1] as usize],
+                        points[t[2] as usize],
+                        points[t[3] as usize],
+                        *probe
+                    ) <= 0,
+                    "point {id} is inside tet {t:?}'s circumsphere"
+                );
+            }
+        }
+    }
+
+    // **R-P2, and the reason §7.4 inserts in ascending NodeKey order.** The same point set handed
+    // over in a different order must give the same tetrahedralisation - compared by COORDINATES,
+    // since the indices are exactly what changed.
+    #[test]
+    fn the_result_is_a_function_of_the_points_not_of_their_order() {
+        let points = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(0.9, 0.8, 0.7),
+            Vec3::new(0.3, 0.1, 0.6),
+            Vec3::new(0.7, 0.2, 0.1),
+        ];
+        let geometric = |tets: &[[u32; 4]], points: &[Vec3]| -> Vec<[NodeKey; 4]> {
+            let mut out: Vec<[NodeKey; 4]> = tets
+                .iter()
+                .map(|t| {
+                    let mut k = [
+                        node_key(points[t[0] as usize], QUANTUM),
+                        node_key(points[t[1] as usize], QUANTUM),
+                        node_key(points[t[2] as usize], QUANTUM),
+                        node_key(points[t[3] as usize], QUANTUM),
+                    ];
+                    k.sort_unstable();
+                    k
+                })
+                .collect();
+            out.sort_unstable();
+            out
+        };
+        let reference = geometric(
+            &delaunay_tets(&points, &keys_of(&points)).expect("tetrahedralisable"),
+            &points,
+        );
+        // Every rotation of the input is a different indexing of the same geometry.
+        for shift in 1..points.len() {
+            let shuffled: Vec<Vec3> = (0..points.len())
+                .map(|slot| points[(slot + shift) % points.len()])
+                .collect();
+            let tets = delaunay_tets(&shuffled, &keys_of(&shuffled)).expect("tetrahedralisable");
+            assert_eq!(
+                geometric(&tets, &shuffled),
+                reference,
+                "rotating the input by {shift} changed the tetrahedralisation"
+            );
+        }
+    }
+
+    // Fewer than four points, or four coplanar ones, have no tetrahedralisation - and that is a
+    // refusal rather than an empty answer, because an empty answer reads as "nothing to do".
+    #[test]
+    fn a_degenerate_point_set_is_refused() {
+        let flat = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(1.0, 1.0, 0.0),
+        ];
+        assert!(delaunay_tets(&flat, &keys_of(&flat)).is_none());
+        let too_few = flat[..3].to_vec();
+        assert!(delaunay_tets(&too_few, &keys_of(&too_few)).is_none());
+    }
 
     fn unit_tet() -> (NodeArena, ConvexCell) {
         let arena = NodeArena::new(
