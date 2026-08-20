@@ -1124,61 +1124,118 @@ fn share_a_face(a: [u32; 4], b: [u32; 4]) -> bool {
 //   from, and a sliver of a clipped piece has a numerically worse normal than the whole triangle
 //   does. Input order is preserved and the caller's input order is fixed, which is what R-P2 needs.
 pub fn fragment_in_cell(tet: [Vec3; 4], tris: &[[Vec3; 3]], tol: f64) -> Vec<[Vec3; 3]> {
-    // The tet's four faces, each as an inward half-space. Built from the cell's own corners so a
-    // degenerate or inverted tet simply keeps nothing rather than keeping everything.
-    let mut halfspaces: Vec<(Vec3, f64)> = Vec::with_capacity(4);
+    let Some(halfspaces) = tet_halfspaces(tet) else {
+        return Vec::new();
+    };
+    tris.iter()
+        .filter(|triangle| clip_to_halfspaces(triangle, &halfspaces, tol).is_some())
+        .copied()
+        .collect()
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: The surface fragment inside one cell as BOUNDED facets — the clipped polygons
+//   themselves, which is what `SPEC_meshgen_geometry.md` §7.2 means by "clipped surface fragments"
+//   and what a constrained tetrahedralisation takes as its constraints.
+// Inputs: the cell's four corners, the candidate triangles, and a tolerance.
+// Returns: one convex polygon per triangle that meets the cell, in the order given.
+// Side effects: None.
+// Notes: **This is what makes the over-cut impossible rather than merely smaller** (PLAN §6.26). A
+//   supporting plane is infinite, so cutting by one crosses the cell's edges where no surface is;
+//   a clipped facet stops where the surface stops, so a strut whose face ends inside the cell
+//   constrains only the part of the cell it actually passes through.
+//
+//   **Every vertex on the cell's boundary is shared with the neighbour by construction.** A facet
+//   vertex is either a vertex of the original triangle - the same point in both cells, since both
+//   read the same arranged surface - or the crossing of one of its edges with a face plane, which
+//   is a function of that edge and that plane and of nothing cell-local. This is the property the
+//   plane-driven route could not have: there the cut point depended on the cell's own plane SET,
+//   which the neighbour does not share. Clipping a triangle by four half-spaces always yields a
+//   convex polygon, so the facet needs no triangulation to be well defined.
+pub fn fragment_facets_in_cell(
+    tet: [Vec3; 4],
+    tris: &[[Vec3; 3]],
+    tol: f64,
+) -> Vec<Vec<Vec3>> {
+    let Some(halfspaces) = tet_halfspaces(tet) else {
+        return Vec::new();
+    };
+    tris.iter()
+        .filter_map(|triangle| clip_to_halfspaces(triangle, &halfspaces, tol))
+        .collect()
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: A tet's four faces as inward half-spaces.
+// Inputs: the four corners.
+// Returns: `(inward unit normal, offset)` per face, or None when the tet is degenerate.
+// Side effects: None.
+// Notes: Built from the cell's own corners, so a degenerate or inverted tet keeps nothing rather
+//   than keeping everything - the failure that turns a clip into a no-op nobody notices.
+fn tet_halfspaces(tet: [Vec3; 4]) -> Option<Vec<(Vec3, f64)>> {
+    let mut out: Vec<(Vec3, f64)> = Vec::with_capacity(4);
     for skip in 0..4 {
         let face: Vec<Vec3> = (0..4).filter(|s| *s != skip).map(|s| tet[s]).collect();
         let normal = face[1].sub(face[0]).cross(face[2].sub(face[0]));
         let length = normal.dot(normal).sqrt();
         if length <= 0.0 {
-            return Vec::new();
+            return None;
         }
         let normal = normal.scale(1.0 / length);
         // Point it at the corner that is not on this face, so "inside" is positive.
-        let inward = if normal.dot(tet[skip].sub(face[0])) < 0.0 { normal.scale(-1.0) } else { normal };
-        halfspaces.push((inward, inward.dot(face[0])));
+        let inward = if normal.dot(tet[skip].sub(face[0])) < 0.0 {
+            normal.scale(-1.0)
+        } else {
+            normal
+        };
+        out.push((inward, inward.dot(face[0])));
     }
+    Some(out)
+}
 
-    let mut out: Vec<[Vec3; 3]> = Vec::new();
-    for triangle in tris {
-        let mut polygon: Vec<Vec3> = triangle.to_vec();
-        for (normal, offset) in &halfspaces {
-            if polygon.is_empty() {
-                break;
+// AI-FUNC-SUMMARY:
+// Purpose: Clip one triangle to a set of half-spaces, keeping it only if what survives has area.
+// Inputs: the triangle, the half-spaces, and a length tolerance.
+// Returns: the clipped convex polygon, or None when the intersection has no area.
+// Side effects: None.
+// Notes: **Measure-zero contact is not fragment.** A triangle meeting the cell at a corner or along
+//   an edge has no material inside it, and admitting it would hand the caller a degenerate facet -
+//   and, on the plane-driven path, an infinite supporting plane that cuts the whole cell for
+//   nothing. `tol` is a length, so it is squared to compare against an area.
+fn clip_to_halfspaces(
+    triangle: &[Vec3; 3],
+    halfspaces: &[(Vec3, f64)],
+    tol: f64,
+) -> Option<Vec<Vec3>> {
+    let mut polygon: Vec<Vec3> = triangle.to_vec();
+    for (normal, offset) in halfspaces {
+        if polygon.is_empty() {
+            return None;
+        }
+        let mut next: Vec<Vec3> = Vec::with_capacity(polygon.len() + 1);
+        for slot in 0..polygon.len() {
+            let (a, b) = (polygon[slot], polygon[(slot + 1) % polygon.len()]);
+            let (da, db) = (normal.dot(a) - offset, normal.dot(b) - offset);
+            if da >= 0.0 {
+                next.push(a);
             }
-            let mut next: Vec<Vec3> = Vec::with_capacity(polygon.len() + 1);
-            for slot in 0..polygon.len() {
-                let (a, b) = (polygon[slot], polygon[(slot + 1) % polygon.len()]);
-                let (da, db) = (normal.dot(a) - offset, normal.dot(b) - offset);
-                if da >= 0.0 {
-                    next.push(a);
-                }
-                // A crossing, and only a strict one: an endpoint exactly on the plane is already
-                // carried by the branch above and adding it twice makes a duplicate vertex.
-                if (da > 0.0 && db < 0.0) || (da < 0.0 && db > 0.0) {
-                    let t = da / (da - db);
-                    next.push(a.add(b.sub(a).scale(t)));
-                }
+            // A crossing, and only a strict one: an endpoint exactly on the plane is already
+            // carried by the branch above and adding it twice makes a duplicate vertex.
+            if (da > 0.0 && db < 0.0) || (da < 0.0 && db > 0.0) {
+                let t = da / (da - db);
+                next.push(a.add(b.sub(a).scale(t)));
             }
-            polygon = next;
         }
-        if polygon.len() < 3 {
-            continue;
-        }
-        // Positive area, measured on the polygon itself. `tol` is a length, so it is squared here
-        // to compare against one - the caller passes the same tolerance the rest of §7.2 uses.
-        let mut area2 = Vec3::new(0.0, 0.0, 0.0);
-        for slot in 1..polygon.len() - 1 {
-            area2 = area2.add(
-                polygon[slot].sub(polygon[0]).cross(polygon[slot + 1].sub(polygon[0])),
-            );
-        }
-        if area2.dot(area2).sqrt() * 0.5 > tol * tol {
-            out.push(*triangle);
-        }
+        polygon = next;
     }
-    out
+    if polygon.len() < 3 {
+        return None;
+    }
+    let mut area2 = Vec3::new(0.0, 0.0, 0.0);
+    for slot in 1..polygon.len() - 1 {
+        area2 = area2.add(polygon[slot].sub(polygon[0]).cross(polygon[slot + 1].sub(polygon[0])));
+    }
+    (area2.dot(area2).sqrt() * 0.5 > tol * tol).then_some(polygon)
 }
 
 // AI-FUNC-SUMMARY:
@@ -2196,6 +2253,137 @@ mod tests {
     // The three inputs SPEC §7.2 names are the tet, the fragment and the curve segments. The tet
     // the pipeline has; the fragment it has never produced. A triangle beyond one of the cell's own
     // face planes is no part of it.
+    // A facet stops where the cell does. Every vertex of it is inside the tet or on its boundary -
+    // which is the difference between a bounded constraint and an infinite supporting plane.
+    #[test]
+    fn a_facet_stops_where_the_cell_does() {
+        let tet = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+        ];
+        let tris = [[
+            Vec3::new(-1.0, -1.0, 0.25),
+            Vec3::new(3.0, -1.0, 0.25),
+            Vec3::new(-1.0, 3.0, 0.25),
+        ]];
+        let facets = fragment_facets_in_cell(tet, &tris, TOL);
+        assert_eq!(facets.len(), 1);
+        for point in &facets[0] {
+            assert!(
+                point.x >= -1.0e-12
+                    && point.y >= -1.0e-12
+                    && point.z >= -1.0e-12
+                    && point.x + point.y + point.z <= 1.0 + 1.0e-12,
+                "facet vertex {point:?} is outside the cell"
+            );
+        }
+        // The cross-section of the unit tet at z = 0.25 is a triangle of legs 0.75, area 0.28125.
+        let mut area2 = Vec3::new(0.0, 0.0, 0.0);
+        for slot in 1..facets[0].len() - 1 {
+            area2 = area2.add(
+                facets[0][slot]
+                    .sub(facets[0][0])
+                    .cross(facets[0][slot + 1].sub(facets[0][0])),
+            );
+        }
+        assert!((area2.dot(area2).sqrt() * 0.5 - 0.28125).abs() < 1.0e-12);
+    }
+
+    // **The rim, which is the whole reason for bounding the facet.** A patch that ends inside the
+    // cell comes back with its own boundary, touching none of the cell's faces - so it constrains
+    // only where the surface is, and material flows round it. The plane through the same triangle
+    // would have cut the cell in two (PLAN §6.26).
+    #[test]
+    fn a_facet_that_ends_inside_the_cell_keeps_its_rim() {
+        let tet = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+        ];
+        let tris = [[
+            Vec3::new(0.05, 0.05, 0.25),
+            Vec3::new(0.20, 0.05, 0.25),
+            Vec3::new(0.05, 0.20, 0.25),
+        ]];
+        let facets = fragment_facets_in_cell(tet, &tris, TOL);
+        assert_eq!(facets.len(), 1);
+        assert_eq!(facets[0].len(), 3, "an interior triangle is its own facet");
+        for point in &facets[0] {
+            let on_boundary = point.x.abs() < 1.0e-12
+                || point.y.abs() < 1.0e-12
+                || point.z.abs() < 1.0e-12
+                || (point.x + point.y + point.z - 1.0).abs() < 1.0e-12;
+            assert!(!on_boundary, "the rim must not touch the cell's boundary");
+        }
+    }
+
+    // **The conformity argument, as a test.** Where a facet meets a shared face, its boundary edge
+    // there must be exactly the trace that face computes for itself - because the neighbour will
+    // triangulate the face from its own `trace_on_face` and the two have to agree without talking.
+    // The facet is clipped from the cell's side and the trace is computed from the face's side; if
+    // they ever disagreed, a constrained tetrahedralisation would be conforming in one cell and not
+    // in the other.
+    #[test]
+    fn the_facets_edge_on_a_face_is_exactly_that_faces_own_trace() {
+        let tet = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+        ];
+        let face = [tet[0], tet[1], tet[2]];
+        // A surface standing on the plane x = 0.2, wide enough to cross the whole cell.
+        let tris = [[
+            Vec3::new(0.2, -1.0, -1.0),
+            Vec3::new(0.2, 3.0, -1.0),
+            Vec3::new(0.2, -1.0, 3.0),
+        ]];
+        let facets = fragment_facets_in_cell(tet, &tris, TOL);
+        assert_eq!(facets.len(), 1);
+
+        // The facet's edges lying in the face's plane, as unordered endpoint pairs.
+        let mut from_cell: Vec<[Vec3; 2]> = Vec::new();
+        for slot in 0..facets[0].len() {
+            let (a, b) = (facets[0][slot], facets[0][(slot + 1) % facets[0].len()]);
+            if a.z.abs() < 1.0e-12 && b.z.abs() < 1.0e-12 {
+                from_cell.push([a, b]);
+            }
+        }
+        let from_face = trace_on_face(face, &tris, TOL);
+        assert_eq!(from_cell.len(), 1, "the facet crosses this face once");
+        assert_eq!(from_face.len(), 1, "and the face sees one chord");
+
+        let same = |p: Vec3, q: Vec3| p.sub(q).dot(p.sub(q)).sqrt() < 1.0e-12;
+        let matched = (same(from_cell[0][0], from_face[0][0])
+            && same(from_cell[0][1], from_face[0][1]))
+            || (same(from_cell[0][0], from_face[0][1]) && same(from_cell[0][1], from_face[0][0]));
+        assert!(
+            matched,
+            "the cell's facet edge {:?} and the face's own trace {:?} must be the same segment",
+            from_cell[0], from_face[0]
+        );
+    }
+
+    // A triangle beyond the cell contributes no facet, exactly as it contributes no plane.
+    #[test]
+    fn a_triangle_outside_the_cell_yields_no_facet() {
+        let tet = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+        ];
+        let tris = [[
+            Vec3::new(0.0, 0.0, 2.0),
+            Vec3::new(1.0, 0.0, 2.0),
+            Vec3::new(0.0, 1.0, 2.0),
+        ]];
+        assert!(fragment_facets_in_cell(tet, &tris, TOL).is_empty());
+    }
+
     #[test]
     fn a_triangle_outside_the_cell_is_no_part_of_its_fragment() {
         let tet = [
