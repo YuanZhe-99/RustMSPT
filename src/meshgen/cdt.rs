@@ -1092,7 +1092,8 @@ pub fn delaunay_tets(points: &[Vec3], keys: &[NodeKey]) -> Option<Vec<[u32; 4]>>
 //   tetrahedralisation meet its neighbour's.
 // Inputs: the face's three corners, every vertex on it (corners included), their keys, and the
 //   constraint segments as index pairs.
-// Returns: the triangles as index triples wound with the face's normal, or None on a refusal.
+// Returns: the triangles as index triples wound with the face's normal, or the named reason it
+//   refused - the refusal rate per reason is what aims the next piece of work, so it is data.
 // Side effects: None — it adds no points.
 // Notes: **In 2D a constrained Delaunay triangulation always exists without Steiner points**, which
 //   is why this half of §7.4 has no refusal case worth designing around while the 3D half does. A
@@ -1114,24 +1115,37 @@ pub fn constrained_face_triangulation(
     points: &[Vec3],
     keys: &[NodeKey],
     segments: &[[u32; 2]],
-) -> Option<Vec<[u32; 3]>> {
+) -> Result<Vec<[u32; 3]>, &'static str> {
     if points.len() < 3 || points.len() != keys.len() {
-        return None;
+        return Err("the face has fewer than three points");
     }
     let axis = crate::meshgen::predicates::best_projection_axis(face[0], face[1], face[2]);
     let reference = face[1].sub(face[0]).cross(face[2].sub(face[0]));
     if reference.dot(reference) <= 0.0 {
-        return None;
+        return Err("the face is degenerate");
     }
-    // The face is convex, so "inside it" is the same sign against all three edges. A point outside
-    // would put area in the result that is not part of the face.
+    // The face is convex, so "inside it" is the same sign against all three edges. A point beyond
+    // one would put area in the result that is not part of the face.
+    //
+    // **Tolerated relatively, and the reason is not laziness.** A trace endpoint is produced by
+    // clipping a chord to the face in floating point, so it lands within rounding of the edge it
+    // ends on - often a few ULP on the wrong side. The exactness that matters here is not that the
+    // point is mathematically inside; it is that BOTH CELLS COMPUTE THE SAME POINT, which the
+    // quantised key gives. Refusing on an exact test measured 535 of a6a's 970 escalated cells and
+    // 427 of a3's 1,088 - the largest face-side refusal by far, and every one of them a rounding
+    // artefact rather than a geometry. `side / outward` is the point's barycentric coordinate
+    // against that edge, so the bound means "no more than 1e-9 of the face outside it" and reads
+    // the same at every element size.
     let outward = crate::meshgen::predicates::orient2d_axis(face[0], face[1], face[2], axis);
+    if outward == 0.0 {
+        return Err("the face is degenerate");
+    }
     for point in points {
         for slot in 0..3 {
             let side =
                 crate::meshgen::predicates::orient2d_axis(face[slot], face[(slot + 1) % 3], *point, axis);
-            if side * outward < 0.0 {
-                return None;
+            if side / outward < -1.0e-9 {
+                return Err("a point lies outside the face");
             }
         }
     }
@@ -1203,14 +1217,14 @@ pub fn constrained_face_triangulation(
     }
     tris.retain(|t| t.iter().all(|id| *id < base));
     if tris.is_empty() {
-        return None;
+        return Err("the face triangulated to nothing");
     }
 
     // --- segment recovery by flipping (Anglada) ---
     for segment in segments {
         let (a, b) = (segment[0], segment[1]);
         if a == b || a >= base || b >= base {
-            return None;
+            return Err("a segment names a point the face does not have");
         }
         let mut guard = 0usize;
         loop {
@@ -1239,12 +1253,12 @@ pub fn constrained_face_triangulation(
                 // a planar straight-line graph means the segment passes through a vertex. That is a
                 // caller error - the point should have been supplied - not a geometry the flip
                 // algorithm has to handle.
-                return None;
+                return Err("a segment runs through a vertex and cannot be flipped to");
             };
             let _ = flipped;
             guard += 1;
             if guard > tris.len() * tris.len() + 16 {
-                return None;
+                return Err("the flip loop did not terminate");
             }
         }
     }
@@ -1259,7 +1273,7 @@ pub fn constrained_face_triangulation(
         );
         let normal = q.sub(p).cross(r.sub(p));
         if normal.dot(normal) <= 0.0 {
-            return None;
+            return Err("a triangle came out degenerate");
         }
         let mut t = t;
         if normal.dot(reference) < 0.0 {
@@ -1270,7 +1284,7 @@ pub fn constrained_face_triangulation(
     }
     out.sort_unstable();
     out.dedup();
-    Some(out)
+    Ok(out)
 }
 
 // AI-FUNC-SUMMARY: A triangle's three edges in order; returns them; side effects: none.
@@ -2190,7 +2204,10 @@ mod tests {
         ];
         let mut points = face.to_vec();
         points.push(Vec3::new(1.0, 1.0, 0.0));
-        assert!(constrained_face_triangulation(face, &points, &keys_of(&points), &[]).is_none());
+        assert_eq!(
+            constrained_face_triangulation(face, &points, &keys_of(&points), &[]).err(),
+            Some("a point lies outside the face")
+        );
     }
 
     // The simplest cell there is: a tet with nothing crossing it. One element, and its four faces

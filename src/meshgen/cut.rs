@@ -4908,6 +4908,99 @@ fn split_escalated_cell(
                 Err(reason) => reason.to_string(),
             },
         };
+        // **And the same question again with the face side supplied.** The frozen triangulation is
+        // rebuilt per face by `constrained_face_triangulation`, given that face's own trace as
+        // constraints - which is exactly what §7.3's cache would deliver to both cells. Measured
+        // beside the unaugmented answer so the difference is the face side's worth, and nothing
+        // else's. Simulated rather than wired, because the cache is shared state and this is a
+        // per-cell diagnostic; what it measures is whether wiring it converts the refusals.
+        let augmented: Result<Vec<[u32; 3]>, &'static str> = (|| {
+            let Some(halfspaces) = crate::meshgen::cdt::tet_halfspaces_of(corners) else {
+                return Err("the cell is degenerate");
+            };
+            let mut out: Vec<[u32; 3]> = Vec::new();
+            for (slot, (normal, offset)) in halfspaces.iter().enumerate() {
+                let face_corners: Vec<Vec3> =
+                    (0..4).filter(|s| *s != slot).map(|s| corners[s]).collect();
+                let face = [face_corners[0], face_corners[1], face_corners[2]];
+                let on_face = |id: u32| -> bool {
+                    (normal.dot(arena.points[id as usize]) - offset).abs() <= edge * 1.0e-9
+                };
+                // This face's share of the frozen soup, and every vertex it already carries.
+                let mut ids: Vec<u32> = Vec::new();
+                let mut carried = 0usize;
+                for triangle in boundary {
+                    let local: Vec<u32> =
+                        triangle.iter().filter_map(|id| to_local.get(id).copied()).collect();
+                    if local.len() != 3 || !local.iter().all(|id| on_face(*id)) {
+                        continue;
+                    }
+                    carried += 1;
+                    for id in local {
+                        if !ids.contains(&id) {
+                            ids.push(id);
+                        }
+                    }
+                }
+                if carried == 0 {
+                    continue;
+                }
+                // The face's own trace, which both cells compute identically from the face alone.
+                let mut segments: Vec<[u32; 2]> = Vec::new();
+                for component in all_components {
+                    let Some(cslot) = classifier.slot_of(*component) else { continue };
+                    for chord in crate::meshgen::cdt::trace_on_face(
+                        face,
+                        classifier.triangles_of(cslot),
+                        edge * 1.0e-9,
+                    ) {
+                        let a = arena.intern(chord[0]);
+                        let b = arena.intern(chord[1]);
+                        if a == b {
+                            continue;
+                        }
+                        for id in [a, b] {
+                            if !ids.contains(&id) {
+                                ids.push(id);
+                            }
+                        }
+                        segments.push([a, b]);
+                    }
+                }
+                let points: Vec<Vec3> = ids.iter().map(|id| arena.points[*id as usize]).collect();
+                let keys: Vec<NodeKey> = ids.iter().map(|id| arena.keys[*id as usize]).collect();
+                let index = |id: u32| ids.iter().position(|x| *x == id).unwrap_or(0) as u32;
+                let local_segments: Vec<[u32; 2]> =
+                    segments.iter().map(|s| [index(s[0]), index(s[1])]).collect();
+                let tris = match crate::meshgen::cdt::constrained_face_triangulation(
+                    face,
+                    &points,
+                    &keys,
+                    &local_segments,
+                ) {
+                    Ok(tris) => tris,
+                    Err(reason) => return Err(reason),
+                };
+                for t in tris {
+                    out.push([ids[t[0] as usize], ids[t[1] as usize], ids[t[2] as usize]]);
+                }
+            }
+            Ok(out)
+        })();
+        let with_face = match (&augmented, facets_local.is_empty()) {
+            (Err(reason), _) => format!("the face side refused: {reason}"),
+            (Ok(_), true) => "no facet in this cell".to_string(),
+            (Ok(boundary_local), false) => match crate::meshgen::cdt::constrained_tets(
+                &arena.points,
+                &arena.keys,
+                boundary_local,
+                &facets_local,
+                edge * 1.0e-9,
+            ) {
+                Ok(tets) => format!("TAKEN {} tet(s)", tets.len()),
+                Err(reason) => reason.to_string(),
+            },
+        };
         // **A new vertex ON the cell's boundary and one strictly inside it are different
         // problems.** An interior one is a rim vertex: private to this cell, and no obstacle at
         // all. One on a shared face is the surface's trace crossing that face, and the frozen
@@ -4931,7 +5024,7 @@ fn split_escalated_cell(
         }
         println!(
             "[PLC] cell {index}: {} facet(s), {on_boundary} new on the boundary, {interior} new \
-             inside, {outcome}",
+             inside, frozen: {outcome} | with the face side: {with_face}",
             facets_local.len()
         );
     }
