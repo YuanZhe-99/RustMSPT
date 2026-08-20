@@ -1086,6 +1086,136 @@ pub fn delaunay_tets(points: &[Vec3], keys: &[NodeKey]) -> Option<Vec<[u32; 4]>>
     Some(out)
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Tetrahedralise one cell so that its frozen boundary and its surface facets are both
+//   faces of the result — `SPEC_meshgen_geometry.md` §7.4's constrained tetrahedralisation.
+// Inputs: the points and keys, the frozen boundary triangulation, and the constraint facets as
+//   polygons of point indices.
+// Returns: the tets, or the named reason the cell could not be meshed this way.
+// Side effects: None — it adds no points, so §7.4's Steiner rule is satisfied vacuously.
+// Notes: **This lands the VERIFYING half of recovery and refuses the rest, deliberately.** §7.4
+//   permits Steiner points off the constraints, and recovering a missing constraint by flips or by
+//   insertion is a large machine. Building it before knowing how often the plain Delaunay already
+//   respects the constraints would be guessing at the size of the problem — the same mistake the
+//   plane-driven route made twice (PLAN §6.24, §6.26). So this checks, and reports which check
+//   failed, and the refusal histogram on real cells is what says whether a recovery machine is
+//   needed and which kind.
+//
+//   Two constraints, and they fail differently. The **boundary** is frozen by J1, so the
+//   tetrahedralisation's own outer faces must be exactly the triangles handed in — not merely cover
+//   the same region, since a neighbour holding the other triangulation of the same quad is a crack.
+//   A **facet** need only be a union of faces, because how it is triangulated is this cell's own
+//   business; that is checked by area, which is the only test that catches both a facet the mesh
+//   cuts through and one it covers twice.
+//
+//   The Delaunay of the vertex set fills their convex hull, and the cell is a tet with its corners
+//   among the points, so "fills the cell" needs no separate check.
+pub fn constrained_tets(
+    points: &[Vec3],
+    keys: &[NodeKey],
+    boundary: &[[u32; 3]],
+    facets: &[Vec<u32>],
+    tol: f64,
+) -> Result<Vec<[u32; 4]>, &'static str> {
+    let Some(tets) = delaunay_tets(points, keys) else {
+        return Err("the points have no tetrahedralisation");
+    };
+    // Faces carried by exactly one tet are the outer boundary; by two, interior.
+    let mut carried: BTreeMap<[u32; 3], usize> = BTreeMap::new();
+    for tet in &tets {
+        for face in tet_faces(*tet) {
+            let mut key = face;
+            key.sort_unstable();
+            *carried.entry(key).or_insert(0) += 1;
+        }
+    }
+    let outer: std::collections::BTreeSet<[u32; 3]> = carried
+        .iter()
+        .filter(|(_, count)| **count == 1)
+        .map(|(face, _)| *face)
+        .collect();
+    let frozen: std::collections::BTreeSet<[u32; 3]> = boundary
+        .iter()
+        .map(|t| {
+            let mut k = *t;
+            k.sort_unstable();
+            k
+        })
+        .collect();
+    // **Both checks always run, and the reason names the combination.** Returning on the first
+    // failure would have made the second one unmeasurable: on a8 only 24 of 4,377 cells reach the
+    // facet test if the boundary test can return early, so "facet recovery is never needed" would
+    // have been a statement about 24 cells dressed up as one about the population.
+    let boundary_ok = outer == frozen;
+
+    let mut facets_ok = true;
+    for facet in facets {
+        if facet.len() < 3 {
+            return Err("a facet has fewer than three vertices");
+        }
+        let corner = |slot: usize| points[facet[slot] as usize];
+        let mut want = Vec3::new(0.0, 0.0, 0.0);
+        for slot in 1..facet.len() - 1 {
+            want = want.add(corner(slot).sub(corner(0)).cross(corner(slot + 1).sub(corner(0))));
+        }
+        let want_area = want.dot(want).sqrt() * 0.5;
+        if want_area <= 0.0 {
+            return Err("a facet has no area");
+        }
+        let normal = want.scale(1.0 / (want.dot(want).sqrt()));
+        let offset = normal.dot(corner(0));
+        // Every face of the mesh lying in the facet's plane and inside its outline. Summed by area,
+        // because a facet the mesh cuts through is short and one it covers twice is long, and only
+        // an area test sees both.
+        let mut covered = 0.0;
+        for face in carried.keys() {
+            let p = [
+                points[face[0] as usize],
+                points[face[1] as usize],
+                points[face[2] as usize],
+            ];
+            if p.iter().any(|q| (normal.dot(*q) - offset).abs() > tol) {
+                continue;
+            }
+            let centre = p[0].add(p[1]).add(p[2]).scale(1.0 / 3.0);
+            if !inside_polygon(centre, facet, points, normal, tol) {
+                continue;
+            }
+            let area2 = p[1].sub(p[0]).cross(p[2].sub(p[0]));
+            covered += area2.dot(area2).sqrt() * 0.5;
+        }
+        if (covered - want_area).abs() > want_area * 1.0e-9 {
+            facets_ok = false;
+        }
+    }
+    match (boundary_ok, facets_ok) {
+        (true, true) => Ok(tets),
+        (false, true) => Err("the tetrahedralisation's boundary is not the frozen one"),
+        (true, false) => Err("a facet is not a union of faces of the tetrahedralisation"),
+        (false, false) => Err("neither the boundary nor the facets survive"),
+    }
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Whether a coplanar point lies inside a convex polygon.
+// Inputs: the point, the polygon's indices, the point table, the polygon's unit normal, and a
+//   tolerance.
+// Returns: bool.
+// Side effects: None.
+// Notes: Convex by construction - the facets are triangles clipped to a tet - so the sign of the
+//   cross product against the normal is the whole test, and a point on an edge counts as inside so
+//   that two faces meeting along one are both credited.
+fn inside_polygon(point: Vec3, facet: &[u32], points: &[Vec3], normal: Vec3, tol: f64) -> bool {
+    for slot in 0..facet.len() {
+        let a = points[facet[slot] as usize];
+        let b = points[facet[(slot + 1) % facet.len()] as usize];
+        if b.sub(a).cross(point.sub(a)).dot(normal) < -tol {
+            return false;
+        }
+    }
+    true
+}
+
 // AI-FUNC-SUMMARY: The smallest vertex id of a tet; returns u32; side effects: none.
 fn tet_min(t: [u32; 4]) -> u32 {
     t.iter().copied().min().unwrap_or(t[0])
@@ -1172,6 +1302,10 @@ pub fn fragment_facets_in_cell(
 // Side effects: None.
 // Notes: Built from the cell's own corners, so a degenerate or inverted tet keeps nothing rather
 //   than keeping everything - the failure that turns a clip into a no-op nobody notices.
+pub fn tet_halfspaces_of(tet: [Vec3; 4]) -> Option<Vec<(Vec3, f64)>> {
+    tet_halfspaces(tet)
+}
+
 fn tet_halfspaces(tet: [Vec3; 4]) -> Option<Vec<(Vec3, f64)>> {
     let mut out: Vec<(Vec3, f64)> = Vec::with_capacity(4);
     for skip in 0..4 {
@@ -1613,6 +1747,112 @@ mod tests {
                 b.sub(a).cross(c.sub(a)).dot(d.sub(a)).abs() / 6.0
             })
             .sum()
+    }
+
+    // The simplest cell there is: a tet with nothing crossing it. One element, and its four faces
+    // are exactly the frozen boundary.
+    #[test]
+    fn a_cell_with_no_constraints_is_one_tet() {
+        let points = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+        ];
+        let boundary = [[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]];
+        let tets = constrained_tets(&points, &keys_of(&points), &boundary, &[], 1.0e-9)
+            .expect("a tet with no constraints is one tet");
+        assert_eq!(tets.len(), 1);
+    }
+
+    // **The J1 check, which is the one that makes a cell's mesh usable by its neighbour.** The
+    // frozen boundary here splits the face z = 0 across its diagonal one way; a tetrahedralisation
+    // whose own outer faces split it the other way covers the same region and is still a crack,
+    // because the neighbour holds the first triangulation. So this must be refused, and refused
+    // for the boundary rather than for anything else.
+    #[test]
+    fn a_boundary_the_mesh_triangulates_differently_is_refused() {
+        let points = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(1.0, 1.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.5, 0.5, 1.0),
+        ];
+        // A pyramid, with its square base deliberately split along the WRONG diagonal for whatever
+        // the Delaunay will choose - one of the two must disagree, and the test asserts the refusal
+        // names the boundary either way by trying both.
+        let one = [[0, 2, 1], [0, 3, 2], [0, 1, 4], [1, 2, 4], [2, 3, 4], [3, 0, 4]];
+        let other = [[0, 3, 1], [1, 3, 2], [0, 1, 4], [1, 2, 4], [2, 3, 4], [3, 0, 4]];
+        let keys = keys_of(&points);
+        let first = constrained_tets(&points, &keys, &one, &[], 1.0e-9);
+        let second = constrained_tets(&points, &keys, &other, &[], 1.0e-9);
+        assert!(
+            first.is_ok() != second.is_ok(),
+            "exactly one of the two diagonals can match the mesh's own boundary"
+        );
+        let refused = if first.is_err() { first } else { second };
+        assert_eq!(
+            refused.err(),
+            Some("the tetrahedralisation's boundary is not the frozen one")
+        );
+    }
+
+    // A facet the Delaunay already respects is accepted — and this is the case the whole approach
+    // is betting on. A small triangle strictly inside a tet comes out as a face of the
+    // tetrahedralisation without any recovery at all, which is why the verifying half is worth
+    // landing before the recovering half is built.
+    #[test]
+    fn a_facet_the_delaunay_already_respects_is_accepted() {
+        let points = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(0.30, 0.05, 0.05),
+            Vec3::new(0.05, 0.30, 0.05),
+            Vec3::new(0.05, 0.05, 0.30),
+        ];
+        let boundary = [[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]];
+        let facet = vec![vec![4u32, 5, 6]];
+        let tets = constrained_tets(&points, &keys_of(&points), &boundary, &facet, 1.0e-9)
+            .expect("this facet is already a face of the Delaunay");
+        // And it really is a face, not merely tolerated: some tet carries exactly those three.
+        assert!(
+            tets.iter().any(|t| {
+                tet_faces(*t).iter().any(|f| {
+                    let mut k = *f;
+                    k.sort_unstable();
+                    k == [4, 5, 6]
+                })
+            }),
+            "the facet must appear as a face"
+        );
+    }
+
+    // A facet the mesh CUTS THROUGH must be refused. Two points straddling the facet's centre and
+    // close enough to be joined by an edge put that edge across it, and no set of faces can then
+    // cover the facet - which is exactly the case a recovery machine would have to fix, and exactly
+    // the case that must never be silently accepted in the meantime.
+    #[test]
+    fn a_facet_an_edge_crosses_is_refused() {
+        let points = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(0.50, 0.05, 0.05),
+            Vec3::new(0.05, 0.50, 0.05),
+            Vec3::new(0.05, 0.05, 0.50),
+            Vec3::new(0.19, 0.19, 0.19),
+            Vec3::new(0.21, 0.21, 0.21),
+        ];
+        let boundary = [[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]];
+        let facet = vec![vec![4u32, 5, 6]];
+        assert_eq!(
+            constrained_tets(&points, &keys_of(&points), &boundary, &facet, 1.0e-9).err(),
+            Some("a facet is not a union of faces of the tetrahedralisation")
+        );
     }
 
     #[test]

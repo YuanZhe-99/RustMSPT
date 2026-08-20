@@ -4835,6 +4835,107 @@ fn split_escalated_cell(
         return None;
     }
 
+    // **P-3.13 step 6, diagnostic only (`RUSTMSPT_PLC_DIAG=1`): what §7.4's constrained
+    // tetrahedralisation would make of this cell.** Nothing is consumed - the result is measured
+    // and dropped - because the caller consumes region SOUPS and this produces TETS, and
+    // restructuring that before knowing the acceptance rate would be building for a population
+    // whose size is unmeasured. The refusal reasons are the point: "the boundary is not the frozen
+    // one" says the face's own triangulation has to carry the trace first, and "a facet is not a
+    // union of faces" says a recovery machine is needed. Those are different pieces of work and
+    // this is what says which one.
+    if std::env::var_os("RUSTMSPT_PLC_DIAG").is_some() {
+        let corners = [
+            nodes[tet[0] as usize],
+            nodes[tet[1] as usize],
+            nodes[tet[2] as usize],
+            nodes[tet[3] as usize],
+        ];
+        let mut edge = f64::INFINITY;
+        for a in 0..4 {
+            for b in (a + 1)..4 {
+                let d = corners[b].sub(corners[a]);
+                edge = edge.min(d.dot(d).sqrt());
+            }
+        }
+        let mut local: Vec<u32> = boundary.iter().flatten().copied().collect();
+        local.sort_unstable();
+        local.dedup();
+        let quantum = volume_tolerance.max(f64::MIN_POSITIVE) * 1.0e-6;
+        let mut arena = crate::meshgen::cdt::NodeArena::new(
+            local.iter().map(|id| nodes[*id as usize]).collect(),
+            quantum,
+        );
+        let to_local: BTreeMap<u32, u32> = local
+            .iter()
+            .enumerate()
+            .map(|(slot, id)| (*id, slot as u32))
+            .collect();
+        let boundary_local: Option<Vec<[u32; 3]>> = boundary
+            .iter()
+            .map(|t| {
+                Some([
+                    *to_local.get(&t[0])?,
+                    *to_local.get(&t[1])?,
+                    *to_local.get(&t[2])?,
+                ])
+            })
+            .collect();
+        let before = arena.points.len();
+        let mut facets_local: Vec<Vec<u32>> = Vec::new();
+        for component in all_components {
+            let Some(slot) = classifier.slot_of(*component) else { continue };
+            for facet in crate::meshgen::cdt::fragment_facets_in_cell(
+                corners,
+                classifier.triangles_of(slot),
+                edge * 1.0e-6,
+            ) {
+                facets_local.push(facet.iter().map(|p| arena.intern(*p)).collect());
+            }
+        }
+        let outcome = match boundary_local {
+            None => "the boundary references a node outside the cell".to_string(),
+            Some(_) if facets_local.is_empty() => {
+                "no facet in this cell".to_string()
+            }
+            Some(boundary_local) => match crate::meshgen::cdt::constrained_tets(
+                &arena.points,
+                &arena.keys,
+                &boundary_local,
+                &facets_local,
+                edge * 1.0e-9,
+            ) {
+                Ok(tets) => format!("TAKEN {} tet(s)", tets.len()),
+                Err(reason) => reason.to_string(),
+            },
+        };
+        // **A new vertex ON the cell's boundary and one strictly inside it are different
+        // problems.** An interior one is a rim vertex: private to this cell, and no obstacle at
+        // all. One on a shared face is the surface's trace crossing that face, and the frozen
+        // triangulation does not contain it - which is the face-side work, and the only thing that
+        // work fixes. Counting them together would credit the face side with rim vertices it has
+        // nothing to do with.
+        let mut on_boundary = 0usize;
+        let mut interior = 0usize;
+        if let Some(halfspaces) = crate::meshgen::cdt::tet_halfspaces_of(corners) {
+            for id in before..arena.points.len() {
+                let point = arena.points[id];
+                if halfspaces
+                    .iter()
+                    .any(|(normal, offset)| (normal.dot(point) - offset).abs() <= edge * 1.0e-9)
+                {
+                    on_boundary += 1;
+                } else {
+                    interior += 1;
+                }
+            }
+        }
+        println!(
+            "[PLC] cell {index}: {} facet(s), {on_boundary} new on the boundary, {interior} new \
+             inside, {outcome}",
+            facets_local.len()
+        );
+    }
+
     // **P-3.13 step 4: an escalated cell is cut by its own surface FRAGMENT first.** §6.24's
     // measurements fixed the order - §7.2's mesher has to replace the centroid fan for escalated
     // cells before the sub-cell population is escalated into it - and this is the first half. It
