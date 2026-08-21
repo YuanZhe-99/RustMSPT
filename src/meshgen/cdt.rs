@@ -1163,6 +1163,40 @@ pub fn constrained_face_triangulation(
     let along = face[1].sub(face[0]);
     let along = along.scale(1.0 / along.dot(along).sqrt());
     let across = unit.cross(along);
+    // **A constraint that runs through a vertex is two constraints.** The flip recovery can never
+    // produce an edge that passes through a third point - no triangulation has one - so a segment
+    // whose interior contains a vertex of the face must be split there before recovery starts.
+    // Measured on a6a: 216 of the 267 faces that failed to triangulate at all, and every one of
+    // them a hanging node in the mesh (PLAN §6.32).
+    let mut segments: Vec<[u32; 2]> = segments.to_vec();
+    let mut split = 0usize;
+    while split < segments.len() {
+        let [a, b] = segments[split];
+        let (p, q) = (points[a as usize], points[b as usize]);
+        let along = q.sub(p);
+        let len2 = along.dot(along);
+        let through = if len2 > 0.0 {
+            (0..points.len() as u32).find(|id| {
+                if *id == a || *id == b {
+                    return false;
+                }
+                let rel = points[*id as usize].sub(p);
+                let t = rel.dot(along) / len2;
+                let off = rel.sub(along.scale(t));
+                off.dot(off) <= 1.0e-18 * len2 && (1.0e-9..=1.0 - 1.0e-9).contains(&t)
+            })
+        } else {
+            None
+        };
+        match through {
+            Some(id) => {
+                segments[split] = [a, id];
+                segments.push([id, b]);
+            }
+            None => split += 1,
+        }
+    }
+    let segments = &segments[..];
     let mut work: Vec<Vec3> = points.to_vec();
     let base = work.len() as u32;
     for angle in [0.0_f64, 2.094_395_102_393_195_5, 4.188_790_204_786_391] {

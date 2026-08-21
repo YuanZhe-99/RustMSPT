@@ -1544,7 +1544,7 @@ pub fn cut_lattice(
         // Every lattice face the surface crosses, with its trace, and every crossing node already
         // on it. Both are functions of the face alone - which is what lets the two cells sharing it
         // derive the same triangulation without communicating (invariant J1).
-        let mut trace: BTreeMap<[u32; 3], SmallVec<[[Vec3; 2]; 4]>> = BTreeMap::new();
+        let mut chords_of: BTreeMap<[u32; 3], SmallVec<[[Vec3; 2]; 4]>> = BTreeMap::new();
         let mut face_nodes: BTreeMap<[u32; 3], SmallVec<[u32; 4]>> = BTreeMap::new();
         let mut owners: BTreeMap<[u32; 3], SmallVec<[u32; 2]>> = BTreeMap::new();
         let mut seen_faces: BTreeSet<[u32; 3]> = BTreeSet::new();
@@ -1590,25 +1590,8 @@ pub fn cut_lattice(
                         }
                     }
                 }
-                // **Augmented only where it actually differs from §5.2.** Marking a face on the
-                // mere presence of a trace forced every cell the surface grazes onto the fan -
-                // 44,324 of a8's declines were "no facet in this cell", which is a cell with
-                // nothing for §7.4 to constrain and every reason to keep taking §6's table.
-                if !chords.is_empty()
-                    && face_needs_augmenting(
-                        face,
-                        &chords,
-                        &on_face,
-                        &cut_index,
-                        &second_index,
-                        &on_cut,
-                        &all_components,
-                        &mesh.nodes,
-                        &keys,
-                        tol,
-                    )
-                {
-                    trace.insert(face, chords);
+                if !chords.is_empty() {
+                    chords_of.insert(face, chords);
                 }
                 if !on_face.is_empty() {
                     face_nodes.insert(face, on_face);
@@ -1616,42 +1599,33 @@ pub fn cut_lattice(
             }
         }
 
-        // **The face triangulations, built once per face and interned globally.** This is the
-        // whole conformity mechanism: a face is triangulated from the face and its own trace, so
-        // both owners consume identical node ids without ever comparing notes (invariant J1). The
-        // trace's points go into `mesh.nodes` here rather than per cell, because a point interned
-        // twice from two cells would be two nodes at one place - the crack four earlier attempts
-        // in this phase produced (PLAN §6.23).
-        //
-        // Interning them unconditionally is safe: every owner of an augmented face either takes
-        // §7.4 or is fanned over the same augmented boundary, so no trace point is ever left with
-        // nothing referencing it. A node nothing references is what `[V3]` calls a hanging node.
         let mut global: BTreeMap<NodeKey, u32> = BTreeMap::new();
         for (id, key) in keys.iter().enumerate() {
             global.entry(*key).or_insert(id as u32);
         }
-        let mut face_tris: BTreeMap<[u32; 3], Vec<[u32; 3]>> = BTreeMap::new();
-        for (face, chords) in &trace {
-            let raw = *face;
-            let geometry = [
-                mesh.nodes[raw[0] as usize],
-                mesh.nodes[raw[1] as usize],
-                mesh.nodes[raw[2] as usize],
+
+        // **A trace point on a lattice EDGE belongs to six cells, not two.** Delivering a face's
+        // trace to that face's two owners is right for a point strictly inside it and wrong for one
+        // on its boundary: the edge is shared by every cell around it, and the four that never see
+        // this face keep the edge whole, leaving the node sitting on their faces with nothing
+        // referencing it. That is 1,437 boundary leaks and 7,025 hanging nodes on a6a, and the
+        // count was invariant under every other bisection precisely because it depends on the
+        // augmented FACE SET rather than on how any cell is meshed (PLAN §6.32).
+        //
+        // So an edge point is interned per EDGE, exactly as `cut_index` interns a crossing, and
+        // every face carrying that edge takes it - including faces the surface never touches.
+        let mut edge_points: BTreeMap<[u32; 2], SmallVec<[u32; 4]>> = BTreeMap::new();
+        let mut face_interior: BTreeMap<[u32; 3], SmallVec<[u32; 4]>> = BTreeMap::new();
+        for (face, chords) in &chords_of {
+            // Copied out before the loop: interning below takes `mesh.nodes` mutably.
+            let corners = [
+                mesh.nodes[face[0] as usize],
+                mesh.nodes[face[1] as usize],
+                mesh.nodes[face[2] as usize],
             ];
-            let mut ids: Vec<u32> = raw.to_vec();
-            for id in face_nodes.get(face).into_iter().flatten() {
-                if !ids.contains(id) {
-                    ids.push(*id);
-                }
-            }
-            let mut segments: Vec<[u32; 2]> = Vec::new();
+            let corner = |slot: usize| corners[slot];
             for chord in chords {
-                let mut ends = [0u32; 2];
-                for (slot, point) in chord.iter().enumerate() {
-                    // **`order_quantum`, not `quantum`** - the node keys this map is built from
-                    // were made with it, and interning a trace point under a different quantum
-                    // gives a coincident node its own id instead of finding the existing one.
-                    // Measured: acceptance fell 93.7 % -> 42 % until this matched.
+                for point in chord {
                     let key = node_key(*point, order_quantum);
                     let id = *global.entry(key).or_insert_with(|| {
                         let id = mesh.nodes.len() as u32;
@@ -1659,10 +1633,95 @@ pub fn cut_lattice(
                         keys.push(key);
                         id
                     });
-                    ends[slot] = id;
-                    if !ids.contains(&id) {
-                        ids.push(id);
+                    // Which of the face's three edges it lies on, if any.
+                    let mut on_edge = None;
+                    for slot in 0..3 {
+                        let (a, b) = (corner(slot), corner((slot + 1) % 3));
+                        let along = b.sub(a);
+                        let len2 = along.dot(along);
+                        if len2 <= 0.0 {
+                            continue;
+                        }
+                        let rel = point.sub(a);
+                        let t = rel.dot(along) / len2;
+                        let off = rel.sub(along.scale(t));
+                        if off.dot(off) <= tol * tol * len2 && (-1.0e-9..=1.0 + 1.0e-9).contains(&t)
+                        {
+                            let (x, y) = (face[slot], face[(slot + 1) % 3]);
+                            on_edge = Some(if x <= y { [x, y] } else { [y, x] });
+                            break;
+                        }
                     }
+                    match on_edge {
+                        Some(edge) => {
+                            let entry = edge_points.entry(edge).or_default();
+                            if !entry.contains(&id) {
+                                entry.push(id);
+                            }
+                        }
+                        None => {
+                            let entry = face_interior.entry(*face).or_default();
+                            if !entry.contains(&id) {
+                                entry.push(id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Every face's full point set: its corners, the crossings already on it, the points its own
+        // trace put inside it, and every edge point on any of its three edges - whoever put them
+        // there.
+        let mut face_ids: BTreeMap<[u32; 3], Vec<u32>> = BTreeMap::new();
+        for face in owners.keys() {
+            let mut ids: Vec<u32> = face.to_vec();
+            for id in face_nodes.get(face).into_iter().flatten() {
+                if !ids.contains(id) {
+                    ids.push(*id);
+                }
+            }
+            for id in face_interior.get(face).into_iter().flatten() {
+                if !ids.contains(id) {
+                    ids.push(*id);
+                }
+            }
+            for slot in 0..3 {
+                let (x, y) = (face[slot], face[(slot + 1) % 3]);
+                let edge = if x <= y { [x, y] } else { [y, x] };
+                for id in edge_points.get(&edge).into_iter().flatten() {
+                    if !ids.contains(id) {
+                        ids.push(*id);
+                    }
+                }
+            }
+            if ids.len() > 3 || chords_of.contains_key(face) {
+                face_ids.insert(*face, ids);
+            }
+        }
+
+        // **Augmented only where it actually differs from §5.2.** Marking a face on the mere
+        // presence of a trace forced every cell the surface grazes onto the fan - 44,324 of a8's
+        // declines were "no facet in this cell", a cell with nothing for §7.4 to constrain and
+        // every reason to keep taking §6's table.
+        let mut face_why: BTreeMap<&'static str, usize> = BTreeMap::new();
+        let mut face_tris: BTreeMap<[u32; 3], Vec<[u32; 3]>> = BTreeMap::new();
+        let mut trace: BTreeMap<[u32; 3], SmallVec<[[Vec3; 2]; 4]>> = BTreeMap::new();
+        for (face, ids) in &face_ids {
+            let raw = *face;
+            let geometry = [
+                mesh.nodes[raw[0] as usize],
+                mesh.nodes[raw[1] as usize],
+                mesh.nodes[raw[2] as usize],
+            ];
+            let mut segments: Vec<[u32; 2]> = Vec::new();
+            for chord in chords_of.get(face).into_iter().flatten() {
+                let mut ends = [0u32; 2];
+                for (slot, point) in chord.iter().enumerate() {
+                    ends[slot] = global
+                        .get(&node_key(*point, order_quantum))
+                        .copied()
+                        .unwrap_or(raw[0]);
                 }
                 if ends[0] != ends[1] {
                     segments.push(ends);
@@ -1672,30 +1731,71 @@ pub fn cut_lattice(
             let face_keys: Vec<NodeKey> = ids.iter().map(|id| keys[*id as usize]).collect();
             let at = |id: u32| ids.iter().position(|x| *x == id).unwrap_or(0) as u32;
             let local: Vec<[u32; 2]> = segments.iter().map(|s| [at(s[0]), at(s[1])]).collect();
-            let Ok(tris) = crate::meshgen::cdt::constrained_face_triangulation(
+            let tris = match crate::meshgen::cdt::constrained_face_triangulation(
                 geometry,
                 &points,
                 &face_keys,
                 &local,
-            ) else {
-                continue;
+            ) {
+                Ok(tris) => tris,
+                Err(reason) => {
+                    *face_why.entry(reason).or_insert(0) += 1;
+                    continue;
+                }
             };
-            face_tris.insert(
+            let mine: Vec<[u32; 3]> = tris
+                .iter()
+                .map(|t| [ids[t[0] as usize], ids[t[1] as usize], ids[t[2] as usize]])
+                .collect();
+            let frozen = frozen_face_tris(
                 raw,
-                tris.iter()
-                    .map(|t| [ids[t[0] as usize], ids[t[1] as usize], ids[t[2] as usize]])
-                    .collect(),
+                &cut_index,
+                &second_index,
+                &on_cut,
+                &all_components,
+                &keys,
             );
+            let canon = |tris: &[[u32; 3]]| -> Vec<[u32; 3]> {
+                let mut out: Vec<[u32; 3]> = tris
+                    .iter()
+                    .map(|t| {
+                        let mut k = *t;
+                        k.sort_unstable();
+                        k
+                    })
+                    .collect();
+                out.sort_unstable();
+                out.dedup();
+                out
+            };
+            let differs = match &frozen {
+                Some(frozen) => canon(&mine) != canon(frozen),
+                None => true,
+            };
+            if differs {
+                face_tris.insert(raw, mine);
+                if let Some(chords) = chords_of.get(face) {
+                    trace.insert(raw, chords.clone());
+                }
+            }
         }
 
-        let unusable = trace.len() - face_tris.len();
+        // A face that carries points §5.2 has not got and could not be triangulated is the one hole
+        // left in the argument: its owners read §5.2 for it and miss those points.
+        let unusable = face_ids
+            .iter()
+            .filter(|(face, ids)| ids.len() > 3 && !face_tris.contains_key(*face))
+            .count();
         if unusable > 0 {
             println!(
-                "[PLC-PASS] {unusable} augmented face(s) of {} could not be triangulated - their \
-                 owners cannot take §7.4 and cannot fall back either, since the neighbour across \
-                 an augmented face expects the augmented one",
-                trace.len()
+                "[PLC-PASS] {unusable} face(s) of {} carry points §5.2 has not got and could not \
+                 be triangulated - their owners read §5.2 for them and miss those points, which is \
+                 a hanging node each",
+                face_ids.len()
             );
+            for (reason, count) in &face_why {
+                println!("[PLC-PASS]   face declined {count}: {reason}");
+            }
         }
 
         // Pass A, in parallel: each cell answered from its own geometry and the shared faces.
