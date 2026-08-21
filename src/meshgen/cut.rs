@@ -1536,7 +1536,9 @@ pub fn cut_lattice(
     let mut face_steiner: BTreeMap<[u32; 3], u32> = BTreeMap::new();
     let plc_pass = std::env::var_os("RUSTMSPT_PLC_PASS").is_some();
     if plc_pass {
-        let tol = quantum;
+        // The arena quantum has to be the one the node keys were built with, or a point that
+        // coincides with an existing node interns as a second node at the same place.
+        let tol = order_quantum;
         // Every lattice face the surface crosses, with its trace, and every crossing node already
         // on it. Both are functions of the face alone - which is what lets the two cells sharing it
         // derive the same triangulation without communicating (invariant J1).
@@ -1612,54 +1614,130 @@ pub fn cut_lattice(
             }
         }
 
-        // Pass A, in parallel: each cell answered from its own geometry and nothing else.
-        let traced_cell = |tet: &[u32; 4]| -> bool {
-            TET_FACES.iter().any(|slots| {
-                let mut face = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+        // **The face triangulations, built once per face and interned globally.** This is the
+        // whole conformity mechanism: a face is triangulated from the face and its own trace, so
+        // both owners consume identical node ids without ever comparing notes (invariant J1). The
+        // trace's points go into `mesh.nodes` here rather than per cell, because a point interned
+        // twice from two cells would be two nodes at one place - the crack four earlier attempts
+        // in this phase produced (PLAN §6.23).
+        //
+        // Interning them unconditionally is safe: every owner of an augmented face either takes
+        // §7.4 or is fanned over the same augmented boundary, so no trace point is ever left with
+        // nothing referencing it. A node nothing references is what `[V3]` calls a hanging node.
+        let mut global: BTreeMap<NodeKey, u32> = BTreeMap::new();
+        for (id, key) in keys.iter().enumerate() {
+            global.entry(*key).or_insert(id as u32);
+        }
+        let mut face_tris: BTreeMap<[u32; 3], Vec<[u32; 3]>> = BTreeMap::new();
+        for (face, chords) in &trace {
+            let raw = *face;
+            let geometry = [
+                mesh.nodes[raw[0] as usize],
+                mesh.nodes[raw[1] as usize],
+                mesh.nodes[raw[2] as usize],
+            ];
+            let mut ids: Vec<u32> = raw.to_vec();
+            for id in face_nodes.get(face).into_iter().flatten() {
+                if !ids.contains(id) {
+                    ids.push(*id);
+                }
+            }
+            let mut segments: Vec<[u32; 2]> = Vec::new();
+            for chord in chords {
+                let mut ends = [0u32; 2];
+                for (slot, point) in chord.iter().enumerate() {
+                    // **`order_quantum`, not `quantum`** - the node keys this map is built from
+                    // were made with it, and interning a trace point under a different quantum
+                    // gives a coincident node its own id instead of finding the existing one.
+                    // Measured: acceptance fell 93.7 % -> 42 % until this matched.
+                    let key = node_key(*point, order_quantum);
+                    let id = *global.entry(key).or_insert_with(|| {
+                        let id = mesh.nodes.len() as u32;
+                        mesh.nodes.push(*point);
+                        keys.push(key);
+                        id
+                    });
+                    ends[slot] = id;
+                    if !ids.contains(&id) {
+                        ids.push(id);
+                    }
+                }
+                if ends[0] != ends[1] {
+                    segments.push(ends);
+                }
+            }
+            let points: Vec<Vec3> = ids.iter().map(|id| mesh.nodes[*id as usize]).collect();
+            let face_keys: Vec<NodeKey> = ids.iter().map(|id| keys[*id as usize]).collect();
+            let at = |id: u32| ids.iter().position(|x| *x == id).unwrap_or(0) as u32;
+            let local: Vec<[u32; 2]> = segments.iter().map(|s| [at(s[0]), at(s[1])]).collect();
+            let Ok(tris) = crate::meshgen::cdt::constrained_face_triangulation(
+                geometry,
+                &points,
+                &face_keys,
+                &local,
+            ) else {
+                continue;
+            };
+            face_tris.insert(
+                raw,
+                tris.iter()
+                    .map(|t| [ids[t[0] as usize], ids[t[1] as usize], ids[t[2] as usize]])
+                    .collect(),
+            );
+        }
+
+        // Pass A, in parallel: each cell answered from its own geometry and the shared faces.
+        let cell_boundary = |tet: &[u32; 4]| -> Option<Vec<[u32; 3]>> {
+            let mut out: Vec<[u32; 3]> = Vec::new();
+            let mut any = false;
+            for slots in TET_FACES {
+                let raw = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+                let mut face = raw;
                 face.sort_by_key(|node| keys[*node as usize]);
-                trace.contains_key(&face)
-            })
+                match face_tris.get(&face) {
+                    Some(tris) => {
+                        any = true;
+                        out.extend(tris.iter().copied());
+                    }
+                    None => out.push(raw),
+                }
+            }
+            any.then_some(out)
         };
-        let attempt: Vec<Option<Result<usize, &'static str>>> = lattice
+        let attempt: Vec<Option<Result<PlcCell, &'static str>>> = lattice
             .tets
             .par_iter()
             .map(|tet| {
-                traced_cell(tet).then(|| {
+                cell_boundary(tet).map(|boundary| {
                     plc_attempt(
                         *tet,
+                        &boundary,
                         &mesh.nodes,
-                        &keys,
                         &all_components,
                         classifier,
-                        &trace,
-                        &face_nodes,
                         tol,
                     )
+                    .map(|mut cell| {
+                        cell.boundary = boundary;
+                        cell
+                    })
+                    .map_err(|reason| {
+                        // The boundary is still needed: a declined cell is fanned over the very
+                        // same augmented faces, which is what keeps it conforming with a neighbour
+                        // that took §7.4.
+                        reason
+                    })
                 })
             })
             .collect();
 
-        // **There is no fixed point to compute, and the reason is worth stating.** The first
-        // version required every owner of a traced face to succeed at §7.4, and iterated because
-        // dropping one cell drops its neighbours. Measured on a6a: 35,024 of 39,782 cells succeed
-        // standalone and **zero** survive thirty rounds - the traced cells form a connected shell
-        // around the surface, so 12 % scattered failures erase all of it.
-        //
-        // That cascade was an artefact of the fallback, not of the geometry. It only exists if a
-        // failed cell drops back to §6's table, whose boundary triangles are §5.2's and therefore
-        // disagree with an augmented face. The centroid fan has no such constraint: it cones
-        // whatever boundary it is given, so a failed cell keeps the augmented faces and stays
-        // conforming with its neighbour.
-        //
-        // And then the owner condition holds by construction. A face carrying a trace is traced
-        // from both sides, so both its owners are traced cells, so both take §7.4-or-fan and both
-        // use the augmented triangulation. Nothing to iterate.
         let attempted = attempt.iter().filter(|a| a.is_some()).count();
         let taken = attempt.iter().filter(|a| matches!(a, Some(Ok(_)))).count();
         let tets: usize = attempt
             .iter()
             .flatten()
             .filter_map(|a| a.as_ref().ok())
+            .map(|c| c.tets.len())
             .sum();
         let mut why: BTreeMap<&'static str, usize> = BTreeMap::new();
         for outcome in attempt.iter().flatten() {
@@ -1677,6 +1755,7 @@ pub fn cut_lattice(
         for (reason, count) in &why {
             println!("[PLC-PASS]   {count} declined: {reason}");
         }
+        let _ = (&owners, attempt);
     }
 
     // §7.3's `FaceTriCache`, wired in as a **consistency check first** (P-3, face-first
@@ -5122,29 +5201,41 @@ fn face_needs_augmenting(
     canon(&mine_global) != canon(&frozen)
 }
 
+/// One cell meshed by §7.2/§7.4, in the arena's own numbering until the caller maps it out.
+struct PlcCell {
+    /// The cell's boundary in GLOBAL ids - kept because a declined cell is fanned over exactly it.
+    boundary: Vec<[u32; 3]>,
+    /// Tets in LOCAL arena ids.
+    tets: Vec<[u32; 4]>,
+    /// The arena's points; ids below `seed.len()` are the boundary's, the rest are new.
+    points: Vec<Vec3>,
+    /// Global id per arena id below its length.
+    seed: Vec<u32>,
+    /// §7.5's sub-region per tet.
+    regions: Vec<u32>,
+}
+
 // AI-FUNC-SUMMARY:
-// Purpose: Try `SPEC_meshgen_geometry.md` §7.2/§7.4 on one cell, standalone — does the constrained
-//   tetrahedralisation of this cell exist, given the face triangulations its own traces imply?
-// Inputs: the cell's tet, the node table and keys, the components and classifier, the per-face
-//   trace segments, the crossing nodes already on each face, and the arena quantum.
-// Returns: the number of tets it would produce, or the named reason it declined.
-// Side effects: None — it interns into a LOCAL arena, so nothing it decides can leave a node behind.
-// Notes: **Standalone on purpose: this is pass A of two.** Whether a cell may actually take this
-//   path also depends on its neighbours taking it — an augmented face triangulation has to be used
-//   by both owners or neither — and that is a fixed point over the whole lattice, computed once
-//   from these per-cell answers. Deciding it here, cell by cell, is the cell-first mistake this
-//   phase has recorded four times (PLAN §6.23).
-#[allow(clippy::too_many_arguments)]
+// Purpose: Mesh one cell by `SPEC_meshgen_geometry.md` §7.2/§7.4 against a boundary it is given.
+// Inputs: the cell's tet, its boundary triangulation in global ids, the node table, the components
+//   and classifier, and a tolerance.
+// Returns: the meshed cell, or the named reason it declined.
+// Side effects: None - it interns into a LOCAL arena, so a decline leaves no node behind.
+// Notes: **The boundary is an input, not something this derives.** It is built once per face from
+//   the face and its own trace, so both cells sharing a face are handed identical node ids and
+//   their meshes meet without either knowing the other exists (invariant J1). Deriving it per cell
+//   is the mistake this phase recorded four times (PLAN §6.23).
+//
+//   A decline is not a failure of the cell: the caller fans it over this same boundary, which keeps
+//   it conforming with a neighbour that did take §7.4. That is why the boundary comes back too.
 fn plc_attempt(
     tet: [u32; 4],
+    boundary: &[[u32; 3]],
     nodes: &[Vec3],
-    keys: &[NodeKey],
     all_components: &[i32],
     classifier: &PointClassifier,
-    trace: &BTreeMap<[u32; 3], SmallVec<[[Vec3; 2]; 4]>>,
-    face_nodes: &BTreeMap<[u32; 3], SmallVec<[u32; 4]>>,
     quantum: f64,
-) -> Result<usize, &'static str> {
+) -> Result<PlcCell, &'static str> {
     let corners = [
         nodes[tet[0] as usize],
         nodes[tet[1] as usize],
@@ -5163,15 +5254,7 @@ fn plc_attempt(
     }
     let tol = edge * 1.0e-9;
 
-    // A local arena seeded with the cell's own nodes and every crossing node on its faces.
-    let mut seed: Vec<u32> = tet.to_vec();
-    for slots in TET_FACES {
-        let mut face = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
-        face.sort_by_key(|node| keys[*node as usize]);
-        for id in face_nodes.get(&face).into_iter().flatten() {
-            seed.push(*id);
-        }
-    }
+    let mut seed: Vec<u32> = boundary.iter().flatten().copied().collect();
     seed.sort_unstable();
     seed.dedup();
     let mut arena = crate::meshgen::cdt::NodeArena::new(
@@ -5183,61 +5266,20 @@ fn plc_attempt(
         .enumerate()
         .map(|(slot, id)| (*id, slot as u32))
         .collect();
+    let boundary_local: Option<Vec<[u32; 3]>> = boundary
+        .iter()
+        .map(|t| {
+            Some([
+                *local_of.get(&t[0])?,
+                *local_of.get(&t[1])?,
+                *local_of.get(&t[2])?,
+            ])
+        })
+        .collect();
+    let Some(boundary_local) = boundary_local else {
+        return Err("the boundary references a node outside the cell");
+    };
 
-    // Each face triangulated with its own trace as constraints. A face the trace does not touch is
-    // its own three corners and nothing else.
-    let mut boundary: Vec<[u32; 3]> = Vec::new();
-    for slots in TET_FACES {
-        let raw = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
-        let mut face = raw;
-        face.sort_by_key(|node| keys[*node as usize]);
-        let geometry = [
-            nodes[raw[0] as usize],
-            nodes[raw[1] as usize],
-            nodes[raw[2] as usize],
-        ];
-        let mut ids: Vec<u32> = raw.iter().filter_map(|id| local_of.get(id).copied()).collect();
-        if ids.len() != 3 {
-            return Err("a face corner is missing from the arena");
-        }
-        for id in face_nodes.get(&face).into_iter().flatten() {
-            if let Some(local) = local_of.get(id) {
-                if !ids.contains(local) {
-                    ids.push(*local);
-                }
-            }
-        }
-        let mut segments: Vec<[u32; 2]> = Vec::new();
-        for chord in trace.get(&face).into_iter().flatten() {
-            let a = arena.intern(chord[0]);
-            let b = arena.intern(chord[1]);
-            if a == b {
-                continue;
-            }
-            for id in [a, b] {
-                if !ids.contains(&id) {
-                    ids.push(id);
-                }
-            }
-            segments.push([a, b]);
-        }
-        let points: Vec<Vec3> = ids.iter().map(|id| arena.points[*id as usize]).collect();
-        let face_keys: Vec<NodeKey> = ids.iter().map(|id| arena.keys[*id as usize]).collect();
-        let at = |id: u32| ids.iter().position(|x| *x == id).unwrap_or(0) as u32;
-        let local_segments: Vec<[u32; 2]> =
-            segments.iter().map(|s| [at(s[0]), at(s[1])]).collect();
-        let tris = crate::meshgen::cdt::constrained_face_triangulation(
-            geometry,
-            &points,
-            &face_keys,
-            &local_segments,
-        )?;
-        for t in tris {
-            boundary.push([ids[t[0] as usize], ids[t[1] as usize], ids[t[2] as usize]]);
-        }
-    }
-
-    // The fragment, bounded to this cell, as §7.2's constraint facets.
     let mut facets: Vec<Vec<u32>> = Vec::new();
     for component in all_components {
         let Some(slot) = classifier.slot_of(*component) else { continue };
@@ -5248,9 +5290,9 @@ fn plc_attempt(
         ) {
             let ids: Vec<u32> = facet.iter().map(|p| arena.intern(*p)).collect();
             // **A facet that collapses under the arena's quantum constrains nothing.** Interning
-            // welds vertices closer than the quantum, so a sliver of surface can arrive with three
-            // points and leave with two - below the mesh's own resolution, and not a reason to
-            // refuse the cell. Measured as 2,424 of a8's declines before this.
+            // welds vertices closer than the quantum, so a sliver of surface arrives with three
+            // points and leaves with two - below the mesh's own resolution, and not a reason to
+            // refuse the cell.
             let mut distinct = ids.clone();
             distinct.sort_unstable();
             distinct.dedup();
@@ -5262,16 +5304,22 @@ fn plc_attempt(
     }
     // **An empty facet list is not a refusal.** A cell whose faces the trace changed but whose
     // interior the surface never enters still has to be meshed against those faces, and a
-    // constrained tetrahedralisation with no interior constraint is exactly that. Refusing here
-    // sent 10,656 of a8's cells to the fan for having nothing to cut, which is backwards.
+    // constrained tetrahedralisation with no interior constraint is exactly that.
     let tets = crate::meshgen::cdt::constrained_tets(
         &arena.points,
         &arena.keys,
-        &boundary,
+        &boundary_local,
         &facets,
         tol,
     )?;
-    Ok(tets.len())
+    let regions = crate::meshgen::cdt::regions_by_constraint(&tets, &facets, &arena.points, tol);
+    Ok(PlcCell {
+        boundary: boundary.to_vec(),
+        tets,
+        points: arena.points,
+        seed,
+        regions,
+    })
 }
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
