@@ -1536,6 +1536,11 @@ pub fn cut_lattice(
     let mut face_steiner: BTreeMap<[u32; 3], u32> = BTreeMap::new();
     // What §7.4 decided for each cell, consumed by the assembly loop below.
     let mut plc: Vec<Option<PlcPlan>> = (0..lattice.tets.len()).map(|_| None).collect();
+    // Kept past the gate so the emitted mesh can be checked against what the faces promised.
+    let mut plc_face_tris: BTreeMap<[u32; 3], Vec<[u32; 3]>> = BTreeMap::new();
+    let mut plc_face_owners_n: BTreeMap<[u32; 3], usize> = BTreeMap::new();
+    let mut plc_boundary: Vec<Option<Vec<[u32; 3]>>> =
+        (0..lattice.tets.len()).map(|_| None).collect();
     let plc_pass = std::env::var_os("RUSTMSPT_PLC_PASS").is_some();
     if plc_pass {
         // The arena quantum has to be the one the node keys were built with, or a point that
@@ -1565,13 +1570,24 @@ pub fn cut_lattice(
                     mesh.nodes[raw[1] as usize],
                     mesh.nodes[raw[2] as usize],
                 ];
+                // **Relative to the face, not absolute.** `trace_on_face` clips the chord to the
+                // face within its tolerance, so an absolute one lets an endpoint sit outside a
+                // small face by whatever fraction of it that tolerance happens to be: measured at
+                // 2.9e-2 of the face - three percent - with `options.eps` on a6a, which is not a
+                // rounding artefact and no threshold downstream should be widened to swallow it.
+                let shortest = (0..3)
+                    .map(|slot| {
+                        let d = geometry[(slot + 1) % 3].sub(geometry[slot]);
+                        d.dot(d).sqrt()
+                    })
+                    .fold(f64::INFINITY, f64::min);
                 let mut chords: SmallVec<[[Vec3; 2]; 4]> = SmallVec::new();
                 for component in &all_components {
                     let Some(slot) = classifier.slot_of(*component) else { continue };
                     for chord in crate::meshgen::cdt::trace_on_face(
                         geometry,
                         classifier.triangles_of(slot),
-                        options.eps,
+                        shortest * 1.0e-9,
                     ) {
                         chords.push(chord);
                     }
@@ -1614,6 +1630,7 @@ pub fn cut_lattice(
         //
         // So an edge point is interned per EDGE, exactly as `cut_index` interns a crossing, and
         // every face carrying that edge takes it - including faces the surface never touches.
+        let mut chord_id: BTreeMap<NodeKey, u32> = BTreeMap::new();
         let mut edge_points: BTreeMap<[u32; 2], SmallVec<[u32; 4]>> = BTreeMap::new();
         let mut face_interior: BTreeMap<[u32; 3], SmallVec<[u32; 4]>> = BTreeMap::new();
         for (face, chords) in &chords_of {
@@ -1626,15 +1643,15 @@ pub fn cut_lattice(
             let corner = |slot: usize| corners[slot];
             for chord in chords {
                 for point in chord {
-                    let key = node_key(*point, order_quantum);
-                    let id = *global.entry(key).or_insert_with(|| {
-                        let id = mesh.nodes.len() as u32;
-                        mesh.nodes.push(*point);
-                        keys.push(key);
-                        id
-                    });
-                    // Which of the face's three edges it lies on, if any.
+                    // **Which of the face's three edges it lies on, and if it does, it is put
+                    // exactly there.** A trace endpoint is a clipped chord and lands within
+                    // rounding of the edge it ends on; leaving it a few ULP off means the face on
+                    // the other side of that edge reads it as lying OUTSIDE itself and refuses to
+                    // triangulate - 38 of the 51 faces that failed, each one leaving its cell's
+                    // boundary open. Projecting onto the edge is a function of the point and the
+                    // edge, so both faces get the same point and neither can disagree.
                     let mut on_edge = None;
+                    let mut placed = *point;
                     for slot in 0..3 {
                         let (a, b) = (corner(slot), corner((slot + 1) % 3));
                         let along = b.sub(a);
@@ -1645,13 +1662,25 @@ pub fn cut_lattice(
                         let rel = point.sub(a);
                         let t = rel.dot(along) / len2;
                         let off = rel.sub(along.scale(t));
-                        if off.dot(off) <= tol * tol * len2 && (-1.0e-9..=1.0 + 1.0e-9).contains(&t)
+                        // Relative to the edge's own length. `tol` here is the arena quantum,
+                        // which is 1e-6 of eps and so tight that a point produced by clipping a
+                        // chord never reads as being on the edge it plainly lies on.
+                        if off.dot(off) <= 1.0e-18 * len2 && (-1.0e-9..=1.0 + 1.0e-9).contains(&t)
                         {
                             let (x, y) = (face[slot], face[(slot + 1) % 3]);
                             on_edge = Some(if x <= y { [x, y] } else { [y, x] });
+                            placed = a.add(along.scale(t.clamp(0.0, 1.0)));
                             break;
                         }
                     }
+                    let key = node_key(placed, order_quantum);
+                    let id = *global.entry(key).or_insert_with(|| {
+                        let id = mesh.nodes.len() as u32;
+                        mesh.nodes.push(placed);
+                        keys.push(key);
+                        id
+                    });
+                    chord_id.insert(node_key(*point, order_quantum), id);
                     match on_edge {
                         Some(edge) => {
                             let entry = edge_points.entry(edge).or_default();
@@ -1705,6 +1734,8 @@ pub fn cut_lattice(
         // declines were "no facet in this cell", a cell with nothing for §7.4 to constrain and
         // every reason to keep taking §6's table.
         let mut face_why: BTreeMap<&'static str, usize> = BTreeMap::new();
+        let mut failed_faces: BTreeSet<[u32; 3]> = BTreeSet::new();
+        let mut face_outside_worst = 0.0f64;
         let mut face_tris: BTreeMap<[u32; 3], Vec<[u32; 3]>> = BTreeMap::new();
         let mut trace: BTreeMap<[u32; 3], SmallVec<[[Vec3; 2]; 4]>> = BTreeMap::new();
         for (face, ids) in &face_ids {
@@ -1718,7 +1749,9 @@ pub fn cut_lattice(
             for chord in chords_of.get(face).into_iter().flatten() {
                 let mut ends = [0u32; 2];
                 for (slot, point) in chord.iter().enumerate() {
-                    ends[slot] = global
+                    // The endpoint may have been snapped onto an edge when it was interned, so the
+                    // raw point's key need not find it; `chord_id` records where each one went.
+                    ends[slot] = chord_id
                         .get(&node_key(*point, order_quantum))
                         .copied()
                         .unwrap_or(raw[0]);
@@ -1740,6 +1773,32 @@ pub fn cut_lattice(
                 Ok(tris) => tris,
                 Err(reason) => {
                     *face_why.entry(reason).or_insert(0) += 1;
+                    failed_faces.insert(raw);
+                    if reason == "a point lies outside the face" {
+                        // How far outside, in the face's own barycentric units - the only scale
+                        // where "outside" means anything. A few ULP is a rounding artefact and a
+                        // threshold fixes it; anything larger is a point that has no business on
+                        // this face and a threshold would only hide it.
+                        let axis = crate::meshgen::predicates::best_projection_axis(
+                            geometry[0], geometry[1], geometry[2],
+                        );
+                        let outward = crate::meshgen::predicates::orient2d_axis(
+                            geometry[0], geometry[1], geometry[2], axis,
+                        );
+                        let mut worst = 0.0f64;
+                        for point in &points {
+                            for slot in 0..3 {
+                                let side = crate::meshgen::predicates::orient2d_axis(
+                                    geometry[slot],
+                                    geometry[(slot + 1) % 3],
+                                    *point,
+                                    axis,
+                                );
+                                worst = worst.min(side / outward).min(0.0);
+                            }
+                        }
+                        face_outside_worst = face_outside_worst.min(worst);
+                    }
                     continue;
                 }
             };
@@ -1796,6 +1855,9 @@ pub fn cut_lattice(
             for (reason, count) in &face_why {
                 println!("[PLC-PASS]   face declined {count}: {reason}");
             }
+            println!(
+                "[PLC-PASS]   worst point-outside-face, in barycentric units: {face_outside_worst:.3e}"
+            );
         }
 
         // Pass A, in parallel: each cell answered from its own geometry and the shared faces.
@@ -1874,6 +1936,20 @@ pub fn cut_lattice(
                     return false;
                 }
                 if cell_boundary(tet).is_none() {
+                    return true;
+                }
+                // **A face that could not be triangulated leaves this cell's boundary OPEN.** It
+                // carries points §5.2 has not got, so the cell reads §5.2 for it and keeps an edge
+                // whole that the neighbouring face has split - and a boundary whose edges are not
+                // each shared by two triangles is not a closed surface. `constrained_tets` catches
+                // that and declines, which sends the cell to the fan, and the fan cones an open
+                // surface into a cell with holes in it: every one of a6a's 464 leaks came from the
+                // fanned arm and none from any other (PLAN §6.33).
+                if TET_FACES.iter().any(|slots| {
+                    let mut face = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+                    face.sort_by_key(|node| keys[*node as usize]);
+                    failed_faces.contains(&face)
+                }) {
                     return true;
                 }
                 TET_FACES.iter().any(|slots| {
@@ -1981,7 +2057,11 @@ pub fn cut_lattice(
         for (reason, count) in &why {
             println!("[PLC-PASS]   {count} declined: {reason}");
         }
-        let _ = &owners;
+        plc_boundary = boundaries.clone();
+        for (face, tris) in &face_tris {
+            plc_face_tris.insert(*face, tris.clone());
+            plc_face_owners_n.insert(*face, owners.get(face).map(|o| o.len()).unwrap_or(0));
+        }
 
         // **Out of the per-cell arenas and into the mesh.** A tet's vertices below `seed.len()` are
         // nodes the boundary already had; the rest are the facet's own vertices, private to this
@@ -2381,6 +2461,8 @@ pub fn cut_lattice(
     let mut crease_faces_fanned: BTreeSet<[u32; 3]> = BTreeSet::new();
     let mut plc_meshed = 0usize;
     let mut plc_fanned = 0usize;
+    // Which path each cell took, so a leak can be charged to one instead of guessed at.
+    let mut path_of: Vec<u8> = vec![0; lattice.tets.len()];
     for (index, cell) in per_cell.into_iter().enumerate() {
         // **§7.1 as amended (rev 1.5): a cell the surface's trace changes is meshed by §7.2/§7.4
         // ahead of §6's table.** Both arms keep the augmented faces, which is what lets a cell that
@@ -2432,6 +2514,7 @@ pub fn cut_lattice(
                         mesh.band_region.push(-1);
                     }
                     plc_meshed += 1;
+                    path_of[index] = 1;
                 }
                 PlcPlan::Fan { boundary } => {
                     let centroid = polygon_soup_centroid(&boundary, &mesh.nodes);
@@ -2459,11 +2542,13 @@ pub fn cut_lattice(
                         mesh.band_region.push(-1);
                     }
                     plc_fanned += 1;
+                    path_of[index] = 2;
                 }
             }
             continue;
         }
         if let Some(reason) = cell.escalation {
+            path_of[index] = 3;
             mesh.escalated.push((index as u32, reason));
             *mesh.stats.n_escalated.entry(reason).or_insert(0) += 1;
             // The cell cannot take §6's path, but it still has to *conform*: its
@@ -3231,6 +3316,126 @@ pub fn cut_lattice(
                 100.0 * lat as f64 / (lat + int) as f64
             ));
         }
+    }
+    if plc_meshed + plc_fanned > 0 {
+        // **Did the mesh actually take the faces the faces promised?** Every triangle of an
+        // augmented face should be carried by exactly as many tets as the face has owners - two
+        // inside the lattice, one on the domain boundary. A triangle carried by fewer is a leak
+        // whose cause is on the FACE side; one the mesh never produced at all means an owner
+        // ignored the triangulation it was handed. Counting it here rather than inferring it from
+        // `[V3]`'s totals is what separates the two.
+        let mut carried: BTreeMap<[u32; 3], usize> = BTreeMap::new();
+        for tet in &mesh.tets {
+            for slots in [[0usize, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]] {
+                let mut face = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+                face.sort_unstable();
+                *carried.entry(face).or_insert(0) += 1;
+            }
+        }
+        let (mut short, mut absent, mut over) = (0usize, 0usize, 0usize);
+        for (face, tris) in &plc_face_tris {
+            let expected = plc_face_owners_n.get(face).copied().unwrap_or(2);
+            for triangle in tris {
+                let mut key = *triangle;
+                key.sort_unstable();
+                match carried.get(&key).copied().unwrap_or(0) {
+                    0 => absent += 1,
+                    n if n < expected => short += 1,
+                    n if n > expected => over += 1,
+                    _ => {}
+                }
+            }
+        }
+        mesh.warnings.push(format!(
+            "[PLC] of the augmented faces' triangles: {absent} appear in no tet at all, {short} in \
+             fewer tets than the face has owners, {over} in more. The first two are the face side's \
+             leak and the third is a face emitted twice by one cell"
+        ));
+        // The same question of the boundary a §7.4 cell was actually handed, which is the augmented
+        // faces plus the ones taken from §5.2. A triangle short here and sound above means the
+        // mismatch is on a face §7.4 left alone - between `face_split` and whatever the neighbour
+        // that took §6's table or escalated actually emitted for it.
+        let mut lone: BTreeMap<[u32; 3], usize> = BTreeMap::new();
+        for boundary in plc_boundary.iter().flatten() {
+            for triangle in boundary {
+                let mut key = *triangle;
+                key.sort_unstable();
+                *lone.entry(key).or_insert(0) += 1;
+            }
+        }
+        let mut unmatched = 0usize;
+        let mut unmatched_augmented = 0usize;
+        for (triangle, promised) in &lone {
+            let got = carried.get(triangle).copied().unwrap_or(0);
+            if got >= *promised {
+                continue;
+            }
+            unmatched += 1;
+            if plc_face_tris.values().any(|tris| {
+                tris.iter().any(|t| {
+                    let mut k = *t;
+                    k.sort_unstable();
+                    k == *triangle
+                })
+            }) {
+                unmatched_augmented += 1;
+            }
+        }
+        // **Which path emitted each leaking face.** A face carried by exactly one tet, whose three
+        // nodes are not all on one domain plane, is `[V3]`'s boundary leak; charging it to the path
+        // its tet's parent took says which of them is wrong, and stops the diagnosis being a
+        // sequence of guesses.
+        let mut face_tet: BTreeMap<[u32; 3], usize> = BTreeMap::new();
+        for (at, tet) in mesh.tets.iter().enumerate() {
+            for slots in [[0usize, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]] {
+                let mut face = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+                face.sort_unstable();
+                face_tet.entry(face).or_insert(at);
+            }
+        }
+        let (mut lo, mut hi) = (mesh.nodes[0], mesh.nodes[0]);
+        for p in &mesh.nodes {
+            lo = Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z));
+            hi = Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
+        }
+        let span = hi.sub(lo).dot(hi.sub(lo)).sqrt().max(f64::MIN_POSITIVE);
+        let on_domain = |face: &[u32; 3]| -> bool {
+            let p = [
+                mesh.nodes[face[0] as usize],
+                mesh.nodes[face[1] as usize],
+                mesh.nodes[face[2] as usize],
+            ];
+            (0..3).any(|axis| {
+                let get = |q: Vec3| match axis {
+                    0 => (q.x, lo.x, hi.x),
+                    1 => (q.y, lo.y, hi.y),
+                    _ => (q.z, lo.z, hi.z),
+                };
+                p.iter().all(|q| {
+                    let (v, a, b) = get(*q);
+                    (v - a).abs() <= span * 1.0e-9 || (v - b).abs() <= span * 1.0e-9
+                })
+            })
+        };
+        let mut leak_by_path = [0usize; 5];
+        for (face, count) in &carried {
+            if *count != 1 || on_domain(face) {
+                continue;
+            }
+            let at = face_tet.get(face).copied().unwrap_or(0);
+            let parent = mesh.parent_of.get(at).copied().unwrap_or(0) as usize;
+            leak_by_path[path_of.get(parent).copied().unwrap_or(4).min(4) as usize] += 1;
+        }
+        mesh.warnings.push(format!(
+            "[PLC] leaking faces by the path that emitted them: {} §6's table, {} §7.4-meshed, \
+             {} §7.4-fanned, {} escalated, {} other",
+            leak_by_path[0], leak_by_path[1], leak_by_path[2], leak_by_path[3], leak_by_path[4]
+        ));
+        mesh.warnings.push(format!(
+            "[PLC] of the boundaries §7.4 cells were handed: {unmatched} triangle(s) are carried by \
+             fewer tets than the cells that promised them, {unmatched_augmented} of those on an \
+             augmented face - so the rest are faces §7.4 left to §5.2"
+        ));
     }
     if plc_meshed + plc_fanned > 0 {
         mesh.warnings.push(format!(
