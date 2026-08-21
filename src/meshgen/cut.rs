@@ -1493,6 +1493,7 @@ pub fn cut_lattice(
         let mut trace: BTreeMap<[u32; 3], SmallVec<[[Vec3; 2]; 4]>> = BTreeMap::new();
         let mut face_nodes: BTreeMap<[u32; 3], SmallVec<[u32; 4]>> = BTreeMap::new();
         let mut owners: BTreeMap<[u32; 3], SmallVec<[u32; 2]>> = BTreeMap::new();
+        let mut seen_faces: BTreeSet<[u32; 3]> = BTreeSet::new();
         for (index, tet) in lattice.tets.iter().enumerate() {
             for slots in TET_FACES {
                 let raw = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
@@ -1502,7 +1503,7 @@ pub fn cut_lattice(
                 if !entry.contains(&(index as u32)) {
                     entry.push(index as u32);
                 }
-                if trace.contains_key(&face) || face_nodes.contains_key(&face) {
+                if !seen_faces.insert(face) {
                     continue;
                 }
                 let geometry = [
@@ -1535,7 +1536,24 @@ pub fn cut_lattice(
                         }
                     }
                 }
-                if !chords.is_empty() {
+                // **Augmented only where it actually differs from §5.2.** Marking a face on the
+                // mere presence of a trace forced every cell the surface grazes onto the fan -
+                // 44,324 of a8's declines were "no facet in this cell", which is a cell with
+                // nothing for §7.4 to constrain and every reason to keep taking §6's table.
+                if !chords.is_empty()
+                    && face_needs_augmenting(
+                        face,
+                        &chords,
+                        &on_face,
+                        &cut_index,
+                        &second_index,
+                        &on_cut,
+                        &all_components,
+                        &nodes,
+                        &keys,
+                        tol,
+                    )
+                {
                     trace.insert(face, chords);
                 }
                 if !on_face.is_empty() {
@@ -4975,6 +4993,136 @@ fn probe_spoke_cut(
 }
 
 // AI-FUNC-SUMMARY:
+// Purpose: Does §7.4's constrained triangulation of one face differ from the frozen §5.2 one?
+// Inputs: the face's key-sorted nodes, its trace, the crossing nodes on it, the cut/on-cut indices,
+//   the components, the node table and keys, and the arena quantum.
+// Returns: true when the two differ, so the face has to be delivered as an augmented one.
+// Side effects: None - a local arena, discarded.
+// Notes: **This is the difference between 172,691 cells and the ones that actually need §7.4.** The
+//   first version marked a face augmented wherever a trace existed, which forced every cell the
+//   surface merely GRAZES onto the fan: 44,324 of a8's declines were "no facet in this cell", a
+//   cell with nothing for §7.4 to constrain that should simply take §6's table as it does today.
+//   A grazing contact whose trace is exactly §5.2's chord changes nothing and constrains nobody.
+//
+//   Two ways to differ, and the first is decisive on its own: if the constrained triangulation
+//   needs a vertex the face does not already carry, no §5.2 row can produce it. Otherwise both are
+//   triangulations of the same vertex set and the triangles are compared directly.
+//
+//   §5.2 is reconstructed here rather than borrowed from `face_states`, which needs a whole cell.
+//   The scoping rule is that function's: a face cut by more than one component is not expressible
+//   by the frozen table at all, so it counts as changed without further inspection.
+#[allow(clippy::too_many_arguments)]
+fn face_needs_augmenting(
+    face: [u32; 3],
+    trace: &[[Vec3; 2]],
+    crossings: &[u32],
+    cut_index: &BTreeMap<([u32; 2], i32), u32>,
+    second_index: &BTreeMap<([u32; 2], i32), u32>,
+    on_cut: &BTreeMap<(u32, i32), ()>,
+    all_components: &[i32],
+    nodes: &[Vec3],
+    keys: &[NodeKey],
+    quantum: f64,
+) -> bool {
+    let geometry = [
+        nodes[face[0] as usize],
+        nodes[face[1] as usize],
+        nodes[face[2] as usize],
+    ];
+    let mut ids: Vec<u32> = face.to_vec();
+    for id in crossings {
+        if !ids.contains(id) {
+            ids.push(*id);
+        }
+    }
+    let mut arena = crate::meshgen::cdt::NodeArena::new(
+        ids.iter().map(|id| nodes[*id as usize]).collect(),
+        quantum,
+    );
+    let before = arena.points.len();
+    let mut segments: Vec<[u32; 2]> = Vec::new();
+    for chord in trace {
+        let a = arena.intern(chord[0]);
+        let b = arena.intern(chord[1]);
+        if a != b {
+            segments.push([a, b]);
+        }
+    }
+    if arena.points.len() != before {
+        // The trace wants a vertex the face has not got; no §5.2 row can produce that.
+        return true;
+    }
+    let Ok(mine) = crate::meshgen::cdt::constrained_face_triangulation(
+        geometry,
+        &arena.points,
+        &arena.keys,
+        &segments,
+    ) else {
+        // If §7.4 cannot triangulate the face there is nothing to deliver, so nothing changes.
+        return false;
+    };
+
+    // §5.2's answer for the same face.
+    let cutting: SmallVec<[i32; 2]> = all_components
+        .iter()
+        .copied()
+        .filter(|component| {
+            (0..3).any(|slot| {
+                let (x, y) = (face[slot], face[(slot + 1) % 3]);
+                let edge = if x <= y { [x, y] } else { [y, x] };
+                cut_index.contains_key(&(edge, *component))
+                    || second_index.contains_key(&(edge, *component))
+            })
+        })
+        .collect();
+    let frozen: SmallVec<[[u32; 3]; 4]> = match cutting.len() {
+        0 => SmallVec::from_slice(&[face]),
+        1 => {
+            let component = cutting[0];
+            let mut state = FaceCutState {
+                nodes: face,
+                ..Default::default()
+            };
+            for slot in 0..3 {
+                let (x, y) = (face[slot], face[(slot + 1) % 3]);
+                let edge = if x <= y { [x, y] } else { [y, x] };
+                state.cut[slot] = cut_index.get(&(edge, component)).copied();
+            }
+            for slot in 0..3 {
+                state.on_cut[slot] = on_cut.contains_key(&(face[slot], component));
+            }
+            match face_split(&state, keys) {
+                Some(split) => split,
+                // Not expressible by the frozen table: the face is a junction face and §7.4's
+                // triangulation is the only one on offer.
+                None => return true,
+            }
+        }
+        // More than one component cuts it, which §5.2 does not cover.
+        _ => return true,
+    };
+
+    let canon = |tris: &[[u32; 3]]| -> Vec<[u32; 3]> {
+        let mut out: Vec<[u32; 3]> = tris
+            .iter()
+            .map(|t| {
+                let mut k = *t;
+                k.sort_unstable();
+                k
+            })
+            .collect();
+        out.sort_unstable();
+        out.dedup();
+        out
+    };
+    let mine_global: Vec<[u32; 3]> = mine
+        .iter()
+        .map(|t| [ids[t[0] as usize], ids[t[1] as usize], ids[t[2] as usize]])
+        .collect();
+    canon(&mine_global) != canon(&frozen)
+}
+
+// AI-FUNC-SUMMARY:
 // Purpose: Try `SPEC_meshgen_geometry.md` §7.2/§7.4 on one cell, standalone — does the constrained
 //   tetrahedralisation of this cell exist, given the face triangulations its own traces imply?
 // Inputs: the cell's tet, the node table and keys, the components and classifier, the per-face
@@ -5098,12 +5246,24 @@ fn plc_attempt(
             classifier.triangles_of(slot),
             edge * 1.0e-6,
         ) {
-            facets.push(facet.iter().map(|p| arena.intern(*p)).collect());
+            let ids: Vec<u32> = facet.iter().map(|p| arena.intern(*p)).collect();
+            // **A facet that collapses under the arena's quantum constrains nothing.** Interning
+            // welds vertices closer than the quantum, so a sliver of surface can arrive with three
+            // points and leave with two - below the mesh's own resolution, and not a reason to
+            // refuse the cell. Measured as 2,424 of a8's declines before this.
+            let mut distinct = ids.clone();
+            distinct.sort_unstable();
+            distinct.dedup();
+            if distinct.len() < 3 {
+                continue;
+            }
+            facets.push(ids);
         }
     }
-    if facets.is_empty() {
-        return Err("no facet in this cell");
-    }
+    // **An empty facet list is not a refusal.** A cell whose faces the trace changed but whose
+    // interior the surface never enters still has to be meshed against those faces, and a
+    // constrained tetrahedralisation with no interior constraint is exactly that. Refusing here
+    // sent 10,656 of a8's cells to the fan for having nothing to cut, which is backwards.
     let tets = crate::meshgen::cdt::constrained_tets(
         &arena.points,
         &arena.keys,
