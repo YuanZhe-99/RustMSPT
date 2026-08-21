@@ -1484,6 +1484,56 @@ pub fn cut_lattice(
     // the lattice: a cell may only take the path if every cell sharing a traced face with it also
     // does, because an augmented face triangulation must be used by both owners or neither. Dropping
     // one cell can therefore drop its neighbour, which is why this iterates rather than filters once.
+    // --- concatenate in cell order ---
+    // Serial, in ascending cell order, so the §7.5 samples are taken in a fixed
+    // sequence and R-P2 holds whatever the thread count is.
+    let mut seed_uncertain = 0usize;
+    let mut seeded_pieces = 0usize;
+    let mut hidden_recovered = 0usize;
+    // Off by default: it costs a classifier query per node of every fanned piece, and it
+    // exists to answer one question once (see `SpokeProbe`), not to run in production.
+    let probing_spokes = std::env::var_os("RUSTMSPT_SPOKE_PROBE").is_some();
+    let mut spoke_probe = SpokeProbe::default();
+    let mut mesh = CutMesh {
+        n_lattice_nodes: nodes.len() as u32,
+        nodes,
+        tets: Vec::new(),
+        records: Vec::new(),
+        parent_of: Vec::new(),
+        regime: Vec::new(),
+        band_region: Vec::new(),
+        thin_regime: options
+            .thin
+            .as_ref()
+            .map(|thin| thin.regime.iter().map(|r| *r as u8).collect())
+            .unwrap_or_default(),
+        thin_pair_class: options
+            .thin
+            .as_ref()
+            .map(|thin| thin.pair_class.clone())
+            .unwrap_or_default(),
+        rim_curve: Vec::new(),
+        constraint_kind: Vec::new(),
+        constraint_ref: Vec::new(),
+        curve_edges: Vec::new(),
+        curves: Vec::new(),
+        interfaces: Vec::new(),
+        escalated: Vec::new(),
+        warnings: Vec::new(),
+        stats: CutStats {
+            n_parents: lattice.tets.len(),
+            n_cut_nodes: nodes_pushed,
+            n_collapsed_pairs: collapsed_edges.len(),
+            band_min_dihedral_deg: f64::INFINITY,
+            min_dihedral_deg: f64::INFINITY,
+            ..Default::default()
+        },
+    };
+    let n_parent_nodes = snapped.nodes.len() as u32;
+    let n_cut_and_parent_nodes = mesh.nodes.len() as u32;
+    let mut pending_interfaces: Vec<(usize, [u32; 3], i32)> = Vec::new();
+    let mut keys = keys;
+    let mut face_steiner: BTreeMap<[u32; 3], u32> = BTreeMap::new();
     let plc_pass = std::env::var_os("RUSTMSPT_PLC_PASS").is_some();
     if plc_pass {
         let tol = quantum;
@@ -1507,9 +1557,9 @@ pub fn cut_lattice(
                     continue;
                 }
                 let geometry = [
-                    nodes[raw[0] as usize],
-                    nodes[raw[1] as usize],
-                    nodes[raw[2] as usize],
+                    mesh.nodes[raw[0] as usize],
+                    mesh.nodes[raw[1] as usize],
+                    mesh.nodes[raw[2] as usize],
                 ];
                 let mut chords: SmallVec<[[Vec3; 2]; 4]> = SmallVec::new();
                 for component in &all_components {
@@ -1549,7 +1599,7 @@ pub fn cut_lattice(
                         &second_index,
                         &on_cut,
                         &all_components,
-                        &nodes,
+                        &mesh.nodes,
                         &keys,
                         tol,
                     )
@@ -1577,7 +1627,7 @@ pub fn cut_lattice(
                 traced_cell(tet).then(|| {
                     plc_attempt(
                         *tet,
-                        &nodes,
+                        &mesh.nodes,
                         &keys,
                         &all_components,
                         classifier,
@@ -1629,56 +1679,6 @@ pub fn cut_lattice(
         }
     }
 
-    // --- concatenate in cell order ---
-    // Serial, in ascending cell order, so the §7.5 samples are taken in a fixed
-    // sequence and R-P2 holds whatever the thread count is.
-    let mut seed_uncertain = 0usize;
-    let mut seeded_pieces = 0usize;
-    let mut hidden_recovered = 0usize;
-    // Off by default: it costs a classifier query per node of every fanned piece, and it
-    // exists to answer one question once (see `SpokeProbe`), not to run in production.
-    let probing_spokes = std::env::var_os("RUSTMSPT_SPOKE_PROBE").is_some();
-    let mut spoke_probe = SpokeProbe::default();
-    let mut mesh = CutMesh {
-        n_lattice_nodes: nodes.len() as u32,
-        nodes,
-        tets: Vec::new(),
-        records: Vec::new(),
-        parent_of: Vec::new(),
-        regime: Vec::new(),
-        band_region: Vec::new(),
-        thin_regime: options
-            .thin
-            .as_ref()
-            .map(|thin| thin.regime.iter().map(|r| *r as u8).collect())
-            .unwrap_or_default(),
-        thin_pair_class: options
-            .thin
-            .as_ref()
-            .map(|thin| thin.pair_class.clone())
-            .unwrap_or_default(),
-        rim_curve: Vec::new(),
-        constraint_kind: Vec::new(),
-        constraint_ref: Vec::new(),
-        curve_edges: Vec::new(),
-        curves: Vec::new(),
-        interfaces: Vec::new(),
-        escalated: Vec::new(),
-        warnings: Vec::new(),
-        stats: CutStats {
-            n_parents: lattice.tets.len(),
-            n_cut_nodes: nodes_pushed,
-            n_collapsed_pairs: collapsed_edges.len(),
-            band_min_dihedral_deg: f64::INFINITY,
-            min_dihedral_deg: f64::INFINITY,
-            ..Default::default()
-        },
-    };
-    let n_parent_nodes = snapped.nodes.len() as u32;
-    let n_cut_and_parent_nodes = mesh.nodes.len() as u32;
-    let mut pending_interfaces: Vec<(usize, [u32; 3], i32)> = Vec::new();
-    let mut keys = keys;
-    let mut face_steiner: BTreeMap<[u32; 3], u32> = BTreeMap::new();
     // §7.3's `FaceTriCache`, wired in as a **consistency check first** (P-3, face-first
     // integration). Every escalated cell triangulates the faces it shares with its neighbours,
     // and today each cell computes that independently - they agree only because `face_mesh` is a
