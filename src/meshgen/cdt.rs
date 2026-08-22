@@ -1463,6 +1463,23 @@ pub fn constrained_tets(
     // facet test if the boundary test can return early, so "facet recovery is never needed" would
     // have been a statement about 24 cells dressed up as one about the population.
     let boundary_ok = outer == frozen;
+    // **Which KIND of mismatch, because they need different cures.** The cell's region is a convex
+    // tet, so `delaunay_tets` puts on its hull exactly the points that lie on the tet's surface. If
+    // every node the frozen boundary uses is still a hull node, the two boundaries cover the same
+    // surface and differ only in how they split it - a combinatorial difference, and the constraint
+    // edge that forces it is recoverable by flips. If a node is MISSING from the hull, the point
+    // rounded to the inside of its face plane and `delaunay_tets` decided that with an exact
+    // predicate, which has no rounding level to hide in; no amount of flipping puts an interior
+    // point back on the hull. Naming the two separately is what stops the second being attacked
+    // with the first's tools.
+    let mut hull_nodes: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+    for face in &outer {
+        hull_nodes.extend(face.iter().copied());
+    }
+    let structural = frozen
+        .iter()
+        .flat_map(|face| face.iter())
+        .any(|node| !hull_nodes.contains(node));
 
     let mut facets_ok = true;
     for facet in facets {
@@ -1504,11 +1521,13 @@ pub fn constrained_tets(
             facets_ok = false;
         }
     }
-    match (boundary_ok, facets_ok) {
-        (true, true) => Ok(tets),
-        (false, true) => Err("the tetrahedralisation's boundary is not the frozen one"),
-        (true, false) => Err("a facet is not a union of faces of the tetrahedralisation"),
-        (false, false) => Err("neither the boundary nor the facets survive"),
+    match (boundary_ok, facets_ok, structural) {
+        (true, true, _) => Ok(tets),
+        (false, true, false) => Err("the boundary is split differently, but on the same nodes"),
+        (false, true, true) => Err("the boundary uses a node that is not on the hull"),
+        (true, false, _) => Err("a facet is not a union of faces of the tetrahedralisation"),
+        (false, false, false) => Err("neither the boundary nor the facets survive"),
+        (false, false, true) => Err("a boundary node is off the hull, and the facets fail too"),
     }
 }
 
@@ -2512,9 +2531,14 @@ mod tests {
             "exactly one of the two diagonals can match the mesh's own boundary"
         );
         let refused = if first.is_err() { first } else { second };
+        // And it names the COMBINATORIAL kind: both diagonals use the base's same four nodes, so
+        // every node the frozen boundary wants is still on the hull and the two boundaries cover
+        // the same surface. That is the mismatch a flip can undo, and the refusal has to say so -
+        // the other kind, a node that rounded off its face plane and left the hull, cannot be
+        // flipped back and must not be attacked with the same tool.
         assert_eq!(
             refused.err(),
-            Some("the tetrahedralisation's boundary is not the frozen one")
+            Some("the boundary is split differently, but on the same nodes")
         );
     }
 

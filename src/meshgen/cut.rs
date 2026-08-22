@@ -1991,6 +1991,54 @@ pub fn cut_lattice(
 
         // A face that carries points §5.2 has not got and could not be triangulated is the one hole
         // left in the argument: its owners read §5.2 for it and miss those points.
+        // **Is every point the pass puts on a face actually ON it?** The cell's region is a
+        // convex tet, so `delaunay_tets` puts on its hull exactly the points that lie on the tet's
+        // surface. A trace point a hair INSIDE becomes an interior point instead, the hull keeps
+        // the bare face, and the prescribed boundary cannot be matched at all - which would be a
+        // structural mismatch rather than the combinatorial one flip recovery addresses. Measured
+        // in the face's own units, as §6.34 had to learn to do.
+        {
+            let mut worst_off = 0.0f64;
+            let mut off_decades = [0usize; 8];
+            let mut total = 0usize;
+            for (face, ids) in &face_interior {
+                let corners = [
+                    mesh.nodes[face[0] as usize],
+                    mesh.nodes[face[1] as usize],
+                    mesh.nodes[face[2] as usize],
+                ];
+                let normal = corners[1].sub(corners[0]).cross(corners[2].sub(corners[0]));
+                let length = normal.dot(normal).sqrt();
+                if length <= 0.0 {
+                    continue;
+                }
+                let normal = normal.scale(1.0 / length);
+                let shortest = (0..3)
+                    .map(|slot| {
+                        let d = corners[(slot + 1) % 3].sub(corners[slot]);
+                        d.dot(d).sqrt()
+                    })
+                    .fold(f64::INFINITY, f64::min);
+                for id in ids {
+                    total += 1;
+                    let off = normal.dot(mesh.nodes[*id as usize].sub(corners[0])).abs() / shortest;
+                    worst_off = worst_off.max(off);
+                    let decade = if off <= 0.0 {
+                        0
+                    } else {
+                        ((off.log10().floor() as i64) + 16).clamp(0, 7) as usize
+                    };
+                    off_decades[decade] += 1;
+                }
+            }
+            println!(
+                "[PLC-PASS] {total} face-interior point(s); off the face's own plane by at worst \
+                 {worst_off:.3e} of its shortest edge, by decade from 1e-16: {off_decades:?} - a \
+                 point off the plane is not on the convex hull, so the prescribed boundary cannot \
+                 be matched however the interior is flipped"
+            );
+        }
+
         // How flat the emitted face triangles are, in the face's own units. A tet cannot be
         // rounder than the boundary triangle it stands on, so a sliver here is a flat element
         // there - which is what `[V1]` reads as a signed volume of +-0.
@@ -2251,6 +2299,30 @@ pub fn cut_lattice(
         // triangle on it becomes a hole. `constrained_tets` refuses both, which is why the meshed
         // arm is clean and the fanned arm carries all of the residual - the defect is in
         // `cell_boundary`, and this counts it there rather than at the far end.
+        // **Does a face-interior point predict the decline?** 2,393 of them against 2,028
+        // declines is close enough to be worth asking directly rather than inferring. A point on
+        // a lattice EDGE stays on the tet's surface however it rounds - the edge is the
+        // intersection of two faces - but a point in a face's INTERIOR is on the hull only if it
+        // rounds to the outside of that one plane, and `delaunay_tets` decides that with an exact
+        // predicate, which has no rounding level to hide in.
+        let mut has_interior_point: Vec<bool> = vec![false; lattice.tets.len()];
+        for face in face_interior.keys() {
+            for owner in owners.get(face).into_iter().flatten() {
+                has_interior_point[*owner as usize] = true;
+            }
+        }
+        let mut table = [[0usize; 2]; 2];
+        for (index, outcome) in attempt.iter().enumerate() {
+            let Some(outcome) = outcome else { continue };
+            table[usize::from(has_interior_point[index])][usize::from(outcome.is_err())] += 1;
+        }
+        println!(
+            "[PLC-PASS] cells by whether any of their faces carries an interior trace point, \
+             against whether §7.4 declined: no point {} took / {} declined, has one {} took / {} \
+             declined",
+            table[0][0], table[0][1], table[1][0], table[1][1]
+        );
+
         let mut open_taken = 0usize;
         let mut open_fanned = 0usize;
         let mut dup_taken = 0usize;
