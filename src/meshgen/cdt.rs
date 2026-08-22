@@ -1427,27 +1427,6 @@ fn flip_edge(
 //   The Delaunay of the vertex set fills their convex hull, and the cell is a tet with its corners
 //   among the points, so "fills the cell" needs no separate check.
 // AI-FUNC-SUMMARY:
-// Purpose: Whether two segments properly cross inside their common plane.
-// Inputs: the four endpoints.
-// Returns: true only for a crossing at an interior point of both.
-// Side effects: None.
-// Notes: Exact throughout - `orient3d` for the coplanarity and `orient2d` for the two
-//   straddle tests, so a segment that merely touches an endpoint is not a crossing.
-fn segments_cross_in_plane(a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> bool {
-    if crate::meshgen::predicates::orient3d_filtered(a, b, c, d).0 != 0 {
-        return false;
-    }
-    let normal = b.sub(a).cross(c.sub(a));
-    let axis = if normal.dot(normal) > 0.0 {
-        crate::meshgen::predicates::best_projection_axis(a, b, c)
-    } else {
-        crate::meshgen::predicates::best_projection_axis(a, b, d)
-    };
-    let o = |p: Vec3, q: Vec3, r: Vec3| crate::meshgen::predicates::orient2d_axis(p, q, r, axis);
-    o(a, b, c) * o(a, b, d) < 0.0 && o(c, d, a) * o(c, d, b) < 0.0
-}
-
-// AI-FUNC-SUMMARY:
 // Purpose: Remove one edge from a tetrahedralisation by retriangulating the fan around it.
 // Inputs: the tets, the points, and the edge as a node pair.
 // Returns: the replacement tets, or None when no valid retriangulation exists.
@@ -1512,8 +1491,10 @@ fn remove_edge(tets: &[[u32; 4]], points: &[Vec3], edge: [u32; 2]) -> Option<Vec
     let (pc, pd) = (points[c as usize], points[d as usize]);
     // A triangle is usable only if `c` and `d` fall strictly on opposite sides of it: then both
     // `(triangle, c)` and `(triangle, d)` are non-degenerate and lie on the two sides the fan
-    // already occupies, so the pair covers the fan's region and nothing else.
-    let usable = |i: usize, k: usize, j: usize| -> bool {
+    // already occupies, so the pair covers the fan's region and nothing else. The score is the
+    // rounder of the two tets it makes, measured as volume over longest edge cubed - scale-free, so
+    // it means the same thing in a cell of any size.
+    let score = |i: usize, k: usize, j: usize| -> f64 {
         let t = [
             points[path[i] as usize],
             points[path[k] as usize],
@@ -1521,25 +1502,52 @@ fn remove_edge(tets: &[[u32; 4]], points: &[Vec3], edge: [u32; 2]) -> Option<Vec
         ];
         let sc = crate::meshgen::predicates::orient3d_filtered(t[0], t[1], t[2], pc).0;
         let sd = crate::meshgen::predicates::orient3d_filtered(t[0], t[1], t[2], pd).0;
-        sc != 0 && sd != 0 && sc != sd
+        if sc == 0 || sd == 0 || sc == sd {
+            return f64::NEG_INFINITY;
+        }
+        let mut worst = f64::INFINITY;
+        for apex in [pc, pd] {
+            let p = [t[0], t[1], t[2], apex];
+            let volume = p[1].sub(p[0]).cross(p[2].sub(p[0])).dot(p[3].sub(p[0])).abs() / 6.0;
+            let mut longest = 0.0f64;
+            for a in 0..4 {
+                for b in a + 1..4 {
+                    let d = p[b].sub(p[a]);
+                    longest = longest.max(d.dot(d).sqrt());
+                }
+            }
+            worst = worst.min(volume / longest.powi(3).max(f64::MIN_POSITIVE));
+        }
+        worst
     };
-    // choice[i][j] is the apex splitting the sub-polygon path[i..=j]; usize::MAX means infeasible.
+    // **Max-min over the whole retriangulation, not the first split that works.** Every feasible
+    // triangulation is equally correct, so choosing among them is free - and taking the first one
+    // costs real quality: recovery flips quads that are coplanar only to rounding, so a careless
+    // split makes a tet whose volume underflows in double even though its exact orientation is
+    // positive. `[V1]` reads that as a negative volume, and it went 3 -> 7 before this.
+    // `choice[i][j]` is the apex splitting the sub-polygon `path[i..=j]`, `usize::MAX` infeasible.
     let mut choice = vec![vec![usize::MAX; n]; n];
+    let mut value = vec![vec![f64::NEG_INFINITY; n]; n];
     for i in 0..n - 1 {
         choice[i][i + 1] = i;
+        value[i][i + 1] = f64::INFINITY;
     }
     for span in 2..n {
         for i in 0..n - span {
             let j = i + span;
             for k in i + 1..j {
-                if choice[i][k] != usize::MAX && choice[k][j] != usize::MAX && usable(i, k, j) {
+                if choice[i][k] == usize::MAX || choice[k][j] == usize::MAX {
+                    continue;
+                }
+                let here = score(i, k, j).min(value[i][k]).min(value[k][j]);
+                if here > value[i][j] {
+                    value[i][j] = here;
                     choice[i][j] = k;
-                    break;
                 }
             }
         }
     }
-    if choice[0][n - 1] == usize::MAX {
+    if choice[0][n - 1] == usize::MAX || !value[0][n - 1].is_finite() {
         return None;
     }
     let mut triangles: Vec<(usize, usize, usize)> = Vec::new();
@@ -1598,58 +1606,123 @@ fn recover_boundary(
     points: &[Vec3],
     frozen: &std::collections::BTreeSet<[u32; 3]>,
 ) -> Result<Vec<[u32; 4]>, &'static str> {
-    let mut frozen_edges: std::collections::BTreeSet<[u32; 2]> = std::collections::BTreeSet::new();
-    for face in frozen {
-        for slot in 0..3 {
-            let (x, y) = (face[slot], face[(slot + 1) % 3]);
-            frozen_edges.insert(if x <= y { [x, y] } else { [y, x] });
-        }
-    }
-    let mut tets = tets.to_vec();
-    // One removal per prescribed edge would be the ideal; each removal can uncover another
-    // crossing, so the budget is generous and finite rather than a `loop`.
-    for _round in 0..64 * frozen_edges.len().max(1) {
+    let faces_of = |tets: &[[u32; 4]]| -> BTreeMap<[u32; 3], usize> {
         let mut carried: BTreeMap<[u32; 3], usize> = BTreeMap::new();
-        for tet in &tets {
+        for tet in tets {
             for face in tet_faces(*tet) {
                 let mut key = face;
                 key.sort_unstable();
                 *carried.entry(key).or_insert(0) += 1;
             }
         }
+        carried
+    };
+    let wrong = |tets: &[[u32; 4]]| -> usize {
+        let carried = faces_of(tets);
         let hull: std::collections::BTreeSet<[u32; 3]> = carried
             .iter()
-            .filter(|(_, count)| **count == 1)
+            .filter(|(_, n)| **n == 1)
             .map(|(face, _)| *face)
             .collect();
-        if hull == *frozen {
+        hull.symmetric_difference(frozen).count()
+    };
+    let mut tets = tets.to_vec();
+    let mut mismatch = wrong(&tets);
+    // Every step strictly reduces the number of hull faces that disagree with the frozen boundary,
+    // so the budget is a bound on a decreasing quantity rather than a guess at how long a `loop`
+    // might run.
+    for _round in 0..mismatch.max(1) * 8 {
+        if mismatch == 0 {
             return Ok(tets);
         }
-        let mut hull_edges: std::collections::BTreeSet<[u32; 2]> = std::collections::BTreeSet::new();
+        let carried = faces_of(&tets);
+        let hull: std::collections::BTreeSet<[u32; 3]> = carried
+            .iter()
+            .filter(|(_, n)| **n == 1)
+            .map(|(face, _)| *face)
+            .collect();
+
+        // **Shaving, which is what the nearly-flat quads need.** A face of the cell carries points
+        // that are only within rounding of its plane - 1.7e-14 of the shortest edge, measured - and
+        // `delaunay_tets` decides coplanarity with an exact predicate. So a quad the frozen
+        // boundary splits one way and the hull splits the other is not a flat quad at all but a
+        // real, microscopic tet (orient3d = -1.4e-22 on a6a's first failing cell), and the two
+        // boundaries bound genuinely different regions: the hull takes the convex side and the
+        // frozen boundary the other. No flip crosses that gap, because a flip preserves volume.
+        //
+        // A tet every one of whose faces is either a hull face the frozen boundary does NOT want,
+        // or a face it does, lies outside the frozen region: deleting it removes only unwanted hull
+        // faces and exposes only wanted ones. That is the operation, and it is exact - no tolerance
+        // decides it, only membership.
+        let shave = (0..tets.len()).find(|at| {
+            let mut removes = 0usize;
+            for face in tet_faces(tets[*at]) {
+                let mut key = face;
+                key.sort_unstable();
+                if frozen.contains(&key) {
+                    continue;
+                }
+                if hull.contains(&key) {
+                    removes += 1;
+                    continue;
+                }
+                return false;
+            }
+            removes > 0
+        });
+        if let Some(at) = shave {
+            let mut next = tets.clone();
+            next.remove(at);
+            let after = wrong(&next);
+            if after < mismatch {
+                tets = next;
+                mismatch = after;
+                continue;
+            }
+        }
+
+        // **Then the flips.** A hull edge the frozen boundary does not want is a candidate; the one
+        // that is taken is the first, in key order, whose removal leaves fewer hull faces wrong.
+        // Selecting by the outcome rather than by an in-plane crossing test is what lets a quad
+        // that is coplanar only to rounding be flipped at all - and it is the progress measure that
+        // makes the loop terminate, so nothing is lost by dropping the geometric test.
+        let mut frozen_edges: std::collections::BTreeSet<[u32; 2]> =
+            std::collections::BTreeSet::new();
+        for face in frozen {
+            for slot in 0..3 {
+                let (x, y) = (face[slot], face[(slot + 1) % 3]);
+                frozen_edges.insert(if x <= y { [x, y] } else { [y, x] });
+            }
+        }
+        let mut hull_edges: std::collections::BTreeSet<[u32; 2]> =
+            std::collections::BTreeSet::new();
         for face in &hull {
             for slot in 0..3 {
                 let (x, y) = (face[slot], face[(slot + 1) % 3]);
                 hull_edges.insert(if x <= y { [x, y] } else { [y, x] });
             }
         }
-        // The prescribed edge the hull is furthest from having, taken in key order so the
-        // sequence of flips is a function of the input (R-P2).
-        let Some(wanted) = frozen_edges.iter().find(|e| !hull_edges.contains(*e)) else {
-            // Every prescribed edge is present and the hull still differs, which cannot happen for
-            // two triangulations of one surface - so the two do NOT cover the same surface.
-            return Err("the boundary and the hull are not the same surface");
-        };
-        let (a, b) = (points[wanted[0] as usize], points[wanted[1] as usize]);
-        let Some(victim) = hull_edges.iter().find(|e| {
-            !frozen_edges.contains(*e)
-                && segments_cross_in_plane(a, b, points[e[0] as usize], points[e[1] as usize])
-        }) else {
-            return Err("no hull edge crosses the one the boundary wants");
-        };
-        let Some(next) = remove_edge(&tets, points, *victim) else {
-            return Err("the fan around a hull edge cannot be retriangulated");
-        };
-        tets = next;
+        let mut moved = false;
+        for edge in hull_edges.iter().filter(|e| !frozen_edges.contains(*e)) {
+            let Some(next) = remove_edge(&tets, points, *edge) else { continue };
+            let after = wrong(&next);
+            if after < mismatch {
+                tets = next;
+                mismatch = after;
+                moved = true;
+                break;
+            }
+        }
+        if !moved {
+            return Err(if shave.is_some() {
+                "no shave or flip brings the hull closer to the boundary"
+            } else {
+                "no flip brings the hull closer to the boundary"
+            });
+        }
+    }
+    if mismatch == 0 {
+        return Ok(tets);
     }
     Err("boundary recovery did not converge")
 }
