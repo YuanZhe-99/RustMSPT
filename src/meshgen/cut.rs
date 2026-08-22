@@ -1541,6 +1541,7 @@ pub fn cut_lattice(
     let mut plc_face_owners_n: BTreeMap<[u32; 3], usize> = BTreeMap::new();
     let mut plc_boundary: Vec<Option<Vec<[u32; 3]>>> =
         (0..lattice.tets.len()).map(|_| None).collect();
+    let mut plc_edge_points: BTreeMap<[u32; 2], Vec<u32>> = BTreeMap::new();
     let plc_pass = std::env::var_os("RUSTMSPT_PLC_PASS").is_some();
     if plc_pass {
         // The arena quantum has to be the one the node keys were built with, or a point that
@@ -1552,6 +1553,7 @@ pub fn cut_lattice(
         let mut chords_of: BTreeMap<[u32; 3], SmallVec<[[Vec3; 2]; 4]>> = BTreeMap::new();
         let mut face_nodes: BTreeMap<[u32; 3], SmallVec<[u32; 4]>> = BTreeMap::new();
         let mut owners: BTreeMap<[u32; 3], SmallVec<[u32; 2]>> = BTreeMap::new();
+        let mut edge_nodes: BTreeMap<[u32; 2], SmallVec<[u32; 6]>> = BTreeMap::new();
         let mut seen_faces: BTreeSet<[u32; 3]> = BTreeSet::new();
         for (index, tet) in lattice.tets.iter().enumerate() {
             for slots in TET_FACES {
@@ -1596,11 +1598,25 @@ pub fn cut_lattice(
                 for slot in 0..3 {
                     let (x, y) = (raw[slot], raw[(slot + 1) % 3]);
                     let key = if x <= y { [x, y] } else { [y, x] };
+                    // The same crossings kept per EDGE as well. A trace endpoint that coincides
+                    // with one is that node, and the decision has to be a function of the edge
+                    // rather than of the face, or the two faces sharing the edge make it
+                    // differently.
+                    let entry = edge_nodes.entry(key).or_default();
+                    if !entry.contains(&key[0]) {
+                        entry.push(key[0]);
+                    }
+                    if !entry.contains(&key[1]) {
+                        entry.push(key[1]);
+                    }
                     for component in &all_components {
                         for map in [&cut_index, &second_index] {
                             if let Some(node) = map.get(&(key, *component)) {
                                 if !on_face.contains(node) {
                                     on_face.push(*node);
+                                }
+                                if !entry.contains(node) {
+                                    entry.push(*node);
                                 }
                             }
                         }
@@ -1673,13 +1689,70 @@ pub fn cut_lattice(
                             break;
                         }
                     }
+                    // **A trace point that coincides with a node already there IS that node.**
+                    // The pass interns on `order_quantum`, which is 1e-6 of the coincidence
+                    // tolerance the rest of the pipeline merges nodes with; a trace endpoint and
+                    // the §5.2 crossing at the same place are two computations of one intersection
+                    // and land a few times 1e-8 apart, so at that quantum they become two nodes at
+                    // one point. Four of them on a6a's edge (10788, 10795), and the face
+                    // triangulation then had three collinear points to triangulate: it emitted a
+                    // zero-area sliver, both faces sharing the edge emitted the SAME sliver, and
+                    // the cell's boundary listed one triangle twice. That is the whole of a6a's
+                    // residual - 18 faces carried by four tets, and the holes beside them.
+                    //
+                    // The candidates are the nodes on the point's own EDGE, not on its face:
+                    // restricted that way the decision is a function of the edge, so the two faces
+                    // sharing it cannot decide differently (invariant J1). `quantum` is
+                    // `options.eps`, the tolerance `coincidence: merge` already uses - the rule is
+                    // the pipeline's own, applied where the pass had been ignoring it.
+                    let mut snapped = None::<u32>;
+                    {
+                        let candidates: &[u32] = match &on_edge {
+                            Some(edge) => edge_nodes.get(edge).map(|v| &v[..]).unwrap_or(&[]),
+                            None => &[],
+                        };
+                        let mut best = quantum;
+                        for other in candidates
+                            .iter()
+                            .chain(match &on_edge {
+                                Some(edge) => {
+                                    edge_points.get(edge).map(|v| &v[..]).unwrap_or(&[])
+                                }
+                                None => &[],
+                            })
+                            .chain(match on_edge {
+                                Some(_) => &[][..],
+                                None => face_nodes.get(face).map(|v| &v[..]).unwrap_or(&[]),
+                            })
+                            .chain(match on_edge {
+                                Some(_) => &[][..],
+                                None => &face[..],
+                            })
+                            .chain(match on_edge {
+                                Some(_) => &[][..],
+                                None => face_interior.get(face).map(|v| &v[..]).unwrap_or(&[]),
+                            })
+                        {
+                            let d = mesh.nodes[*other as usize].sub(placed);
+                            let d = d.dot(d).sqrt();
+                            // `<` and not `<=`, plus the id tie-break, so the nearest node wins and
+                            // an exact tie resolves the same way on every run.
+                            if d < best || (d == best && snapped.is_some_and(|s| *other < s)) {
+                                best = d;
+                                snapped = Some(*other);
+                            }
+                        }
+                    }
                     let key = node_key(placed, order_quantum);
-                    let id = *global.entry(key).or_insert_with(|| {
-                        let id = mesh.nodes.len() as u32;
-                        mesh.nodes.push(placed);
-                        keys.push(key);
-                        id
-                    });
+                    let id = match snapped {
+                        Some(id) => id,
+                        None => *global.entry(key).or_insert_with(|| {
+                            let id = mesh.nodes.len() as u32;
+                            mesh.nodes.push(placed);
+                            keys.push(key);
+                            id
+                        }),
+                    };
                     chord_id.insert(node_key(*point, order_quantum), id);
                     match on_edge {
                         Some(edge) => {
@@ -1697,6 +1770,79 @@ pub fn cut_lattice(
                     }
                 }
             }
+        }
+
+        // **How many of the interned points are, by the pipeline's own coincidence tolerance,
+        // an existing node?** The pass interns on `order_quantum`, which is 1e-6 of `eps` - fine
+        // enough to preserve ordering and far too fine to decide identity. A trace endpoint and
+        // the §5.2 crossing at the same place are computed by different routes and land microns
+        // apart in the last digits; at this quantum they become two nodes.
+        {
+            let coarse = quantum.max(f64::MIN_POSITIVE);
+            let cell = |p: Vec3| {
+                (
+                    (p.x / coarse).floor() as i64,
+                    (p.y / coarse).floor() as i64,
+                    (p.z / coarse).floor() as i64,
+                )
+            };
+            let created: Vec<u32> = edge_points
+                .values()
+                .flatten()
+                .chain(face_interior.values().flatten())
+                .copied()
+                .collect();
+            let mut grid: BTreeMap<(i64, i64, i64), Vec<u32>> = BTreeMap::new();
+            for (id, point) in mesh.nodes.iter().enumerate() {
+                grid.entry(cell(*point)).or_default().push(id as u32);
+            }
+            let mut collides = 0usize;
+            let mut worst = f64::INFINITY;
+            let mut decades = [0usize; 12];
+            for id in &created {
+                let point = mesh.nodes[*id as usize];
+                let home = cell(point);
+                let mut near = None::<f64>;
+                for dx in -1..=1 {
+                    for dy in -1..=1 {
+                        for dz in -1..=1 {
+                            let key = (home.0 + dx, home.1 + dy, home.2 + dz);
+                            for other in grid.get(&key).into_iter().flatten() {
+                                if other == id {
+                                    continue;
+                                }
+                                let d = mesh.nodes[*other as usize].sub(point);
+                                let d = d.dot(d).sqrt();
+                                if d <= coarse {
+                                    near = Some(near.map_or(d, |n: f64| n.min(d)));
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Some(d) = near {
+                    collides += 1;
+                    worst = worst.min(d);
+                    let decade = if d <= 0.0 {
+                        0
+                    } else {
+                        ((d.log10().floor() as i64) + 14).clamp(0, 11) as usize
+                    };
+                    decades[decade] += 1;
+                }
+            }
+            println!(
+                "[PLC-PASS] {collides} of {} interned point(s) sit within eps of another node - \
+                 the same point by the pipeline's own coincidence rule, two nodes by the pass's \
+                 ordering quantum; closest pair {:.3e} against eps {:.3e}",
+                created.len(),
+                worst,
+                coarse
+            );
+            println!(
+                "[PLC-PASS]   by separation, 1e-14 up to eps: {decades:?} - a gap in this row is \
+                 an identity scale the geometry itself names, a smear is a threshold being tuned"
+            );
         }
 
         // Every face's full point set: its corners, the crossings already on it, the points its own
@@ -1841,10 +1987,11 @@ pub fn cut_lattice(
 
         // A face that carries points §5.2 has not got and could not be triangulated is the one hole
         // left in the argument: its owners read §5.2 for it and miss those points.
-        let unusable = face_ids
-            .iter()
-            .filter(|(face, ids)| ids.len() > 3 && !face_tris.contains_key(*face))
-            .count();
+        // Faces that FAILED to triangulate - not merely faces `face_tris` has no entry for. A face
+        // whose triangulation came out equal to §5.2's is deliberately left out of `face_tris`, and
+        // counting those as unusable reported 8,868 broken faces on a6a in a run where every face
+        // triangulated. A measured row that says the opposite of the truth is worse than no row.
+        let unusable = failed_faces.len();
         if unusable > 0 {
             println!(
                 "[PLC-PASS] {unusable} face(s) of {} carry points §5.2 has not got and could not \
@@ -2057,7 +2204,56 @@ pub fn cut_lattice(
         for (reason, count) in &why {
             println!("[PLC-PASS]   {count} declined: {reason}");
         }
+        // **What the fan is actually handed.** The fan cones its boundary and asks nothing of it,
+        // so every property the cell ends up with is a property the boundary already had: a
+        // triangle listed twice becomes two tets carrying the same face, and an edge with one
+        // triangle on it becomes a hole. `constrained_tets` refuses both, which is why the meshed
+        // arm is clean and the fanned arm carries all of the residual - the defect is in
+        // `cell_boundary`, and this counts it there rather than at the far end.
+        let mut open_taken = 0usize;
+        let mut open_fanned = 0usize;
+        let mut dup_taken = 0usize;
+        let mut dup_fanned = 0usize;
+        for (boundary, outcome) in boundaries.iter().zip(attempt.iter()) {
+            let (Some(boundary), Some(outcome)) = (boundary, outcome) else { continue };
+            let mut seen: BTreeSet<[u32; 3]> = BTreeSet::new();
+            let mut duplicated = false;
+            let mut edges: BTreeMap<[u32; 2], usize> = BTreeMap::new();
+            for triangle in boundary {
+                let mut key = *triangle;
+                key.sort_unstable();
+                if !seen.insert(key) {
+                    duplicated = true;
+                }
+                for slot in 0..3 {
+                    let (x, y) = (triangle[slot], triangle[(slot + 1) % 3]);
+                    *edges.entry(if x <= y { [x, y] } else { [y, x] }).or_insert(0) += 1;
+                }
+            }
+            let open = edges.values().any(|n| *n != 2);
+            match outcome.is_ok() {
+                true => {
+                    open_taken += usize::from(open);
+                    dup_taken += usize::from(duplicated);
+                }
+                false => {
+                    open_fanned += usize::from(open);
+                    dup_fanned += usize::from(duplicated);
+                }
+            }
+        }
+        if open_taken + open_fanned + dup_taken + dup_fanned > 0 {
+            println!(
+                "[PLC-PASS] the boundaries themselves: {open_fanned} fanned cell(s) and \
+                 {open_taken} meshed one(s) were handed a boundary that is not closed, \
+                 {dup_fanned} fanned and {dup_taken} meshed one(s) a boundary listing some \
+                 triangle twice"
+            );
+        }
         plc_boundary = boundaries.clone();
+        for (edge, ids) in &edge_points {
+            plc_edge_points.insert(*edge, ids.to_vec());
+        }
         for (face, tris) in &face_tris {
             plc_face_tris.insert(*face, tris.clone());
             plc_face_owners_n.insert(*face, owners.get(face).map(|o| o.len()).unwrap_or(0));
@@ -3430,6 +3626,85 @@ pub fn cut_lattice(
             "[PLC] leaking faces by the path that emitted them: {} §6's table, {} §7.4-meshed, \
              {} §7.4-fanned, {} escalated, {} other",
             leak_by_path[0], leak_by_path[1], leak_by_path[2], leak_by_path[3], leak_by_path[4]
+        ));
+        // **The same question asked of the hanging nodes, and asked as an EDGE question.**
+        // A leak is a face two cells disagree about; a T-junction need not be. A cell can carry a
+        // lattice edge whole while the point another cell put on that edge sits in the middle of
+        // it - every face involved still has two owners, so `carried` is balanced and the leak
+        // count says nothing. The test is therefore not about faces at all: an interned edge point
+        // is a hanging node exactly when some tet still has both of that edge's endpoints as
+        // vertices. Charging that tet to its parent's path says which arm kept the edge.
+        let mut tet_edges: BTreeMap<[u32; 2], usize> = BTreeMap::new();
+        for (at, tet) in mesh.tets.iter().enumerate() {
+            for pair in [[0usize, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]] {
+                let (x, y) = (tet[pair[0]], tet[pair[1]]);
+                tet_edges.entry(if x <= y { [x, y] } else { [y, x] }).or_insert(at);
+            }
+        }
+        let mut referenced = vec![false; mesh.nodes.len()];
+        for tet in &mesh.tets {
+            for node in tet {
+                referenced[*node as usize] = true;
+            }
+        }
+        let mut tjunction_by_path = [0usize; 5];
+        let (mut split_edges, mut orphan_points) = (0usize, 0usize);
+        for (edge, ids) in &plc_edge_points {
+            let interior: Vec<u32> =
+                ids.iter().copied().filter(|id| !edge.contains(id)).collect();
+            if interior.is_empty() {
+                continue;
+            }
+            split_edges += 1;
+            orphan_points += interior
+                .iter()
+                .filter(|id| !referenced[**id as usize])
+                .count();
+            let Some(at) = tet_edges.get(edge).copied() else { continue };
+            let parent = mesh.parent_of.get(at).copied().unwrap_or(0) as usize;
+            tjunction_by_path[path_of.get(parent).copied().unwrap_or(4).min(4) as usize] +=
+                interior.len();
+        }
+        mesh.warnings.push(format!(
+            "[PLC] of {split_edges} lattice edge(s) an interned point splits, the tets that still \
+             carry the whole edge are: {} §6's table, {} §7.4-meshed, {} §7.4-fanned, {} \
+             escalated, {} other - and {orphan_points} of those points are in no tet at all",
+            tjunction_by_path[0],
+            tjunction_by_path[1],
+            tjunction_by_path[2],
+            tjunction_by_path[3],
+            tjunction_by_path[4]
+        ));
+        // Faces carried by three or more tets, by the paths that carried them. A face emitted by
+        // both of its owners AND by a third cell is not a tolerance question: one of the three
+        // built a triangle on a face that is not its own.
+        let mut over_by_path = [0usize; 5];
+        let mut over_faces = 0usize;
+        for (face, count) in &carried {
+            if *count < 3 {
+                continue;
+            }
+            over_faces += 1;
+            for (at, tet) in mesh.tets.iter().enumerate() {
+                for slots in [[0usize, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]] {
+                    let mut key = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+                    key.sort_unstable();
+                    if key == *face {
+                        let parent = mesh.parent_of.get(at).copied().unwrap_or(0) as usize;
+                        over_by_path
+                            [path_of.get(parent).copied().unwrap_or(4).min(4) as usize] += 1;
+                    }
+                }
+            }
+        }
+        mesh.warnings.push(format!(
+            "[PLC] {over_faces} face(s) carried by three or more tets, whose carriers are: {} \
+             §6's table, {} §7.4-meshed, {} §7.4-fanned, {} escalated, {} other",
+            over_by_path[0],
+            over_by_path[1],
+            over_by_path[2],
+            over_by_path[3],
+            over_by_path[4]
         ));
         mesh.warnings.push(format!(
             "[PLC] of the boundaries §7.4 cells were handed: {unmatched} triangle(s) are carried by \

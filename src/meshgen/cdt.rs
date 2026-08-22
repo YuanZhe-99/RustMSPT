@@ -2422,6 +2422,53 @@ mod tests {
         );
     }
 
+    // **Two points at the same place on one edge become a zero-area triangle, and the caller's
+    // obligation is to not present them.** Distinct keys mean distinct points by this function's
+    // contract, so points a few times 1e-8 apart on a straight edge are legal input and get
+    // triangulated - into a sliver whose three vertices are collinear. That sliver is the whole
+    // of a6a's residual: it lies on the EDGE, so both faces sharing the edge emit the same one,
+    // the cell's boundary lists a triangle twice, and the fan cones it into two tets carrying one
+    // face - 18 faces carried by four tets, plus the holes beside them (PLAN §6.35). The cure is
+    // upstream, where a trace point coincident with an existing node is interned AS that node;
+    // this pins why that is required rather than merely tidy.
+    #[test]
+    fn coincident_points_on_an_edge_triangulate_to_a_sliver() {
+        let face = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        ];
+        let mut points = face.to_vec();
+        // Three all-but-identical points partway along the edge from (0,0) to (1,0).
+        points.push(Vec3::new(0.5, 0.0, 0.0));
+        points.push(Vec3::new(0.5 + 3.0e-8, 0.0, 0.0));
+        points.push(Vec3::new(0.5 + 5.0e-8, 3.0e-9, 0.0));
+        let tris = constrained_face_triangulation(face, &points, &keys_of(&points), &[])
+            .expect("near-coincident points are legal input and are triangulated");
+        let area = |t: &[u32; 3]| -> f64 {
+            let (a, b, c) = (
+                points[t[0] as usize],
+                points[t[1] as usize],
+                points[t[2] as usize],
+            );
+            b.sub(a).cross(c.sub(a)).dot(Vec3::new(0.0, 0.0, 1.0)).abs() / 2.0
+        };
+        let slivers = tris.iter().filter(|t| area(t) < 1.0e-12).count();
+        assert!(
+            slivers > 0,
+            "the coincident points must produce a degenerate triangle - if this ever stops being \
+             true the upstream snap is no longer load-bearing and this test should say so"
+        );
+        // And it is a sliver ON THE EDGE, which is what makes it appear in both owners' boundaries.
+        assert!(
+            tris.iter().any(|t| {
+                area(t) < 1.0e-12
+                    && t.iter().all(|id| points[*id as usize].y.abs() <= 1.0e-8)
+            }),
+            "the degenerate triangle lies along the face edge, so both faces sharing it emit it"
+        );
+    }
+
     // The simplest cell there is: a tet with nothing crossing it. One element, and its four faces
     // are exactly the frozen boundary.
     #[test]
