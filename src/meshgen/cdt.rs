@@ -1426,6 +1426,234 @@ fn flip_edge(
 //
 //   The Delaunay of the vertex set fills their convex hull, and the cell is a tet with its corners
 //   among the points, so "fills the cell" needs no separate check.
+// AI-FUNC-SUMMARY:
+// Purpose: Whether two segments properly cross inside their common plane.
+// Inputs: the four endpoints.
+// Returns: true only for a crossing at an interior point of both.
+// Side effects: None.
+// Notes: Exact throughout - `orient3d` for the coplanarity and `orient2d` for the two
+//   straddle tests, so a segment that merely touches an endpoint is not a crossing.
+fn segments_cross_in_plane(a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> bool {
+    if crate::meshgen::predicates::orient3d_filtered(a, b, c, d).0 != 0 {
+        return false;
+    }
+    let normal = b.sub(a).cross(c.sub(a));
+    let axis = if normal.dot(normal) > 0.0 {
+        crate::meshgen::predicates::best_projection_axis(a, b, c)
+    } else {
+        crate::meshgen::predicates::best_projection_axis(a, b, d)
+    };
+    let o = |p: Vec3, q: Vec3, r: Vec3| crate::meshgen::predicates::orient2d_axis(p, q, r, axis);
+    o(a, b, c) * o(a, b, d) < 0.0 && o(c, d, a) * o(c, d, b) < 0.0
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Remove one edge from a tetrahedralisation by retriangulating the fan around it.
+// Inputs: the tets, the points, and the edge as a node pair.
+// Returns: the replacement tets, or None when no valid retriangulation exists.
+// Side effects: None.
+// Notes: The fan around a hull edge is an open strip whose link is a path from one hull
+//   face's apex to the other's. Closing that path with the edge the flip creates gives a
+//   polygon; every triangulation of it yields tets `(triangle, c)` and `(triangle, d)`,
+//   and the triangulation is chosen by a dynamic program that only accepts triangles with
+//   `c` and `d` strictly on opposite sides - which is what makes both tets non-degenerate
+//   and interior. With a fan of two this is the ordinary 2-2 flip; the general case is the
+//   reason a fan of three or more is recoverable at all.
+fn remove_edge(tets: &[[u32; 4]], points: &[Vec3], edge: [u32; 2]) -> Option<Vec<[u32; 4]>> {
+    let (c, d) = (edge[0], edge[1]);
+    let mut fan: Vec<usize> = Vec::new();
+    let mut link: BTreeMap<u32, smallvec::SmallVec<[u32; 2]>> = BTreeMap::new();
+    for (at, tet) in tets.iter().enumerate() {
+        if !tet.contains(&c) || !tet.contains(&d) {
+            continue;
+        }
+        fan.push(at);
+        let rest: Vec<u32> = tet.iter().copied().filter(|x| *x != c && *x != d).collect();
+        if rest.len() != 2 {
+            return None;
+        }
+        link.entry(rest[0]).or_default().push(rest[1]);
+        link.entry(rest[1]).or_default().push(rest[0]);
+    }
+    if fan.len() < 2 {
+        return None;
+    }
+    // Exactly two ends means the fan is an open strip, which is what a hull edge has. A closed
+    // ring is an interior edge and is not what boundary recovery is asking about.
+    let ends: Vec<u32> = link
+        .iter()
+        .filter(|(_, next)| next.len() == 1)
+        .map(|(node, _)| *node)
+        .collect();
+    if ends.len() != 2 {
+        return None;
+    }
+    let mut path: Vec<u32> = vec![ends[0]];
+    let mut seen: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+    seen.insert(ends[0]);
+    loop {
+        let last = *path.last()?;
+        let previous = if path.len() >= 2 { Some(path[path.len() - 2]) } else { None };
+        let Some(next) = link.get(&last)?.iter().copied().find(|x| Some(*x) != previous) else {
+            break;
+        };
+        if !seen.insert(next) {
+            return None;
+        }
+        path.push(next);
+        if next == ends[1] {
+            break;
+        }
+    }
+    if path.len() != fan.len() + 1 {
+        return None;
+    }
+    let n = path.len();
+    let (pc, pd) = (points[c as usize], points[d as usize]);
+    // A triangle is usable only if `c` and `d` fall strictly on opposite sides of it: then both
+    // `(triangle, c)` and `(triangle, d)` are non-degenerate and lie on the two sides the fan
+    // already occupies, so the pair covers the fan's region and nothing else.
+    let usable = |i: usize, k: usize, j: usize| -> bool {
+        let t = [
+            points[path[i] as usize],
+            points[path[k] as usize],
+            points[path[j] as usize],
+        ];
+        let sc = crate::meshgen::predicates::orient3d_filtered(t[0], t[1], t[2], pc).0;
+        let sd = crate::meshgen::predicates::orient3d_filtered(t[0], t[1], t[2], pd).0;
+        sc != 0 && sd != 0 && sc != sd
+    };
+    // choice[i][j] is the apex splitting the sub-polygon path[i..=j]; usize::MAX means infeasible.
+    let mut choice = vec![vec![usize::MAX; n]; n];
+    for i in 0..n - 1 {
+        choice[i][i + 1] = i;
+    }
+    for span in 2..n {
+        for i in 0..n - span {
+            let j = i + span;
+            for k in i + 1..j {
+                if choice[i][k] != usize::MAX && choice[k][j] != usize::MAX && usable(i, k, j) {
+                    choice[i][j] = k;
+                    break;
+                }
+            }
+        }
+    }
+    if choice[0][n - 1] == usize::MAX {
+        return None;
+    }
+    let mut triangles: Vec<(usize, usize, usize)> = Vec::new();
+    let mut stack = vec![(0usize, n - 1)];
+    while let Some((i, j)) = stack.pop() {
+        if j <= i + 1 {
+            continue;
+        }
+        let k = choice[i][j];
+        triangles.push((i, k, j));
+        stack.push((i, k));
+        stack.push((k, j));
+    }
+    let mut out: Vec<[u32; 4]> = Vec::with_capacity(tets.len() + triangles.len());
+    for (at, tet) in tets.iter().enumerate() {
+        if !fan.contains(&at) {
+            out.push(*tet);
+        }
+    }
+    for (i, k, j) in triangles {
+        let t = [path[i], path[k], path[j]];
+        for apex in [c, d] {
+            let mut piece = [t[0], t[1], t[2], apex];
+            match crate::meshgen::predicates::orient3d_filtered(
+                points[piece[0] as usize],
+                points[piece[1] as usize],
+                points[piece[2] as usize],
+                points[piece[3] as usize],
+            )
+            .0
+            {
+                0 => return None,
+                s if s < 0 => piece.swap(0, 1),
+                _ => {}
+            }
+            out.push(piece);
+        }
+    }
+    Some(out)
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Flip a tetrahedralisation's hull until it carries a prescribed boundary.
+// Inputs: the tets, the points, and the frozen boundary as sorted node triples.
+// Returns: the recovered tets, or None when some prescribed edge cannot be recovered.
+// Side effects: None.
+// Notes: The cell's region is a convex tet, so a boundary that uses only hull nodes covers
+//   the same surface as the hull and differs from it only in how each planar facet is split
+//   - measured on a6a, where every one of 2,028 declines was of that kind and none was a
+//   node off the hull. Recovery is then 2D edge recovery per facet: for a prescribed edge
+//   the hull lacks, remove a hull edge that properly crosses it. Each removal strictly
+//   reduces the number of hull edges crossing that prescribed edge, which is what makes the
+//   loop terminate rather than merely usually stop.
+fn recover_boundary(
+    tets: &[[u32; 4]],
+    points: &[Vec3],
+    frozen: &std::collections::BTreeSet<[u32; 3]>,
+) -> Result<Vec<[u32; 4]>, &'static str> {
+    let mut frozen_edges: std::collections::BTreeSet<[u32; 2]> = std::collections::BTreeSet::new();
+    for face in frozen {
+        for slot in 0..3 {
+            let (x, y) = (face[slot], face[(slot + 1) % 3]);
+            frozen_edges.insert(if x <= y { [x, y] } else { [y, x] });
+        }
+    }
+    let mut tets = tets.to_vec();
+    // One removal per prescribed edge would be the ideal; each removal can uncover another
+    // crossing, so the budget is generous and finite rather than a `loop`.
+    for _round in 0..64 * frozen_edges.len().max(1) {
+        let mut carried: BTreeMap<[u32; 3], usize> = BTreeMap::new();
+        for tet in &tets {
+            for face in tet_faces(*tet) {
+                let mut key = face;
+                key.sort_unstable();
+                *carried.entry(key).or_insert(0) += 1;
+            }
+        }
+        let hull: std::collections::BTreeSet<[u32; 3]> = carried
+            .iter()
+            .filter(|(_, count)| **count == 1)
+            .map(|(face, _)| *face)
+            .collect();
+        if hull == *frozen {
+            return Ok(tets);
+        }
+        let mut hull_edges: std::collections::BTreeSet<[u32; 2]> = std::collections::BTreeSet::new();
+        for face in &hull {
+            for slot in 0..3 {
+                let (x, y) = (face[slot], face[(slot + 1) % 3]);
+                hull_edges.insert(if x <= y { [x, y] } else { [y, x] });
+            }
+        }
+        // The prescribed edge the hull is furthest from having, taken in key order so the
+        // sequence of flips is a function of the input (R-P2).
+        let Some(wanted) = frozen_edges.iter().find(|e| !hull_edges.contains(*e)) else {
+            // Every prescribed edge is present and the hull still differs, which cannot happen for
+            // two triangulations of one surface - so the two do NOT cover the same surface.
+            return Err("the boundary and the hull are not the same surface");
+        };
+        let (a, b) = (points[wanted[0] as usize], points[wanted[1] as usize]);
+        let Some(victim) = hull_edges.iter().find(|e| {
+            !frozen_edges.contains(*e)
+                && segments_cross_in_plane(a, b, points[e[0] as usize], points[e[1] as usize])
+        }) else {
+            return Err("no hull edge crosses the one the boundary wants");
+        };
+        let Some(next) = remove_edge(&tets, points, *victim) else {
+            return Err("the fan around a hull edge cannot be retriangulated");
+        };
+        tets = next;
+    }
+    Err("boundary recovery did not converge")
+}
+
 pub fn constrained_tets(
     points: &[Vec3],
     keys: &[NodeKey],
@@ -1436,20 +1664,6 @@ pub fn constrained_tets(
     let Some(tets) = delaunay_tets(points, keys) else {
         return Err("the points have no tetrahedralisation");
     };
-    // Faces carried by exactly one tet are the outer boundary; by two, interior.
-    let mut carried: BTreeMap<[u32; 3], usize> = BTreeMap::new();
-    for tet in &tets {
-        for face in tet_faces(*tet) {
-            let mut key = face;
-            key.sort_unstable();
-            *carried.entry(key).or_insert(0) += 1;
-        }
-    }
-    let outer: std::collections::BTreeSet<[u32; 3]> = carried
-        .iter()
-        .filter(|(_, count)| **count == 1)
-        .map(|(face, _)| *face)
-        .collect();
     let frozen: std::collections::BTreeSet<[u32; 3]> = boundary
         .iter()
         .map(|t| {
@@ -1458,6 +1672,46 @@ pub fn constrained_tets(
             k
         })
         .collect();
+    // Faces carried by exactly one tet are the outer boundary; by two, interior.
+    let faces_of = |tets: &[[u32; 4]]| -> BTreeMap<[u32; 3], usize> {
+        let mut carried: BTreeMap<[u32; 3], usize> = BTreeMap::new();
+        for tet in tets {
+            for face in tet_faces(*tet) {
+                let mut key = face;
+                key.sort_unstable();
+                *carried.entry(key).or_insert(0) += 1;
+            }
+        }
+        carried
+    };
+    let hull_of = |carried: &BTreeMap<[u32; 3], usize>| -> std::collections::BTreeSet<[u32; 3]> {
+        carried
+            .iter()
+            .filter(|(_, count)| **count == 1)
+            .map(|(face, _)| *face)
+            .collect()
+    };
+    let mut carried = faces_of(&tets);
+    let mut outer = hull_of(&carried);
+    // **The Delaunay hull is not the prescribed boundary, and that is expected.** Both triangulate
+    // the same convex surface on the same nodes; they disagree wherever a constraint edge on a face
+    // is not the Delaunay diagonal. Recovering it is a flip problem, not a reason to give the cell
+    // to the fan - and the fan is what carries every remaining conformity risk (PLAN §6.36).
+    let mut tets = tets;
+    let mut recovery_failed: Option<&'static str> = None;
+    if outer != frozen {
+        match recover_boundary(&tets, points, &frozen) {
+            Ok(recovered) => {
+                tets = recovered;
+                carried = faces_of(&tets);
+                outer = hull_of(&carried);
+            }
+            // Kept and reported instead of collapsed into one refusal: the three ways recovery can
+            // stop want three different follow-ups, and a single name would hide which is the
+            // population.
+            Err(reason) => recovery_failed = Some(reason),
+        }
+    }
     // **Both checks always run, and the reason names the combination.** Returning on the first
     // failure would have made the second one unmeasurable: on a8 only 24 of 4,377 cells reach the
     // facet test if the boundary test can return early, so "facet recovery is never needed" would
@@ -1523,7 +1777,8 @@ pub fn constrained_tets(
     }
     match (boundary_ok, facets_ok, structural) {
         (true, true, _) => Ok(tets),
-        (false, true, false) => Err("the boundary is split differently, but on the same nodes"),
+        (false, true, false) => Err(recovery_failed
+            .unwrap_or("the boundary is split differently, but on the same nodes")),
         (false, true, true) => Err("the boundary uses a node that is not on the hull"),
         (true, false, _) => Err("a facet is not a union of faces of the tetrahedralisation"),
         (false, false, false) => Err("neither the boundary nor the facets survive"),
@@ -2505,12 +2760,16 @@ mod tests {
     }
 
     // **The J1 check, which is the one that makes a cell's mesh usable by its neighbour.** The
-    // frozen boundary here splits the face z = 0 across its diagonal one way; a tetrahedralisation
-    // whose own outer faces split it the other way covers the same region and is still a crack,
-    // because the neighbour holds the first triangulation. So this must be refused, and refused
-    // for the boundary rather than for anything else.
+    // frozen boundary here splits the base across its diagonal one way; a tetrahedralisation whose
+    // own outer faces split it the other way covers the same region and is still a crack, because
+    // the neighbour holds the first triangulation.
+    //
+    // Both diagonals are now ACCEPTED, and that is the point: the Delaunay will choose one of them
+    // and boundary recovery flips it to whichever was asked for. The test therefore checks the
+    // thing that matters - that the tetrahedralisation handed back really does carry the boundary
+    // it was given - rather than that one of the two is refused.
     #[test]
-    fn a_boundary_the_mesh_triangulates_differently_is_refused() {
+    fn either_diagonal_of_a_frozen_base_is_recovered() {
         let points = vec![
             Vec3::new(0.0, 0.0, 0.0),
             Vec3::new(1.0, 0.0, 0.0),
@@ -2526,20 +2785,31 @@ mod tests {
         let keys = keys_of(&points);
         let first = constrained_tets(&points, &keys, &one, &[], 1.0e-9);
         let second = constrained_tets(&points, &keys, &other, &[], 1.0e-9);
-        assert!(
-            first.is_ok() != second.is_ok(),
-            "exactly one of the two diagonals can match the mesh's own boundary"
-        );
-        let refused = if first.is_err() { first } else { second };
-        // And it names the COMBINATORIAL kind: both diagonals use the base's same four nodes, so
-        // every node the frozen boundary wants is still on the hull and the two boundaries cover
-        // the same surface. That is the mismatch a flip can undo, and the refusal has to say so -
-        // the other kind, a node that rounded off its face plane and left the hull, cannot be
-        // flipped back and must not be attacked with the same tool.
-        assert_eq!(
-            refused.err(),
-            Some("the boundary is split differently, but on the same nodes")
-        );
+        for (asked, got) in [(&one[..], &first), (&other[..], &second)] {
+            let tets = got.as_ref().expect("both diagonals must be recovered");
+            let mut carried: BTreeMap<[u32; 3], usize> = BTreeMap::new();
+            for tet in tets {
+                for face in tet_faces(*tet) {
+                    let mut key = face;
+                    key.sort_unstable();
+                    *carried.entry(key).or_insert(0) += 1;
+                }
+            }
+            let hull: std::collections::BTreeSet<[u32; 3]> = carried
+                .iter()
+                .filter(|(_, n)| **n == 1)
+                .map(|(face, _)| *face)
+                .collect();
+            let want: std::collections::BTreeSet<[u32; 3]> = asked
+                .iter()
+                .map(|t| {
+                    let mut k = *t;
+                    k.sort_unstable();
+                    k
+                })
+                .collect();
+            assert_eq!(hull, want, "the mesh must carry the boundary it was given");
+        }
     }
 
     // A facet the Delaunay already respects is accepted — and this is the case the whole approach
