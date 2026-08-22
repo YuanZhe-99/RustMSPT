@@ -1848,6 +1848,10 @@ pub fn cut_lattice(
         // Every face's full point set: its corners, the crossings already on it, the points its own
         // trace put inside it, and every edge point on any of its three edges - whoever put them
         // there.
+        //
+        // A note on what makes a face's point set hard: points that are distinct but nearly
+        // collinear triangulate into slivers, and a sliver on the boundary forces a flat TET on
+        // whichever cell owns it. The census after `face_tris` measures exactly that.
         let mut face_ids: BTreeMap<[u32; 3], Vec<u32>> = BTreeMap::new();
         for face in owners.keys() {
             let mut ids: Vec<u32> = face.to_vec();
@@ -1987,6 +1991,43 @@ pub fn cut_lattice(
 
         // A face that carries points §5.2 has not got and could not be triangulated is the one hole
         // left in the argument: its owners read §5.2 for it and miss those points.
+        // How flat the emitted face triangles are, in the face's own units. A tet cannot be
+        // rounder than the boundary triangle it stands on, so a sliver here is a flat element
+        // there - which is what `[V1]` reads as a signed volume of +-0.
+        {
+            let mut slivers = 0usize;
+            let mut total = 0usize;
+            let mut worst = f64::INFINITY;
+            for tris in face_tris.values() {
+                for triangle in tris {
+                    total += 1;
+                    let p = [
+                        mesh.nodes[triangle[0] as usize],
+                        mesh.nodes[triangle[1] as usize],
+                        mesh.nodes[triangle[2] as usize],
+                    ];
+                    let cross = p[1].sub(p[0]).cross(p[2].sub(p[0]));
+                    let area = cross.dot(cross).sqrt() * 0.5;
+                    let longest = (0..3)
+                        .map(|slot| {
+                            let d = p[(slot + 1) % 3].sub(p[slot]);
+                            d.dot(d).sqrt()
+                        })
+                        .fold(0.0f64, f64::max);
+                    let shape = area / longest.powi(2).max(f64::MIN_POSITIVE);
+                    if shape < 1.0e-6 {
+                        slivers += 1;
+                        worst = worst.min(shape);
+                    }
+                }
+            }
+            println!(
+                "[PLC-PASS] {slivers} of {total} emitted face triangle(s) are slivers \
+                 (area/longest^2 < 1e-6), worst {worst:.3e} - a tet cannot be rounder than the \
+                 boundary triangle it stands on"
+            );
+        }
+
         // Faces that FAILED to triangulate - not merely faces `face_tris` has no entry for. A face
         // whose triangulation came out equal to §5.2's is deliberately left out of `face_tris`, and
         // counting those as unusable reported 8,868 broken faces on a6a in a run where every face
@@ -3705,6 +3746,137 @@ pub fn cut_lattice(
             over_by_path[2],
             over_by_path[3],
             over_by_path[4]
+        ));
+        // **`[V6]`'s adjacency violations, charged the same way.** A face between two tets whose
+        // records name different materials is a material boundary and must carry an interface tag.
+        // Whether the two tets are in ONE cell or in two says which half is at fault: inside a cell
+        // the regions are separated by a constraint face and the cap list should already name it,
+        // while across a lattice face the two cells classified independently and disagreed.
+        {
+            let mut tagged: BTreeSet<[u32; 3]> = BTreeSet::new();
+            for (_, triangle, _) in &pending_interfaces {
+                let mut key = *triangle;
+                key.sort_unstable();
+                tagged.insert(key);
+            }
+            let mut sides: BTreeMap<[u32; 3], SmallVec<[usize; 2]>> = BTreeMap::new();
+            for (at, tet) in mesh.tets.iter().enumerate() {
+                for slots in [[0usize, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]] {
+                    let mut face = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+                    face.sort_unstable();
+                    sides.entry(face).or_default().push(at);
+                }
+            }
+            let inside_set = |at: usize| -> Vec<i32> {
+                let mut out: Vec<i32> = mesh
+                    .records
+                    .get(at)
+                    .map(|r| {
+                        r.entries
+                            .iter()
+                            .filter(|(_, side)| *side == Side::Inside)
+                            .map(|(x, _)| *x)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                out.sort_unstable();
+                out
+            };
+            let (mut same_cell, mut cross_cell) = (0usize, 0usize);
+            let mut cross_by_path = [0usize; 5];
+            let mut same_by_path = [0usize; 5];
+            for (face, at) in &sides {
+                if at.len() != 2 || tagged.contains(face) {
+                    continue;
+                }
+                // **`[V6]`'s own rule, not a broader one.** A face may change the inside-set by as
+                // many components as it is tagged with, and an untagged face is allowed one - a
+                // single body's surface passing through. Counting every disagreement instead reads
+                // 9,368 where `[V6]` reads 792, and a diagnostic that does not agree with the check
+                // it is diagnosing is worse than none.
+                let (a, b) = (inside_set(at[0]), inside_set(at[1]));
+                let difference = a.iter().filter(|x| !b.contains(x)).count()
+                    + b.iter().filter(|x| !a.contains(x)).count();
+                if difference <= 1 {
+                    continue;
+                }
+                let (a, b) = (
+                    mesh.parent_of.get(at[0]).copied().unwrap_or(0) as usize,
+                    mesh.parent_of.get(at[1]).copied().unwrap_or(0) as usize,
+                );
+                if a == b {
+                    same_cell += 1;
+                    same_by_path[path_of.get(a).copied().unwrap_or(4).min(4) as usize] += 1;
+                } else {
+                    cross_cell += 1;
+                    for parent in [a, b] {
+                        cross_by_path
+                            [path_of.get(parent).copied().unwrap_or(4).min(4) as usize] += 1;
+                    }
+                }
+            }
+            mesh.warnings.push(format!(
+                "[PLC] `[V6]` steps of two or more components across an untagged face: \
+                 {same_cell} inside one cell ({} table / {} meshed / {} fanned / {} escalated / \
+                 {} other) and {cross_cell} across a lattice face ({} / {} / {} / {} / {} by side)",
+                same_by_path[0],
+                same_by_path[1],
+                same_by_path[2],
+                same_by_path[3],
+                same_by_path[4],
+                cross_by_path[0],
+                cross_by_path[1],
+                cross_by_path[2],
+                cross_by_path[3],
+                cross_by_path[4]
+            ));
+        }
+
+        // **And the same charge for the degenerate elements.** `[V1]` reads a signed volume and
+        // says nothing about where it came from; normalising by the tet's own longest edge cubed
+        // makes "flat" a scale-free statement, and the path histogram says which arm to look in.
+        let mut flat_by_path = [0usize; 5];
+        let mut inverted_by_path = [0usize; 5];
+        let mut worst_flat = f64::INFINITY;
+        for (at, tet) in mesh.tets.iter().enumerate() {
+            let p = [
+                mesh.nodes[tet[0] as usize],
+                mesh.nodes[tet[1] as usize],
+                mesh.nodes[tet[2] as usize],
+                mesh.nodes[tet[3] as usize],
+            ];
+            let volume = p[1].sub(p[0]).cross(p[2].sub(p[0])).dot(p[3].sub(p[0])) / 6.0;
+            let mut longest = 0.0f64;
+            for a in 0..4 {
+                for b in a + 1..4 {
+                    let d = p[b].sub(p[a]);
+                    longest = longest.max(d.dot(d).sqrt());
+                }
+            }
+            let shape = volume / longest.powi(3).max(f64::MIN_POSITIVE);
+            let parent = mesh.parent_of.get(at).copied().unwrap_or(0) as usize;
+            let path = path_of.get(parent).copied().unwrap_or(4).min(4) as usize;
+            if shape <= 0.0 {
+                inverted_by_path[path] += 1;
+            } else if shape < 1.0e-9 {
+                flat_by_path[path] += 1;
+                worst_flat = worst_flat.min(shape);
+            }
+        }
+        mesh.warnings.push(format!(
+            "[PLC] tets with volume/longest-edge^3 at or below zero: {} §6's table, {} \
+             §7.4-meshed, {} §7.4-fanned, {} escalated, {} other; and merely flat (< 1e-9): {} / \
+             {} / {} / {} / {}, worst {worst_flat:.3e}",
+            inverted_by_path[0],
+            inverted_by_path[1],
+            inverted_by_path[2],
+            inverted_by_path[3],
+            inverted_by_path[4],
+            flat_by_path[0],
+            flat_by_path[1],
+            flat_by_path[2],
+            flat_by_path[3],
+            flat_by_path[4]
         ));
         mesh.warnings.push(format!(
             "[PLC] of the boundaries §7.4 cells were handed: {unmatched} triangle(s) are carried by \
