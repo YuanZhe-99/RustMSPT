@@ -2511,6 +2511,112 @@ pub fn cut_lattice(
                  (a face triangulation that is not one)"
             );
         }
+        // **One row per traced cell, for offline analysis.** Print-only and behind an env var, so
+        // it changes nothing that is meshed. The decline reasons partition the population but say
+        // nothing about what the declining cells *are*; this pairs each reason with the cell's own
+        // geometry so the question "what is left" can be answered from data rather than from the
+        // next hypothesis.
+        if let Some(path) = std::env::var_os("RUSTMSPT_PLC_CSV") {
+            let mut rows = String::from(
+                "index,reason,short_edge,long_edge,shape,aug_faces,boundary_tris,trace_pts,                 components,fragment_tris,curve,rim_pts,rim_worst\n",
+            );
+            for (index, outcome) in attempt.iter().enumerate() {
+                let Some(outcome) = outcome else { continue };
+                let tet = lattice.tets[index];
+                let p = [
+                    mesh.nodes[tet[0] as usize],
+                    mesh.nodes[tet[1] as usize],
+                    mesh.nodes[tet[2] as usize],
+                    mesh.nodes[tet[3] as usize],
+                ];
+                let (mut short, mut long) = (f64::INFINITY, 0.0f64);
+                for a in 0..4 {
+                    for b in (a + 1)..4 {
+                        let d = p[b].sub(p[a]);
+                        let d = d.dot(d).sqrt();
+                        short = short.min(d);
+                        long = long.max(d);
+                    }
+                }
+                let volume = p[1].sub(p[0]).cross(p[2].sub(p[0])).dot(p[3].sub(p[0])).abs() / 6.0;
+                let shape = volume / long.powi(3).max(f64::MIN_POSITIVE);
+                let mut aug = 0usize;
+                let mut curve = 0usize;
+                for slots in TET_FACES {
+                    let mut face = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+                    face.sort_by_key(|node| keys[*node as usize]);
+                    aug += usize::from(face_tris.contains_key(&face));
+                    curve += usize::from(curve_pierce.contains_key(&face));
+                }
+                let boundary = boundaries[index].as_ref();
+                let tris = boundary.map(|b| b.len()).unwrap_or(0);
+                let mut pts: BTreeSet<u32> = BTreeSet::new();
+                for triangle in boundary.into_iter().flatten() {
+                    pts.extend(triangle.iter().copied());
+                }
+                let mut fragment = 0usize;
+                let mut components = 0usize;
+                // The fragment's RIM - its vertices lying on the cell's own surface. Those are the
+                // points that end up on the convex hull, and the ones the frozen boundary must
+                // already have or the two are not the same point set. For each, the distance to
+                // the nearest boundary node, relative to the cell's shortest edge: a few ULP means
+                // one point spelled twice, anything larger means the rim really is somewhere else.
+                let mut rim = 0usize;
+                let mut rim_worst = 0.0f64;
+                let corner_of = |q: Vec3| -> f64 {
+                    pts.iter()
+                        .map(|id| {
+                            let d = mesh.nodes[*id as usize].sub(q);
+                            d.dot(d).sqrt()
+                        })
+                        .fold(f64::INFINITY, f64::min)
+                };
+                // **`fragment_facets_in_cell`, which is what `plc_attempt` actually interns.**
+                // `fragment_in_cell` hands back the ORIGINAL triangles - its own note says so, and
+                // its only consumer wants their supporting planes - so measuring the rim from it
+                // reads points far outside the cell and means nothing.
+                let planes = crate::meshgen::cdt::tet_halfspaces_of(p);
+                for component in &all_components {
+                    let Some(slot) = classifier.slot_of(*component) else { continue };
+                    let facets = crate::meshgen::cdt::fragment_facets_in_cell(
+                        p,
+                        classifier.triangles_of(slot),
+                        short * 1.0e-6,
+                    );
+                    if facets.is_empty() {
+                        continue;
+                    }
+                    components += 1;
+                    fragment += facets.len();
+                    for facet in &facets {
+                        for q in facet {
+                            let on_surface = planes.as_ref().is_some_and(|hs| {
+                                hs.iter().any(|(n, d)| (n.dot(*q) - d).abs() <= short * 1.0e-6)
+                            });
+                            if !on_surface {
+                                continue;
+                            }
+                            rim += 1;
+                            rim_worst = rim_worst.max(corner_of(*q) / short);
+                        }
+                    }
+                }
+                let reason = match outcome {
+                    Ok(_) => "taken",
+                    Err(reason) => reason,
+                };
+                rows.push_str(&format!(
+                    "{index},\"{reason}\",{short:.6e},{long:.6e},{shape:.6e},{aug},{tris},{},\
+                     {components},{fragment},{curve},{rim},{rim_worst:.3e}\n",
+                    pts.len()
+                ));
+            }
+            if let Err(e) = std::fs::write(&path, rows) {
+                println!("[PLC-PASS] could not write the cell census: {e}");
+            } else {
+                println!("[PLC-PASS] cell census written to {}", path.to_string_lossy());
+            }
+        }
         plc_boundary = boundaries.clone();
         for (edge, ids) in &edge_points {
             plc_edge_points.insert(*edge, ids.to_vec());

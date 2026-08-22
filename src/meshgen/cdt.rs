@@ -1906,6 +1906,19 @@ pub fn constrained_tets(
         .iter()
         .flat_map(|face| face.iter())
         .any(|node| !hull_nodes.contains(node));
+    // **And the mismatch in the other direction, which had never been asked.** A node the HULL
+    // carries and the frozen boundary does not is just as unflippable: the cell's outer surface has
+    // a vertex on it that its neighbours have never heard of, and no flip or shave removes a point
+    // from the convex hull of the points it was given. Those points come from the surface fragment,
+    // whose rim is clipped to the tet and therefore lands ON the cell's faces - the same curve the
+    // face's trace already put there, computed a second way. Naming it separately is what
+    // distinguishes "the two boundaries split one surface differently" from "they are not the same
+    // point set at all".
+    let mut frozen_nodes: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+    for face in &frozen {
+        frozen_nodes.extend(face.iter().copied());
+    }
+    let intruding = hull_nodes.iter().filter(|node| !frozen_nodes.contains(node)).count();
 
     let mut facets_ok = true;
     for facet in facets {
@@ -1947,11 +1960,15 @@ pub fn constrained_tets(
             facets_ok = false;
         }
     }
-    match (boundary_ok, facets_ok, structural) {
+    match (boundary_ok, facets_ok, structural || intruding > 0) {
         (true, true, _) => Ok(tets),
         (false, true, false) => Err(recovery_failed
             .unwrap_or("the boundary is split differently, but on the same nodes")),
-        (false, true, true) => Err("the boundary uses a node that is not on the hull"),
+        (false, true, true) => Err(if structural {
+            "the boundary uses a node that is not on the hull"
+        } else {
+            "the hull carries a node the boundary has never heard of"
+        }),
         (true, false, _) => Err("a facet is not a union of faces of the tetrahedralisation"),
         (false, false, false) => Err("neither the boundary nor the facets survive"),
         (false, false, true) => Err("a boundary node is off the hull, and the facets fail too"),
