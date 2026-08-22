@@ -2368,6 +2368,7 @@ pub fn cut_lattice(
                         &all_components,
                         classifier,
                         tol,
+                        options.eps,
                     )
                 })
             })
@@ -6625,6 +6626,10 @@ fn plc_attempt(
     all_components: &[i32],
     classifier: &PointClassifier,
     quantum: f64,
+    // `weld` is the pipeline's coincidence tolerance (`options.eps`). It is a separate argument from
+    // `quantum`, which is the *ordering* quantum a millionth of its size - the pair §6.35 found
+    // being used for each other's job, so each is now named for what it is.
+    weld: f64,
 ) -> Result<PlcCell, &'static str> {
     let corners = [
         nodes[tet[0] as usize],
@@ -6670,6 +6675,32 @@ fn plc_attempt(
         return Err("the boundary references a node outside the cell");
     };
 
+    // **The facet's rim comes from the FACES, not from a second clip.** The cell's cut is derived
+    // twice - the faces from `trace_on_face`, the interior from `fragment_facets_in_cell` - and
+    // where the two disagree the hull carries a vertex the frozen boundary has never heard of, which
+    // no flip or shave can remove. That is 537 of a6a's 744 declines and 1,425 of a3's 2,724, and
+    // the disagreement is a measured 2.5e-2 of an element, three orders past any tolerance
+    // (PLAN §6.42).
+    //
+    // A clipped surface triangle meets any one face plane in a segment, so it contributes at most
+    // two rim vertices per face - exactly the endpoints `trace_on_face` produced for the same
+    // triangle on the same face, which the boundary has already interned and both owners share
+    // (invariant J1). So the rim vertex is *matched* to that node rather than interned as a second
+    // one: the face is the authority for where the surface meets it, and the interior adopts it.
+    let planes = crate::meshgen::cdt::tet_halfspaces_of(corners).unwrap_or_default();
+    // The boundary's own nodes, grouped by the face plane each lies on. Seed ids only - a node the
+    // boundary does not have is not a legal place for the rim to land.
+    let on_plane: Vec<Vec<u32>> = planes
+        .iter()
+        .map(|(normal, offset)| {
+            (0..seed.len() as u32)
+                .filter(|id| {
+                    (normal.dot(arena.points[*id as usize]) - offset).abs() <= edge * 1.0e-6
+                })
+                .collect()
+        })
+        .collect();
+    let mut snapped_far = 0usize;
     let mut facets: Vec<Vec<u32>> = Vec::new();
     let mut facet_of: Vec<i32> = Vec::new();
     for component in all_components {
@@ -6679,7 +6710,57 @@ fn plc_attempt(
             classifier.triangles_of(slot),
             edge * 1.0e-6,
         ) {
-            let ids: Vec<u32> = facet.iter().map(|p| arena.intern(*p)).collect();
+            let ids: Vec<u32> = facet
+                .iter()
+                .map(|p| {
+                    let found = {
+                        let mut best: Option<(f64, u32)> = None;
+                        for (slot, (normal, offset)) in planes.iter().enumerate() {
+                            if (normal.dot(*p) - offset).abs() > edge * 1.0e-6 {
+                                continue;
+                            }
+                            for id in &on_plane[slot] {
+                                let d = arena.points[*id as usize].sub(*p);
+                                let d = d.dot(d).sqrt();
+                                if best.is_none_or(|(b, _)| d < b) {
+                                    best = Some((d, *id));
+                                }
+                            }
+                        }
+                        best
+                    };
+                    match found {
+                        // **Bounded by `quantum`, because that is exactly how far the face moved
+                        // its own points.** The two constructions do not disagree by rounding: the
+                        // face side SNAPS its trace points - onto the edge they lie on, and onto a
+                        // coincident node within `quantum` (§6.35) - while the facet's rim is the
+                        // raw intersection. So the face carries the moved position and the facet
+                        // the unmoved one, and the gap is bounded by the snap, which is `eps`, and
+                        // measured at 2.5e-2 of an element where `eps` is 1.4-5e-2 of one. Matching
+                        // within that bound reconciles the two; matching further would be moving
+                        // the surface rather than adopting the face's account of it.
+                        //
+                        // Equalising the two CLIP tolerances was tried first and measured inert -
+                        // 453 declines against 461 - which is what rules out the tolerance
+                        // explanation and leaves the snap as the mechanism (PLAN §6.43).
+                        Some((d, id)) if d <= weld => {
+                            if d > edge * 1.0e-9 {
+                                snapped_far += 1;
+                            }
+                            id
+                        }
+                        _ => arena.intern(*p),
+                    }
+                })
+                .collect();
+            // Matching can bring two rim vertices to one node, which collapses that edge of the
+            // facet. Consecutive repeats are dropped; a facet left with fewer than three distinct
+            // vertices constrains nothing and is skipped below.
+            let mut ids: Vec<u32> = ids;
+            ids.dedup();
+            if ids.len() > 1 && ids.first() == ids.last() {
+                ids.pop();
+            }
             // **A facet that collapses under the arena's quantum constrains nothing.** Interning
             // welds vertices closer than the quantum, so a sliver of surface arrives with three
             // points and leaves with two - below the mesh's own resolution, and not a reason to
