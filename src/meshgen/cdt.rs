@@ -1150,19 +1150,22 @@ pub fn constrained_face_triangulation(
         }
     }
 
-    // --- Delaunay, over a local super-triangle ---
-    let (mut lo, mut hi) = (points[0], points[0]);
-    for p in points {
-        lo = Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z));
-        hi = Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
-    }
-    let centre = lo.add(hi).scale(0.5);
-    let span = hi.sub(lo);
-    let reach = span.dot(span).sqrt().max(f64::MIN_POSITIVE) * 1000.0;
-    let unit = reference.scale(1.0 / reference.dot(reference).sqrt());
-    let along = face[1].sub(face[0]);
-    let along = along.scale(1.0 / along.dot(along).sqrt());
-    let across = unit.cross(along);
+    // --- Delaunay, seeded with the FACE itself ---
+    //
+    // **No super-triangle.** The usual trick wraps the points in a huge triangle and deletes
+    // whatever touches it at the end, which is right only if that triangle is far enough away to
+    // lose every in-circle test against the real points. "Far enough" is not a fixed multiple of
+    // the span: a sliver triangle's circumradius grows as its height shrinks, and on a3 a face
+    // 1e-2 across carried points 1e-7 apart, whose circumcircles have radius some 1e5 times the
+    // face. At the customary 1000x span the super-triangle sat well inside them, so a corner
+    // inserted late did not invalidate the outer triangles built before it, and the triangulation
+    // came back covering a PENTAGON instead of the face - 220 of a3's 24,021 augmented faces,
+    // 1,258 boundary leaks behind them (PLAN §6.39).
+    //
+    // None of that is needed here. Every point is already checked to lie inside the face, so the
+    // face IS the convex hull and can be the initial triangulation. Coverage then holds by
+    // construction rather than by a distance being large enough, and no test involves a point that
+    // is not the caller's.
     // **A constraint that runs through a vertex is two constraints.** The flip recovery can never
     // produce an edge that passes through a third point - no triangulation has one - so a segment
     // whose interior contains a vertex of the face must be split there before recovery starts.
@@ -1197,30 +1200,104 @@ pub fn constrained_face_triangulation(
         }
     }
     let segments = &segments[..];
-    let mut work: Vec<Vec3> = points.to_vec();
-    let base = work.len() as u32;
-    for angle in [0.0_f64, 2.094_395_102_393_195_5, 4.188_790_204_786_391] {
-        work.push(centre.add(along.scale(angle.cos() * reach)).add(across.scale(angle.sin() * reach)));
+    let work: &[Vec3] = points;
+    let base = points.len() as u32;
+    // The face's own corners, which the caller supplies among the points; without them there is no
+    // hull to seed and the invariant this function rests on does not hold.
+    let corner_at = |want: Vec3| -> Option<u32> {
+        points
+            .iter()
+            .position(|p| p.x == want.x && p.y == want.y && p.z == want.z)
+            .map(|slot| slot as u32)
+    };
+    let corners = [corner_at(face[0]), corner_at(face[1]), corner_at(face[2])];
+    let (Some(c0), Some(c1), Some(c2)) = (corners[0], corners[1], corners[2]) else {
+        return Err("the face's corners are not among its points");
+    };
+    let mut seed = [c0, c1, c2];
+    if crate::meshgen::predicates::orient2d_axis(
+        points[c0 as usize],
+        points[c1 as usize],
+        points[c2 as usize],
+        axis,
+    ) < 0.0
+    {
+        seed.swap(1, 2);
     }
-    let mut tris: Vec<[u32; 3]> = vec![[base, base + 1, base + 2]];
+    let mut tris: Vec<[u32; 3]> = vec![seed];
+    // Which of the face's three edges each point lies on, as a bit per edge - a corner lies on two.
+    // Relative to the edge's own length, which is the only scale at which "on it" means anything.
+    let rim_of: Vec<u8> = points
+        .iter()
+        .map(|p| {
+            let mut mask = 0u8;
+            for slot in 0..3 {
+                let (a, b) = (face[slot], face[(slot + 1) % 3]);
+                let along = b.sub(a);
+                let len2 = along.dot(along);
+                if len2 <= 0.0 {
+                    continue;
+                }
+                let rel = p.sub(a);
+                let t = rel.dot(along) / len2;
+                let off = rel.sub(along.scale(t));
+                if off.dot(off) <= 1.0e-18 * len2 && (-1.0e-9..=1.0 + 1.0e-9).contains(&t) {
+                    mask |= 1 << slot;
+                }
+            }
+            mask
+        })
+        .collect();
 
-    let mut order: Vec<u32> = (0..points.len() as u32).collect();
+    let mut order: Vec<u32> = (0..points.len() as u32)
+        .filter(|id| *id != c0 && *id != c1 && *id != c2)
+        .collect();
     order.sort_by_key(|id| keys[*id as usize]);
     order.dedup_by_key(|id| keys[*id as usize]);
     for id in order {
         let point = work[id as usize];
-        let cavity: Vec<usize> = (0..tris.len())
-            .filter(|at| {
-                let t = tris[*at];
-                crate::meshgen::predicates::incircle_axis(
-                    work[t[0] as usize],
-                    work[t[1] as usize],
-                    work[t[2] as usize],
-                    point,
-                    axis,
-                ) > 0
-            })
-            .collect();
+        // **Flooded from a seed, not filtered over the whole triangulation.** Bowyer-Watson's
+        // cavity must be a connected, star-shaped region around the point: its boundary is then a
+        // simple polygon and joining the point to each boundary edge retriangulates it exactly.
+        // Taking every triangle whose circumcircle contains the point breaks that the moment one of
+        // them is a sliver - a sliver's circumcircle is enormous, so a triangle on the far side of
+        // the face joins the cavity, the cavity is no longer connected, and the "boundary" read off
+        // it is two loops rather than one. The retriangulation then leaves a HOLE: on a3 the
+        // triangles came back covering a pentagon instead of the face, 220 of 24,021 faces, and
+        // every one of them handed both its owners an open boundary that the fan then coned into a
+        // leak - 1,258 of them (PLAN §6.39).
+        //
+        // `delaunay_tets` has always flooded; this is the 2D half catching up with it.
+        let inside = |at: usize| -> bool {
+            let t = tris[at];
+            crate::meshgen::predicates::incircle_axis(
+                work[t[0] as usize],
+                work[t[1] as usize],
+                work[t[2] as usize],
+                point,
+                axis,
+            ) > 0
+        };
+        let Some(seed) = (0..tris.len()).find(|at| inside(*at)) else {
+            continue;
+        };
+        let mut cavity: Vec<usize> = Vec::new();
+        let mut frontier = vec![seed];
+        while let Some(at) = frontier.pop() {
+            if cavity.contains(&at) {
+                continue;
+            }
+            cavity.push(at);
+            for other in 0..tris.len() {
+                if cavity.contains(&other) || !share_an_edge(tris[at], tris[other]) {
+                    continue;
+                }
+                if inside(other) {
+                    frontier.push(other);
+                }
+            }
+        }
+        cavity.sort_unstable();
         if cavity.is_empty() {
             continue;
         }
@@ -1244,12 +1321,29 @@ pub fn constrained_face_triangulation(
                 if edge[0] == id || edge[1] == id {
                     continue;
                 }
+                // **A triangle whose three points all lie on one edge of the face is skipped.**
+                // Inserting a point that lies on a boundary edge puts that edge on the cavity's
+                // rim; joining it to the point gives a triangle of no area, and dropping it is what
+                // refines the rim from `(a,b)` into `(a,p)` and `(p,b)` - the two neighbouring new
+                // triangles already carry those.
+                //
+                // **The test is membership of the edge, not a predicate on the triangle.** Asking
+                // `orient2d` whether the three are collinear asks about a quantity of order 1e-19,
+                // and a trace point that cut.rs has already placed ON an edge is only within
+                // rounding of it: measured at 1.4e-17 off, which an exact predicate calls inside.
+                // Each face would then decide for itself whether the point splits the rim - and the
+                // two faces sharing that edge project along different axes and hold different other
+                // points, so they decide differently and the boundary cracks. Membership is a
+                // function of the EDGE, so they cannot (invariant J1).
+                if (rim_of[edge[0] as usize] & rim_of[edge[1] as usize] & rim_of[id as usize]) != 0
+                {
+                    continue;
+                }
                 next.push([edge[0], edge[1], id]);
             }
         }
         tris = next;
     }
-    tris.retain(|t| t.iter().all(|id| *id < base));
     if tris.is_empty() {
         return Err("the face triangulated to nothing");
     }
@@ -1322,6 +1416,11 @@ pub fn constrained_face_triangulation(
 }
 
 // AI-FUNC-SUMMARY: A triangle's three edges in order; returns them; side effects: none.
+// AI-FUNC-SUMMARY: Whether two triangles share an edge; returns bool; side effects: none.
+fn share_an_edge(a: [u32; 3], b: [u32; 3]) -> bool {
+    a.iter().filter(|id| b.contains(id)).count() >= 2
+}
+
 fn tri_edges(t: [u32; 3]) -> [[u32; 2]; 3] {
     [[t[0], t[1]], [t[1], t[2]], [t[2], t[0]]]
 }
@@ -2814,6 +2913,80 @@ mod tests {
             }),
             "the degenerate triangle lies along the face edge, so both faces sharing it emit it"
         );
+    }
+
+    // **A triangulation must cover its face.** Taken verbatim from a3, where 220 of 24,021
+    // augmented faces came back covering less than the face they were given - here a pentagon
+    // instead of the triangle, missing a sliver strip worth 1.7e-5 of the area along one edge.
+    // Points 3, 4 and 5 all lie strictly inside the face (barycentric 1.7e-5, 5.6e-6 and 8.7e-16
+    // against the edge they crowd), so the convex hull of the input IS the face and there is no
+    // question of what the answer should be.
+    //
+    // The consequence is not a small area error. A face that covers less than itself hands both of
+    // its owners a boundary whose edges do not pair, the fan cones the hole, and a3 read 1,258
+    // boundary leaks - every one of them charged to the fanned arm (PLAN §6.39).
+    #[test]
+    fn a_face_crowded_along_one_edge_is_still_covered() {
+        let points = vec![
+            Vec3::new(0.279654036638725, 0.18042195912175807, 0.18042195912175807),
+            Vec3::new(0.2886751345948129, 0.18944305707784598, 0.18042195912175807),
+            Vec3::new(0.2886762250124125, 0.18944305707784598, 0.18944305707784598),
+            Vec3::new(0.2886756228037549, 0.18944290329192393, 0.1857332257025385),
+            Vec3::new(0.288675909965015, 0.18944300690253296, 0.1872517525529728),
+            Vec3::new(0.2886757765896766, 0.18944305707784598, 0.1857332256994687),
+        ];
+        let face = [points[0], points[1], points[2]];
+        let segments = [[3u32, 5], [3, 4], [4, 2]];
+        let tris = constrained_face_triangulation(face, &points, &keys_of(&points), &segments)
+            .expect("the face triangulates");
+        let area = |a: Vec3, b: Vec3, c: Vec3| {
+            let n = b.sub(a).cross(c.sub(a));
+            n.dot(n).sqrt() / 2.0
+        };
+        let whole = area(face[0], face[1], face[2]);
+        let covered: f64 = tris
+            .iter()
+            .map(|t| {
+                area(
+                    points[t[0] as usize],
+                    points[t[1] as usize],
+                    points[t[2] as usize],
+                )
+            })
+            .sum();
+        assert!(
+            (covered - whole).abs() <= whole * 1.0e-12,
+            "the triangles must cover the face: {covered:e} of {whole:e}, short by {:.3e} of it",
+            (whole - covered) / whole
+        );
+        // And covering it is not enough - it has to be a triangulation. Every edge is shared by two
+        // triangles unless it is on the face's rim, where it is shared by one. A face that fails
+        // this hands both its owners a boundary whose edges do not pair.
+        let mut edges: BTreeMap<[u32; 2], usize> = BTreeMap::new();
+        for t in &tris {
+            for slot in 0..3 {
+                let (x, y) = (t[slot], t[(slot + 1) % 3]);
+                *edges.entry(if x <= y { [x, y] } else { [y, x] }).or_insert(0) += 1;
+            }
+        }
+        for (edge, count) in &edges {
+            let on_rim = (0..3).any(|slot| {
+                let (p, q) = (face[slot], face[(slot + 1) % 3]);
+                let along = q.sub(p);
+                let len2 = along.dot(along);
+                edge.iter().all(|node| {
+                    let rel = points[*node as usize].sub(p);
+                    let t = rel.dot(along) / len2;
+                    let off = rel.sub(along.scale(t));
+                    off.dot(off) <= 1.0e-18 * len2 && (-1.0e-9..=1.0 + 1.0e-9).contains(&t)
+                })
+            });
+            assert_eq!(
+                *count,
+                usize::from(!on_rim) + 1,
+                "edge {edge:?} (on_rim={on_rim}) is carried {count} time(s) in {tris:?}"
+            );
+        }
     }
 
     // The simplest cell there is: a tet with nothing crossing it. One element, and its four faces

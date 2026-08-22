@@ -1707,32 +1707,45 @@ pub fn cut_lattice(
                     // the pipeline's own, applied where the pass had been ignoring it.
                     let mut snapped = None::<u32>;
                     {
-                        let candidates: &[u32] = match &on_edge {
-                            Some(edge) => edge_nodes.get(edge).map(|v| &v[..]).unwrap_or(&[]),
-                            None => &[],
-                        };
-                        let mut best = quantum;
-                        for other in candidates
-                            .iter()
-                            .chain(match &on_edge {
-                                Some(edge) => {
-                                    edge_points.get(edge).map(|v| &v[..]).unwrap_or(&[])
+                        // The candidates. For a point ON an edge they are that edge's nodes and
+                        // nothing else, so the decision is a function of the edge and the two faces
+                        // sharing it cannot differ (invariant J1). For a point in the face's
+                        // INTERIOR the face's whole node set is fair game - including the points on
+                        // its three edges, which is the case that was missing: a trace endpoint
+                        // that stops 2e-7 short of an edge is not "on" it by any relative test, yet
+                        // it is the same intersection as the edge point already there. Leaving the
+                        // pair distinct forced the face triangulation to cover the strip between
+                        // them with slivers, and the segment recovery to route an edge past a
+                        // vertex it cannot route past - 689 faces refused on a6a (PLAN §6.40).
+                        // The interior point belongs to this face alone, so widening its candidates
+                        // costs J1 nothing.
+                        let mut candidates: SmallVec<[u32; 16]> = SmallVec::new();
+                        match &on_edge {
+                            Some(edge) => {
+                                candidates.extend(
+                                    edge_nodes.get(edge).into_iter().flatten().copied(),
+                                );
+                                candidates.extend(
+                                    edge_points.get(edge).into_iter().flatten().copied(),
+                                );
+                            }
+                            None => {
+                                candidates.extend(face.iter().copied());
+                                candidates
+                                    .extend(face_nodes.get(face).into_iter().flatten().copied());
+                                candidates
+                                    .extend(face_interior.get(face).into_iter().flatten().copied());
+                                for slot in 0..3 {
+                                    let (x, y) = (face[slot], face[(slot + 1) % 3]);
+                                    let key = if x <= y { [x, y] } else { [y, x] };
+                                    candidates.extend(
+                                        edge_points.get(&key).into_iter().flatten().copied(),
+                                    );
                                 }
-                                None => &[],
-                            })
-                            .chain(match on_edge {
-                                Some(_) => &[][..],
-                                None => face_nodes.get(face).map(|v| &v[..]).unwrap_or(&[]),
-                            })
-                            .chain(match on_edge {
-                                Some(_) => &[][..],
-                                None => &face[..],
-                            })
-                            .chain(match on_edge {
-                                Some(_) => &[][..],
-                                None => face_interior.get(face).map(|v| &v[..]).unwrap_or(&[]),
-                            })
-                        {
+                            }
+                        }
+                        let mut best = quantum;
+                        for other in &candidates {
                             let d = mesh.nodes[*other as usize].sub(placed);
                             let d = d.dot(d).sqrt();
                             // `<` and not `<=`, plus the id tie-break, so the nearest node wins and
@@ -1952,6 +1965,43 @@ pub fn cut_lattice(
                     continue;
                 }
             };
+            if std::env::var_os("RUSTMSPT_PLC_DUMP").is_some() {
+                let mut edges: BTreeMap<[u32; 2], usize> = BTreeMap::new();
+                for triangle in &tris {
+                    for slot in 0..3 {
+                        let (x, y) = (triangle[slot], triangle[(slot + 1) % 3]);
+                        *edges.entry(if x <= y { [x, y] } else { [y, x] }).or_insert(0) += 1;
+                    }
+                }
+                let bad = edges.iter().any(|(edge, count)| {
+                    let on_rim = (0..3).any(|slot| {
+                        let (p, q) = (geometry[slot], geometry[(slot + 1) % 3]);
+                        let along = q.sub(p);
+                        let len2 = along.dot(along);
+                        len2 > 0.0
+                            && edge.iter().all(|node| {
+                                let rel = points[*node as usize].sub(p);
+                                let t = rel.dot(along) / len2;
+                                let off = rel.sub(along.scale(t));
+                                off.dot(off) <= 1.0e-18 * len2
+                                    && (-1.0e-9..=1.0 + 1.0e-9).contains(&t)
+                            })
+                    });
+                    *count != usize::from(!on_rim) + 1
+                });
+                if bad {
+                    static SHOWN: std::sync::atomic::AtomicUsize =
+                        std::sync::atomic::AtomicUsize::new(0);
+                    if SHOWN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 2 {
+                        println!("[PLC-DUMP] face {:?}", geometry.map(|p| (p.x, p.y, p.z)));
+                        for (slot, p) in points.iter().enumerate() {
+                            println!("[PLC-DUMP]   point {slot} = {:?}", (p.x, p.y, p.z));
+                        }
+                        println!("[PLC-DUMP]   segments {local:?}");
+                        println!("[PLC-DUMP]   tris {tris:?}");
+                    }
+                }
+            }
             let mine: Vec<[u32; 3]> = tris
                 .iter()
                 .map(|t| [ids[t[0] as usize], ids[t[1] as usize], ids[t[2] as usize]])
@@ -2036,6 +2086,60 @@ pub fn cut_lattice(
                  {worst_off:.3e} of its shortest edge, by decade from 1e-16: {off_decades:?} - a \
                  point off the plane is not on the convex hull, so the prescribed boundary cannot \
                  be matched however the interior is flipped"
+            );
+        }
+
+        // **Is each face's triangulation a triangulation?** Every edge strictly inside the face
+        // must be shared by exactly two of its triangles and every edge on its rim by exactly one.
+        // A face that fails this hands both its owners an open boundary, and the fan then cones the
+        // hole - which is 1,258 leaks on a3 (PLAN §6.39). Checked on `face_tris` alone, so a
+        // failure here names `constrained_face_triangulation` and clears §5.2's table, or the
+        // reverse.
+        {
+            let (mut broken, mut worst_edges) = (0usize, 0usize);
+            for (face, tris) in &face_tris {
+                let mut edges: BTreeMap<[u32; 2], usize> = BTreeMap::new();
+                for triangle in tris {
+                    for slot in 0..3 {
+                        let (x, y) = (triangle[slot], triangle[(slot + 1) % 3]);
+                        *edges.entry(if x <= y { [x, y] } else { [y, x] }).or_insert(0) += 1;
+                    }
+                }
+                let corners = [
+                    mesh.nodes[face[0] as usize],
+                    mesh.nodes[face[1] as usize],
+                    mesh.nodes[face[2] as usize],
+                ];
+                let mut bad = 0usize;
+                for (edge, count) in &edges {
+                    // On the face's rim if both ends lie on one of its three sides.
+                    let on_rim = (0..3).any(|slot| {
+                        let (p, q) = (corners[slot], corners[(slot + 1) % 3]);
+                        let along = q.sub(p);
+                        let len2 = along.dot(along);
+                        len2 > 0.0
+                            && edge.iter().all(|node| {
+                                let rel = mesh.nodes[*node as usize].sub(p);
+                                let t = rel.dot(along) / len2;
+                                let off = rel.sub(along.scale(t));
+                                off.dot(off) <= 1.0e-18 * len2
+                                    && (-1.0e-9..=1.0 + 1.0e-9).contains(&t)
+                            })
+                    });
+                    if *count != usize::from(!on_rim) + 1 {
+                        bad += 1;
+                    }
+                }
+                if bad > 0 {
+                    broken += 1;
+                    worst_edges = worst_edges.max(bad);
+                }
+            }
+            println!(
+                "[PLC-PASS] {broken} of {} augmented face(s) are not a triangulation of their face \
+                 - an edge inside one carried by other than two triangles, or a rim edge by other \
+                 than one; worst {worst_edges} such edge(s) on one face",
+                face_tris.len()
             );
         }
 
@@ -2323,11 +2427,14 @@ pub fn cut_lattice(
             table[0][0], table[0][1], table[1][0], table[1][1]
         );
 
+        let (mut open_on_tet_edge, mut open_in_face) = (0usize, 0usize);
         let mut open_taken = 0usize;
         let mut open_fanned = 0usize;
         let mut dup_taken = 0usize;
         let mut dup_fanned = 0usize;
-        for (boundary, outcome) in boundaries.iter().zip(attempt.iter()) {
+        for (index, (boundary, outcome)) in
+            boundaries.iter().zip(attempt.iter()).enumerate()
+        {
             let (Some(boundary), Some(outcome)) = (boundary, outcome) else { continue };
             let mut seen: BTreeSet<[u32; 3]> = BTreeSet::new();
             let mut duplicated = false;
@@ -2344,6 +2451,45 @@ pub fn cut_lattice(
                 }
             }
             let open = edges.values().any(|n| *n != 2);
+            if open {
+                // **Where it opens.** An unpaired edge lying on one of the tet's own six edges
+                // means the two faces meeting there disagree about splitting it - a quarrel between
+                // `face_tris` and §5.2's `face_split`. An unpaired edge in a face's interior means
+                // that one face's triangulation is not a triangulation at all. The two have nothing
+                // to do with each other and only the count can say which is the population.
+                let tet = lattice.tets[index];
+                let corners = [
+                    mesh.nodes[tet[0] as usize],
+                    mesh.nodes[tet[1] as usize],
+                    mesh.nodes[tet[2] as usize],
+                    mesh.nodes[tet[3] as usize],
+                ];
+                for (edge, count) in &edges {
+                    if *count == 2 {
+                        continue;
+                    }
+                    let on_tet_edge = (0..4).any(|a| {
+                        ((a + 1)..4).any(|b| {
+                            let (p, q) = (corners[a], corners[b]);
+                            let along = q.sub(p);
+                            let len2 = along.dot(along);
+                            len2 > 0.0
+                                && edge.iter().all(|node| {
+                                    let rel = mesh.nodes[*node as usize].sub(p);
+                                    let t = rel.dot(along) / len2;
+                                    let off = rel.sub(along.scale(t));
+                                    off.dot(off) <= 1.0e-18 * len2
+                                        && (-1.0e-9..=1.0 + 1.0e-9).contains(&t)
+                                })
+                        })
+                    });
+                    if on_tet_edge {
+                        open_on_tet_edge += 1;
+                    } else {
+                        open_in_face += 1;
+                    }
+                }
+            }
             match outcome.is_ok() {
                 true => {
                     open_taken += usize::from(open);
@@ -2360,7 +2506,9 @@ pub fn cut_lattice(
                 "[PLC-PASS] the boundaries themselves: {open_fanned} fanned cell(s) and \
                  {open_taken} meshed one(s) were handed a boundary that is not closed, \
                  {dup_fanned} fanned and {dup_taken} meshed one(s) a boundary listing some \
-                 triangle twice"
+                 triangle twice; of the unpaired edges {open_on_tet_edge} lie on one of the tet's \
+                 own edges (two faces disagreeing about a split) and {open_in_face} inside a face \
+                 (a face triangulation that is not one)"
             );
         }
         plc_boundary = boundaries.clone();
