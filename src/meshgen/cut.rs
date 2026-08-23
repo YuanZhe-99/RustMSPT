@@ -4524,132 +4524,432 @@ pub fn cut_lattice(
                 worst_flat = worst_flat.min(shape);
             }
         }
+        // **Detect and repair, to a fixed point.** One pass is not enough: a node hangs on several
+        // faces, and repairing one changes the ring the next is judged against - so the pass is run
+        // again until it stops finding anything. Exclusion only ever removes hanging nodes here, so
+        // the loop is decreasing and the budget bounds it rather than guessing at it.
+        for _round in 0..8 {
+            let mut absorbed = 0usize;
         // **Find the T-junctions the way `[V3]` reports them**, with `[V3]`'s own test: a node
-        // within `1e-9 x diagonal` of a face it is not a vertex of. Every attempt to prevent these
-        // before the mesh exists has either moved geometry or excluded cells (PLAN §6.56), so they
-        // are found here instead - and the detector reproduces the verifier's count before any
-        // repair is built, because a repair aimed at a proxy fixes the proxy.
-        //
-        // The first version of this asked for `orient3d == 0` exactly and found NOTHING, which was
-        // the useful failure: these nodes are not exactly on the face, they are a few times 1e-12
-        // off it. The bound is the verifier's, not a new one.
-        {
-            let mut lo = Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
-            let mut hi = Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
-            for p in &mesh.nodes {
-                lo = Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z));
-                hi = Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
-            }
-            let diagonal = hi.sub(lo);
-            let tol = 1.0e-9 * diagonal.dot(diagonal).sqrt();
-            let step = (diagonal.dot(diagonal).sqrt() / (mesh.nodes.len() as f64).cbrt().max(1.0))
-                .max(f64::MIN_POSITIVE);
-            let at = |p: Vec3| {
-                (
-                    (p.x / step).floor() as i64,
-                    (p.y / step).floor() as i64,
-                    (p.z / step).floor() as i64,
-                )
-            };
-            let mut grid: BTreeMap<(i64, i64, i64), Vec<u32>> = BTreeMap::new();
-            for (id, p) in mesh.nodes.iter().enumerate() {
-                grid.entry(at(*p)).or_default().push(id as u32);
-            }
-            let mut faces: BTreeSet<[u32; 3]> = BTreeSet::new();
-            for tet in &mesh.tets {
-                for face in [
-                    [tet[1], tet[2], tet[3]],
-                    [tet[0], tet[2], tet[3]],
-                    [tet[0], tet[1], tet[3]],
-                    [tet[0], tet[1], tet[2]],
-                ] {
-                    let mut key = face;
-                    key.sort_unstable();
-                    faces.insert(key);
+            // within `1e-9 x diagonal` of a face it is not a vertex of. Every attempt to prevent these
+            // before the mesh exists has either moved geometry or excluded cells (PLAN §6.56), so they
+            // are found here instead - and the detector reproduces the verifier's count before any
+            // repair is built, because a repair aimed at a proxy fixes the proxy.
+            //
+            // The first version of this asked for `orient3d == 0` exactly and found NOTHING, which was
+            // the useful failure: these nodes are not exactly on the face, they are a few times 1e-12
+            // off it. The bound is the verifier's, not a new one.
+            {
+                let mut lo = Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
+                let mut hi = Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+                for p in &mesh.nodes {
+                    lo = Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z));
+                    hi = Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
                 }
-            }
-            let mut hanging: BTreeSet<u32> = BTreeSet::new();
-            let mut incidences = 0usize;
-            let mut on_rim = 0usize;
-            for face in &faces {
-                let p = [
-                    mesh.nodes[face[0] as usize],
-                    mesh.nodes[face[1] as usize],
-                    mesh.nodes[face[2] as usize],
-                ];
-                let bl = Vec3::new(
-                    p.iter().map(|q| q.x).fold(f64::INFINITY, f64::min) - tol,
-                    p.iter().map(|q| q.y).fold(f64::INFINITY, f64::min) - tol,
-                    p.iter().map(|q| q.z).fold(f64::INFINITY, f64::min) - tol,
-                );
-                let br = Vec3::new(
-                    p.iter().map(|q| q.x).fold(f64::NEG_INFINITY, f64::max) + tol,
-                    p.iter().map(|q| q.y).fold(f64::NEG_INFINITY, f64::max) + tol,
-                    p.iter().map(|q| q.z).fold(f64::NEG_INFINITY, f64::max) + tol,
-                );
-                let (l, h) = (at(bl), at(br));
-                for gx in l.0..=h.0 {
-                    for gy in l.1..=h.1 {
-                        for gz in l.2..=h.2 {
-                            for id in grid.get(&(gx, gy, gz)).into_iter().flatten() {
-                                if face.contains(id) {
-                                    continue;
-                                }
-                                let q = mesh.nodes[*id as usize];
-                                if crate::meshgen::verify::point_triangle_dist2(q, p[0], p[1], p[2])
-                                    > tol * tol
-                                {
-                                    continue;
-                                }
-                                hanging.insert(*id);
-                                incidences += 1;
-                                // On the face's RIM the repair is an edge split - every tet around
-                                // that edge takes the node - and strictly inside it is a face split,
-                                // which touches only the two tets sharing it. Counted apart because
-                                // they are different operations.
-                                let rim = (0..3).any(|slot| {
-                                    let (u, v) = (p[slot], p[(slot + 1) % 3]);
-                                    let along = v.sub(u);
-                                    let len2 = along.dot(along);
-                                    if len2 <= 0.0 {
-                                        return false;
+                let diagonal = hi.sub(lo);
+                let tol = 1.0e-9 * diagonal.dot(diagonal).sqrt();
+                let step = (diagonal.dot(diagonal).sqrt() / (mesh.nodes.len() as f64).cbrt().max(1.0))
+                    .max(f64::MIN_POSITIVE);
+                let at = |p: Vec3| {
+                    (
+                        (p.x / step).floor() as i64,
+                        (p.y / step).floor() as i64,
+                        (p.z / step).floor() as i64,
+                    )
+                };
+                let mut grid: BTreeMap<(i64, i64, i64), Vec<u32>> = BTreeMap::new();
+                for (id, p) in mesh.nodes.iter().enumerate() {
+                    grid.entry(at(*p)).or_default().push(id as u32);
+                }
+                let mut faces: BTreeSet<[u32; 3]> = BTreeSet::new();
+                for tet in &mesh.tets {
+                    for face in [
+                        [tet[1], tet[2], tet[3]],
+                        [tet[0], tet[2], tet[3]],
+                        [tet[0], tet[1], tet[3]],
+                        [tet[0], tet[1], tet[2]],
+                    ] {
+                        let mut key = face;
+                        key.sort_unstable();
+                        faces.insert(key);
+                    }
+                }
+                let mut hanging: BTreeSet<u32> = BTreeSet::new();
+                let mut incidences = 0usize;
+                let mut on_rim = 0usize;
+                for face in &faces {
+                    let p = [
+                        mesh.nodes[face[0] as usize],
+                        mesh.nodes[face[1] as usize],
+                        mesh.nodes[face[2] as usize],
+                    ];
+                    let bl = Vec3::new(
+                        p.iter().map(|q| q.x).fold(f64::INFINITY, f64::min) - tol,
+                        p.iter().map(|q| q.y).fold(f64::INFINITY, f64::min) - tol,
+                        p.iter().map(|q| q.z).fold(f64::INFINITY, f64::min) - tol,
+                    );
+                    let br = Vec3::new(
+                        p.iter().map(|q| q.x).fold(f64::NEG_INFINITY, f64::max) + tol,
+                        p.iter().map(|q| q.y).fold(f64::NEG_INFINITY, f64::max) + tol,
+                        p.iter().map(|q| q.z).fold(f64::NEG_INFINITY, f64::max) + tol,
+                    );
+                    let (l, h) = (at(bl), at(br));
+                    for gx in l.0..=h.0 {
+                        for gy in l.1..=h.1 {
+                            for gz in l.2..=h.2 {
+                                for id in grid.get(&(gx, gy, gz)).into_iter().flatten() {
+                                    if face.contains(id) {
+                                        continue;
                                     }
-                                    let t = (q.sub(u).dot(along) / len2).clamp(0.0, 1.0);
-                                    let off = q.sub(u).sub(along.scale(t));
-                                    off.dot(off) <= tol * tol
-                                });
-                                if rim {
-                                    on_rim += 1;
+                                    let q = mesh.nodes[*id as usize];
+                                    if crate::meshgen::verify::point_triangle_dist2(q, p[0], p[1], p[2])
+                                        > tol * tol
+                                    {
+                                        continue;
+                                    }
+                                    hanging.insert(*id);
+                                    incidences += 1;
+                                    // On the face's RIM the repair is an edge split - every tet around
+                                    // that edge takes the node - and strictly inside it is a face split,
+                                    // which touches only the two tets sharing it. Counted apart because
+                                    // they are different operations.
+                                    let rim = (0..3).any(|slot| {
+                                        let (u, v) = (p[slot], p[(slot + 1) % 3]);
+                                        let along = v.sub(u);
+                                        let len2 = along.dot(along);
+                                        if len2 <= 0.0 {
+                                            return false;
+                                        }
+                                        let t = (q.sub(u).dot(along) / len2).clamp(0.0, 1.0);
+                                        let off = q.sub(u).sub(along.scale(t));
+                                        off.dot(off) <= tol * tol
+                                    });
+                                    if rim {
+                                        on_rim += 1;
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
-            if !hanging.is_empty() {
-                mesh.warnings.push(format!(
-                    "[PLC] T-junction detector: {} node(s) hang, over {incidences} (node, face) \
-                     incidence(s), of which {on_rim} put the node on the face's RIM - an edge split \
-                     - and the rest strictly inside it, a face split",
-                    hanging.len()
-                ));
+                if !hanging.is_empty() {
+                    mesh.warnings.push(format!(
+                        "[PLC] T-junction detector: {} node(s) hang, over {incidences} (node, face) \
+                         incidence(s), of which {on_rim} put the node on the face's RIM - an edge split \
+                         - and the rest strictly inside it, a face split",
+                        hanging.len()
+                    ));
+                }
+
+                // **The repair: replace the flat sliver AND its neighbour together.**
+                //
+                // The configuration is exact, and measuring is what found it. A hanging node `q` sits on
+                // a face `F = (a, b, c)`; `F` is carried by two tets, and one of them is `U = F + {q}` -
+                // a tet whose fourth vertex lies on its own base plane to about 1e-12, so a sliver of
+                // essentially no volume. The other, `T = F + {d}`, is the one that does not have `q`,
+                // and that is why `q` hangs on it.
+                //
+                // Splitting `T` alone fails, and the failure is instructive: it creates `(a, b, q)`,
+                // `(b, c, q)`, `(c, a, q)` - which are already `U`'s faces - so those faces acquire a
+                // third owner (a8: 0 multi-shared faces -> 22). Replacing **both** tets by the same three
+                // pieces is exactly conforming instead:
+                //
+                //   before   T: abc abd acd bcd      U: abc abq acq bcq
+                //   after    (a,b,q,d) (b,c,q,d) (c,a,q,d)
+                //            -> abd acd bcd kept, abq acq bcq kept, abc gone with BOTH its owners,
+                //               and (a,q,d) (b,q,d) (c,q,d) new and internal
+                //
+                // and the volumes sum, because `U` had none. **Nothing moves**, which removes the other
+                // hazard entirely - a node is a vertex of every tet around it, and displacing it is a
+                // global edit with a local motive.
+                //
+                // `U` is overwritten in place rather than deleted, so every tet index already recorded
+                // elsewhere stays valid, and it inherits `T`'s record: it had no volume to own.
+                let mut present: BTreeSet<[u32; 4]> = mesh
+                    .tets
+                    .iter()
+                    .map(|tet| {
+                        let mut key = *tet;
+                        key.sort_unstable();
+                        key
+                    })
+                    .collect();
+                let mut repaired = 0usize;
+                let mut refused_shape = 0usize;
+                let mut refused_rim = 0usize;
+                let mut refused_tagged = 0usize;
+            let (mut why_clash, mut why_degenerate) = (0usize, 0usize);
+            let (mut why_no_carrier, mut why_all_slivers) = (0usize, 0usize);
+                let tagged: BTreeSet<[u32; 3]> = pending_interfaces
+                    .iter()
+                    .map(|(_, triangle, _)| {
+                        let mut key = *triangle;
+                        key.sort_unstable();
+                        key
+                    })
+                    .collect();
+                for face in &faces {
+                    let p = [
+                        mesh.nodes[face[0] as usize],
+                        mesh.nodes[face[1] as usize],
+                        mesh.nodes[face[2] as usize],
+                    ];
+                    for id in hanging.clone() {
+                        if face.contains(&id) {
+                            continue;
+                        }
+                        let q = mesh.nodes[id as usize];
+                        if crate::meshgen::verify::point_triangle_dist2(q, p[0], p[1], p[2]) > tol * tol
+                        {
+                            continue;
+                        }
+                        // On the face's RIM the node is on an EDGE, shared by every tet around it, and
+                        // one of the three pieces would have three collinear vertices. That is a
+                        // different operation and it is not this one.
+                        let mut rim = None;
+                        for slot in 0..3 {
+                            let (u, v) = (p[slot], p[(slot + 1) % 3]);
+                            let along = v.sub(u);
+                            let len2 = along.dot(along);
+                            if len2 <= 0.0 {
+                                continue;
+                            }
+                            let t = (q.sub(u).dot(along) / len2).clamp(0.0, 1.0);
+                            let off = q.sub(u).sub(along.scale(t));
+                            if off.dot(off) <= tol * tol {
+                                let (x, y) = (face[slot], face[(slot + 1) % 3]);
+                                rim = Some(if x <= y { [x, y] } else { [y, x] });
+                                break;
+                            }
+                        }
+                        // **On the rim the node is on an EDGE, and an edge belongs to every tet around
+                        // it.** Splitting one face's two owners would leave the rest of the ring holding
+                        // the edge whole. So the whole ring is taken at once: a tet that does not have
+                        // the node splits in two, and a tet that DOES is a zero-volume wedge - its three
+                        // vertices `a`, `b`, `q` are collinear - which cannot be split and is removed.
+                        // Removing it is exactly right rather than merely tolerable: its faces
+                        // `(a, q, z)` and `(q, b, z)` tile `(a, b, z)`, which is the face the split of
+                        // its neighbour produces on the other side, so the two halves meet.
+                        if let Some(edge) = rim {
+                            if tagged.contains(face) {
+                                refused_tagged += 1;
+                                continue;
+                            }
+                            let ring: Vec<usize> = (0..mesh.tets.len())
+                                .filter(|at| {
+                                    mesh.tets[*at].contains(&edge[0]) && mesh.tets[*at].contains(&edge[1])
+                                })
+                                .collect();
+                            let wedges: Vec<usize> = ring
+                                .iter()
+                                .copied()
+                                .filter(|at| mesh.tets[*at].contains(&id))
+                                .collect();
+                            let solids: Vec<usize> = ring
+                                .iter()
+                                .copied()
+                                .filter(|at| !mesh.tets[*at].contains(&id))
+                                .collect();
+                            if wedges.is_empty() || solids.is_empty() {
+                                refused_rim += 1;
+                                continue;
+                            }
+                            let mut plan: Vec<(usize, [u32; 4])> = Vec::new();
+                            let mut ok = true;
+                            for at in &solids {
+                                let tet = mesh.tets[*at];
+                                let rest: Vec<u32> = tet
+                                    .iter()
+                                    .copied()
+                                    .filter(|x| *x != edge[0] && *x != edge[1])
+                                    .collect();
+                                if rest.len() != 2 {
+                                    ok = false;
+                                    break;
+                                }
+                                for piece in [
+                                    [edge[0], id, rest[0], rest[1]],
+                                    [id, edge[1], rest[0], rest[1]],
+                                ] {
+                                    match orient_positively(piece, &mesh.nodes) {
+                                        Some(good) => {
+                                            let mut key = good;
+                                            key.sort_unstable();
+                                            if present.contains(&key) {
+                                                ok = false;
+                                            }
+                                            plan.push((*at, good));
+                                        }
+                                        None => ok = false,
+                                    }
+                                }
+                                if !ok {
+                                    break;
+                                }
+                            }
+                            // Every wedge slot is reused and every solid is replaced, so the ring's
+                            // element count goes from `solids + wedges` to `2 x solids`; anything left
+                            // over is appended, which keeps all recorded tet indices valid.
+                            if !ok || plan.len() < ring.len() {
+                                refused_rim += 1;
+                                continue;
+                            }
+                            for at in &ring {
+                                let mut key = mesh.tets[*at];
+                                key.sort_unstable();
+                                present.remove(&key);
+                            }
+                            let mut slots: Vec<usize> = wedges.clone();
+                            slots.extend(solids.iter().copied());
+                            for (slot, (source, piece)) in plan.iter().enumerate() {
+                                let mut key = *piece;
+                                key.sort_unstable();
+                                present.insert(key);
+                                match slots.get(slot) {
+                                    Some(at) => {
+                                        mesh.tets[*at] = *piece;
+                                        mesh.records[*at] = mesh.records[*source].clone();
+                                        mesh.parent_of[*at] = mesh.parent_of[*source];
+                                        mesh.regime[*at] = mesh.regime[*source];
+                                        mesh.band_region[*at] = mesh.band_region[*source];
+                                    }
+                                    None => {
+                                        mesh.tets.push(*piece);
+                                        let record = mesh.records[*source].clone();
+                                        mesh.records.push(record);
+                                        let parent = mesh.parent_of[*source];
+                                        mesh.parent_of.push(parent);
+                                        let regime = mesh.regime[*source];
+                                        mesh.regime.push(regime);
+                                        let band = mesh.band_region[*source];
+                                        mesh.band_region.push(band);
+                                    }
+                                }
+                            }
+                            repaired += 1;
+                    absorbed += 1;
+                            continue;
+                        }
+                        if tagged.contains(face) {
+                            refused_tagged += 1;
+                            continue;
+                        }
+                        let carriers: Vec<usize> = (0..mesh.tets.len())
+                            .filter(|at| face.iter().all(|n| mesh.tets[*at].contains(n)))
+                            .collect();
+                        // **Every carrier that lacks the node splits into three; a carrier that
+                        // HAS it is the flat sliver and is absorbed.** One rule rather than three
+                        // cases, because the mesh presents all three: a face with one sliver and one
+                        // solid, a face whose BOTH owners lack the node - `q` is then a vertex of
+                        // some tet further out and both sides simply split - and a hull face with a
+                        // single owner. The pieces go back into the carriers' own slots and the
+                        // remainder is appended, so a sliver disappears without any tet index moving.
+                        let mut plan: Vec<(usize, [u32; 4])> = Vec::new();
+                        let mut ok = !carriers.is_empty();
+                        for at in &carriers {
+                            let tet = mesh.tets[*at];
+                            if tet.contains(&id) {
+                                continue;
+                            }
+                            let Some(apex) = tet.iter().copied().find(|x| !face.contains(x)) else {
+                                ok = false;
+                                break;
+                            };
+                            for piece in [
+                                [face[0], face[1], id, apex],
+                                [face[1], face[2], id, apex],
+                                [face[2], face[0], id, apex],
+                            ] {
+                                match orient_positively(piece, &mesh.nodes) {
+                                    Some(good) => {
+                                        // **A piece the mesh already has is a refusal, not a piece to
+                                        // skip.** Skipping it and writing only the rest was tried:
+                                        // it leaves a hole, because the tet already there does not
+                                        // cover the same region - a3 went from 0 boundary leaks to 6
+                                        // and 0 non-manifold edges to 15. Whatever that
+                                        // configuration is, this operation is not for it.
+                                        let mut key = good;
+                                        key.sort_unstable();
+                                        if present.contains(&key) {
+                                            ok = false;
+                                            why_clash += 1;
+                                        }
+                                        plan.push((*at, good));
+                                    }
+                                    None => {
+                                        ok = false;
+                                        why_degenerate += 1;
+                                    }
+                                }
+                            }
+                            if !ok {
+                                break;
+                            }
+                        }
+                        // Fewer pieces than carriers would leave a slot with nothing to put in it,
+                        // and a tet cannot be deleted here without moving every index after it.
+                        if carriers.is_empty() {
+                            why_no_carrier += 1;
+                        } else if ok && plan.len() < carriers.len() {
+                            why_all_slivers += 1;
+                        }
+                        if !ok || plan.len() < carriers.len() {
+                            refused_shape += 1;
+                            continue;
+                        }
+                        for at in &carriers {
+                            let mut key = mesh.tets[*at];
+                            key.sort_unstable();
+                            present.remove(&key);
+                        }
+                        for (slot, (source, piece)) in plan.iter().enumerate() {
+                            let mut key = *piece;
+                            key.sort_unstable();
+                            present.insert(key);
+                            match carriers.get(slot) {
+                                Some(at) => {
+                                    mesh.tets[*at] = *piece;
+                                    mesh.records[*at] = mesh.records[*source].clone();
+                                    mesh.parent_of[*at] = mesh.parent_of[*source];
+                                    mesh.regime[*at] = mesh.regime[*source];
+                                    mesh.band_region[*at] = mesh.band_region[*source];
+                                }
+                                None => {
+                                    mesh.tets.push(*piece);
+                                    let record = mesh.records[*source].clone();
+                                    mesh.records.push(record);
+                                    let parent = mesh.parent_of[*source];
+                                    mesh.parent_of.push(parent);
+                                    let regime = mesh.regime[*source];
+                                    mesh.regime.push(regime);
+                                    let band = mesh.band_region[*source];
+                                    mesh.band_region.push(band);
+                                }
+                            }
+                        }
+                        repaired += 1;
+                        absorbed += 1;
+                    }
+                }
+                if repaired + refused_shape + refused_rim + refused_tagged > 0 {
+                    mesh.warnings.push(format!(
+                        "[PLC] T-junction repair: {repaired} node(s) absorbed by replacing the flat \
+                         sliver and its neighbour with three tets; refused {refused_rim} on a face's \
+                         rim (an edge, not a face), {refused_tagged} on a tagged interface face and \
+                         {refused_shape} for shape - {why_clash} because a piece is already in the \
+                     mesh, {why_degenerate} because a piece is flat, {why_no_carrier} with no \
+                     carrier and {why_all_slivers} where every carrier already has the node"
+                    ));
+                }
+                // An earlier version of this split only the tets that own the face, leaving `U` to
+                // claim `(a, b, q)` as a third owner - a8 went to 22 multi-shared faces. Replacing both
+                // is what makes it conforming, and the duplicate guard above is what makes it safe where
+                // the cavity is not the clean pair.
             }
 
-            // **A repair was built here and reverted.** Splitting the tets that own the face at the
-            // hanging node is the obvious local operation and it is not sufficient: the triangles a
-            // split creates - `(f0, f1, q)` and the rest - are already carried by tets around the
-            // face's edges that have `q` as a vertex, so the split hands them a third owner. On a8
-            // it took 58 hanging nodes to 79, 0 non-manifold edges to 32 and 0 multi-shared faces to
-            // 22. An earlier version also applied each carrier as it went and skipped the degenerate
-            // ones, which cracked the mesh outright (0 leaks -> 11).
-            //
-            // The measurement that matters is why it cannot fire at all on a3: **every candidate
-            // meets a tet that ALREADY has the node** - 9 of 9 there, 37 of 49 on a8. Those are
-            // near-degenerate tets, three of whose vertices are collinear to about 1e-12, and a
-            // split is not the operation for them. What the residual needs is the cavity around the
-            // node re-tetrahedralised as a whole, which is a point insertion and a larger build than
-            // this. The detector above stays, because it reproduces `[V3]`'s count exactly and is
-            // what any such build has to be measured against.
+            if absorbed == 0 {
+                break;
+            }
         }
         // **Charge each BAD element to the arm that emitted it**, on the measure `[V4]` actually
         // reports: the smallest dihedral angle. The goal names three properties and this is the
