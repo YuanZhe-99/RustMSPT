@@ -1648,6 +1648,7 @@ pub fn cut_lattice(
         // So an edge point is interned per EDGE, exactly as `cut_index` interns a crossing, and
         // every face carrying that edge takes it - including faces the surface never touches.
         let mut chord_id: BTreeMap<NodeKey, u32> = BTreeMap::new();
+        let mut rim_decade = [0usize; 16];
         let mut edge_points: BTreeMap<[u32; 2], SmallVec<[u32; 4]>> = BTreeMap::new();
         let mut face_interior: BTreeMap<[u32; 3], SmallVec<[u32; 4]>> = BTreeMap::new();
         for (face, chords) in &chords_of {
@@ -1669,6 +1670,34 @@ pub fn cut_lattice(
                     // edge, so both faces get the same point and neither can disagree.
                     let mut on_edge = None;
                     let mut placed = *point;
+                    // **How far is this endpoint from the nearest rim, in the face's own units?**
+                    // The `on_edge` test below accepts 1e-9 of the edge's length, and a3's duplicate
+                    // trace points sit 1.85e-7 apart near a shared edge - so something lands between
+                    // the two. If the histogram has a GAP, the geometry names the scale; if it is a
+                    // smear, any bound put here is a threshold being tuned and the cure is elsewhere.
+                    {
+                        let mut nearest = f64::INFINITY;
+                        for slot in 0..3 {
+                            let (a, b) = (corner(slot), corner((slot + 1) % 3));
+                            let along = b.sub(a);
+                            let len2 = along.dot(along);
+                            if len2 <= 0.0 {
+                                continue;
+                            }
+                            let rel = point.sub(a);
+                            let t = (rel.dot(along) / len2).clamp(0.0, 1.0);
+                            let off = rel.sub(along.scale(t));
+                            nearest = nearest.min(off.dot(off).sqrt() / len2.sqrt());
+                        }
+                        if nearest.is_finite() {
+                            let decade = if nearest <= 0.0 {
+                                0
+                            } else {
+                                ((-nearest.log10()).floor() as i64).clamp(0, 15) as usize
+                            };
+                            rim_decade[decade] += 1;
+                        }
+                    }
                     for slot in 0..3 {
                         let (a, b) = (corner(slot), corner((slot + 1) % 3));
                         let along = b.sub(a);
@@ -1788,6 +1817,10 @@ pub fn cut_lattice(
             }
         }
 
+        println!(
+            "[PLC-PASS] trace endpoint distance to the nearest rim, by decade of the face's own \
+             edge length (1e0, 1e-1, ... 1e-15): {rim_decade:?}"
+        );
         // **How many of the interned points are, by the pipeline's own coincidence tolerance,
         // an existing node?** The pass interns on `order_quantum`, which is 1e-6 of `eps` - fine
         // enough to preserve ordering and far too fine to decide identity. A trace endpoint and
