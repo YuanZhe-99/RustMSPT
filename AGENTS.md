@@ -767,6 +767,19 @@ and the other reads it — decide which, and say so at the site.
   by construction — its material boundary is wherever the spokes happen to cut. `[V3]` passes on it,
   which is why it survived: **conformity to the mesh and conformity to the geometry are different
   properties and only `[V13]` sees the second.**
+- **Run the biggest case before believing any of it — again.** a8 is 34 % of the suite's off-surface
+  area and had never been through the gated path. It improves fidelity by 38 % and **fails `[V3]`**
+  with 113,859 hanging nodes, on a mechanism the three smaller cases cannot exhibit. Every conformity
+  result from a1, a3 and a6a was true and none of it generalised.
+- **A fixed point must be scoped to the object the constraint lives on.** §7.1's exclusion spreads
+  over *faces*, but a trace point is interned on an *edge*, and an edge is shared by more cells than
+  any face is. The scope mismatch is invisible until an exclusion set is large enough to reach a
+  §7.4 cell edge-wise but not face-wise — which needed a8 to show up.
+- **Before building the remedy the literature names, check the defect is the one it is for.** Slivers
+  called for interior Steiner points, and one diagnostic — does the bad tet also have a needle FACE? —
+  said **94.3 % of them inherit two-dimensional badness from a face frozen by J1**, which no
+  three-dimensional operation can touch. The remedy would have addressed 6 % of the problem at a cost
+  in element count.
 - **Compare two products at equal quality of the property they differ on, not at equal parameter.**
   “+93 % elements at the same *h*” compares an exact mesh against a chording one and says nothing.
   At equal *fidelity* the ranking inverts: the gated path reaches 99.789 % on-surface with 59,472

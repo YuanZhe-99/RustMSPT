@@ -4378,6 +4378,8 @@ pub fn cut_lattice(
         {
             let mut band = [[0usize; 4]; 5];
             let mut worst = [180.0f64; 5];
+            let mut inherited = [0usize; 5];
+            let mut genuine = [0usize; 5];
             for (at, tet) in mesh.tets.iter().enumerate() {
                 let p = [
                     mesh.nodes[tet[0] as usize],
@@ -4414,8 +4416,37 @@ pub fn cut_lattice(
                     let cosine = (u.dot(v) / (nu * nv)).clamp(-1.0, 1.0);
                     least = least.min(cosine.acos().to_degrees());
                 }
+                // **Is the badness created in 3D, or inherited from a thin triangle already on a
+                // face?** A tet whose worst dihedral is small AND one of whose faces is already a
+                // needle in 2D cannot be fixed by any three-dimensional operation - the face is
+                // shared with a neighbour and frozen by J1, so the cure would have to be at the face
+                // level. A tet with four well-shaped faces and a small dihedral is a true sliver,
+                // which is the case Steiner points and exudation are for. The two want opposite
+                // work, so they are counted apart.
+                let mut face_least = 180.0f64;
+                for tri in [[0usize, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]] {
+                    let q = [p[tri[0]], p[tri[1]], p[tri[2]]];
+                    for corner in 0..3 {
+                        let u = q[(corner + 1) % 3].sub(q[corner]);
+                        let v = q[(corner + 2) % 3].sub(q[corner]);
+                        let (nu, nv) = (u.dot(u).sqrt(), v.dot(v).sqrt());
+                        if nu <= 0.0 || nv <= 0.0 {
+                            face_least = 0.0;
+                            continue;
+                        }
+                        face_least = face_least
+                            .min((u.dot(v) / (nu * nv)).clamp(-1.0, 1.0).acos().to_degrees());
+                    }
+                }
                 let parent = mesh.parent_of.get(at).copied().unwrap_or(0) as usize;
                 let path = path_of.get(parent).copied().unwrap_or(4).min(4) as usize;
+                if least < 10.0 {
+                    if face_least < 10.0 {
+                        inherited[path] += 1;
+                    } else {
+                        genuine[path] += 1;
+                    }
+                }
                 let slot = if least < 1.0 {
                     0
                 } else if least < 5.0 {
@@ -4443,13 +4474,17 @@ pub fn cut_lattice(
                 let bad = band[path][0] + band[path][1] + band[path][2];
                 mesh.warnings.push(format!(
                     "[PLC] dihedral by path: {} has {total} tet(s), {bad} below 10° ({:.2} %) - \
-                     {} under 1°, {} in 1-5°, {} in 5-10°; worst {:.4}°",
+                     {} under 1°, {} in 1-5°, {} in 5-10°; worst {:.4}°. Of the bad ones {} \
+                     INHERIT a needle face ({:.1} %) and {} are true slivers with four good faces",
                     name[path],
                     100.0 * bad as f64 / total as f64,
                     band[path][0],
                     band[path][1],
                     band[path][2],
-                    worst[path]
+                    worst[path],
+                    inherited[path],
+                    100.0 * inherited[path] as f64 / bad.max(1) as f64,
+                    genuine[path]
                 ));
             }
         }
