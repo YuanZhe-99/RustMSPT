@@ -2166,6 +2166,394 @@ fn recover_segment(
 }
 
 // AI-FUNC-SUMMARY:
+// Purpose: Fan a declined cell in pieces the facets separate, instead of over the whole cell.
+// Inputs: the cell's boundary soup, its facets, the point list (which grows by one node per piece),
+//   and the cell's relative tolerance.
+// Returns: the tets and the piece each belongs to, or None when the facets do not separate the cell.
+// Side effects: appends one centroid per piece to `points`.
+// Notes: **The fallback is where the damage is, not the kernel.** Measured by path on A-3, the cells
+//   §7.4 meshes carry 0.4 % of their interface area off the surface and the cells it declines carry
+//   87 %; the declined arm is 95 % of ALL the off-surface area the gated path produces. The reason
+//   is not that those cells are hard - it is that the fallback fans the whole cell over its boundary
+//   soup and never looks at the surface, so the material boundary comes out as whatever the fan's
+//   spokes happen to cut, up to half a cell off. §7.6 has said so in its own comment since P-3.2 and
+//   splits escalated cells for exactly this reason; §7.4's decline path never got the same treatment.
+//
+//   Every piece is convex, which is what makes the fan exact rather than hopeful: the cell is a tet,
+//   each facet is planar, and a convex body intersected with halfspaces stays convex - so a piece is
+//   star-shaped about any interior point and the centroid fan is a genuine tetrahedralisation of it.
+//   The construction is checked rather than argued: a boundary triangle that straddles a facet's
+//   plane, a piece whose surface does not close, a degenerate fan tet, or pieces whose volumes do
+//   not sum to the cell's, all decline and leave the caller its whole-cell fan.
+//
+//   `[R1]` is the rule this serves - "no fallback may abandon conformity to the interface" - and the
+//   whole-cell fan abandons it by construction.
+// Why the split fan declined, counted by reason. Print-only, and filled only when
+// `RUSTMSPT_PLC_DIAG` is set: the split is the fallback that keeps the surface, so what stops it is
+// exactly the ranking that says where the remaining off-surface area comes from.
+static SPLIT_FAN_WHY: std::sync::Mutex<Option<BTreeMap<&'static str, u64>>> =
+    std::sync::Mutex::new(None);
+static SPLIT_FAN_DIAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+// AI-FUNC-SUMMARY:
+// Purpose: Read the per-reason histogram of `facet_split_fan` outcomes.
+// Inputs: none.
+// Returns: reason -> count, most frequent first; empty unless the diagnostic is on.
+// Side effects: None.
+pub fn split_fan_refusals() -> Vec<(&'static str, u64)> {
+    let guard = SPLIT_FAN_WHY.lock().unwrap_or_else(|e| e.into_inner());
+    let mut out: Vec<(&'static str, u64)> = guard
+        .as_ref()
+        .map(|m| m.iter().map(|(k, v)| (*k, *v)).collect())
+        .unwrap_or_default();
+    out.sort_by(|a, b| b.1.cmp(&a.1));
+    out
+}
+
+fn note_split(reason: &'static str) {
+    if *SPLIT_FAN_DIAG.get_or_init(|| std::env::var_os("RUSTMSPT_PLC_DIAG").is_some()) {
+        let mut guard = SPLIT_FAN_WHY.lock().unwrap_or_else(|e| e.into_inner());
+        *guard.get_or_insert_with(BTreeMap::new).entry(reason).or_insert(0) += 1;
+    }
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Orient a closed triangle soup consistently, so its signed volume means something.
+// Inputs: the soup.
+// Returns: the same triangles with a consistent winding, or None when it is not a closed manifold.
+// Side effects: None.
+// Notes: **The volume test needs this and the closure test comes free with it.** A piece is built by
+//   taking part of the cell's boundary and capping it with the surface's own triangles, and those
+//   two arrive with unrelated windings - so summing `p0 . (p1 x p2)` over the raw soup measures
+//   `outer - cap` on one side and `outer + cap` on the other, and the partition test then rejects
+//   every split (1,314 of A-3's 1,835 cells, before this). Propagating one orientation across shared
+//   edges fixes the winding and, in the same pass, refuses a soup that is not a closed manifold:
+//   every edge must be walked once each way, which is exactly what a closed surface means.
+fn orient_soup(soup: &[[u32; 3]]) -> Option<Vec<[u32; 3]>> {
+    if soup.is_empty() {
+        return None;
+    }
+    let mut by_edge: BTreeMap<[u32; 2], smallvec::SmallVec<[usize; 2]>> = BTreeMap::new();
+    for (at, t) in soup.iter().enumerate() {
+        for slot in 0..3 {
+            let (x, y) = (t[slot], t[(slot + 1) % 3]);
+            by_edge
+                .entry(if x <= y { [x, y] } else { [y, x] })
+                .or_default()
+                .push(at);
+        }
+    }
+    if by_edge.values().any(|on| on.len() != 2) {
+        return None;
+    }
+    let mut out: Vec<[u32; 3]> = soup.to_vec();
+    let mut fixed = vec![false; soup.len()];
+    let mut queue = vec![0usize];
+    fixed[0] = true;
+    while let Some(at) = queue.pop() {
+        let here = out[at];
+        for slot in 0..3 {
+            let (x, y) = (here[slot], here[(slot + 1) % 3]);
+            let key = if x <= y { [x, y] } else { [y, x] };
+            let Some(on) = by_edge.get(&key) else { return None };
+            let Some(other) = on.iter().copied().find(|o| *o != at) else {
+                return None;
+            };
+            // The neighbour must walk this edge the other way round. If it is already fixed and
+            // does not, the soup is not orientable.
+            let walks = |t: [u32; 3], a: u32, b: u32| {
+                (0..3).any(|slot| t[slot] == a && t[(slot + 1) % 3] == b)
+            };
+            if fixed[other] {
+                if walks(out[other], x, y) == walks(here, x, y) {
+                    return None;
+                }
+                continue;
+            }
+            if walks(out[other], x, y) {
+                out[other].swap(0, 1);
+            }
+            fixed[other] = true;
+            queue.push(other);
+        }
+    }
+    fixed.iter().all(|f| *f).then_some(out)
+}
+
+pub fn facet_split_fan(
+    boundary: &[[u32; 3]],
+    caps: &[Vec<[u32; 3]>],
+    side_of: &dyn Fn(usize, u32) -> Option<bool>,
+    side_of_face: &dyn Fn(usize, [u32; 3]) -> Option<bool>,
+    points: &mut Vec<Vec3>,
+    tol: f64,
+) -> Option<(Vec<[u32; 4]>, Vec<u32>)> {
+    note_split(match caps.len() {
+        0 => "the cell has no facet",
+        1 => "offered: one surface",
+        _ => "offered: two or more surfaces",
+    });
+    let mut pieces: Vec<Vec<[u32; 3]>> = vec![boundary.to_vec()];
+    for (group, cap) in caps.iter().enumerate() {
+        if cap.is_empty() {
+            continue;
+        }
+        let mut next: Vec<Vec<[u32; 3]>> = Vec::with_capacity(pieces.len() + 1);
+        // **A cap may cut at most one piece.** The cap is a whole surface patch, and adding all of
+        // it to both halves of two different pieces puts each of its triangles into four - which
+        // `[V3]` reads exactly as it is, a face shared by four tets and six non-manifold edges
+        // around it. Where a second surface really does cross both pieces, only the part of it
+        // inside each belongs there, and clipping the patch per piece is a different piece of work;
+        // until it exists the cell declines and keeps its whole-cell fan.
+        let mut cuts = 0usize;
+        for piece in pieces {
+            let (mut above, mut below) = (Vec::new(), Vec::new());
+            let mut refused: Option<&'static str> = None;
+            for triangle in &piece {
+                let mut side: Option<bool> = None;
+                for node in triangle {
+                    match side_of(group, *node) {
+                        None => {}
+                        Some(here) => match side {
+                            None => side = Some(here),
+                            Some(there) if there == here => {}
+                            Some(_) => {
+                                refused =
+                                    Some("a boundary triangle straddles the surface with no node on it");
+                                break;
+                            }
+                        },
+                    }
+                }
+                if refused.is_some() {
+                    break;
+                }
+                match side {
+                    Some(true) => above.push(*triangle),
+                    Some(false) => below.push(*triangle),
+                    // Every corner on the surface does not mean the triangle has no side - a face
+                    // the surface crosses twice is triangulated with both chords as edges, and the
+                    // strip between them has all its corners on the surface while lying squarely in
+                    // the material between. §7.6 learned this the same way; the thing being placed
+                    // is the triangle's own interior, so ask about that.
+                    None => match side_of_face(group, *triangle) {
+                        Some(true) => above.push(*triangle),
+                        Some(false) => below.push(*triangle),
+                        None => {
+                            refused = Some("a boundary triangle lies wholly on the surface");
+                            break;
+                        }
+                    },
+                }
+            }
+            if let Some(reason) = refused {
+                note_split(reason);
+                return None;
+            }
+            if above.is_empty() || below.is_empty() {
+                next.push(piece);
+                continue;
+            }
+            // The cap is the surface's own triangles, so the interface this fallback emits IS the
+            // input surface rather than whatever a spoke happened to cut. Winding does not matter:
+            // every fan tet is oriented positively below, and both the closure test and the volume
+            // test are orientation-free.
+            cuts += 1;
+            if cuts > 1 {
+                note_split("a second surface cuts more than one piece");
+                return None;
+            }
+            above.extend(cap.iter().copied());
+            below.extend(cap.iter().copied());
+            next.push(above);
+            next.push(below);
+        }
+        pieces = next;
+    }
+    if pieces.len() < 2 {
+        note_split("no surface separates the cell into two pieces");
+        return None;
+    }
+    let soup_volume = |soup: &[[u32; 3]], points: &[Vec3]| -> f64 {
+        let mut sum = 0.0;
+        for t in soup {
+            let p = [
+                points[t[0] as usize],
+                points[t[1] as usize],
+                points[t[2] as usize],
+            ];
+            sum += p[0].cross(p[1]).dot(p[2]) / 6.0;
+        }
+        sum.abs()
+    };
+    // **The cell's own volume must be read from an ORIENTED soup too.** The boundary arrives as the
+    // four faces' triangulations with no shared winding, and `p0 . (p1 x p2)` summed over an
+    // unoriented soup is not a volume - it was the reference this test compared against, and it made
+    // the comparison meaningless.
+    let Some(oriented_boundary) = orient_soup(boundary) else {
+        note_split("the cell's own boundary is not a closed manifold");
+        return None;
+    };
+    let whole = soup_volume(&oriented_boundary, points);
+    let mut tets: Vec<[u32; 4]> = Vec::new();
+    let mut regions: Vec<u32> = Vec::new();
+    let mut summed = 0.0;
+    for (region, piece) in pieces.iter().enumerate() {
+        // Closed and consistently wound, or the cap did not cover the cross-section and the piece
+        // is not a body. Both questions are the one walk.
+        let Some(piece) = orient_soup(piece) else {
+            note_split("a piece's surface does not close - the cut does not span the cell");
+            return None;
+        };
+        let piece = &piece;
+        let mut nodes: Vec<u32> = piece.iter().flatten().copied().collect();
+        nodes.sort_unstable();
+        nodes.dedup();
+        let mut centre = Vec3::new(0.0, 0.0, 0.0);
+        for node in &nodes {
+            centre = centre.add(points[*node as usize]);
+        }
+        let centre = centre.scale(1.0 / nodes.len() as f64);
+        let apex = points.len() as u32;
+        points.push(centre);
+        for t in piece {
+            let mut piece_tet = [t[0], t[1], t[2], apex];
+            match crate::meshgen::predicates::orient3d_filtered(
+                points[piece_tet[0] as usize],
+                points[piece_tet[1] as usize],
+                points[piece_tet[2] as usize],
+                points[piece_tet[3] as usize],
+            )
+            .0
+            {
+                0 => {
+                    note_split("a fan tet is degenerate");
+                    return None;
+                }
+                s if s < 0 => piece_tet.swap(0, 1),
+                _ => {}
+            }
+            tets.push(piece_tet);
+            regions.push(region as u32);
+        }
+        summed += soup_volume(piece, points);
+    }
+    // The pieces must partition the cell: neither overlapping nor leaving a hole. This is also the
+    // test that catches a piece the centroid does not see all of - a non-convex piece whose fan
+    // folds over itself sums to more than it occupies.
+    if (summed - whole).abs() > whole.max(summed) * 1.0e-9 {
+        note_split("the pieces do not partition the cell");
+        return None;
+    }
+    let _ = tol;
+    note_split("BUILT");
+    Some((tets, regions))
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: The mesh edges that properly cross a facet's interior.
+// Inputs: the tets, the points, and one facet polygon.
+// Returns: the crossing edges, deduplicated and in key order.
+// Side effects: None.
+// Notes: A facet is a union of mesh faces exactly when nothing crosses its interior, so this is the
+//   progress measure interior recovery runs on - the same shape of measure `crossed_faces` is for a
+//   segment, with the roles of edge and face exchanged. The facet is a triangle clipped by a tet,
+//   so it is CONVEX and the fan from its first vertex covers it; every test is
+//   `segment_crosses_triangle`, which is exact and answers "no" to every degeneracy, so an edge
+//   lying IN the facet's plane or touching its rim is not counted - which is right, since neither
+//   obstructs the facet.
+fn facet_crossing_edges(
+    tets: &[[u32; 4]],
+    points: &[Vec3],
+    facet: &[u32],
+) -> std::collections::BTreeSet<[u32; 2]> {
+    let mut out: std::collections::BTreeSet<[u32; 2]> = std::collections::BTreeSet::new();
+    if facet.len() < 3 {
+        return out;
+    }
+    let fan: Vec<[u32; 3]> = (1..facet.len() - 1)
+        .map(|at| [facet[0], facet[at], facet[at + 1]])
+        .collect();
+    for tet in tets {
+        for pair in [[0usize, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]] {
+            let (x, y) = (tet[pair[0]], tet[pair[1]]);
+            let key = if x <= y { [x, y] } else { [y, x] };
+            if out.contains(&key) {
+                continue;
+            }
+            for tri in &fan {
+                if tri.contains(&x) || tri.contains(&y) {
+                    continue;
+                }
+                if segment_crosses_triangle(
+                    points[x as usize],
+                    points[y as usize],
+                    points[tri[0] as usize],
+                    points[tri[1] as usize],
+                    points[tri[2] as usize],
+                ) {
+                    out.insert(key);
+                    break;
+                }
+            }
+        }
+    }
+    out
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Make one facet's interior a union of mesh faces, its edges already being mesh edges.
+// Inputs: the tets, the points, the facet, and the edges that may not be removed.
+// Returns: the recovered tets, or None when no removal reduces the crossings.
+// Side effects: None.
+// Notes: **The second half of facet recovery, and the half that had never been built.** Recovering
+//   a facet's EDGES leaves its interior still crossed, and on A-3 that residue is the largest single
+//   decline class - 42.3 % of all the interface area the gated path strands, against 31.0 % for the
+//   link polygon and 17.1 % for the edges themselves. The operation is the one already here: an edge
+//   crossing the facet is removed, and the removal is kept only when strictly fewer edges cross
+//   afterwards, so the measure is a decreasing integer and the loop's budget bounds it rather than
+//   guesses at it. The hull's edges and every facet's edges are protected, so this cannot undo the
+//   boundary recovery or the edge recovery that ran before it.
+//
+//   **It converts 14 of A-3's 1,849 declining cells and no more, and the reason is worth keeping.**
+//   Almost every removal it wants is refused by `remove_edge`, on the one line that is 90.4 % of
+//   ALL its refusals - "the link polygon has no valid triangulation". So this is not a weak
+//   recovery, it is a recovery starved of its one operation, and what it measures is how much of
+//   the facet-interior class sits behind that single refusal (PLAN §6.49).
+fn recover_facet_interior(
+    tets: &[[u32; 4]],
+    points: &[Vec3],
+    facet: &[u32],
+    protected: &std::collections::BTreeSet<[u32; 2]>,
+) -> Option<Vec<[u32; 4]>> {
+    let mut tets = tets.to_vec();
+    let mut crossings = facet_crossing_edges(&tets, points, facet).len();
+    for _round in 0..crossings.max(1) * 8 {
+        if crossings == 0 {
+            return Some(tets);
+        }
+        let mut moved = false;
+        for edge in facet_crossing_edges(&tets, points, facet) {
+            if protected.contains(&edge) {
+                continue;
+            }
+            let Ok(next) = remove_edge(&tets, points, edge) else { continue };
+            let after = facet_crossing_edges(&next, points, facet).len();
+            if after < crossings {
+                tets = next;
+                crossings = after;
+                moved = true;
+                break;
+            }
+        }
+        if !moved {
+            return None;
+        }
+    }
+    None
+}
+
+// AI-FUNC-SUMMARY:
 // Purpose: Make every facet's edges edges of the tetrahedralisation.
 // Inputs: the tets, the points, the facets, and the boundary's edges, which are protected.
 // Returns: the recovered tets, or None if any facet edge cannot be recovered.
@@ -2400,6 +2788,32 @@ pub fn constrained_tets(
         });
         if missing {
             if let Some(recovered) = recover_facet_edges(&tets, points, facets, &protected) {
+                tets = recovered;
+                carried = faces_of(&tets);
+                outer = hull_of(&carried);
+            }
+        }
+    }
+    // **And then the facet's INTERIOR, which is the other half.** Its edges being mesh edges does
+    // not make a facet a union of mesh faces; something can still cross the middle of it, and on
+    // A-3 that residue strands more interface area than any other refusal. Every facet is offered,
+    // in order; a facet nothing crosses costs one pass over the edges and returns immediately, and
+    // a recovery that cannot finish leaves the tets it was given rather than a half-recovered
+    // complex. Protection is recomputed here because the edge recovery above may have moved the
+    // hull.
+    {
+        let mut protected = edges_of(&outer);
+        for facet in facets {
+            for slot in 0..facet.len() {
+                let (a, b) = (facet[slot], facet[(slot + 1) % facet.len()]);
+                protected.insert(if a <= b { [a, b] } else { [b, a] });
+            }
+        }
+        for facet in facets {
+            if facet.len() < 3 || facet_crossing_edges(&tets, points, facet).is_empty() {
+                continue;
+            }
+            if let Some(recovered) = recover_facet_interior(&tets, points, facet, &protected) {
                 tets = recovered;
                 carried = faces_of(&tets);
                 outer = hull_of(&carried);
@@ -3715,17 +4129,14 @@ mod tests {
         );
     }
 
-    // A facet the mesh CUTS THROUGH must be refused. Two points straddling the facet's centre and
-    // close enough to be joined by an edge put that edge across it, and no set of faces can then
-    // cover the facet - which is exactly the case a recovery machine would have to fix, and exactly
-    // the case that must never be silently accepted in the meantime.
-    //
-    // The refusal names WHICH half of facet recovery is missing, and this is the second: the
-    // facet's own edges are all present, and it is the interior that an edge crosses. The other
-    // half - a facet edge that is not an edge of the mesh at all - needs different machinery, so a
-    // single name covering both could not be acted on.
+    // A facet the mesh CUTS THROUGH is RECOVERED. Two points straddling the facet's centre and
+    // close enough to be joined by an edge put that edge across it, so no set of faces covers the
+    // facet as the Delaunay leaves it - and interior recovery removes the crossing edge and makes
+    // the facet a union of faces. Until that recovery existed this case was refused by name, and
+    // the refusal is what this test used to assert; the case is now the one the second half of
+    // facet recovery is for, so the test asserts the cure rather than the symptom.
     #[test]
-    fn a_facet_an_edge_crosses_is_refused() {
+    fn a_facet_an_edge_crosses_is_recovered() {
         let points = vec![
             Vec3::new(0.0, 0.0, 0.0),
             Vec3::new(1.0, 0.0, 0.0),
@@ -3739,9 +4150,16 @@ mod tests {
         ];
         let boundary = [[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]];
         let facet = vec![vec![4u32, 5, 6]];
-        assert_eq!(
-            constrained_tets(&points, &keys_of(&points), &boundary, &facet, 1.0e-9).err(),
-            Some("a facet's edges are all there but its interior is not covered")
+        let tets = constrained_tets(&points, &keys_of(&points), &boundary, &facet, 1.0e-9)
+            .expect("interior recovery must remove the edge that crosses the facet");
+        assert!(
+            facet_crossing_edges(&tets, &points, &facet[0]).is_empty(),
+            "nothing may cross the facet once it is recovered"
+        );
+        // The crossing edge itself is gone, which is the operation that did it.
+        assert!(
+            !tets.iter().any(|t| t.contains(&7) && t.contains(&8)),
+            "the edge across the facet must have been removed"
         );
     }
 

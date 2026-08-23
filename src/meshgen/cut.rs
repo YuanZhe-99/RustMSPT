@@ -2625,9 +2625,14 @@ pub fn cut_lattice(
                 println!("[PLC-PASS] cell census written to {}", path.to_string_lossy());
             }
         }
+        // A cell §7.4 declined is recorded here whether the facet-split fan then saved it or not:
+        // the census ranks what the KERNEL could not take, and the split fan is the fallback rather
+        // than an acceptance.
         for (index, outcome) in attempt.iter().enumerate() {
-            if let Some(Err(reason)) = outcome {
-                plc_decline[index] = Some(reason);
+            match outcome {
+                Some(Err(reason)) => plc_decline[index] = Some(reason),
+                Some(Ok(cell)) => plc_decline[index] = cell.fanned,
+                None => {}
             }
         }
         plc_boundary = boundaries.clone();
@@ -2648,10 +2653,23 @@ pub fn cut_lattice(
             let Some(outcome) = outcome else { continue };
             plc[index] = Some(match outcome {
                 Ok(cell) => {
+                    // **Only the points some tet actually uses are interned.** A cell's arena can end
+                    // up holding a point nothing references - a facet vertex the recovery welded
+                    // away, or a piece centroid whose fan tets were all dropped as degenerate - and
+                    // interning it puts a node in the mesh that no element mentions. `[V2]` calls
+                    // that an unreferenced node and `[V3]` calls it a hanging node wherever it
+                    // happens to land on someone's face, which is exactly the 57 `[V3]` reported on
+                    // a3. The cure is not to hunt every producer of a stray point but to stop
+                    // publishing points the cell did not use.
+                    let used: BTreeSet<u32> = cell.tets.iter().flatten().copied().collect();
                     let mut map: Vec<u32> = Vec::with_capacity(cell.points.len());
                     for (local, point) in cell.points.iter().enumerate() {
                         if local < cell.seed.len() {
                             map.push(cell.seed[local]);
+                            continue;
+                        }
+                        if !used.contains(&(local as u32)) {
+                            map.push(u32::MAX);
                             continue;
                         }
                         let key = node_key(*point, order_quantum);
@@ -3037,6 +3055,7 @@ pub fn cut_lattice(
     let mut crease_faces_fanned: BTreeSet<[u32; 3]> = BTreeSet::new();
     let mut plc_meshed = 0usize;
     let mut plc_fanned = 0usize;
+    let mut plc_split_fanned = 0usize;
     // Which path each cell took, so a leak can be charged to one instead of guessed at.
     let mut path_of: Vec<u8> = vec![0; lattice.tets.len()];
     for (index, cell) in per_cell.into_iter().enumerate() {
@@ -3089,8 +3108,16 @@ pub fn cut_lattice(
                         mesh.regime.push(REGIME_NORMAL);
                         mesh.band_region.push(-1);
                     }
-                    plc_meshed += 1;
-                    path_of[index] = 1;
+                    // Separated in the census: a cell the kernel meshed and a cell the facet-split
+                    // fan filled are both conforming and both keep the surface, but only the first
+                    // is §7.4 doing its job, and the two must not average together.
+                    if plc_decline[index].is_some() {
+                        plc_split_fanned += 1;
+                        path_of[index] = 4;
+                    } else {
+                        plc_meshed += 1;
+                        path_of[index] = 1;
+                    }
                 }
                 PlcPlan::Fan { boundary } => {
                     let centroid = polygon_soup_centroid(&boundary, &mesh.nodes);
@@ -4270,7 +4297,13 @@ pub fn cut_lattice(
                 ));
             }
             let total: f64 = off_area.iter().sum::<f64>() + on_area.iter().sum::<f64>();
-            let name = ["§6's table", "§7.4-meshed", "§7.4-fanned", "escalated", "other"];
+            let name = [
+                "§6's table",
+                "§7.4-meshed",
+                "§7.4-fanned (whole cell)",
+                "escalated",
+                "§7.4-fanned (facet-split)",
+            ];
             for path in 0..5 {
                 if faces_by_path[path] == 0 {
                     continue;
@@ -4348,11 +4381,15 @@ pub fn cut_lattice(
              augmented face - so the rest are faces §7.4 left to §5.2"
         ));
     }
-    if plc_meshed + plc_fanned > 0 {
+    for (reason, count) in crate::meshgen::cdt::split_fan_refusals() {
+        mesh.warnings.push(format!("[PLC] facet-split fan {count} time(s): {reason}"));
+    }
+    if plc_meshed + plc_fanned + plc_split_fanned > 0 {
         mesh.warnings.push(format!(
             "[PLC] §7.1 rev 1.5: {plc_meshed} cell(s) meshed by §7.2/§7.4 against their own \
-             surface fragment, {plc_fanned} fanned over the same augmented faces where it \
-             declined. Both keep the faces the trace changed, which is what lets the two meet"
+             surface fragment, {plc_split_fanned} fanned in the pieces their facets separate \
+             where it declined, and {plc_fanned} over the whole cell where even that could not \
+             be built. All three keep the faces the trace changed, which is what lets them meet"
         ));
     }
     if face_trace_faces > 0 {
@@ -6741,6 +6778,10 @@ struct PlcCell {
     /// Faces separating two sub-regions, with the component whose facet they lie in - the cell's
     /// material boundary, in LOCAL ids.
     caps: Vec<([u32; 3], i32)>,
+    /// `Some(reason)` when §7.4 declined and the cell was fanned in facet-separated pieces instead.
+    /// The cell is still conforming and its interface is still on the surface; the reason is kept so
+    /// the census can rank what §7.4 could not take.
+    fanned: Option<&'static str>,
 }
 
 // AI-FUNC-SUMMARY:
@@ -6915,14 +6956,114 @@ fn plc_attempt(
     // **An empty facet list is not a refusal.** A cell whose faces the trace changed but whose
     // interior the surface never enters still has to be meshed against those faces, and a
     // constrained tetrahedralisation with no interior constraint is exactly that.
-    let tets = crate::meshgen::cdt::constrained_tets(
+    // **When §7.4 declines, fan the PIECES THE FACETS SEPARATE, not the whole cell.** The kernel and
+    // its fallback are not two ways of doing the same job: measured by path on A-3, the cells §7.4
+    // meshes carry 0.4 % of their interface area off the surface and the cells it declines carry
+    // 87 %, which is 95 % of all the off-surface area the gated path produces. A declined cell is
+    // still a tet cut by planar facets whose rims lie on its own faces, and splitting the boundary
+    // soup by each facet and capping both halves gives convex pieces a centroid fan tetrahedralises
+    // exactly - with the surface itself as the shared face. `[R1]` asks precisely this: no fallback
+    // may abandon conformity to the interface, and the whole-cell fan abandons it by construction.
+    // Every guard inside the split declines rather than guesses, and a decline still reaches the
+    // caller's own fan.
+    let outcome = crate::meshgen::cdt::constrained_tets(
         &arena.points,
         &arena.keys,
         &boundary_local,
         &facets,
         tol,
-    )?;
-    let regions = crate::meshgen::cdt::regions_by_constraint(&tets, &facets, &arena.points, tol);
+    );
+    let (tets, regions, fanned) = match outcome {
+        Ok(tets) => {
+            let regions =
+                crate::meshgen::cdt::regions_by_constraint(&tets, &facets, &arena.points, tol);
+            (tets, regions, None)
+        }
+        Err(reason) => {
+            // **The cut is the SURFACE, not a plane.** A cell holds several clipped surface
+            // triangles - 930 of A-3's declining cells hold three or more - and each has its own
+            // plane, so splitting the boundary soup by any one of them puts triangles on both sides
+            // of the others and the split refuses. What separates the cell is the patch: the union
+            // of one component's facets, with the side read from the classifier exactly as §7.6's
+            // `split_soup_by_surface` reads it. A node that is a vertex of the patch is ON it and
+            // takes no side, which is what lets a triangle sitting against the surface be placed by
+            // its other corners.
+            let mut groups: BTreeMap<i32, Vec<usize>> = BTreeMap::new();
+            for (slot, component) in facet_of.iter().enumerate() {
+                groups.entry(*component).or_default().push(slot);
+            }
+            let components: Vec<i32> = groups.keys().copied().collect();
+            // **A cap triangle lying in one of the cell's own faces is not a cut.** A surface running
+            // along a lattice face separates nothing inside this cell - the material changes across
+            // the face, which is the NEIGHBOUR's business as much as this cell's. Capping with it
+            // puts that triangle into both halves here and into both halves next door, which `[V3]`
+            // reads as a face shared by four tets and six non-manifold edges around it. §7.6 refuses
+            // the same configuration by name; here the triangle is simply not part of the cut.
+            let on_cell_face = |t: &[u32; 3]| {
+                planes.iter().any(|(normal, offset)| {
+                    t.iter().all(|node| {
+                        (normal.dot(arena.points[*node as usize]) - offset).abs() <= edge * 1.0e-6
+                    })
+                })
+            };
+            let caps: Vec<Vec<[u32; 3]>> = groups
+                .values()
+                .map(|slots| {
+                    slots
+                        .iter()
+                        .flat_map(|slot| {
+                            let facet = &facets[*slot];
+                            (1..facet.len().saturating_sub(1))
+                                .map(|at| [facet[0], facet[at], facet[at + 1]])
+                                .collect::<Vec<[u32; 3]>>()
+                        })
+                        .filter(|t| !on_cell_face(t))
+                        .collect()
+                })
+                .collect();
+            let on_patch: Vec<BTreeSet<u32>> = groups
+                .values()
+                .map(|slots| slots.iter().flat_map(|slot| facets[*slot].iter().copied()).collect())
+                .collect();
+            // The oracle reads the points as they are BEFORE the split, which is also why they are
+            // snapshotted: the split appends one centroid per piece to the same list.
+            let base: Vec<Vec3> = arena.points.clone();
+            let uncertain = std::cell::Cell::new(0usize);
+            let side_of = |group: usize, node: u32| -> Option<bool> {
+                if on_patch[group].contains(&node) {
+                    return None;
+                }
+                let slot = classifier.slot_of(components[group])?;
+                let mut here = uncertain.get();
+                let inside = classifier.inside(base[node as usize], slot, &mut here);
+                uncertain.set(here);
+                Some(inside)
+            };
+            let side_of_face = |group: usize, triangle: [u32; 3]| -> Option<bool> {
+                let centre = base[triangle[0] as usize]
+                    .add(base[triangle[1] as usize])
+                    .add(base[triangle[2] as usize])
+                    .scale(1.0 / 3.0);
+                let slot = classifier.slot_of(components[group])?;
+                let mut here = uncertain.get();
+                let inside = classifier.inside(centre, slot, &mut here);
+                uncertain.set(here);
+                Some(inside)
+            };
+            let split = crate::meshgen::cdt::facet_split_fan(
+                &boundary_local,
+                &caps,
+                &side_of,
+                &side_of_face,
+                &mut arena.points,
+                tol,
+            );
+            match split {
+                Some((tets, regions)) => (tets, regions, Some(reason)),
+                None => return Err(reason),
+            }
+        }
+    };
     // **The material boundary is where two sub-regions meet, and nowhere else.** Not every facet
     // face is one: a facet with a free rim has the same region on both sides (§7.5), and tagging it
     // would declare an interface the mesh has no material change across - which is exactly what
@@ -6977,6 +7118,7 @@ fn plc_attempt(
         seed,
         regions,
         caps,
+        fanned,
     })
 }
 

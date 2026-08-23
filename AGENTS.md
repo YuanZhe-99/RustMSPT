@@ -756,6 +756,22 @@ and the other reads it — decide which, and say so at the site.
 
 #### Edits that were right
 
+- **When a fallback exists, measure the fallback before improving the kernel.** §7.4's declined arm
+  carried **87 % of its interface area off the surface against the kernel's 0.4 %** and was 95 % of
+  all the damage. Three successive rounds of work went into making the kernel decline less often and
+  moved 14, 2 and 2 cells; one round on the *fallback* moved 1,582 and took a6a's off-surface area
+  down 89 %. The histogram had said so for four steps and was read as a ranking of cells rather than
+  as a statement about which code was wrong.
+- **A fallback that ignores the constraint is not conforming, whatever the verifier says.** `[R1]`
+  says no fallback may abandon conformity to the interface, and a whole-cell centroid fan abandons it
+  by construction — its material boundary is wherever the spokes happen to cut. `[V3]` passes on it,
+  which is why it survived: **conformity to the mesh and conformity to the geometry are different
+  properties and only `[V13]` sees the second.**
+- **Cure the class, not the producer.** 57 hanging nodes on a3 were *unreferenced* nodes — valence
+  zero — and the tempting fix was to find which producer left them. Interning only the points some
+  tet actually uses fixed every producer at once, present and future, and took the count below the
+  baseline (43 → 22) rather than merely back to it.
+
 - **Charge every defect to the path that emitted it.** A histogram of leaking faces against the arm
   that produced them ended rounds of guessing in one run: `0 table / 0 meshed / 464 fanned / 0
   escalated`. The all-zero rows are as valuable — the T-junction row coming back zero killed the
@@ -790,7 +806,26 @@ and the other reads it — decide which, and say so at the site.
   decline rate rising 0 % → 100 % with fragment size and *flat* against cell shape. **Aggregates
   told us where to look; the per-entity dump told us what we were looking at.**
 
-#### Edits that were wrong, and what the cost was
+#### Edits that were wrong
+
+- **Adding an operation to a search without checking it can move that search's measure.** Twice.
+  §6.48's 2-3 flip preserves its own region boundary, so a search scored on *hull* faces could never
+  see it. §6.49's Steiner cone removes one edge and creates `n + 2` radiating through the same
+  region, so a search scored on *edges crossing a facet* usually got more, not fewer — it built
+  successfully 687 times out of 692 and converted two cells. Both were correct code aimed at the
+  wrong objective. **State which measure the new operation decreases, and by what mechanism, before
+  writing it.**
+- **Splitting a cell by a facet's PLANE rather than by the surface.** A cell holds several clipped
+  surface triangles — 930 of a3's declining cells hold three or more — so the cut inside it is a bent
+  patch and any single plane puts boundary triangles on both sides of the others. 1,359 of 1,835
+  cells refused for that reason alone. The side must come from the classifier, which is what §7.6's
+  `split_soup_by_surface` had always done.
+- **Summing `p₀·(p₁×p₂)` over an unoriented soup and calling it a volume.** It is a volume only for a
+  consistently wound closed surface; the cell's boundary arrives as four face triangulations with no
+  shared winding. The partition test compared against garbage and rejected 1,314 cells. The tell was
+  in the numbers before the code: the *same* value appeared for cells of visibly different size.
+
+, and what the cost was
 
 - **`edge × 0.5` as a match tolerance.** It worked and was indefensible — half an element is a
   relocation, not a coincidence. The right bound was `eps`, *because that is exactly how far the
