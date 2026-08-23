@@ -767,6 +767,12 @@ and the other reads it — decide which, and say so at the site.
   by construction — its material boundary is wherever the spokes happen to cut. `[V3]` passes on it,
   which is why it survived: **conformity to the mesh and conformity to the geometry are different
   properties and only `[V13]` sees the second.**
+- **A repair that replaces must replace BOTH sides.** A hanging node sits on a face shared by a
+  zero-volume sliver (which has the node) and a solid tet (which does not). Splitting the solid alone
+  creates triangles the sliver already carries, handing them a third owner; replacing the pair by the
+  same three pieces is exactly conforming, and the volumes sum because the sliver had none. Six wrong
+  versions preceded it, and each failure named the next constraint: all-or-nothing per node, a
+  duplicate guard, the rim as an edge operation, and a fixed point.
 - **A seed of three can be an outbreak of forty-six thousand.** a8's whole conformity failure —
   2,268 leaks, 113,859 hanging nodes — traced to **two faces** that would not triangulate, refused by
   a private 1e-9 relative bound where the point was seven orders of magnitude inside `eps`. The
