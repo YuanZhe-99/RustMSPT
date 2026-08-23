@@ -2027,6 +2027,12 @@ pub fn cut_lattice(
                 out.dedup();
                 out
             };
+            // Measured and refuted: augmenting only where §5.2's node SET is inadequate, rather
+            // than wherever the triangulations differ, cuts the traced population 13x (a6a 36,256
+            // -> 2,759) and makes the off-surface area WORSE on both cases - a6a's away-from-curve
+            // 1.30e-2 -> 1.57e-2, a3's 1.61e-1 -> 2.55e-1. So the damage is not simply proportional
+            // to how many cells §7.4 is handed, and narrowing the triage is not the lever
+            // (PLAN §6.45).
             let differs = match &frozen {
                 Some(frozen) => canon(&mine) != canon(frozen),
                 None => true,
@@ -4172,7 +4178,12 @@ pub fn cut_lattice(
                 mesh.nodes[tet[2] as usize],
                 mesh.nodes[tet[3] as usize],
             ];
-            let volume = p[1].sub(p[0]).cross(p[2].sub(p[0])).dot(p[3].sub(p[0])) / 6.0;
+            // **The same volume `[V1]` computes, which is the EXACT one.** A cross-and-dot in
+            // double disagrees with it precisely in the regime this row is about, so charging the
+            // paths with the fp formula reported zero inverted tets in a run where `[V1]` found 16.
+            // A diagnostic that does not use the check's own arithmetic is measuring a different
+            // question (PLAN §6.45).
+            let volume = crate::meshgen::predicates::tet_signed_volume(p[0], p[1], p[2], p[3]);
             let mut longest = 0.0f64;
             for a in 0..4 {
                 for b in a + 1..4 {

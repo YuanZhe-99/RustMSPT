@@ -2286,7 +2286,46 @@ pub fn constrained_tets(
             }
         }
     }
+    // **A tet whose volume cannot be computed in double is not an element.** `orient3d_filtered`
+    // reports whether its own static error bound held; when it did not, the floating-point
+    // determinant is inside the noise and only the exact fallback knows the sign. Those are exactly
+    // the tets `[V1]` reads as a signed volume of +-0 - it computes in double, as any solver
+    // assembling a Jacobian would. This is the predicate's own bound rather than a quality
+    // threshold: there is no number here to tune.
+    //
+    // §7.4 declines the cell rather than emitting one, which sends it to the fan - a conforming
+    // refusal, and the trade this project's own rule asks for. Three steps in a row bought
+    // acceptance and paid for it in `[V1]` (3 -> 7 -> 19 -> 20), each recorded as "the same trade as
+    // before" and never re-examined; this is where that stops (PLAN §6.45).
+    let unmeasurable = tets.iter().any(|t| {
+        let p = [
+            points[t[0] as usize],
+            points[t[1] as usize],
+            points[t[2] as usize],
+            points[t[3] as usize],
+        ];
+        // **Thinner than the node quantum is not an element.** Measured at emit time with the exact
+        // predicate, §7.4 produces NO inverted tet - and `[V1]` finds sixteen in the written file,
+        // so they are tipped over downstream rather than born that way. The bound is therefore not
+        // about computing the volume here but about surviving a later nudge: a tet's volume changes
+        // by about its face area times any displacement of a vertex, so one whose volume is below
+        // `longest² × tol` has a height under `tol` and its orientation is at the mercy of whatever
+        // moves a node next. `tol` is the cell's own relative tolerance, already a parameter - this
+        // adds no number of its own.
+        let volume = crate::meshgen::predicates::tet_signed_volume(p[0], p[1], p[2], p[3]).abs();
+        let mut longest = 0.0f64;
+        for a in 0..4 {
+            for b in a + 1..4 {
+                let d = p[b].sub(p[a]);
+                longest = longest.max(d.dot(d).sqrt());
+            }
+        }
+        volume <= longest * longest * tol
+    });
     match (boundary_ok, facets_ok, structural || intruding > 0) {
+        (true, true, _) if unmeasurable => {
+            Err("a tet is thinner than the node quantum")
+        }
         (true, true, _) => Ok(tets),
         (false, true, false) => Err(recovery_failed
             .unwrap_or("the boundary is split differently, but on the same nodes")),
