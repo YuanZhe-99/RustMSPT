@@ -767,6 +767,16 @@ and the other reads it — decide which, and say so at the site.
   by construction — its material boundary is wherever the spokes happen to cut. `[V3]` passes on it,
   which is why it survived: **conformity to the mesh and conformity to the geometry are different
   properties and only `[V13]` sees the second.**
+- **A seed of three can be an outbreak of forty-six thousand.** a8's whole conformity failure —
+  2,268 leaks, 113,859 hanging nodes — traced to **two faces** that would not triangulate, refused by
+  a private 1e-9 relative bound where the point was seven orders of magnitude inside `eps`. The
+  exclusion spread amplified three cells into 46,596. **Instrument the seed of a propagation, not its
+  population**: the population had been measured four times and said nothing.
+- **Moving a shared node is a global edit with a local motive.** A node is a vertex of every tet
+  around it, and displacing it by a billionth of the domain can invert one that was already flat.
+- **A local split is not a point insertion.** Splitting the tets that own a face at a node creates
+  triangles that tets around that face's edges may already carry, handing them a third owner. The
+  cavity has to be re-tetrahedralised as a whole.
 - **Check which direction a propagation runs before propagating.** a8's T-junctions come from cells
   that read §5.2 and cannot split an edge. Spreading the *exclusion* outward recruits more cells into
   exactly that set: excluded 46,596 → 122,551, T-junctions 8,930 → 20,400, hanging nodes 113,859 →

@@ -4524,6 +4524,133 @@ pub fn cut_lattice(
                 worst_flat = worst_flat.min(shape);
             }
         }
+        // **Find the T-junctions the way `[V3]` reports them**, with `[V3]`'s own test: a node
+        // within `1e-9 x diagonal` of a face it is not a vertex of. Every attempt to prevent these
+        // before the mesh exists has either moved geometry or excluded cells (PLAN §6.56), so they
+        // are found here instead - and the detector reproduces the verifier's count before any
+        // repair is built, because a repair aimed at a proxy fixes the proxy.
+        //
+        // The first version of this asked for `orient3d == 0` exactly and found NOTHING, which was
+        // the useful failure: these nodes are not exactly on the face, they are a few times 1e-12
+        // off it. The bound is the verifier's, not a new one.
+        {
+            let mut lo = Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
+            let mut hi = Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+            for p in &mesh.nodes {
+                lo = Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z));
+                hi = Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
+            }
+            let diagonal = hi.sub(lo);
+            let tol = 1.0e-9 * diagonal.dot(diagonal).sqrt();
+            let step = (diagonal.dot(diagonal).sqrt() / (mesh.nodes.len() as f64).cbrt().max(1.0))
+                .max(f64::MIN_POSITIVE);
+            let at = |p: Vec3| {
+                (
+                    (p.x / step).floor() as i64,
+                    (p.y / step).floor() as i64,
+                    (p.z / step).floor() as i64,
+                )
+            };
+            let mut grid: BTreeMap<(i64, i64, i64), Vec<u32>> = BTreeMap::new();
+            for (id, p) in mesh.nodes.iter().enumerate() {
+                grid.entry(at(*p)).or_default().push(id as u32);
+            }
+            let mut faces: BTreeSet<[u32; 3]> = BTreeSet::new();
+            for tet in &mesh.tets {
+                for face in [
+                    [tet[1], tet[2], tet[3]],
+                    [tet[0], tet[2], tet[3]],
+                    [tet[0], tet[1], tet[3]],
+                    [tet[0], tet[1], tet[2]],
+                ] {
+                    let mut key = face;
+                    key.sort_unstable();
+                    faces.insert(key);
+                }
+            }
+            let mut hanging: BTreeSet<u32> = BTreeSet::new();
+            let mut incidences = 0usize;
+            let mut on_rim = 0usize;
+            for face in &faces {
+                let p = [
+                    mesh.nodes[face[0] as usize],
+                    mesh.nodes[face[1] as usize],
+                    mesh.nodes[face[2] as usize],
+                ];
+                let bl = Vec3::new(
+                    p.iter().map(|q| q.x).fold(f64::INFINITY, f64::min) - tol,
+                    p.iter().map(|q| q.y).fold(f64::INFINITY, f64::min) - tol,
+                    p.iter().map(|q| q.z).fold(f64::INFINITY, f64::min) - tol,
+                );
+                let br = Vec3::new(
+                    p.iter().map(|q| q.x).fold(f64::NEG_INFINITY, f64::max) + tol,
+                    p.iter().map(|q| q.y).fold(f64::NEG_INFINITY, f64::max) + tol,
+                    p.iter().map(|q| q.z).fold(f64::NEG_INFINITY, f64::max) + tol,
+                );
+                let (l, h) = (at(bl), at(br));
+                for gx in l.0..=h.0 {
+                    for gy in l.1..=h.1 {
+                        for gz in l.2..=h.2 {
+                            for id in grid.get(&(gx, gy, gz)).into_iter().flatten() {
+                                if face.contains(id) {
+                                    continue;
+                                }
+                                let q = mesh.nodes[*id as usize];
+                                if crate::meshgen::verify::point_triangle_dist2(q, p[0], p[1], p[2])
+                                    > tol * tol
+                                {
+                                    continue;
+                                }
+                                hanging.insert(*id);
+                                incidences += 1;
+                                // On the face's RIM the repair is an edge split - every tet around
+                                // that edge takes the node - and strictly inside it is a face split,
+                                // which touches only the two tets sharing it. Counted apart because
+                                // they are different operations.
+                                let rim = (0..3).any(|slot| {
+                                    let (u, v) = (p[slot], p[(slot + 1) % 3]);
+                                    let along = v.sub(u);
+                                    let len2 = along.dot(along);
+                                    if len2 <= 0.0 {
+                                        return false;
+                                    }
+                                    let t = (q.sub(u).dot(along) / len2).clamp(0.0, 1.0);
+                                    let off = q.sub(u).sub(along.scale(t));
+                                    off.dot(off) <= tol * tol
+                                });
+                                if rim {
+                                    on_rim += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if !hanging.is_empty() {
+                mesh.warnings.push(format!(
+                    "[PLC] T-junction detector: {} node(s) hang, over {incidences} (node, face) \
+                     incidence(s), of which {on_rim} put the node on the face's RIM - an edge split \
+                     - and the rest strictly inside it, a face split",
+                    hanging.len()
+                ));
+            }
+
+            // **A repair was built here and reverted.** Splitting the tets that own the face at the
+            // hanging node is the obvious local operation and it is not sufficient: the triangles a
+            // split creates - `(f0, f1, q)` and the rest - are already carried by tets around the
+            // face's edges that have `q` as a vertex, so the split hands them a third owner. On a8
+            // it took 58 hanging nodes to 79, 0 non-manifold edges to 32 and 0 multi-shared faces to
+            // 22. An earlier version also applied each carrier as it went and skipped the degenerate
+            // ones, which cracked the mesh outright (0 leaks -> 11).
+            //
+            // The measurement that matters is why it cannot fire at all on a3: **every candidate
+            // meets a tet that ALREADY has the node** - 9 of 9 there, 37 of 49 on a8. Those are
+            // near-degenerate tets, three of whose vertices are collinear to about 1e-12, and a
+            // split is not the operation for them. What the residual needs is the cavity around the
+            // node re-tetrahedralised as a whole, which is a point insertion and a larger build than
+            // this. The detector above stays, because it reproduces `[V3]`'s count exactly and is
+            // what any such build has to be measured against.
+        }
         // **Charge each BAD element to the arm that emitted it**, on the measure `[V4]` actually
         // reports: the smallest dihedral angle. The goal names three properties and this is the
         // third - *no bad elements* - and it is the only one the gated path still loses on. The
