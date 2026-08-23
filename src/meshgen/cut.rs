@@ -1542,6 +1542,7 @@ pub fn cut_lattice(
     let mut plc_boundary: Vec<Option<Vec<[u32; 3]>>> =
         (0..lattice.tets.len()).map(|_| None).collect();
     let mut plc_edge_points: BTreeMap<[u32; 2], Vec<u32>> = BTreeMap::new();
+    let mut plc_decline: Vec<Option<&'static str>> = vec![None; lattice.tets.len()];
     let plc_pass = std::env::var_os("RUSTMSPT_PLC_PASS").is_some();
     if plc_pass {
         // The arena quantum has to be the one the node keys were built with, or a point that
@@ -2622,6 +2623,11 @@ pub fn cut_lattice(
                 println!("[PLC-PASS] could not write the cell census: {e}");
             } else {
                 println!("[PLC-PASS] cell census written to {}", path.to_string_lossy());
+            }
+        }
+        for (index, outcome) in attempt.iter().enumerate() {
+            if let Some(Err(reason)) = outcome {
+                plc_decline[index] = Some(reason);
             }
         }
         plc_boundary = boundaries.clone();
@@ -4195,6 +4201,7 @@ pub fn cut_lattice(
                 out.sort_unstable();
                 out
             };
+            let mut off_by_reason: BTreeMap<&'static str, (f64, usize)> = BTreeMap::new();
             let mut on_area = [0.0f64; 5];
             let mut off_area = [0.0f64; 5];
             let mut faces_by_path = [0usize; 5];
@@ -4234,11 +4241,33 @@ pub fn cut_lattice(
                 let parent = mesh.parent_of.get(at[0]).copied().unwrap_or(0) as usize;
                 let path = path_of.get(parent).copied().unwrap_or(4).min(4) as usize;
                 faces_by_path[path] += 1;
-                if worst <= longest * 0.02 {
-                    on_area[path] += area;
-                } else {
+                let off = worst > longest * 0.02;
+                if off {
                     off_area[path] += area;
+                    // **And which REFUSAL stranded it.** §6.46 established that the fan carries
+                    // essentially all of P3's damage; ranking the decline classes by the interface
+                    // area they strand - rather than by how many cells are in them - is what says
+                    // which to fix first. A class of few cells on the sharp edges can outweigh a
+                    // class of many in flat regions.
+                    if let Some(reason) = plc_decline.get(parent).copied().flatten() {
+                        let entry = off_by_reason.entry(reason).or_insert((0.0, 0usize));
+                        entry.0 += area;
+                        entry.1 += 1;
+                    }
+                } else {
+                    on_area[path] += area;
                 }
+            }
+            let stranded: f64 = off_by_reason.values().map(|(a, _)| *a).sum();
+            let mut ranked: Vec<(&'static str, (f64, usize))> =
+                off_by_reason.into_iter().collect();
+            ranked.sort_by(|a, b| b.1 .0.total_cmp(&a.1 .0));
+            for (reason, (area, faces)) in ranked {
+                mesh.warnings.push(format!(
+                    "[PLC] P3 stranded by refusal: {area:.4e} ({:.1} % of all stranded) over \
+                     {faces} face(s) - {reason}",
+                    100.0 * area / stranded.max(f64::MIN_POSITIVE)
+                ));
             }
             let total: f64 = off_area.iter().sum::<f64>() + on_area.iter().sum::<f64>();
             let name = ["§6's table", "§7.4-meshed", "§7.4-fanned", "escalated", "other"];

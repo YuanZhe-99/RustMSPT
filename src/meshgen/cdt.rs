@@ -2051,6 +2051,73 @@ fn recover_facet_edges(
     Some(tets)
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Remove tets thinner than a bound by edge removal, without touching protected edges.
+// Inputs: the tets, the points, the thinness bound as a height, and the edges that must not go.
+// Returns: the tets with as many thin ones removed as edge removal can manage.
+// Side effects: None.
+// Notes: **A conforming refusal is the correct fallback and a poor destination.** Declining a cell
+//   for one unusable tet hands the whole cell to the centroid fan, and the fan is measured at four
+//   thousand times the off-surface area per interface face - on a6a that one refusal became 47.6 %
+//   of all the P3 area the gated path strands, from 88 cells (PLAN §6.47). Removing the tet keeps
+//   the cell, and the machinery is the same edge removal facet recovery uses.
+//
+//   A removal is kept only if it strictly reduces the number of too-thin tets, so the loop cannot
+//   trade one for another and cannot fail to terminate.
+fn remove_thin_tets(
+    tets: &[[u32; 4]],
+    points: &[Vec3],
+    height: f64,
+    protected: &std::collections::BTreeSet<[u32; 2]>,
+) -> Vec<[u32; 4]> {
+    let thin = |t: &[u32; 4]| -> bool {
+        let p = [
+            points[t[0] as usize],
+            points[t[1] as usize],
+            points[t[2] as usize],
+            points[t[3] as usize],
+        ];
+        let volume = crate::meshgen::predicates::tet_signed_volume(p[0], p[1], p[2], p[3]).abs();
+        let mut longest = 0.0f64;
+        for a in 0..4 {
+            for b in a + 1..4 {
+                let d = p[b].sub(p[a]);
+                longest = longest.max(d.dot(d).sqrt());
+            }
+        }
+        volume <= longest * longest * height
+    };
+    let mut tets = tets.to_vec();
+    let mut count = tets.iter().filter(|t| thin(t)).count();
+    for _round in 0..count.max(1) * 4 {
+        if count == 0 {
+            return tets;
+        }
+        let Some(at) = tets.iter().position(thin) else { return tets };
+        let victim = tets[at];
+        let mut moved = false;
+        for pair in [[0usize, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]] {
+            let (x, y) = (victim[pair[0]], victim[pair[1]]);
+            let edge = if x <= y { [x, y] } else { [y, x] };
+            if protected.contains(&edge) {
+                continue;
+            }
+            let Some(next) = remove_edge(&tets, points, edge) else { continue };
+            let after = next.iter().filter(|t| thin(t)).count();
+            if after < count {
+                tets = next;
+                count = after;
+                moved = true;
+                break;
+            }
+        }
+        if !moved {
+            return tets;
+        }
+    }
+    tets
+}
+
 pub fn constrained_tets(
     points: &[Vec3],
     keys: &[NodeKey],
@@ -2297,6 +2364,21 @@ pub fn constrained_tets(
     // refusal, and the trade this project's own rule asks for. Three steps in a row bought
     // acceptance and paid for it in `[V1]` (3 -> 7 -> 19 -> 20), each recorded as "the same trade as
     // before" and never re-examined; this is where that stops (PLAN §6.45).
+    // Thin tets are REMOVED before they are counted, and the cell is declined only for those that
+    // survive. Protected: the boundary's edges and every facet's edges, so removal cannot undo
+    // either recovery.
+    {
+        let mut protected = edges_of(&outer);
+        for facet in facets {
+            for slot in 0..facet.len() {
+                let (a, b) = (facet[slot], facet[(slot + 1) % facet.len()]);
+                protected.insert(if a <= b { [a, b] } else { [b, a] });
+            }
+        }
+        tets = remove_thin_tets(&tets, points, tol, &protected);
+        carried = faces_of(&tets);
+        outer = hull_of(&carried);
+    }
     let unmeasurable = tets.iter().any(|t| {
         let p = [
             points[t[0] as usize],
