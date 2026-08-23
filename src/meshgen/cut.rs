@@ -4369,6 +4369,90 @@ pub fn cut_lattice(
                 worst_flat = worst_flat.min(shape);
             }
         }
+        // **Charge each BAD element to the arm that emitted it**, on the measure `[V4]` actually
+        // reports: the smallest dihedral angle. The goal names three properties and this is the
+        // third - *no bad elements* - and it is the only one the gated path still loses on. The
+        // technique is the one that found every previous cause; the buckets are `[V4]`'s own floor
+        // (5°) and its share gate (10°) so the row can be read against the verifier without
+        // translation.
+        {
+            let mut band = [[0usize; 4]; 5];
+            let mut worst = [180.0f64; 5];
+            for (at, tet) in mesh.tets.iter().enumerate() {
+                let p = [
+                    mesh.nodes[tet[0] as usize],
+                    mesh.nodes[tet[1] as usize],
+                    mesh.nodes[tet[2] as usize],
+                    mesh.nodes[tet[3] as usize],
+                ];
+                // The dihedral on edge (a, b) is the angle between the two faces meeting there,
+                // read off their outward normals.
+                let mut least = 180.0f64;
+                for (a, b, c, d) in [
+                    (0, 1, 2, 3),
+                    (0, 2, 1, 3),
+                    (0, 3, 1, 2),
+                    (1, 2, 0, 3),
+                    (1, 3, 0, 2),
+                    (2, 3, 0, 1),
+                ] {
+                    let axis = p[b].sub(p[a]);
+                    let length = axis.dot(axis).sqrt();
+                    if length <= 0.0 {
+                        continue;
+                    }
+                    let axis = axis.scale(1.0 / length);
+                    let drop = |q: Vec3| {
+                        let rel = q.sub(p[a]);
+                        rel.sub(axis.scale(rel.dot(axis)))
+                    };
+                    let (u, v) = (drop(p[c]), drop(p[d]));
+                    let (nu, nv) = (u.dot(u).sqrt(), v.dot(v).sqrt());
+                    if nu <= 0.0 || nv <= 0.0 {
+                        continue;
+                    }
+                    let cosine = (u.dot(v) / (nu * nv)).clamp(-1.0, 1.0);
+                    least = least.min(cosine.acos().to_degrees());
+                }
+                let parent = mesh.parent_of.get(at).copied().unwrap_or(0) as usize;
+                let path = path_of.get(parent).copied().unwrap_or(4).min(4) as usize;
+                let slot = if least < 1.0 {
+                    0
+                } else if least < 5.0 {
+                    1
+                } else if least < 10.0 {
+                    2
+                } else {
+                    3
+                };
+                band[path][slot] += 1;
+                worst[path] = worst[path].min(least);
+            }
+            let name = [
+                "§6's table",
+                "§7.4-meshed",
+                "§7.4-fanned (whole cell)",
+                "escalated",
+                "§7.4-fanned (facet-split)",
+            ];
+            for path in 0..5 {
+                let total: usize = band[path].iter().sum();
+                if total == 0 {
+                    continue;
+                }
+                let bad = band[path][0] + band[path][1] + band[path][2];
+                mesh.warnings.push(format!(
+                    "[PLC] dihedral by path: {} has {total} tet(s), {bad} below 10° ({:.2} %) - \
+                     {} under 1°, {} in 1-5°, {} in 5-10°; worst {:.4}°",
+                    name[path],
+                    100.0 * bad as f64 / total as f64,
+                    band[path][0],
+                    band[path][1],
+                    band[path][2],
+                    worst[path]
+                ));
+            }
+        }
         mesh.warnings.push(format!(
             "[PLC] tets with volume/longest-edge^3 at or below zero: {} §6's table, {} \
              §7.4-meshed, {} §7.4-fanned, {} escalated, {} other; and merely flat (< 1e-9): {} / \

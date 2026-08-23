@@ -2520,6 +2520,183 @@ pub fn facet_split_fan(
 }
 
 // AI-FUNC-SUMMARY:
+// Purpose: A tet's smallest dihedral angle, in degrees.
+// Inputs: its four points.
+// Returns: the least angle between two of its faces, 0 for a degenerate tet.
+// Side effects: None.
+// Notes: The same quantity `[V4]` reports, computed the same way - the angle on edge (a, b) is
+//   between the two other vertices once the edge direction is projected out. Written here so the
+//   optimiser and the verifier are scoring the same thing; an optimiser tuned on a different measure
+//   improves a number nobody checks.
+fn min_dihedral_deg(p: [Vec3; 4]) -> f64 {
+    let mut least = 180.0f64;
+    for (a, b, c, d) in [
+        (0, 1, 2, 3),
+        (0, 2, 1, 3),
+        (0, 3, 1, 2),
+        (1, 2, 0, 3),
+        (1, 3, 0, 2),
+        (2, 3, 0, 1),
+    ] {
+        let axis = p[b].sub(p[a]);
+        let length = axis.dot(axis).sqrt();
+        if length <= 0.0 {
+            return 0.0;
+        }
+        let axis = axis.scale(1.0 / length);
+        let drop = |q: Vec3| {
+            let rel = q.sub(p[a]);
+            rel.sub(axis.scale(rel.dot(axis)))
+        };
+        let (u, v) = (drop(p[c]), drop(p[d]));
+        let (nu, nv) = (u.dot(u).sqrt(), v.dot(v).sqrt());
+        if nu <= 0.0 || nv <= 0.0 {
+            return 0.0;
+        }
+        least = least.min((u.dot(v) / (nu * nv)).clamp(-1.0, 1.0).acos().to_degrees());
+    }
+    least
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: The worst dihedral among the tets that carry a given face or edge.
+// Inputs: the tets, the points, and a predicate selecting which tets count.
+// Returns: the least dihedral over the selected tets, 180 when none.
+// Side effects: None.
+fn worst_dihedral(tets: &[[u32; 4]], points: &[Vec3], pick: &dyn Fn(&[u32; 4]) -> bool) -> f64 {
+    tets.iter()
+        .filter(|t| pick(t))
+        .map(|t| {
+            min_dihedral_deg([
+                points[t[0] as usize],
+                points[t[1] as usize],
+                points[t[2] as usize],
+                points[t[3] as usize],
+            ])
+        })
+        .fold(180.0f64, f64::min)
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Flip slivers out of a finished cell without moving its boundary or its facets.
+// Inputs: the tets, the points, the prescribed boundary, the facets, and a round budget.
+// Returns: the improved tets, or the input when nothing helped.
+// Side effects: None.
+// Notes: **The third goal property, and the only one the gated path still loses on.** Charging bad
+//   elements to the arm that emitted them says §5.2's table produces 0.02 % of tets below 10° on a1
+//   and §7.4 produces 19.6 %, so this is the kernel's own problem and not the fallback's. The cause
+//   is structural rather than a bug: every point of a PLC cell lies on its boundary or on a facet
+//   that spans it, so there are NO interior points, and a Delaunay tetrahedralisation of points in
+//   convex position is where slivers live.
+//
+//   Flips first, because they cost no elements - `[R2]` is a gate, and a Steiner point pays for
+//   quality in the currency the goal also counts. A move is taken only when the least dihedral among
+//   the tets it touches strictly improves, so the cell's own worst element is the measure and every
+//   accepted move raises it. Both the boundary and the facets are protected: a 2-3 flip is offered
+//   only interior faces, and edge removal only edges neither the hull nor a facet owns, so nothing
+//   the recovery established can be undone here.
+fn improve_dihedral(
+    tets: &[[u32; 4]],
+    points: &[Vec3],
+    facets: &[Vec<u32>],
+    rounds: usize,
+) -> Vec<[u32; 4]> {
+    let mut tets = tets.to_vec();
+    let key_of = |x: u32, y: u32| if x <= y { [x, y] } else { [y, x] };
+    // A face all of whose corners belong to one facet may lie IN that facet and carry the interface;
+    // flipping it away would undo the recovery. Over-protecting here is free, since such faces are
+    // few and a flip elsewhere is always available.
+    let facet_nodes: Vec<std::collections::BTreeSet<u32>> = facets
+        .iter()
+        .map(|f| f.iter().copied().collect())
+        .collect();
+    let on_facet = |t: &[u32; 3]| {
+        facet_nodes
+            .iter()
+            .any(|set| t.iter().all(|node| set.contains(node)))
+    };
+    let mut protected_edges: std::collections::BTreeSet<[u32; 2]> =
+        std::collections::BTreeSet::new();
+    for facet in facets {
+        for slot in 0..facet.len() {
+            protected_edges.insert(key_of(facet[slot], facet[(slot + 1) % facet.len()]));
+        }
+    }
+    for _round in 0..rounds {
+        let mut carried: BTreeMap<[u32; 3], usize> = BTreeMap::new();
+        for tet in &tets {
+            for face in tet_faces(*tet) {
+                let mut key = face;
+                key.sort_unstable();
+                *carried.entry(key).or_insert(0) += 1;
+            }
+        }
+        let mut hull_edges: std::collections::BTreeSet<[u32; 2]> =
+            std::collections::BTreeSet::new();
+        for (face, count) in &carried {
+            if *count != 1 {
+                continue;
+            }
+            for slot in 0..3 {
+                hull_edges.insert(key_of(face[slot], face[(slot + 1) % 3]));
+            }
+        }
+        let mut moved = false;
+        // 2-3 first: it is the move that puts an edge IN, and a sliver is usually short of one.
+        for (face, count) in &carried {
+            if *count != 2 || on_facet(face) {
+                continue;
+            }
+            let before = worst_dihedral(&tets, points, &|t| face.iter().all(|n| t.contains(n)));
+            let Some(next) = flip_two_three(&tets, points, *face) else { continue };
+            let touched: std::collections::BTreeSet<u32> = face.iter().copied().collect();
+            let after = worst_dihedral(&next, points, &|t| {
+                touched.iter().filter(|n| t.contains(n)).count() >= 2
+                    && t.iter().any(|n| !touched.contains(n))
+            });
+            if after > before {
+                tets = next;
+                moved = true;
+                break;
+            }
+        }
+        if moved {
+            continue;
+        }
+        // Then edge removal, which takes an edge OUT. Only interior edges neither the hull nor a
+        // facet owns, so the cell's outer surface and its interface both stay exactly as recovered.
+        let mut edges: std::collections::BTreeSet<[u32; 2]> = std::collections::BTreeSet::new();
+        for tet in &tets {
+            for pair in [[0usize, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]] {
+                edges.insert(key_of(tet[pair[0]], tet[pair[1]]));
+            }
+        }
+        for edge in &edges {
+            if hull_edges.contains(edge) || protected_edges.contains(edge) {
+                continue;
+            }
+            let before = worst_dihedral(&tets, points, &|t| {
+                t.contains(&edge[0]) && t.contains(&edge[1])
+            });
+            let Ok(next) = remove_edge(&tets, points, *edge) else { continue };
+            let ends: [u32; 2] = *edge;
+            let after = worst_dihedral(&next, points, &|t| {
+                t.contains(&ends[0]) || t.contains(&ends[1])
+            });
+            if after > before {
+                tets = next;
+                moved = true;
+                break;
+            }
+        }
+        if !moved {
+            break;
+        }
+    }
+    tets
+}
+
+// AI-FUNC-SUMMARY:
 // Purpose: The mesh edges that properly cross a facet's interior.
 // Inputs: the tets, the points, and one facet polygon.
 // Returns: the crossing edges, deduplicated and in key order.
@@ -2887,6 +3064,19 @@ pub fn constrained_tets(
                 carried = faces_of(&tets);
                 outer = hull_of(&carried);
             }
+        }
+    }
+    // **Then the slivers, which are the third goal property.** Nothing above this line looks at
+    // element shape at all, and the measurement says it should: §5.2's table puts 0.02 % of a1's
+    // tets below 10° and §7.4 puts 19.6 %. The pass only flips, so it costs no elements, and it is
+    // guarded rather than trusted - if it moved the hull the cell keeps the tets it had, and the
+    // facet checks below still run on whatever it produced.
+    {
+        let improved = improve_dihedral(&tets, points, facets, 24);
+        let after = hull_of(&faces_of(&improved));
+        if after == outer {
+            tets = improved;
+            carried = faces_of(&tets);
         }
     }
     // **Both checks always run, and the reason names the combination.** Returning on the first
