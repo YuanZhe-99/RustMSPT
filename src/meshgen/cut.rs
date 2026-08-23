@@ -1912,15 +1912,20 @@ pub fn cut_lattice(
             let mut segments: Vec<[u32; 2]> = Vec::new();
             for chord in chords_of.get(face).into_iter().flatten() {
                 let mut ends = [0u32; 2];
+                let mut whole = true;
                 for (slot, point) in chord.iter().enumerate() {
                     // The endpoint may have been snapped onto an edge when it was interned, so the
                     // raw point's key need not find it; `chord_id` records where each one went.
-                    ends[slot] = chord_id
-                        .get(&node_key(*point, order_quantum))
-                        .copied()
-                        .unwrap_or(raw[0]);
+                    // **A missing entry means the point was DROPPED**, because it would have split
+                    // a lattice edge §6's cut has no node on. Aiming the chord at the face's first
+                    // corner instead - which is what this did - invents a constraint the surface
+                    // does not have; the chord is simply not expressible on this face.
+                    match chord_id.get(&node_key(*point, order_quantum)) {
+                        Some(id) => ends[slot] = *id,
+                        None => whole = false,
+                    }
                 }
-                if ends[0] != ends[1] {
+                if whole && ends[0] != ends[1] {
                     segments.push(ends);
                 }
             }
@@ -4065,6 +4070,7 @@ pub fn cut_lattice(
         }
         let mut tjunction_by_path = [0usize; 5];
         let (mut split_edges, mut orphan_points) = (0usize, 0usize);
+        let (mut tjunction_known, mut tjunction_second, mut tjunction_unknown) = (0usize, 0usize, 0usize);
         for (edge, ids) in &plc_edge_points {
             let interior: Vec<u32> =
                 ids.iter().copied().filter(|id| !edge.contains(id)).collect();
@@ -4078,8 +4084,31 @@ pub fn cut_lattice(
                 .count();
             let Some(at) = tet_edges.get(edge).copied() else { continue };
             let parent = mesh.parent_of.get(at).copied().unwrap_or(0) as usize;
-            tjunction_by_path[path_of.get(parent).copied().unwrap_or(4).min(4) as usize] +=
-                interior.len();
+            let path = path_of.get(parent).copied().unwrap_or(4).min(4) as usize;
+            tjunction_by_path[path] += interior.len();
+            // **Does §6's table know about the point at all?** A trace point that is ALSO one of
+            // §6's own edge crossings is a point every cell around the edge already splits, and it
+            // cannot be the T-junction. One the face trace interned and `cut_index` has never heard
+            // of is invisible to every cell that reads §5.2 - and that is a different defect, at a
+            // different place, from the exclusion propagating too narrowly. a8 is the only case with
+            // either, so the two have never been told apart.
+            if path == 0 {
+                for id in &interior {
+                    if all_components
+                        .iter()
+                        .any(|c| cut_index.get(&(*edge, *c)) == Some(id))
+                    {
+                        tjunction_known += 1;
+                    } else if all_components
+                        .iter()
+                        .any(|c| second_index.get(&(*edge, *c)) == Some(id))
+                    {
+                        tjunction_second += 1;
+                    } else {
+                        tjunction_unknown += 1;
+                    }
+                }
+            }
         }
         mesh.warnings.push(format!(
             "[PLC] of {split_edges} lattice edge(s) an interned point splits, the tets that still \
@@ -4091,6 +4120,14 @@ pub fn cut_lattice(
             tjunction_by_path[3],
             tjunction_by_path[4]
         ));
+        if tjunction_by_path[0] > 0 {
+            mesh.warnings.push(format!(
+                "[PLC] of the points §6's table carries whole, {tjunction_known} are §6's OWN edge \
+                 crossing (it splits them anyway), {tjunction_second} are a second crossing on the \
+                 same edge, and {tjunction_unknown} are points only the face trace has - those last \
+                 are invisible to §5.2 and are the T-junction"
+            ));
+        }
         // Faces carried by three or more tets, by the paths that carried them. A face emitted by
         // both of its owners AND by a third cell is not a tolerance question: one of the three
         // built a triangle on a face that is not its own.

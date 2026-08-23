@@ -767,6 +767,15 @@ and the other reads it — decide which, and say so at the site.
   by construction — its material boundary is wherever the spokes happen to cut. `[V3]` passes on it,
   which is why it survived: **conformity to the mesh and conformity to the geometry are different
   properties and only `[V13]` sees the second.**
+- **Check which direction a propagation runs before propagating.** a8's T-junctions come from cells
+  that read §5.2 and cannot split an edge. Spreading the *exclusion* outward recruits more cells into
+  exactly that set: excluded 46,596 → 122,551, T-junctions 8,930 → 20,400, hanging nodes 113,859 →
+  289,135, and fidelity fell *below* the shipped path. **The thing that causes the defect is not the
+  thing to spread.**
+- **"Measured zero" is a statement about one question.** I asserted a rule was a no-op on three cases
+  because their *T-junction* count was zero; the rule fired on a quite different quantity — how the
+  point was interned — and a6a drops 934 of them. Before claiming a change is inert, measure the
+  quantity the change actually reads.
 - **Run the biggest case before believing any of it — again.** a8 is 34 % of the suite's off-surface
   area and had never been through the gated path. It improves fidelity by 38 % and **fails `[V3]`**
   with 113,859 hanging nodes, on a mechanism the three smaller cases cannot exhibit. Every conformity
