@@ -743,3 +743,89 @@ See [Algorithm Overview](#3-algorithm-overview) above (each algorithm doc has it
 - **Obstacle 1, narrowed again: the offending face is NOT a cap triangle.** `fan_cap` rejects an apex whose fan swallows a loop vertex *on an edge* but says nothing about a vertex strictly **inside** a fan triangle — exactly what `cell_fan_is_conforming` reports. Extending `fan_swallows_vertex` to reject interior containment is a **no-op on the default path** (a8/a3/a6a identical to the digit, 370 tests green) and leaves the traced count at **1,628, unchanged**. So the apex choice is not the cause; both the guard and the tracer were reverted. That leaves the **per-piece fan** faces `(centroid, a, b)`: a crossing node sits *on* a boundary edge, so it lies inside such a face only if some triangle still carries that edge **uncut** — the pre-pass missed a triangle. **Check the cap triangles first**: `split_escalated_cell` adds them to both pieces *after* the pre-pass runs, their edges span loop vertices, and nothing traces them.
 - **Obstacle 1, chased to the end: the traced pieces are NOT STAR-SHAPED from their centroids.** Instrumenting the guard to name the offending face's origin reports the same on all **1,628**: the face has no cap-only node and the intruding node is not cap-only either — both are ordinary boundary nodes. So the fan face `(centroid, a, b)` passes through **another part of the piece's own boundary**. Not a missed split, not a guard to loosen: a centroid fan cannot mesh a piece that is not star-shaped, and **tracing adds nodes and detail, which makes pieces less star-shaped — so the fan's own precondition fails more often the better the trace gets.**
 - **The three open problems are ONE problem: the centroid fan's limits.** (1) The sub-cell body needs a cut from the surface fragment rather than edge crossings. (2) The mixed-label fan piece needs the trace on its boundary so the split can separate it. (3) The traced piece is separable but the fan cannot mesh it. All three are answered by **SPEC §7.2's local PLC mesher** — input is the cell's tet, its clipped surface fragments and its curve segments, and it cones nothing to a centre. The kernel exists and is tested (`src/meshgen/cdt.rs`); what it has never had is the **fragment input**. That is no longer one capability among several — **it is the remaining capability**, and every other route into these problems is now closed with numbers.
+
+### P-3.13, the local PLC mesher: what worked and what did not
+
+**The one defect behind four symptoms.** *The cut is derived twice — once for the faces and once for
+the interior — and only where the two happen to agree can a cell be meshed.* Four appearances:
+§6.35 one point interned under two spellings; §6.39 rim membership re-derived per face instead of
+read off the edge; §6.41 a subdivider clipping against §5.2's world while the faces are split by the
+trace; §6.43 the facet's rim recomputed instead of adopted. **None was ever fixed by moving a
+threshold.** When two parts of the mesher must agree about a geometric quantity, one of them owns it
+and the other reads it — decide which, and say so at the site.
+
+#### Edits that were right
+
+- **Charge every defect to the path that emitted it.** A histogram of leaking faces against the arm
+  that produced them ended rounds of guessing in one run: `0 table / 0 meshed / 464 fanned / 0
+  escalated`. The all-zero rows are as valuable — the T-junction row coming back zero killed the
+  obvious next hypothesis before it was built.
+- **Measure a number *with units*, not a threshold sweep.** Three tolerance edits in a row changed
+  nothing (leaks 464 → 466). What ended it was "how far outside the face, in the face's own
+  barycentric coordinates" — −2.9 × 10⁻², three percent of the face. **An absolute tolerance on a
+  relative question fails completely below one scale and not at all above it, which is exactly why
+  sweeping it looks inert.**
+- **Name the refusal, then split the name when it covers two things.** "The boundary is not the
+  frozen one" became combinatorial vs structural (§6.36), then structural in *both directions*
+  (§6.42), then facet-edge vs facet-interior (§6.44). Each split turned an unexplained population
+  into a work item, and twice the two halves needed completely different machinery.
+- **Ask the refusal in both directions.** §6.36 measured "2,028 combinatorial, 0 structural" and it
+  was true and half the question. *A node the hull carries that the boundary has never heard of* was
+  never asked, and it was 72 % of the population.
+- **Guard before the fan, not after it.** The fan checks nothing, so whatever it is handed becomes
+  the cell. Three guards were needed to keep a split conforming and the *first two changed nothing*
+  — which was the measurement that located the third (dropped degenerate cone tets).
+- **Seed a bounded domain with the domain.** The face triangulator's super-triangle sat at 1000 ×
+  the span while sliver circumcircles reach 10⁵ × it, so `retain` deleted a whole strip. Every point
+  is already checked to lie inside the face, so **the face is the convex hull and coverage holds by
+  construction.**
+- **Make membership a lookup, not a predicate on 10⁻¹⁹.** Whether a point splits an edge is a
+  property *of the edge*; two faces re-deriving it from `orient2d` project along different axes and
+  decide differently, and the boundary cracks.
+- **A constraint that runs through a vertex is two constraints** — in 3D as well as 2D. Applied to
+  face constraints since §6.32 and not to facets until §6.44, where recovering a facet edge
+  *created* it across a split point and put back 33 hanging nodes.
+- **Build the dataset when the same guess keeps failing.** Six build-measure-revert cycles ended
+  when one CSV of per-cell facts (`RUSTMSPT_PLC_CSV`, gated, print-only) plus pandas showed the
+  decline rate rising 0 % → 100 % with fragment size and *flat* against cell shape. **Aggregates
+  told us where to look; the per-entity dump told us what we were looking at.**
+
+#### Edits that were wrong, and what the cost was
+
+- **`edge × 0.5` as a match tolerance.** It worked and was indefensible — half an element is a
+  relocation, not a coincidence. The right bound was `eps`, *because that is exactly how far the
+  face had already moved its own points*. **A tolerance is defensible when you can name the thing it
+  is measuring; if the only argument is "it works", it is a knob.**
+- **Trusting a parameter's name.** `plc_attempt`'s parameter called `quantum` is passed
+  `order_quantum`, a millionth of `eps`, so bounding a *coincidence* test by it did nothing at all
+  — §6.35's category error a second time, in the same function, through a name. **Check what a
+  tolerance parameter is actually passed at the call site before reasoning about its size.**
+- **Reporting a correlation without its base rate.** A face-interior point raises the decline rate
+  six-fold, which looks like the answer until you notice 1,614 of 2,253 declines have no such point
+  at all.
+- **Measuring the wrong function.** The first rim census used `fragment_in_cell`, which returns the
+  **original** triangles — its own note says so — and read rim points 85 × the cell's edge away.
+  Only the impossibility of that number caught it. **A number that cannot be true is a gift; the
+  same error in a plausible range would have been believed.**
+- **Fixing the symptom one level below the cause.** §6.41 tagged the fan's caps: 503 → 494. The
+  violations were not in the cells the split reached but in the 473 it could not, and the split's own
+  caps ignored the augmented boundary — the same root cause arriving from another direction.
+- **Two snaps of fragment vertices to the arena**, at `edge × 10⁻⁹` and at `eps` six orders coarser:
+  no change either time. The coarse one failing too is what ruled out the whole class rather than one
+  threshold. **When a tolerance change is inert at two scales that differ by six orders, the
+  mechanism is not a tolerance.**
+- **Assuming a baseline.** "The default path passes everything" was true of a6a and never of a3,
+  which already fails `[V2]` with 19 duplicate nodes and `[V6]`. Read a case's own baseline before
+  charging a regression to a change.
+
+#### Rules that keep paying
+
+- **State the falsifier with the plan, then hold to it.** §6.42's item 1 was written as "if the
+  hull-extra class does not collapse this is not the fix, whatever the acceptance number does". It
+  collapsed 96 % and 99 %, so the acceptance gain was earned rather than coincidental.
+- **A change that changes nothing does not stay** — unless it is a guard the other half of the code
+  already carries, in which case keep it and **record it as neutral rather than sell it as a fix**
+  (the 2D cavity flood, the max-min retriangulation).
+- **Conformity is not tradeable.** Two changes in this stretch bought acceptance and broke `[V3]`;
+  both came out. R1 permits no fallback that abandons conformity, and 2 % of one verifier is not an
+  exception.

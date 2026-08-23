@@ -1556,34 +1556,45 @@ fn remove_edge(tets: &[[u32; 4]], points: &[Vec3], edge: [u32; 2]) -> Option<Vec
     if fan.len() < 2 {
         return None;
     }
-    // Exactly two ends means the fan is an open strip, which is what a hull edge has. A closed
-    // ring is an interior edge and is not what boundary recovery is asking about.
+    // **Two ends means an open strip (a hull edge); no ends means a closed ring (an interior one).**
+    // Both are the same operation on the same polygon - the link, closed by the edge the removal
+    // creates - and the only difference is where the walk starts. An open fan of n tets has a link
+    // of n+1 vertices and becomes 2(n-1) tets; a closed ring of n has a link of n and becomes
+    // 2(n-2), which at n = 3 is the ordinary 3-2 flip. Boundary recovery only ever needed the first;
+    // recovering a facet's edges needs the second, because the segment to be recovered runs through
+    // the interior.
     let ends: Vec<u32> = link
         .iter()
         .filter(|(_, next)| next.len() == 1)
         .map(|(node, _)| *node)
         .collect();
-    if ends.len() != 2 {
+    let closed = ends.is_empty() && link.values().all(|next| next.len() == 2);
+    if ends.len() != 2 && !closed {
         return None;
     }
-    let mut path: Vec<u32> = vec![ends[0]];
+    let start = if closed { *link.keys().next()? } else { ends[0] };
+    let mut path: Vec<u32> = vec![start];
     let mut seen: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
-    seen.insert(ends[0]);
+    seen.insert(start);
     loop {
         let last = *path.last()?;
         let previous = if path.len() >= 2 { Some(path[path.len() - 2]) } else { None };
         let Some(next) = link.get(&last)?.iter().copied().find(|x| Some(*x) != previous) else {
             break;
         };
+        if next == start {
+            break;
+        }
         if !seen.insert(next) {
             return None;
         }
         path.push(next);
-        if next == ends[1] {
+        if !closed && next == ends[1] {
             break;
         }
     }
-    if path.len() != fan.len() + 1 {
+    let want = if closed { fan.len() } else { fan.len() + 1 };
+    if path.len() != want || path.len() < 3 {
         return None;
     }
     let n = path.len();
@@ -1660,6 +1671,44 @@ fn remove_edge(tets: &[[u32; 4]], points: &[Vec3], edge: [u32; 2]) -> Option<Vec
         stack.push((i, k));
         stack.push((k, j));
     }
+    // **The replacement must occupy exactly the region it replaces, and that is checked, not
+    // assumed.** The per-triangle test only asks that `c` and `d` fall either side; for an open fan
+    // that is enough, but a closed ring's link polygon can be non-convex, and then a triangulation
+    // the test admits can carry tets outside the fan. The two consequences are a hole and an
+    // overlap, and both show up as nodes sitting on faces they are not vertices of - 33 hanging
+    // nodes on a6a, where there had been none (PLAN §6.44). So: the boundary of the removed region
+    // and the boundary of the added one must be the same set of faces, and the volumes must agree.
+    let region_boundary = |group: &[[u32; 4]]| -> std::collections::BTreeSet<[u32; 3]> {
+        let mut count: BTreeMap<[u32; 3], usize> = BTreeMap::new();
+        for tet in group {
+            for face in tet_faces(*tet) {
+                let mut key = face;
+                key.sort_unstable();
+                *count.entry(key).or_insert(0) += 1;
+            }
+        }
+        count
+            .into_iter()
+            .filter(|(_, n)| *n == 1)
+            .map(|(face, _)| face)
+            .collect()
+    };
+    let volume_of = |group: &[[u32; 4]]| -> f64 {
+        group
+            .iter()
+            .map(|t| {
+                let p = [
+                    points[t[0] as usize],
+                    points[t[1] as usize],
+                    points[t[2] as usize],
+                    points[t[3] as usize],
+                ];
+                p[1].sub(p[0]).cross(p[2].sub(p[0])).dot(p[3].sub(p[0])).abs() / 6.0
+            })
+            .sum()
+    };
+    let removed: Vec<[u32; 4]> = fan.iter().map(|at| tets[*at]).collect();
+    let mut added: Vec<[u32; 4]> = Vec::with_capacity(triangles.len() * 2);
     let mut out: Vec<[u32; 4]> = Vec::with_capacity(tets.len() + triangles.len());
     for (at, tet) in tets.iter().enumerate() {
         if !fan.contains(&at) {
@@ -1682,9 +1731,22 @@ fn remove_edge(tets: &[[u32; 4]], points: &[Vec3], edge: [u32; 2]) -> Option<Vec
                 s if s < 0 => piece.swap(0, 1),
                 _ => {}
             }
-            out.push(piece);
+            added.push(piece);
         }
     }
+    // The boundary test applies to an INTERIOR edge only. Removing one leaves the fan's boundary
+    // faces `(c, vi, vi+1)` and `(d, vi, vi+1)` exactly where they were, so any change is the
+    // triangulation escaping the region. Removing a HULL edge deliberately retriangulates the two
+    // faces on the hull - that is the whole operation boundary recovery needs - so the same test
+    // there would forbid the thing it is for.
+    if closed && region_boundary(&removed) != region_boundary(&added) {
+        return None;
+    }
+    let (before, after) = (volume_of(&removed), volume_of(&added));
+    if (before - after).abs() > before.max(after) * 1.0e-9 {
+        return None;
+    }
+    out.extend(added);
     Some(out)
 }
 
@@ -1826,6 +1888,169 @@ fn recover_boundary(
     Err("boundary recovery did not converge")
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Whether an open segment properly crosses a triangle's interior.
+// Inputs: the segment's ends and the triangle's three vertices.
+// Returns: true only for a transversal crossing - touching a vertex, an edge or the plane is not one.
+// Side effects: None.
+// Notes: Exact throughout. The segment must straddle the triangle's plane strictly, and the three
+//   `orient3d` values that place the segment's line against the triangle's edges must agree in sign,
+//   which is the standard segment-triangle test written so that every degeneracy answers "no"
+//   rather than guessing.
+fn segment_crosses_triangle(a: Vec3, b: Vec3, p: Vec3, q: Vec3, r: Vec3) -> bool {
+    let o = |w: Vec3, x: Vec3, y: Vec3, z: Vec3| {
+        crate::meshgen::predicates::orient3d_filtered(w, x, y, z).0
+    };
+    let (sa, sb) = (o(p, q, r, a), o(p, q, r, b));
+    if sa == 0 || sb == 0 || sa == sb {
+        return false;
+    }
+    let (d1, d2, d3) = (o(a, b, p, q), o(a, b, q, r), o(a, b, r, p));
+    d1 != 0 && d1 == d2 && d2 == d3
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: The faces of a tetrahedralisation whose interiors a segment properly crosses.
+// Inputs: the tets, the points, and the segment's two nodes.
+// Returns: the crossed faces, deduplicated and in key order.
+// Side effects: None.
+// Notes: This is the progress measure segment recovery runs on: a segment is an edge of the mesh
+//   exactly when nothing crosses it, so a flip that reduces this count has moved towards recovering
+//   it and one that does not has not. Counting FACES rather than tets makes the measure independent
+//   of how the region either side happens to be filled.
+fn crossed_faces(tets: &[[u32; 4]], points: &[Vec3], a: u32, b: u32) -> Vec<[u32; 3]> {
+    let (pa, pb) = (points[a as usize], points[b as usize]);
+    let mut out: std::collections::BTreeSet<[u32; 3]> = std::collections::BTreeSet::new();
+    for tet in tets {
+        for face in tet_faces(*tet) {
+            if face.contains(&a) || face.contains(&b) {
+                continue;
+            }
+            let mut key = face;
+            key.sort_unstable();
+            if out.contains(&key) {
+                continue;
+            }
+            if segment_crosses_triangle(
+                pa,
+                pb,
+                points[face[0] as usize],
+                points[face[1] as usize],
+                points[face[2] as usize],
+            ) {
+                out.insert(key);
+            }
+        }
+    }
+    out.into_iter().collect()
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Make one segment an edge of the tetrahedralisation by removing what crosses it.
+// Inputs: the tets, the points, the segment, and the edges that must not be removed.
+// Returns: the recovered tets, or None when no removal makes progress.
+// Side effects: None.
+// Notes: The first half of facet recovery - a facet cannot be a union of mesh faces until its own
+//   edges are edges of the mesh, and on a3 that is 853 of the declines. The move is the same edge
+//   removal boundary recovery uses, now that it also handles the closed ring an interior edge has;
+//   what changes is the choice of victim and the progress measure. A victim is an edge of a face
+//   the segment crosses - anything else is not in the way - and a removal is kept only if it leaves
+//   strictly fewer crossed faces, which is what makes the loop terminate rather than wander.
+//
+//   The boundary's own edges are protected. Removing one would retriangulate the cell's outer
+//   surface, which its neighbours have already been promised (invariant J1), so a recovery that
+//   needed it must fail instead.
+fn recover_segment(
+    tets: &[[u32; 4]],
+    points: &[Vec3],
+    a: u32,
+    b: u32,
+    protected: &std::collections::BTreeSet<[u32; 2]>,
+) -> Option<Vec<[u32; 4]>> {
+    let key_of = |x: u32, y: u32| if x <= y { [x, y] } else { [y, x] };
+    let mut tets = tets.to_vec();
+    let mut crossings = crossed_faces(&tets, points, a, b).len();
+    for _round in 0..crossings.max(1) * 8 {
+        if tets.iter().any(|t| t.contains(&a) && t.contains(&b)) {
+            return Some(tets);
+        }
+        let faces = crossed_faces(&tets, points, a, b);
+        if faces.is_empty() {
+            // Nothing is in the way and the segment is still not an edge, which means the two nodes
+            // are not connected through the region at all. No flip fixes that.
+            return None;
+        }
+        let mut victims: std::collections::BTreeSet<[u32; 2]> =
+            std::collections::BTreeSet::new();
+        for face in &faces {
+            for slot in 0..3 {
+                let edge = key_of(face[slot], face[(slot + 1) % 3]);
+                if !protected.contains(&edge) {
+                    victims.insert(edge);
+                }
+            }
+        }
+        let mut moved = false;
+        for edge in &victims {
+            let Some(next) = remove_edge(&tets, points, *edge) else { continue };
+            let after = crossed_faces(&next, points, a, b).len();
+            if after < crossings {
+                tets = next;
+                crossings = after;
+                moved = true;
+                break;
+            }
+        }
+        if !moved {
+            return None;
+        }
+    }
+    None
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Make every facet's edges edges of the tetrahedralisation.
+// Inputs: the tets, the points, the facets, and the boundary's edges, which are protected.
+// Returns: the recovered tets, or None if any facet edge cannot be recovered.
+// Side effects: None.
+// Notes: All or nothing per call: a half-recovered facet is not a constraint the caller can use,
+//   and `constrained_tets` re-checks everything afterwards anyway.
+fn recover_facet_edges(
+    tets: &[[u32; 4]],
+    points: &[Vec3],
+    facets: &[Vec<u32>],
+    protected: &std::collections::BTreeSet<[u32; 2]>,
+) -> Option<Vec<[u32; 4]>> {
+    let key_of = |x: u32, y: u32| if x <= y { [x, y] } else { [y, x] };
+    let mut tets = tets.to_vec();
+    for facet in facets {
+        if facet.len() < 3 {
+            continue;
+        }
+        for slot in 0..facet.len() {
+            let (a, b) = (facet[slot], facet[(slot + 1) % facet.len()]);
+            if a == b {
+                continue;
+            }
+            let mut present = tets.iter().any(|t| t.contains(&a) && t.contains(&b));
+            if present {
+                continue;
+            }
+            let mut guard = protected.clone();
+            // The facet's own edges are protected too, so recovering one does not undo another.
+            for other in 0..facet.len() {
+                guard.insert(key_of(facet[other], facet[(other + 1) % facet.len()]));
+            }
+            tets = recover_segment(&tets, points, a, b, &guard)?;
+            present = tets.iter().any(|t| t.contains(&a) && t.contains(&b));
+            if !present {
+                return None;
+            }
+        }
+    }
+    Some(tets)
+}
+
 pub fn constrained_tets(
     points: &[Vec3],
     keys: &[NodeKey],
@@ -1836,6 +2061,46 @@ pub fn constrained_tets(
     let Some(tets) = delaunay_tets(points, keys) else {
         return Err("the points have no tetrahedralisation");
     };
+    // **A facet edge that runs through a node is two facet edges.** The same rule
+    // `constrained_face_triangulation` applies to its 2D constraints (§6.32), now applied in 3D
+    // because the facet's rim comes from the faces and can therefore run along a lattice edge that a
+    // trace point has split. Recovering such an edge *creates* it, which spans the split point and
+    // puts a T-junction back into a cell that had none - 8 of them on a6a, and 33 hanging nodes
+    // behind them (PLAN §6.44). Splitting first is a pure function of the facet and the points, so
+    // it costs nothing and cannot disagree between cells.
+    let facets: Vec<Vec<u32>> = facets
+        .iter()
+        .map(|facet| {
+            if facet.len() < 3 {
+                return facet.clone();
+            }
+            let mut out: Vec<u32> = Vec::with_capacity(facet.len());
+            for slot in 0..facet.len() {
+                let (a, b) = (facet[slot], facet[(slot + 1) % facet.len()]);
+                out.push(a);
+                let (p, q) = (points[a as usize], points[b as usize]);
+                let along = q.sub(p);
+                let len2 = along.dot(along);
+                if len2 <= 0.0 {
+                    continue;
+                }
+                let mut between: Vec<(f64, u32)> = (0..points.len() as u32)
+                    .filter(|id| *id != a && *id != b && !facet.contains(id))
+                    .filter_map(|id| {
+                        let rel = points[id as usize].sub(p);
+                        let t = rel.dot(along) / len2;
+                        let off = rel.sub(along.scale(t));
+                        (off.dot(off) <= 1.0e-18 * len2 && (1.0e-9..=1.0 - 1.0e-9).contains(&t))
+                            .then_some((t, id))
+                    })
+                    .collect();
+                between.sort_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)));
+                out.extend(between.into_iter().map(|(_, id)| id));
+            }
+            out
+        })
+        .collect();
+    let facets = &facets[..];
     let frozen: std::collections::BTreeSet<[u32; 3]> = boundary
         .iter()
         .map(|t| {
@@ -1865,6 +2130,16 @@ pub fn constrained_tets(
     };
     let mut carried = faces_of(&tets);
     let mut outer = hull_of(&carried);
+    let edges_of = |faces: &std::collections::BTreeSet<[u32; 3]>| {
+        let mut out: std::collections::BTreeSet<[u32; 2]> = std::collections::BTreeSet::new();
+        for face in faces {
+            for slot in 0..3 {
+                let (x, y) = (face[slot], face[(slot + 1) % 3]);
+                out.insert(if x <= y { [x, y] } else { [y, x] });
+            }
+        }
+        out
+    };
     // **The Delaunay hull is not the prescribed boundary, and that is expected.** Both triangulate
     // the same convex surface on the same nodes; they disagree wherever a constraint edge on a face
     // is not the Delaunay diagonal. Recovering it is a flip problem, not a reason to give the cell
@@ -1882,6 +2157,29 @@ pub fn constrained_tets(
             // stop want three different follow-ups, and a single name would hide which is the
             // population.
             Err(reason) => recovery_failed = Some(reason),
+        }
+    }
+    // **Then the facet's edges, which is the first half of facet recovery.** A facet cannot be a
+    // union of mesh faces until its own edges are edges of the mesh; that is 52 of a6a's declines
+    // and 853 of a3's, against 216 and 602 where the edges are all present and only the interior is
+    // uncovered (PLAN §6.44). The two halves need different machinery, and this is the one edge
+    // removal already does. Attempted only when something is actually missing, so the common case
+    // pays a set lookup.
+    {
+        let protected = edges_of(&outer);
+        let missing = facets.iter().any(|facet| {
+            facet.len() >= 3
+                && (0..facet.len()).any(|slot| {
+                    let (a, b) = (facet[slot], facet[(slot + 1) % facet.len()]);
+                    a != b && !tets.iter().any(|t| t.contains(&a) && t.contains(&b))
+                })
+        });
+        if missing {
+            if let Some(recovered) = recover_facet_edges(&tets, points, facets, &protected) {
+                tets = recovered;
+                carried = faces_of(&tets);
+                outer = hull_of(&carried);
+            }
         }
     }
     // **Both checks always run, and the reason names the combination.** Returning on the first
@@ -1921,6 +2219,8 @@ pub fn constrained_tets(
     let intruding = hull_nodes.iter().filter(|node| !frozen_nodes.contains(node)).count();
 
     let mut facets_ok = true;
+    let mut facet_edges_missing = 0usize;
+    let mut facet_interior_uncovered = 0usize;
     for facet in facets {
         if facet.len() < 3 {
             return Err("a facet has fewer than three vertices");
@@ -1958,6 +2258,32 @@ pub fn constrained_tets(
         }
         if (covered - want_area).abs() > want_area * 1.0e-9 {
             facets_ok = false;
+            // **Which half of facet recovery is missing.** A constraint facet is recovered in two
+            // stages: its EDGES must be edges of the tetrahedralisation, and then its interior must
+            // be covered by faces. They need different machinery - edges are recovered by removing
+            // what crosses them, interiors by flipping or by a Steiner point - so a single refusal
+            // naming both is a refusal that cannot be acted on. Counted here, and reported as two
+            // reasons below.
+            let mut mesh_edges: std::collections::BTreeSet<[u32; 2]> =
+                std::collections::BTreeSet::new();
+            for tet in &tets {
+                for pair in [[0usize, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]] {
+                    let (x, y) = (tet[pair[0]], tet[pair[1]]);
+                    mesh_edges.insert(if x <= y { [x, y] } else { [y, x] });
+                }
+            }
+            let missing = (0..facet.len())
+                .filter(|slot| {
+                    let (x, y) = (facet[*slot], facet[(slot + 1) % facet.len()]);
+                    let key = if x <= y { [x, y] } else { [y, x] };
+                    !mesh_edges.contains(&key)
+                })
+                .count();
+            if missing > 0 {
+                facet_edges_missing += missing;
+            } else {
+                facet_interior_uncovered += 1;
+            }
         }
     }
     match (boundary_ok, facets_ok, structural || intruding > 0) {
@@ -1969,7 +2295,11 @@ pub fn constrained_tets(
         } else {
             "the hull carries a node the boundary has never heard of"
         }),
-        (true, false, _) => Err("a facet is not a union of faces of the tetrahedralisation"),
+        (true, false, _) => Err(if facet_edges_missing > 0 {
+            "a facet edge is not an edge of the tetrahedralisation"
+        } else {
+            "a facet's edges are all there but its interior is not covered"
+        }),
         (false, false, false) => Err("neither the boundary nor the facets survive"),
         (false, false, true) => Err("a boundary node is off the hull, and the facets fail too"),
     }
@@ -3111,6 +3441,11 @@ mod tests {
     // close enough to be joined by an edge put that edge across it, and no set of faces can then
     // cover the facet - which is exactly the case a recovery machine would have to fix, and exactly
     // the case that must never be silently accepted in the meantime.
+    //
+    // The refusal names WHICH half of facet recovery is missing, and this is the second: the
+    // facet's own edges are all present, and it is the interior that an edge crosses. The other
+    // half - a facet edge that is not an edge of the mesh at all - needs different machinery, so a
+    // single name covering both could not be acted on.
     #[test]
     fn a_facet_an_edge_crosses_is_refused() {
         let points = vec![
@@ -3128,7 +3463,7 @@ mod tests {
         let facet = vec![vec![4u32, 5, 6]];
         assert_eq!(
             constrained_tets(&points, &keys_of(&points), &boundary, &facet, 1.0e-9).err(),
-            Some("a facet is not a union of faces of the tetrahedralisation")
+            Some("a facet's edges are all there but its interior is not covered")
         );
     }
 
