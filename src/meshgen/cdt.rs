@@ -1115,6 +1115,7 @@ pub fn constrained_face_triangulation(
     points: &[Vec3],
     keys: &[NodeKey],
     segments: &[[u32; 2]],
+    weld: f64,
 ) -> Result<Vec<[u32; 3]>, &'static str> {
     if points.len() < 3 || points.len() != keys.len() {
         return Err("the face has fewer than three points");
@@ -1133,18 +1134,46 @@ pub fn constrained_face_triangulation(
     // point is mathematically inside; it is that BOTH CELLS COMPUTE THE SAME POINT, which the
     // quantised key gives. Refusing on an exact test measured 535 of a6a's 970 escalated cells and
     // 427 of a3's 1,088 - the largest face-side refusal by far, and every one of them a rounding
-    // artefact rather than a geometry. `side / outward` is the point's barycentric coordinate
-    // against that edge, so the bound means "no more than 1e-9 of the face outside it" and reads
-    // the same at every element size.
+    // artefact rather than a geometry.
+    //
+    // **Bounded by the pipeline's own coincidence tolerance, not by a private constant.** This test
+    // used to refuse at a barycentric coordinate below -1e-9 - a relative bound this one routine
+    // invented. On a8 that rejected **two faces** whose worst point is 1.869e-9 of the face outside,
+    // which at that case's element size is about 1e-11 in absolute terms: seven orders of magnitude
+    // inside `eps`, the tolerance `coincidence: merge` uses to decide that two points ARE the same
+    // point. So the pipeline's own rule says the point is on the face and only this line disagreed.
+    //
+    // The cost of disagreeing is not two faces. A face that will not triangulate excludes its
+    // owners from §7.4, the exclusion spreads across augmented faces to their neighbours, and on a8
+    // **3 seed cells become 46,596** - which then read §5.2, leave 8,930 split lattice edges whole,
+    // and produce 113,859 hanging nodes and 2,268 leaks. Removing every exclusion takes a8 to 6
+    // leaks and 66 hanging nodes, and its off-surface area from 0.07089 to 0.01089 against 0.11511
+    // shipped, so the amplification is the whole of the failure.
+    //
+    // The test is now a distance: `|side| / |edge|` is how far the point lies off that edge's line
+    // in the face's own projection, and `weld` is the distance below which this pipeline calls two
+    // points one. It is the same quantity §6.35 found being used for the ORDERING quantum's job,
+    // now supplied where a private relative constant had been standing in for it.
     let outward = crate::meshgen::predicates::orient2d_axis(face[0], face[1], face[2], axis);
     if outward == 0.0 {
         return Err("the face is degenerate");
     }
+    use crate::meshgen::predicates::ProjectionAxis;
+    let flat = |p: Vec3| match axis {
+        ProjectionAxis::X => (p.y, p.z),
+        ProjectionAxis::Y => (p.z, p.x),
+        ProjectionAxis::Z => (p.x, p.y),
+    };
     for point in points {
         for slot in 0..3 {
-            let side =
-                crate::meshgen::predicates::orient2d_axis(face[slot], face[(slot + 1) % 3], *point, axis);
-            if side / outward < -1.0e-9 {
+            let (a, b) = (face[slot], face[(slot + 1) % 3]);
+            let side = crate::meshgen::predicates::orient2d_axis(a, b, *point, axis);
+            if side / outward >= 0.0 {
+                continue;
+            }
+            let (fa, fb) = (flat(a), flat(b));
+            let length = ((fb.0 - fa.0).powi(2) + (fb.1 - fa.1).powi(2)).sqrt();
+            if length <= 0.0 || side.abs() / length > weld {
                 return Err("a point lies outside the face");
             }
         }
@@ -3997,7 +4026,7 @@ mod tests {
             Vec3::new(0.0, 1.0, 0.0),
         ];
         let points = face.to_vec();
-        let tris = constrained_face_triangulation(face, &points, &keys_of(&points), &[])
+        let tris = constrained_face_triangulation(face, &points, &keys_of(&points), &[], 0.0)
             .expect("a bare face triangulates");
         assert_eq!(tris.len(), 1);
     }
@@ -4020,6 +4049,7 @@ mod tests {
             &points,
             &keys_of(&points),
             &[[3, 4]],
+            0.0,
         )
         .expect("a chord is recoverable");
         assert!(
@@ -4062,7 +4092,7 @@ mod tests {
             points.push(corner);
         }
         let segments = [[3u32, 4], [4, 5], [5, 3]];
-        let tris = constrained_face_triangulation(face, &points, &keys_of(&points), &segments)
+        let tris = constrained_face_triangulation(face, &points, &keys_of(&points), &segments, 0.0)
             .expect("an interior loop is recoverable");
         for segment in &segments {
             assert!(
@@ -4121,7 +4151,7 @@ mod tests {
             out
         };
         let reference = geometric(
-            &constrained_face_triangulation(face, &base, &keys_of(&base), &[[3, 5], [5, 4]])
+            &constrained_face_triangulation(face, &base, &keys_of(&base), &[[3, 5], [5, 4]], 0.0)
                 .expect("triangulable"),
             &base,
         );
@@ -4138,7 +4168,7 @@ mod tests {
             };
             let segments = [[find(base[3]), find(base[5])], [find(base[5]), find(base[4])]];
             let tris =
-                constrained_face_triangulation(face, &shuffled, &keys_of(&shuffled), &segments)
+                constrained_face_triangulation(face, &shuffled, &keys_of(&shuffled), &segments, 0.0)
                     .expect("triangulable");
             assert_eq!(
                 geometric(&tris, &shuffled),
@@ -4161,7 +4191,7 @@ mod tests {
         let mut points = face.to_vec();
         points.push(Vec3::new(1.0, 1.0, 0.0));
         assert_eq!(
-            constrained_face_triangulation(face, &points, &keys_of(&points), &[]).err(),
+            constrained_face_triangulation(face, &points, &keys_of(&points), &[], 0.0).err(),
             Some("a point lies outside the face")
         );
     }
@@ -4187,7 +4217,7 @@ mod tests {
         points.push(Vec3::new(0.5, 0.0, 0.0));
         points.push(Vec3::new(0.5 + 3.0e-8, 0.0, 0.0));
         points.push(Vec3::new(0.5 + 5.0e-8, 3.0e-9, 0.0));
-        let tris = constrained_face_triangulation(face, &points, &keys_of(&points), &[])
+        let tris = constrained_face_triangulation(face, &points, &keys_of(&points), &[], 0.0)
             .expect("near-coincident points are legal input and are triangulated");
         let area = |t: &[u32; 3]| -> f64 {
             let (a, b, c) = (
@@ -4235,7 +4265,7 @@ mod tests {
         ];
         let face = [points[0], points[1], points[2]];
         let segments = [[3u32, 5], [3, 4], [4, 2]];
-        let tris = constrained_face_triangulation(face, &points, &keys_of(&points), &segments)
+        let tris = constrained_face_triangulation(face, &points, &keys_of(&points), &segments, 0.0)
             .expect("the face triangulates");
         let area = |a: Vec3, b: Vec3, c: Vec3| {
             let n = b.sub(a).cross(c.sub(a));

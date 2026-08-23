@@ -1679,9 +1679,11 @@ pub fn cut_lattice(
                         let rel = point.sub(a);
                         let t = rel.dot(along) / len2;
                         let off = rel.sub(along.scale(t));
-                        // Relative to the edge's own length. `tol` here is the arena quantum,
-                        // which is 1e-6 of eps and so tight that a point produced by clipping a
-                        // chord never reads as being on the edge it plainly lies on.
+                        // Relative to the edge's own length. Widening this to the coincidence
+                        // tolerance was tried and rejected: it takes a3's hanging nodes 18 -> 6 and
+                        // its duplicates 100 -> 2, and costs 2 points of on-surface area, because
+                        // projecting a point onto an edge MOVES it. Identity is fixed below instead,
+                        // where it costs no geometry.
                         if off.dot(off) <= 1.0e-18 * len2 && (-1.0e-9..=1.0 + 1.0e-9).contains(&t)
                         {
                             let (x, y) = (face[slot], face[(slot + 1) % 3]);
@@ -1938,6 +1940,7 @@ pub fn cut_lattice(
                 &points,
                 &face_keys,
                 &local,
+                options.eps,
             ) {
                 Ok(tris) => tris,
                 Err(reason) => {
@@ -2276,9 +2279,11 @@ pub fn cut_lattice(
         // boundary leaks on a6a. A cell that would have escalated but carries an augmented face is
         // not in this set: it takes §7.4 instead of escalating, so there is nothing to disagree
         // with.
-        let will_escalate = |index: usize, tet: &[u32; 4]| -> bool {
-            per_cell[index].escalation.is_some() && !has_augmented_face(tet)
-        };
+        // **Where the exclusions come from**, because the three clauses want different work and a8
+        // has 46,596 of them against zero on every other case.
+        let seed_no_boundary = std::sync::atomic::AtomicUsize::new(0);
+        let seed_failed_face = std::sync::atomic::AtomicUsize::new(0);
+        let seed_curve_pierce = std::sync::atomic::AtomicUsize::new(0);
         let mut excluded: Vec<bool> = lattice
             .tets
             .par_iter()
@@ -2288,6 +2293,7 @@ pub fn cut_lattice(
                     return false;
                 }
                 if cell_boundary(tet).is_none() {
+                    seed_no_boundary.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     return true;
                 }
                 // **A face that could not be triangulated leaves this cell's boundary OPEN.** It
@@ -2302,14 +2308,18 @@ pub fn cut_lattice(
                     face.sort_by_key(|node| keys[*node as usize]);
                     failed_faces.contains(&face)
                 }) {
+                    seed_failed_face.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     return true;
                 }
+                // **Kept, and measured inert.** Removing this clause and nothing else left a8
+                // bit-identical - 85,537 traced cells, 8,930 T-junctions, 2,268 leaks - so it is not
+                // where a8's exclusions come from; those are the untriangulable-face seed above and
+                // its propagation. It guards a real disagreement (P-3.3's crease fan triangulates a
+                // curve-pierced face from the pierce point, not by §5.2's chord) and costs nothing
+                // measured, so it stays.
                 TET_FACES.iter().any(|slots| {
                     let mut face = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
                     face.sort_by_key(|node| keys[*node as usize]);
-                    // Only a CURVE-PIERCED face is at issue. That is the one P-3.3's crease fan
-                    // triangulates from the pierce point instead of §5.2's chord; every other face
-                    // an escalated cell owns it splits by §5.2, which is what §7.4 reads too.
                     if !curve_pierce.contains_key(&face) {
                         return false;
                     }
@@ -2318,14 +2328,17 @@ pub fn cut_lattice(
                         .map(|list| {
                             list.iter().any(|other| {
                                 *other as usize != index
-                                    && will_escalate(
-                                        *other as usize,
-                                        &lattice.tets[*other as usize],
-                                    )
+                                    && per_cell[*other as usize].escalation.is_some()
+                                    && !has_augmented_face(&lattice.tets[*other as usize])
                             })
                         })
                         .unwrap_or(false)
                 })
+            })
+            .inspect(|hit| {
+                if *hit {
+                    seed_curve_pierce.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
             })
             .collect();
         for _round in 0..64 {
@@ -2356,7 +2369,16 @@ pub fn cut_lattice(
         }
         let poisoned = excluded.iter().filter(|e| **e).count();
         if poisoned > 0 {
-            println!("[PLC-PASS] {poisoned} cell(s) excluded by an untriangulable face");
+            use std::sync::atomic::Ordering::Relaxed;
+            let no_boundary = seed_no_boundary.load(Relaxed);
+            let failed_face = seed_failed_face.load(Relaxed);
+            let pierced = seed_curve_pierce.load(Relaxed).saturating_sub(failed_face + no_boundary);
+            println!(
+                "[PLC-PASS] {poisoned} cell(s) excluded, of which the seed is {no_boundary} with no \
+                 boundary at all, {failed_face} owning a face that would not triangulate, \
+                 {pierced} next to an escalating cell across a curve-pierced face - and the rest \
+                 are the spread"
+            );
         }
 
         // The boundary first, so a declined cell still has one: it is fanned over exactly the same
@@ -3067,6 +3089,7 @@ pub fn cut_lattice(
     let mut plc_meshed_tets = 0usize;
     let mut plc_split_fanned_tets = 0usize;
     let mut plc_fanned_tets = 0usize;
+    let mut fan_repeated = 0usize;
     // Which path each cell took, so a leak can be charged to one instead of guessed at.
     let mut path_of: Vec<u8> = vec![0; lattice.tets.len()];
     for (index, cell) in per_cell.into_iter().enumerate() {
@@ -3133,6 +3156,29 @@ pub fn cut_lattice(
                     }
                 }
                 PlcPlan::Fan { boundary } => {
+                    // **A triangle the boundary lists TWICE is not a face, and coning it makes two
+                    // identical tets.** `constrained_tets` refuses such a soup outright, so only the
+                    // fan is exposed to it - and `[V1]` reads the result as a duplicate cell while
+                    // `[V3]` reads the faces around it as carried four, eight or ten times. The two
+                    // copies bound zero volume between them, so dropping BOTH keeps the soup closed
+                    // (every edge count falls by two) where dropping one would open it. Counted, not
+                    // silent: the soup should not contain them and this says how often it does.
+                    let mut times: BTreeMap<[u32; 3], usize> = BTreeMap::new();
+                    for triangle in &boundary {
+                        let mut key = *triangle;
+                        key.sort_unstable();
+                        *times.entry(key).or_insert(0) += 1;
+                    }
+                    let boundary: Vec<[u32; 3]> = boundary
+                        .iter()
+                        .filter(|triangle| {
+                            let mut key = **triangle;
+                            key.sort_unstable();
+                            times.get(&key).copied().unwrap_or(1) % 2 == 1
+                        })
+                        .copied()
+                        .collect();
+                    fan_repeated += times.values().filter(|n| **n > 1).count();
                     let centroid = polygon_soup_centroid(&boundary, &mesh.nodes);
                     let centroid_id = mesh.nodes.len() as u32;
                     mesh.nodes.push(centroid);
@@ -3675,6 +3721,7 @@ pub fn cut_lattice(
                         &mesh.nodes,
                         &keys,
                         options.volume_tolerance,
+                        options.eps,
                         &meeting_nodes,
                         &plc_face_owners,
                     ))
@@ -4128,6 +4175,44 @@ pub fn cut_lattice(
                  are invisible to §5.2 and are the T-junction"
             ));
         }
+        // **The same tet emitted twice, by the path that emitted it.** `[V1]` calls it a duplicate
+        // cell and `[V3]` sees the faces around it carried four, eight or ten times; both are one
+        // defect, and it is a cell whose pieces overlap rather than partition. Charged by path
+        // because a duplicate from the kernel and a duplicate from a fan are different bugs.
+        {
+            let mut seen: BTreeMap<[u32; 4], usize> = BTreeMap::new();
+            let mut duplicate_by_path = [0usize; 5];
+            let mut duplicate_parents: BTreeSet<u32> = BTreeSet::new();
+            for (at, tet) in mesh.tets.iter().enumerate() {
+                let mut key = *tet;
+                key.sort_unstable();
+                match seen.entry(key) {
+                    std::collections::btree_map::Entry::Vacant(slot) => {
+                        slot.insert(at);
+                    }
+                    std::collections::btree_map::Entry::Occupied(_) => {
+                        let parent = mesh.parent_of.get(at).copied().unwrap_or(0);
+                        duplicate_parents.insert(parent);
+                        duplicate_by_path
+                            [path_of.get(parent as usize).copied().unwrap_or(4).min(4) as usize] += 1;
+                    }
+                }
+            }
+            let total: usize = duplicate_by_path.iter().sum();
+            if total > 0 {
+                mesh.warnings.push(format!(
+                    "[PLC] {total} duplicate tet(s) over {} parent cell(s): {} §6's table, {} \
+                     §7.4-meshed, {} §7.4-fanned, {} escalated, {} facet-split - a cell whose \
+                     pieces overlap rather than partition",
+                    duplicate_parents.len(),
+                    duplicate_by_path[0],
+                    duplicate_by_path[1],
+                    duplicate_by_path[2],
+                    duplicate_by_path[3],
+                    duplicate_by_path[4]
+                ));
+            }
+        }
         // Faces carried by three or more tets, by the paths that carried them. A face emitted by
         // both of its owners AND by a third cell is not a tolerance question: one of the three
         // built a triangle on a face that is not its own.
@@ -4544,6 +4629,12 @@ pub fn cut_lattice(
             "[PLC] of the boundaries §7.4 cells were handed: {unmatched} triangle(s) are carried by \
              fewer tets than the cells that promised them, {unmatched_augmented} of those on an \
              augmented face - so the rest are faces §7.4 left to §5.2"
+        ));
+    }
+    if fan_repeated > 0 {
+        mesh.warnings.push(format!(
+            "[PLC] {fan_repeated} triangle(s) appeared more than once in a cell's boundary soup and \
+             were dropped in pairs before fanning - the soup should not contain them"
         ));
     }
     for (reason, count) in crate::meshgen::cdt::split_fan_refusals() {
@@ -6836,6 +6927,7 @@ fn face_needs_augmenting(
         &arena.points,
         &arena.keys,
         &segments,
+        0.0,
     ) else {
         // If §7.4 cannot triangulate the face there is nothing to deliver, so nothing changes.
         return false;
@@ -7311,6 +7403,10 @@ fn split_escalated_cell(
     nodes: &[Vec3],
     keys: &[NodeKey],
     volume_tolerance: f64,
+    // The pipeline's coincidence tolerance. Used only by the `RUSTMSPT_PLC_DIAG` probe below, which
+    // simulates the face side: given a different bound from the real path it would predict the wrong
+    // answer, which is the one thing a probe must not do.
+    eps: f64,
     meeting_nodes: &[(u32, [i32; 2])],
     face_owners: &BTreeMap<[u32; 3], (u16, u16)>,
 ) -> Option<(Vec<SmallVec<[[u32; 3]; 16]>>, Vec<([u32; 3], i32)>)> {
@@ -7516,6 +7612,7 @@ fn split_escalated_cell(
                     &points,
                     &keys,
                     &local_segments,
+                    eps,
                 ) {
                     Ok(tris) => tris,
                     Err(reason) => return Err(reason),
