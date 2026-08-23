@@ -767,6 +767,21 @@ and the other reads it — decide which, and say so at the site.
   by construction — its material boundary is wherever the spokes happen to cut. `[V3]` passes on it,
   which is why it survived: **conformity to the mesh and conformity to the geometry are different
   properties and only `[V13]` sees the second.**
+- **Compare two products at equal quality of the property they differ on, not at equal parameter.**
+  “+93 % elements at the same *h*” compares an exact mesh against a chording one and says nothing.
+  At equal *fidelity* the ranking inverts: the gated path reaches 99.789 % on-surface with 59,472
+  elements where the shipped path needs *h*/2 and 225,296 to reach 98.519 %. **A cost is only a cost
+  once both sides deliver the same thing.**
+- **Explain the bill before paying it down.** The element premium looked like mesher waste and was
+  not: 16.9 tets against a 20-triangle augmented boundary is cheaper than a fan of it, and the twenty
+  triangles are the input's own tessellation at 0.9 *h*. The prediction that followed — make the
+  lattice finer than the tessellation and the premium collapses — held (+93 % → +24 %), which is what
+  turned a suspicion into a fact.
+- **The same charging technique works on every goal property.** Charging *bad elements* to the
+  emitting arm, on `[V4]`'s own measure, said in one run that slivers are the kernel's problem and
+  not the fallback's (0.02 % vs 19.6 % below 10°) — and pointed straight at the structural cause: a
+  PLC cell has **no interior points**, and a Delaunay of points in convex position is where slivers
+  live.
 - **Cure the class, not the producer.** 57 hanging nodes on a3 were *unreferenced* nodes — valence
   zero — and the tempting fix was to find which producer left them. Interning only the points some
   tet actually uses fixed every producer at once, present and future, and took the count below the
