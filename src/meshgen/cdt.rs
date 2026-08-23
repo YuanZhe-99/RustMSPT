@@ -2286,6 +2286,7 @@ pub fn facet_split_fan(
     side_of: &dyn Fn(usize, u32) -> Option<bool>,
     side_of_face: &dyn Fn(usize, [u32; 3]) -> Option<bool>,
     points: &mut Vec<Vec3>,
+    keys: &[NodeKey],
     tol: f64,
 ) -> Option<(Vec<[u32; 4]>, Vec<u32>)> {
     note_split(match caps.len() {
@@ -2409,32 +2410,100 @@ pub fn facet_split_fan(
         let mut nodes: Vec<u32> = piece.iter().flatten().copied().collect();
         nodes.sort_unstable();
         nodes.dedup();
-        let mut centre = Vec3::new(0.0, 0.0, 0.0);
-        for node in &nodes {
-            centre = centre.add(points[*node as usize]);
-        }
-        let centre = centre.scale(1.0 / nodes.len() as f64);
-        let apex = points.len() as u32;
-        points.push(centre);
-        for t in piece {
-            let mut piece_tet = [t[0], t[1], t[2], apex];
-            match crate::meshgen::predicates::orient3d_filtered(
-                points[piece_tet[0] as usize],
-                points[piece_tet[1] as usize],
-                points[piece_tet[2] as usize],
-                points[piece_tet[3] as usize],
-            )
-            .0
-            {
-                0 => {
-                    note_split("a fan tet is degenerate");
-                    return None;
-                }
-                s if s < 0 => piece_tet.swap(0, 1),
-                _ => {}
+        // **A piece is CONVEX with a prescribed boundary and no interior constraint, which is the
+        // easy case of the very kernel that declined the cell.** The cell declined because of its
+        // facets; here the facet has become part of the piece's own boundary, so the only thing left
+        // to recover is the hull - and that succeeds far more often. The reward is threefold: no new
+        // node, fewer tets, and a Delaunay tetrahedralisation instead of a fan of slivers. A fan
+        // cones a flat-ish piece to one point and every tet it makes is a pancake, which is where
+        // both the element count and the dihedral floor were going.
+        let filled = (|| {
+            if nodes.iter().any(|n| *n as usize >= keys.len()) {
+                return None;
             }
-            tets.push(piece_tet);
-            regions.push(region as u32);
+            let local: BTreeMap<u32, u32> = nodes
+                .iter()
+                .enumerate()
+                .map(|(slot, node)| (*node, slot as u32))
+                .collect();
+            let sub_points: Vec<Vec3> = nodes.iter().map(|n| points[*n as usize]).collect();
+            let sub_keys: Vec<NodeKey> = nodes.iter().map(|n| keys[*n as usize]).collect();
+            let sub_boundary: Vec<[u32; 3]> = piece
+                .iter()
+                .map(|t| [local[&t[0]], local[&t[1]], local[&t[2]]])
+                .collect();
+            constrained_tets(&sub_points, &sub_keys, &sub_boundary, &[], tol)
+                .map_err(|reason| {
+                    note_split(match reason {
+                        "the boundary is split differently, but on the same nodes" => {
+                            "piece refused: the hull splits the boundary differently"
+                        }
+                        "the boundary uses a node that is not on the hull" => {
+                            "piece refused: a boundary node is not on the hull"
+                        }
+                        "the hull carries a node the boundary has never heard of" => {
+                            "piece refused: the hull carries an extra node"
+                        }
+                        "a tet is thinner than the node quantum" => {
+                            "piece refused: a tet is thinner than the node quantum"
+                        }
+                        "the points have no tetrahedralisation" => {
+                            "piece refused: the points have no tetrahedralisation"
+                        }
+                        _ => "piece refused: some other reason",
+                    })
+                })
+                .ok()
+                .map(|sub| {
+                    sub.iter()
+                        .map(|t| {
+                            [
+                                nodes[t[0] as usize],
+                                nodes[t[1] as usize],
+                                nodes[t[2] as usize],
+                                nodes[t[3] as usize],
+                            ]
+                        })
+                        .collect::<Vec<[u32; 4]>>()
+                })
+        })();
+        match filled {
+            Some(sub) => {
+                note_split("a piece was tetrahedralised, not fanned");
+                for piece_tet in sub {
+                    tets.push(piece_tet);
+                    regions.push(region as u32);
+                }
+            }
+            None => {
+                let mut centre = Vec3::new(0.0, 0.0, 0.0);
+                for node in &nodes {
+                    centre = centre.add(points[*node as usize]);
+                }
+                let centre = centre.scale(1.0 / nodes.len() as f64);
+                let apex = points.len() as u32;
+                points.push(centre);
+                for t in piece {
+                    let mut piece_tet = [t[0], t[1], t[2], apex];
+                    match crate::meshgen::predicates::orient3d_filtered(
+                        points[piece_tet[0] as usize],
+                        points[piece_tet[1] as usize],
+                        points[piece_tet[2] as usize],
+                        points[piece_tet[3] as usize],
+                    )
+                    .0
+                    {
+                        0 => {
+                            note_split("a fan tet is degenerate");
+                            return None;
+                        }
+                        s if s < 0 => piece_tet.swap(0, 1),
+                        _ => {}
+                    }
+                    tets.push(piece_tet);
+                    regions.push(region as u32);
+                }
+            }
         }
         summed += soup_volume(piece, points);
     }

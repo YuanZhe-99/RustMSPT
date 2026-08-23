@@ -3056,6 +3056,12 @@ pub fn cut_lattice(
     let mut plc_meshed = 0usize;
     let mut plc_fanned = 0usize;
     let mut plc_split_fanned = 0usize;
+    // **P2 is a gate, not an outcome, so the element cost of each arm is measured beside its cell
+    // count.** On a1 the same ~1,900 cells cost 9,544 tets under §5.2's table and 39,533 under
+    // §7.4; a per-cell figure per arm is what says which arm to work on.
+    let mut plc_meshed_tets = 0usize;
+    let mut plc_split_fanned_tets = 0usize;
+    let mut plc_fanned_tets = 0usize;
     // Which path each cell took, so a leak can be charged to one instead of guessed at.
     let mut path_of: Vec<u8> = vec![0; lattice.tets.len()];
     for (index, cell) in per_cell.into_iter().enumerate() {
@@ -3113,9 +3119,11 @@ pub fn cut_lattice(
                     // is §7.4 doing its job, and the two must not average together.
                     if plc_decline[index].is_some() {
                         plc_split_fanned += 1;
+                        plc_split_fanned_tets += tets.len();
                         path_of[index] = 4;
                     } else {
                         plc_meshed += 1;
+                        plc_meshed_tets += tets.len();
                         path_of[index] = 1;
                     }
                 }
@@ -3145,6 +3153,7 @@ pub fn cut_lattice(
                         mesh.band_region.push(-1);
                     }
                     plc_fanned += 1;
+                    plc_fanned_tets += fanned.tets.len();
                     path_of[index] = 2;
                 }
             }
@@ -4390,6 +4399,16 @@ pub fn cut_lattice(
              surface fragment, {plc_split_fanned} fanned in the pieces their facets separate \
              where it declined, and {plc_fanned} over the whole cell where even that could not \
              be built. All three keep the faces the trace changed, which is what lets them meet"
+        ));
+        let per = |tets: usize, cells: usize| tets as f64 / cells.max(1) as f64;
+        mesh.warnings.push(format!(
+            "[PLC] element cost by arm: §7.4-meshed {plc_meshed_tets} tet(s) over {plc_meshed} \
+             cell(s) = {:.2}/cell; facet-split fan {plc_split_fanned_tets} over \
+             {plc_split_fanned} = {:.2}/cell; whole-cell fan {plc_fanned_tets} over \
+             {plc_fanned} = {:.2}/cell",
+            per(plc_meshed_tets, plc_meshed),
+            per(plc_split_fanned_tets, plc_split_fanned),
+            per(plc_fanned_tets, plc_fanned)
         ));
     }
     if face_trace_faces > 0 {
@@ -7056,6 +7075,7 @@ fn plc_attempt(
                 &side_of,
                 &side_of_face,
                 &mut arena.points,
+                &arena.keys,
                 tol,
             );
             match split {
