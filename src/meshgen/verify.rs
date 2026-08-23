@@ -661,7 +661,7 @@ fn face_key(a: i64, b: i64, c: i64) -> [i64; 3] {
 const TET_FACES: [[usize; 3]; 4] = [[1, 2, 3], [0, 3, 2], [0, 1, 3], [0, 2, 1]];
 
 // AI-FUNC-SUMMARY: Squared distance from a point to a triangle (closest-point clamp); returns f64; side effects: none.
-fn point_triangle_dist2(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> f64 {
+pub(crate) fn point_triangle_dist2(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> f64 {
     let ab = b.sub(a);
     let ac = c.sub(a);
     let ap = p.sub(a);

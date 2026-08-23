@@ -4165,6 +4165,103 @@ pub fn cut_lattice(
             ));
         }
 
+        // **The histogram never built: off-surface AREA charged to the emitting path.** Every
+        // previous cause in this step was found by charging a defect to the arm that produced it,
+        // and P3 - the property the whole project is for - had never been charged to anything. The
+        // criterion is `[V13]`'s: a material-boundary face is on the surface when its corners are,
+        // within 2 % of the face's own size. Measured here rather than in the verifier because only
+        // this side knows which arm emitted the face.
+        {
+            let mut sides: BTreeMap<[u32; 3], SmallVec<[usize; 2]>> = BTreeMap::new();
+            for (at, tet) in mesh.tets.iter().enumerate() {
+                for slots in [[0usize, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]] {
+                    let mut face = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+                    face.sort_unstable();
+                    sides.entry(face).or_default().push(at);
+                }
+            }
+            let inside_set = |at: usize| -> Vec<i32> {
+                let mut out: Vec<i32> = mesh
+                    .records
+                    .get(at)
+                    .map(|r| {
+                        r.entries
+                            .iter()
+                            .filter(|(_, side)| *side == Side::Inside)
+                            .map(|(x, _)| *x)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                out.sort_unstable();
+                out
+            };
+            let mut on_area = [0.0f64; 5];
+            let mut off_area = [0.0f64; 5];
+            let mut faces_by_path = [0usize; 5];
+            for (face, at) in &sides {
+                if at.len() != 2 || inside_set(at[0]) == inside_set(at[1]) {
+                    continue;
+                }
+                let p = [
+                    mesh.nodes[face[0] as usize],
+                    mesh.nodes[face[1] as usize],
+                    mesh.nodes[face[2] as usize],
+                ];
+                let cross = p[1].sub(p[0]).cross(p[2].sub(p[0]));
+                let area = cross.dot(cross).sqrt() * 0.5;
+                let mut longest = 0.0f64;
+                for slot in 0..3 {
+                    let d = p[(slot + 1) % 3].sub(p[slot]);
+                    longest = longest.max(d.dot(d).sqrt());
+                }
+                // The worst corner's distance to the nearest input triangle, over every component.
+                let mut worst = 0.0f64;
+                for q in &p {
+                    let mut best = f64::INFINITY;
+                    for component in &all_components {
+                        let Some(slot) = classifier.slot_of(*component) else { continue };
+                        for tri in classifier.triangles_of(slot) {
+                            best = best.min(
+                                crate::meshgen::verify::point_triangle_dist2(
+                                    *q, tri[0], tri[1], tri[2],
+                                )
+                                .sqrt(),
+                            );
+                        }
+                    }
+                    worst = worst.max(best);
+                }
+                let parent = mesh.parent_of.get(at[0]).copied().unwrap_or(0) as usize;
+                let path = path_of.get(parent).copied().unwrap_or(4).min(4) as usize;
+                faces_by_path[path] += 1;
+                if worst <= longest * 0.02 {
+                    on_area[path] += area;
+                } else {
+                    off_area[path] += area;
+                }
+            }
+            let total: f64 = off_area.iter().sum::<f64>() + on_area.iter().sum::<f64>();
+            let name = ["§6's table", "§7.4-meshed", "§7.4-fanned", "escalated", "other"];
+            for path in 0..5 {
+                if faces_by_path[path] == 0 {
+                    continue;
+                }
+                let both = on_area[path] + off_area[path];
+                mesh.warnings.push(format!(
+                    "[PLC] P3 by path: {} carries {} interface face(s), {:.4e} of {:.4e} total \
+                     boundary area, of which {:.4e} is OFF the surface ({:.1} % of that arm, \
+                     {:.1} % of all off-surface area)",
+                    name[path],
+                    faces_by_path[path],
+                    both,
+                    total,
+                    off_area[path],
+                    100.0 * off_area[path] / both.max(f64::MIN_POSITIVE),
+                    100.0 * off_area[path] / off_area.iter().sum::<f64>().max(f64::MIN_POSITIVE)
+                ));
+            }
+        }
+
         // **And the same charge for the degenerate elements.** `[V1]` reads a signed volume and
         // says nothing about where it came from; normalising by the tet's own longest edge cubed
         // makes "flat" a scale-free statement, and the path histogram says which arm to look in.
