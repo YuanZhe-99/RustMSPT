@@ -1537,7 +1537,11 @@ fn flip_edge(
 //   `c` and `d` strictly on opposite sides - which is what makes both tets non-degenerate
 //   and interior. With a fan of two this is the ordinary 2-2 flip; the general case is the
 //   reason a fan of three or more is recoverable at all.
-fn remove_edge(tets: &[[u32; 4]], points: &[Vec3], edge: [u32; 2]) -> Option<Vec<[u32; 4]>> {
+fn remove_edge(
+    tets: &[[u32; 4]],
+    points: &[Vec3],
+    edge: [u32; 2],
+) -> Result<Vec<[u32; 4]>, &'static str> {
     let (c, d) = (edge[0], edge[1]);
     let mut fan: Vec<usize> = Vec::new();
     let mut link: BTreeMap<u32, smallvec::SmallVec<[u32; 2]>> = BTreeMap::new();
@@ -1548,13 +1552,13 @@ fn remove_edge(tets: &[[u32; 4]], points: &[Vec3], edge: [u32; 2]) -> Option<Vec
         fan.push(at);
         let rest: Vec<u32> = tet.iter().copied().filter(|x| *x != c && *x != d).collect();
         if rest.len() != 2 {
-            return None;
+            return Err("a tet on the edge has the wrong shape");
         }
         link.entry(rest[0]).or_default().push(rest[1]);
         link.entry(rest[1]).or_default().push(rest[0]);
     }
     if fan.len() < 2 {
-        return None;
+        return Err("only one tet carries the edge");
     }
     // **Two ends means an open strip (a hull edge); no ends means a closed ring (an interior one).**
     // Both are the same operation on the same polygon - the link, closed by the edge the removal
@@ -1570,23 +1574,35 @@ fn remove_edge(tets: &[[u32; 4]], points: &[Vec3], edge: [u32; 2]) -> Option<Vec
         .collect();
     let closed = ends.is_empty() && link.values().all(|next| next.len() == 2);
     if ends.len() != 2 && !closed {
-        return None;
+        return Err("the link is neither an open strip nor a closed ring");
     }
-    let start = if closed { *link.keys().next()? } else { ends[0] };
+    let start = if closed {
+        match link.keys().next() {
+            Some(k) => *k,
+            None => return Err("the link is empty"),
+        }
+    } else {
+        ends[0]
+    };
     let mut path: Vec<u32> = vec![start];
     let mut seen: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
     seen.insert(start);
     loop {
-        let last = *path.last()?;
+        let Some(last) = path.last().copied() else {
+            return Err("the link walk ran out");
+        };
         let previous = if path.len() >= 2 { Some(path[path.len() - 2]) } else { None };
-        let Some(next) = link.get(&last)?.iter().copied().find(|x| Some(*x) != previous) else {
+        let Some(neighbours) = link.get(&last) else {
+            return Err("the link walk ran out");
+        };
+        let Some(next) = neighbours.iter().copied().find(|x| Some(*x) != previous) else {
             break;
         };
         if next == start {
             break;
         }
         if !seen.insert(next) {
-            return None;
+            return Err("the link repeats a vertex");
         }
         path.push(next);
         if !closed && next == ends[1] {
@@ -1595,7 +1611,7 @@ fn remove_edge(tets: &[[u32; 4]], points: &[Vec3], edge: [u32; 2]) -> Option<Vec
     }
     let want = if closed { fan.len() } else { fan.len() + 1 };
     if path.len() != want || path.len() < 3 {
-        return None;
+        return Err("the link does not close into a polygon");
     }
     let n = path.len();
     let (pc, pd) = (points[c as usize], points[d as usize]);
@@ -1658,7 +1674,7 @@ fn remove_edge(tets: &[[u32; 4]], points: &[Vec3], edge: [u32; 2]) -> Option<Vec
         }
     }
     if choice[0][n - 1] == usize::MAX || !value[0][n - 1].is_finite() {
-        return None;
+        return Err("the link polygon has no valid triangulation");
     }
     let mut triangles: Vec<(usize, usize, usize)> = Vec::new();
     let mut stack = vec![(0usize, n - 1)];
@@ -1727,7 +1743,7 @@ fn remove_edge(tets: &[[u32; 4]], points: &[Vec3], edge: [u32; 2]) -> Option<Vec
             )
             .0
             {
-                0 => return None,
+                0 => return Err("a replacement tet is degenerate"),
                 s if s < 0 => piece.swap(0, 1),
                 _ => {}
             }
@@ -1740,11 +1756,100 @@ fn remove_edge(tets: &[[u32; 4]], points: &[Vec3], edge: [u32; 2]) -> Option<Vec
     // faces on the hull - that is the whole operation boundary recovery needs - so the same test
     // there would forbid the thing it is for.
     if closed && region_boundary(&removed) != region_boundary(&added) {
+        return Err("the replacement does not cover the same region");
+    }
+    let (before, after) = (volume_of(&removed), volume_of(&added));
+    if (before - after).abs() > before.max(after) * 1.0e-9 {
+        return Err("the replacement does not preserve the volume");
+    }
+    out.extend(added);
+    Ok(out)
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: The 2-3 flip - replace the two tets sharing an interior face with three sharing a new edge.
+// Inputs: the tets, the points, and the shared face.
+// Returns: the replacement tets, or None when the flip is not valid there.
+// Side effects: None.
+// Notes: **The inverse of edge removal, and the move the recovery was missing.** `remove_edge`
+//   only ever takes edges away; a hull that stalls one or two faces short of the prescribed
+//   boundary usually needs one put in, and on a6a *every* cell in that class stalls at one or two
+//   faces (PLAN §6.48). Validity is the same question as everywhere else here: the three new tets
+//   must each be non-degenerate and must together occupy exactly what the two replaced, which is
+//   checked rather than argued.
+fn flip_two_three(tets: &[[u32; 4]], points: &[Vec3], face: [u32; 3]) -> Option<Vec<[u32; 4]>> {
+    let mut carriers: Vec<usize> = Vec::new();
+    for (at, tet) in tets.iter().enumerate() {
+        if face.iter().all(|id| tet.contains(id)) {
+            carriers.push(at);
+        }
+    }
+    if carriers.len() != 2 {
+        return None;
+    }
+    let apex = |at: usize| -> Option<u32> {
+        tets[at].iter().copied().find(|id| !face.contains(id))
+    };
+    let (d, e) = (apex(carriers[0])?, apex(carriers[1])?);
+    if d == e {
+        return None;
+    }
+    let mut added: Vec<[u32; 4]> = Vec::with_capacity(3);
+    for slot in 0..3 {
+        let (x, y) = (face[slot], face[(slot + 1) % 3]);
+        let mut piece = [x, y, d, e];
+        match crate::meshgen::predicates::orient3d_filtered(
+            points[piece[0] as usize],
+            points[piece[1] as usize],
+            points[piece[2] as usize],
+            points[piece[3] as usize],
+        )
+        .0
+        {
+            0 => return None,
+            s if s < 0 => piece.swap(0, 1),
+            _ => {}
+        }
+        added.push(piece);
+    }
+    let removed = [tets[carriers[0]], tets[carriers[1]]];
+    let boundary_of = |group: &[[u32; 4]]| -> std::collections::BTreeSet<[u32; 3]> {
+        let mut count: BTreeMap<[u32; 3], usize> = BTreeMap::new();
+        for tet in group {
+            for f in tet_faces(*tet) {
+                let mut key = f;
+                key.sort_unstable();
+                *count.entry(key).or_insert(0) += 1;
+            }
+        }
+        count.into_iter().filter(|(_, n)| *n == 1).map(|(f, _)| f).collect()
+    };
+    let volume_of = |group: &[[u32; 4]]| -> f64 {
+        group
+            .iter()
+            .map(|t| {
+                let p = [
+                    points[t[0] as usize],
+                    points[t[1] as usize],
+                    points[t[2] as usize],
+                    points[t[3] as usize],
+                ];
+                p[1].sub(p[0]).cross(p[2].sub(p[0])).dot(p[3].sub(p[0])).abs() / 6.0
+            })
+            .sum()
+    };
+    if boundary_of(&removed) != boundary_of(&added) {
         return None;
     }
     let (before, after) = (volume_of(&removed), volume_of(&added));
     if (before - after).abs() > before.max(after) * 1.0e-9 {
         return None;
+    }
+    let mut out: Vec<[u32; 4]> = Vec::with_capacity(tets.len() + 1);
+    for (at, tet) in tets.iter().enumerate() {
+        if !carriers.contains(&at) {
+            out.push(*tet);
+        }
     }
     out.extend(added);
     Some(out)
@@ -1864,8 +1969,20 @@ fn recover_boundary(
             }
         }
         let mut moved = false;
+        // Why each candidate failed, so the refusal can say whether the removal was impossible or
+        // merely unhelpful. Those want different work: the first is a gap in `remove_edge`, the
+        // second a gap in the search.
+        let (mut refused, mut unhelpful) = (0usize, 0usize);
+        let mut why: Option<&'static str> = None;
         for edge in hull_edges.iter().filter(|e| !frozen_edges.contains(*e)) {
-            let Some(next) = remove_edge(&tets, points, *edge) else { continue };
+            let next = match remove_edge(&tets, points, *edge) {
+                Ok(next) => next,
+                Err(reason) => {
+                    refused += 1;
+                    why = Some(reason);
+                    continue;
+                }
+            };
             let after = wrong(&next);
             if after < mismatch {
                 tets = next;
@@ -1873,12 +1990,52 @@ fn recover_boundary(
                 moved = true;
                 break;
             }
+            unhelpful += 1;
         }
         if !moved {
-            return Err(if shave.is_some() {
-                "no shave or flip brings the hull closer to the boundary"
+            let interior: Vec<[u32; 3]> = carried
+                .iter()
+                .filter(|(_, n)| **n == 2)
+                .map(|(face, _)| *face)
+                .collect();
+            for face in interior {
+                let Some(next) = flip_two_three(&tets, points, face) else { continue };
+                let after = wrong(&next);
+                if after < mismatch {
+                    tets = next;
+                    mismatch = after;
+                    moved = true;
+                    break;
+                }
+            }
+        }
+        if !moved {
+            // **Which way the hull is wrong, because the two want opposite operations.** The hull
+            // and the frozen boundary cover the same nodes, so their disagreement is either faces
+            // the hull HAS that the boundary does not want - the hull is too big, and shaving is
+            // the operation - or faces the boundary WANTS that the hull has not got, where the
+            // hull is too small and nothing can be shaved off. Reporting "no flip" for both puts a
+            // class the shave was built for and a class it can never touch under one name, and on
+            // a6a that name carries 61.2 % of all the interface area the gated path strands
+            // (PLAN §6.48).
+            // Both directions are non-empty on every declining cell measured, so neither shaving
+            // alone nor adding alone is the missing operation. What is left to ask is HOW FAR the
+            // two are apart when the search stalls: a mismatch of one or two faces is a local
+            // configuration the flip set does not happen to cover, while a mismatch of dozens means
+            // the recovery never got started and the fault is upstream of it.
+            let extra = hull.difference(frozen).count();
+            let wanted = frozen.difference(&hull).count();
+            let _ = (extra, wanted);
+            return Err(if refused == 0 && unhelpful == 0 {
+                "no hull edge is a candidate for removal at all"
+            } else if refused > 0 && unhelpful == 0 {
+                // The last refusal reason stands for the class: with every candidate refused it is
+                // the operation that is missing, not the choice among candidates.
+                why.unwrap_or("every removable hull edge was refused by the fan retriangulation")
+            } else if refused == 0 {
+                "every hull edge removed cleanly and none brought the hull closer"
             } else {
-                "no flip brings the hull closer to the boundary"
+                "some hull edges refuse to be removed and the rest do not help"
             });
         }
     }
@@ -1992,7 +2149,7 @@ fn recover_segment(
         }
         let mut moved = false;
         for edge in &victims {
-            let Some(next) = remove_edge(&tets, points, *edge) else { continue };
+            let Ok(next) = remove_edge(&tets, points, *edge) else { continue };
             let after = crossed_faces(&next, points, a, b).len();
             if after < crossings {
                 tets = next;
@@ -2102,7 +2259,7 @@ fn remove_thin_tets(
             if protected.contains(&edge) {
                 continue;
             }
-            let Some(next) = remove_edge(&tets, points, edge) else { continue };
+            let Ok(next) = remove_edge(&tets, points, edge) else { continue };
             let after = next.iter().filter(|t| thin(t)).count();
             if after < count {
                 tets = next;
