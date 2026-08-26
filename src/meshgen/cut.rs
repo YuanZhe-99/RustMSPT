@@ -1494,6 +1494,11 @@ pub fn cut_lattice(
     // exists to answer one question once (see `SpokeProbe`), not to run in production.
     let probing_spokes = std::env::var_os("RUSTMSPT_SPOKE_PROBE").is_some();
     let mut spoke_probe = SpokeProbe::default();
+    // Print-only (`RUSTMSPT_PLC_DIAG`): which arm interned each node. Two arms computing one
+    // intersection is the residual §6.58 named, and naming the two arms is what says where the
+    // identity rule has to go - measured on a3, 312 of 368 coincident pairs are two TRACE
+    // ENDPOINTS, so it is one arm disagreeing with itself across a shared edge, not two arms.
+    let mut origin: Vec<&'static str> = vec!["base"; nodes.len()];
     let mut mesh = CutMesh {
         n_lattice_nodes: nodes.len() as u32,
         nodes,
@@ -1795,6 +1800,7 @@ pub fn cut_lattice(
                             let id = mesh.nodes.len() as u32;
                             mesh.nodes.push(placed);
                             keys.push(key);
+                            origin.push("trace-endpoint");
                             id
                         }),
                     };
@@ -2737,6 +2743,7 @@ pub fn cut_lattice(
                             let id = mesh.nodes.len() as u32;
                             mesh.nodes.push(*point);
                             keys.push(key);
+                            origin.push("plc-arena");
                             id
                         });
                         map.push(id);
@@ -3216,6 +3223,7 @@ pub fn cut_lattice(
                     let centroid_id = mesh.nodes.len() as u32;
                     mesh.nodes.push(centroid);
                     keys.push(node_key(centroid, quantum));
+                    origin.push("cell-fan-centroid");
                     let fanned = fan_cell(&boundary, centroid_id);
                     for piece in &fanned.tets {
                         let Some(oriented) = orient_positively(*piece, &mesh.nodes) else {
@@ -3377,6 +3385,7 @@ pub fn cut_lattice(
                             let id = mesh.nodes.len() as u32;
                             mesh.nodes.push(point);
                             keys.push(node_key(point, order_quantum));
+                            origin.push("crease-hub");
                             face_steiner.insert(corners, id);
                             id
                         }
@@ -3448,6 +3457,7 @@ pub fn cut_lattice(
                                         let id = mesh.nodes.len() as u32;
                                         mesh.nodes.push(point);
                                         keys.push(node_key(point, order_quantum));
+                                        origin.push("face-steiner");
                                         face_steiner.insert(corners, id);
                                         id
                                     }
@@ -3550,6 +3560,7 @@ pub fn cut_lattice(
                                 let id = mesh.nodes.len() as u32;
                                 mesh.nodes.push(point);
                                 keys.push(node_key(point, order_quantum));
+                                origin.push("curve-pierce");
                                 face_steiner.insert(corners, id);
                                 id
                             }
@@ -3841,6 +3852,7 @@ pub fn cut_lattice(
                 let centroid_id = mesh.nodes.len() as u32;
                 mesh.nodes.push(centroid);
                 keys.push(node_key(centroid, quantum));
+                origin.push("band-slab-centroid");
                 let fanned = fan_cell(slab, centroid_id);
                 if pairs.is_some() {
                     *mesh
@@ -4537,6 +4549,66 @@ pub fn cut_lattice(
         // splitting that one puts the first back. No split can separate two spellings of one point,
         // so the pass stops on the repeat rather than spending its budget oscillating - and stopping
         // on a state it has already recorded is what makes the result the same every run.
+        // **Which two arms computed the same point?** Print-only. `[V2]` names the duplicates and
+        // `[V3]` reports one of each pair hanging on the other's faces; what neither says is where
+        // they came from, and that is what decides where the identity rule belongs. Measured on a3:
+        // 368 pairs within `eps`, of which 312 are trace-endpoint against trace-endpoint - one arm
+        // computing one intersection twice, on the two faces that meet at the edge it ends near.
+        if std::env::var_os("RUSTMSPT_PLC_DIAG").is_some() {
+            origin.resize(mesh.nodes.len(), "unknown");
+            let coarse = quantum.max(f64::MIN_POSITIVE);
+            let cell = |p: Vec3| {
+                (
+                    (p.x / coarse).floor() as i64,
+                    (p.y / coarse).floor() as i64,
+                    (p.z / coarse).floor() as i64,
+                )
+            };
+            let mut grid: BTreeMap<(i64, i64, i64), Vec<u32>> = BTreeMap::new();
+            for (id, point) in mesh.nodes.iter().enumerate() {
+                grid.entry(cell(*point)).or_default().push(id as u32);
+            }
+            let mut by_arms: BTreeMap<(&'static str, &'static str), usize> = BTreeMap::new();
+            let mut closest: Vec<(u64, u32, u32)> = Vec::new();
+            for (id, point) in mesh.nodes.iter().enumerate() {
+                let home = cell(*point);
+                for dx in -1..=1 {
+                    for dy in -1..=1 {
+                        for dz in -1..=1 {
+                            let key = (home.0 + dx, home.1 + dy, home.2 + dz);
+                            for other in grid.get(&key).into_iter().flatten() {
+                                if *other as usize <= id {
+                                    continue;
+                                }
+                                let d = mesh.nodes[*other as usize].sub(*point);
+                                let d = d.dot(d).sqrt();
+                                if d > coarse {
+                                    continue;
+                                }
+                                let (a, b) = (origin[id], origin[*other as usize]);
+                                let pair = if a <= b { (a, b) } else { (b, a) };
+                                *by_arms.entry(pair).or_insert(0) += 1;
+                                closest.push((d.to_bits(), id as u32, *other));
+                            }
+                        }
+                    }
+                }
+            }
+            closest.sort_unstable();
+            let total: usize = by_arms.values().sum();
+            mesh.warnings.push(format!(
+                "[PLC] coincident node pairs within eps ({coarse:.3e}): {total}, by the arms that \
+                 interned them: {by_arms:?}"
+            ));
+            for (bits, a, b) in closest.iter().take(6) {
+                mesh.warnings.push(format!(
+                    "[PLC]   pair {a} ({}) / {b} ({}) at {:.4e}",
+                    origin[*a as usize],
+                    origin[*b as usize],
+                    f64::from_bits(*bits)
+                ));
+            }
+        }
         let mut seen: BTreeSet<(Vec<u32>, usize, usize)> = BTreeSet::new();
         let mut fewest = usize::MAX;
         for _round in 0..12 {
