@@ -1663,6 +1663,7 @@ pub fn cut_lattice(
         // at 1e-2 means the candidate set never held one.
         let mut nearest_decade = [0usize; 16];
         let mut probe_decade = [0usize; 16];
+        let mut second_stage = 0usize;
         let mut edge_points: BTreeMap<[u32; 2], SmallVec<[u32; 4]>> = BTreeMap::new();
         let mut face_interior: BTreeMap<[u32; 3], SmallVec<[u32; 4]>> = BTreeMap::new();
         // **The candidate set the snap was missing, and it is a publication and not a bound.**
@@ -1679,6 +1680,24 @@ pub fn cut_lattice(
         // keeps this from repeating the failure of publishing everything within `quantum` of an
         // edge, which put thousands of legitimately distinct points in one bucket and took a3's
         // traced cells from 16,883 to 190.
+        // **And these candidates are judged at `[V2]`'s bound, not at `eps`.** That is the whole
+        // difference between this and §6.63: publishing and then snapping at `quantum` takes a3's
+        // traced cells from 16,883 to 190, because `eps` is the width of a whole feature here.
+        // `1e-6 x diagonal` is the tolerance the contract itself calls coincident and the config's
+        // `coincidence: merge` already names - a hundred times tighter - and the measured near-edge
+        // distances put 290 points inside it against some 24,000 inside `eps`.
+        let coincident = {
+            let (mut lo, mut hi) = (
+                Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY),
+                Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY),
+            );
+            for p in &mesh.nodes {
+                lo = Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z));
+                hi = Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
+            }
+            let span = hi.sub(lo);
+            1.0e-6 * span.dot(span).sqrt()
+        };
         let mut near_edge: BTreeMap<[u32; 2], SmallVec<[u32; 4]>> = BTreeMap::new();
         for (face, chords) in &chords_of {
             // Copied out before the loop: interning below takes `mesh.nodes` mutably.
@@ -1742,8 +1761,23 @@ pub fn cut_lattice(
                         // its duplicates 100 -> 2, and costs 2 points of on-surface area, because
                         // projecting a point onto an edge MOVES it. Identity is fixed below instead,
                         // where it costs no geometry.
-                        if off.dot(off) <= 1.0e-18 * len2 && (-1.0e-9..=1.0 + 1.0e-9).contains(&t)
-                        {
+                        // **Or within the tolerance the contract calls coincident.** The private
+                        // `1e-9` relative bound is what left a3's residual outside this path: the
+                        // pairs sit 6.7e-7 of the face's own edge from the rim, seven hundred times
+                        // too far. And this is the only path that can help them, because the two
+                        // endpoints belong to two faces that are NOT coplanar - a node they share
+                        // has to lie on their common line or it is off one of the two planes, which
+                        // is exactly what killed the near-edge snap (a3's traced cells 16,883 ->
+                        // 190: the face could no longer be triangulated at all).
+                        //
+                        // `1e-6 x diagonal` is `[V2]`'s own duplicate rule and the config's
+                        // `coincidence: merge`, not a number chosen here, and it is a hundred times
+                        // tighter than the `eps` that cost two points of on-surface area in §6.40.
+                        // The projection moves a point by at most that, against features of 1e-4
+                        // and coarser.
+                        let close = off.dot(off) <= 1.0e-18 * len2
+                            || off.dot(off) <= coincident * coincident;
+                        if close && (-1.0e-9..=1.0 + 1.0e-9).contains(&t) {
                             let (x, y) = (face[slot], face[(slot + 1) % 3]);
                             on_edge = Some(if x <= y { [x, y] } else { [y, x] });
                             placed = a.add(along.scale(t.clamp(0.0, 1.0)));
@@ -1924,7 +1958,8 @@ pub fn cut_lattice(
         );
         println!(
             "[PLC-PASS] distance to the nearest node the NEAR-EDGE publication makes visible, by \
-             decade (1e0, 1e-1, ... 1e-15): {probe_decade:?}"
+             decade (1e0, 1e-1, ... 1e-15): {probe_decade:?}; the near-edge stage reused a node \
+             {second_stage} time(s)"
         );
         // **How many of the interned points are, by the pipeline's own coincidence tolerance,
         // an existing node?** The pass interns on `order_quantum`, which is 1e-6 of `eps` - fine
