@@ -1499,6 +1499,10 @@ pub fn cut_lattice(
     // identity rule has to go - measured on a3, 312 of 368 coincident pairs are two TRACE
     // ENDPOINTS, so it is one arm disagreeing with itself, not two arms disagreeing.
     let mut origin: Vec<&'static str> = vec!["base"; nodes.len()];
+    // Print-only companion: for a trace endpoint, the lattice face(s) it was traced on. The pair
+    // report below asks what the coincident pairs SHARE - the same face, an edge, a corner, or
+    // nothing - because that is what says which computation has to be made common.
+    let mut trace_faces: BTreeMap<u32, BTreeSet<[u32; 3]>> = BTreeMap::new();
     let mut mesh = CutMesh {
         n_lattice_nodes: nodes.len() as u32,
         nodes,
@@ -1654,6 +1658,10 @@ pub fn cut_lattice(
         // every face carrying that edge takes it - including faces the surface never touches.
         let mut chord_id: BTreeMap<NodeKey, u32> = BTreeMap::new();
         let mut rim_decade = [0usize; 16];
+        // Print-only: for every trace endpoint the snap did NOT reuse, how far the nearest
+        // candidate actually was. A bar at 1e-8 means the bound refused a node it could see; a bar
+        // at 1e-2 means the candidate set never held one.
+        let mut nearest_decade = [0usize; 16];
         let mut edge_points: BTreeMap<[u32; 2], SmallVec<[u32; 4]>> = BTreeMap::new();
         let mut face_interior: BTreeMap<[u32; 3], SmallVec<[u32; 4]>> = BTreeMap::new();
         for (face, chords) in &chords_of {
@@ -1743,6 +1751,7 @@ pub fn cut_lattice(
                     // `options.eps`, the tolerance `coincidence: merge` already uses - the rule is
                     // the pipeline's own, applied where the pass had been ignoring it.
                     let mut snapped = None::<u32>;
+                    let mut nearest_candidate = f64::INFINITY;
                     {
                         // The candidates. For a point ON an edge they are that edge's nodes and
                         // nothing else, so the decision is a function of the edge and the two faces
@@ -1785,6 +1794,11 @@ pub fn cut_lattice(
                         for other in &candidates {
                             let d = mesh.nodes[*other as usize].sub(placed);
                             let d = d.dot(d).sqrt();
+                            // Print-only: how close the NEAREST candidate is, whatever the bound
+                            // says. A point that ends up with a coincident partner and whose
+                            // nearest candidate is far away is one the candidate set never
+                            // contained - which is a different defect from a bound being too tight.
+                            nearest_candidate = nearest_candidate.min(d);
                             // `<` and not `<=`, plus the id tie-break, so the nearest node wins and
                             // an exact tie resolves the same way on every run.
                             if d < best || (d == best && snapped.is_some_and(|s| *other < s)) {
@@ -1805,6 +1819,15 @@ pub fn cut_lattice(
                         }),
                     };
                     chord_id.insert(node_key(*point, order_quantum), id);
+                    trace_faces.entry(id).or_default().insert(*face);
+                    if snapped.is_none() && nearest_candidate.is_finite() {
+                        let decade = if nearest_candidate <= 0.0 {
+                            0
+                        } else {
+                            ((-nearest_candidate.log10()).floor() as i64).clamp(0, 15) as usize
+                        };
+                        nearest_decade[decade] += 1;
+                    }
                     match on_edge {
                         Some(edge) => {
                             let entry = edge_points.entry(edge).or_default();
@@ -1826,6 +1849,10 @@ pub fn cut_lattice(
         println!(
             "[PLC-PASS] trace endpoint distance to the nearest rim, by decade of the face's own \
              edge length (1e0, 1e-1, ... 1e-15): {rim_decade:?}"
+        );
+        println!(
+            "[PLC-PASS] distance to the NEAREST candidate node for every trace endpoint the snap \
+             did not reuse, by decade (1e0, 1e-1, ... 1e-15): {nearest_decade:?}"
         );
         // **How many of the interned points are, by the pipeline's own coincidence tolerance,
         // an existing node?** The pass interns on `order_quantum`, which is 1e-6 of `eps` - fine
@@ -4561,6 +4588,7 @@ pub fn cut_lattice(
                 grid.entry(cell(*point)).or_default().push(id as u32);
             }
             let mut by_arms: BTreeMap<(&'static str, &'static str), usize> = BTreeMap::new();
+            let mut by_relation: BTreeMap<&'static str, usize> = BTreeMap::new();
             let mut closest: Vec<(u64, u32, u32)> = Vec::new();
             for (id, point) in mesh.nodes.iter().enumerate() {
                 let home = cell(*point);
@@ -4581,6 +4609,29 @@ pub fn cut_lattice(
                                 let pair = if a <= b { (a, b) } else { (b, a) };
                                 *by_arms.entry(pair).or_insert(0) += 1;
                                 closest.push((d.to_bits(), id as u32, *other));
+                                // **What do the two faces share?** The strongest relation any pair
+                                // of their faces has: the same face, an edge, a corner, or nothing.
+                                let (here, there) = (
+                                    trace_faces.get(&(id as u32)),
+                                    trace_faces.get(other),
+                                );
+                                if let (Some(here), Some(there)) = (here, there) {
+                                    let mut best = 0usize;
+                                    for f in here {
+                                        for g in there {
+                                            let shared =
+                                                f.iter().filter(|c| g.contains(c)).count();
+                                            best = best.max(shared);
+                                        }
+                                    }
+                                    let label = match best {
+                                        3 => "same face",
+                                        2 => "faces share an edge",
+                                        1 => "faces share a corner",
+                                        _ => "faces share nothing",
+                                    };
+                                    *by_relation.entry(label).or_insert(0) += 1;
+                                }
                             }
                         }
                     }
@@ -4590,14 +4641,19 @@ pub fn cut_lattice(
             let total: usize = by_arms.values().sum();
             mesh.warnings.push(format!(
                 "[PLC] coincident node pairs within eps ({coarse:.3e}): {total}, by the arms that \
-                 interned them: {by_arms:?}"
+                 interned them: {by_arms:?}; and for the trace-endpoint pairs, by what their faces \
+                 share: {by_relation:?}"
             ));
             for (bits, a, b) in closest.iter().take(6) {
                 mesh.warnings.push(format!(
-                    "[PLC]   pair {a} ({}) / {b} ({}) at {:.4e}",
+                    "[PLC]   pair {a} ({}) / {b} ({}) at {:.4e}; faces {:?} vs {:?}; at {:?} and {:?}",
                     origin[*a as usize],
                     origin[*b as usize],
-                    f64::from_bits(*bits)
+                    f64::from_bits(*bits),
+                    trace_faces.get(a).map(|f| f.iter().copied().collect::<Vec<_>>()),
+                    trace_faces.get(b).map(|f| f.iter().copied().collect::<Vec<_>>()),
+                    mesh.nodes[*a as usize],
+                    mesh.nodes[*b as usize],
                 ));
             }
         }
