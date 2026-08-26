@@ -4528,7 +4528,18 @@ pub fn cut_lattice(
         // faces, and repairing one changes the ring the next is judged against - so the pass is run
         // again until it stops finding anything. Exclusion only ever removes hanging nodes here, so
         // the loop is decreasing and the budget bounds it rather than guessing at it.
-        for _round in 0..8 {
+        // Set where a round actually removed a tet, so the indices the interface index holds are
+        // known to be stale and get rebuilt below rather than remapped.
+        let mut compacted = false;
+        // **A repaired state the pass has already seen means the repair is undoing itself.** The
+        // measured case is a pair of node chains between the same two endpoints, 1.85e-7 apart:
+        // splitting an edge of one puts the other chain's node on the face that split just made, and
+        // splitting that one puts the first back. No split can separate two spellings of one point,
+        // so the pass stops on the repeat rather than spending its budget oscillating - and stopping
+        // on a state it has already recorded is what makes the result the same every run.
+        let mut seen: BTreeSet<(Vec<u32>, usize, usize)> = BTreeSet::new();
+        let mut fewest = usize::MAX;
+        for _round in 0..12 {
             let mut absorbed = 0usize;
         // **Find the T-junctions the way `[V3]` reports them**, with `[V3]`'s own test: a node
             // within `1e-9 x diagonal` of a face it is not a vertex of. Every attempt to prevent these
@@ -4640,6 +4651,22 @@ pub fn cut_lattice(
                         hanging.len()
                     ));
                 }
+                let repeated = !seen.insert((hanging.iter().copied().collect(), incidences, on_rim));
+                fewest = fewest.min(incidences);
+                // A cycle is left on its **best** phase, not on whichever one it was caught in. The
+                // two states of the measured cycle carry 7 and 11 incidences; stopping on the first
+                // repeat would land on either, so the pass keeps going until the repeat is also the
+                // fewest it has seen.
+                if repeated && incidences <= fewest {
+                    mesh.warnings.push(format!(
+                        "[PLC] T-junction repair: STOPPED on a state already seen - {} node(s) over \
+                         {incidences} incidence(s) came back after being repaired. A node that \
+                         returns is not a T-junction: it is one point the cut spelled twice, and a \
+                         split cannot separate two spellings",
+                        hanging.len()
+                    ));
+                    break;
+                }
 
                 // **The repair: replace the flat sliver AND its neighbour together.**
                 //
@@ -4675,8 +4702,33 @@ pub fn cut_lattice(
                     })
                     .collect();
                 let mut repaired = 0usize;
+                // **Slots whose tet has to go.** The face split never needs one - it writes three
+                // pieces into two owners' slots and appends the third - but the edge split does: a
+                // ring of `w` wedges and `s` solids becomes `2 s` tets, and where `s < w` the
+                // surplus wedge slots hold degenerate membranes with nothing to put in their place.
+                // Removing a tet moves every index after it, so the removals are collected here and
+                // the array is compacted once, at the end of the round, before anything reads it
+                // again.
+                let mut dead: BTreeSet<usize> = BTreeSet::new();
+                let faces_of = |tet: [u32; 4]| -> [[u32; 3]; 4] {
+                    let mut out = [
+                        [tet[0], tet[1], tet[2]],
+                        [tet[0], tet[1], tet[3]],
+                        [tet[0], tet[2], tet[3]],
+                        [tet[1], tet[2], tet[3]],
+                    ];
+                    for face in out.iter_mut() {
+                        face.sort_unstable();
+                    }
+                    out
+                };
+                // Print-only: what the refusals actually are. `RUSTMSPT_PLC_DIAG` changes nothing but
+                // the log (R3); the cap keeps a pathological case from writing a book.
+                let diag = std::env::var_os("RUSTMSPT_PLC_DIAG").is_some();
+                let mut detail: Vec<String> = Vec::new();
                 let mut refused_shape = 0usize;
                 let mut refused_rim = 0usize;
+                let (mut rim_no_pair, mut rim_piece, mut rim_boundary) = (0usize, 0usize, 0usize);
                 let mut refused_tagged = 0usize;
             let (mut why_clash, mut why_degenerate) = (0usize, 0usize);
             let (mut why_no_carrier, mut why_all_slivers) = (0usize, 0usize);
@@ -4722,6 +4774,45 @@ pub fn cut_lattice(
                                 break;
                             }
                         }
+                        // **Ask the predicate as well as the bound.** The test above asks whether
+                        // `q` is within `tol` of an edge. The residual configuration measured on a3
+                        // is 1.0 to 1.9 times `tol` away from one - strictly inside the face by that
+                        // test - and still produces a piece that `orient3d` calls exactly flat, or
+                        // one the mesh already holds. Both say the same thing the bound was trying
+                        // to say, in the arithmetic that decides it: `q` is on that edge, so the
+                        // operation wanted is the edge split. Reading it off the piece rather than
+                        // off a second tolerance is what keeps this free of a knob (R3).
+                        if rim.is_none() {
+                            'carrier: for at in 0..mesh.tets.len() {
+                                if dead.contains(&at) {
+                                    continue;
+                                }
+                                let tet = mesh.tets[at];
+                                if !face.iter().all(|n| tet.contains(n)) || tet.contains(&id) {
+                                    continue;
+                                }
+                                let Some(apex) = tet.iter().copied().find(|x| !face.contains(x))
+                                else {
+                                    continue;
+                                };
+                                for slot in 0..3 {
+                                    let piece = [face[slot], face[(slot + 1) % 3], id, apex];
+                                    let flat = crate::meshgen::predicates::orient3d(
+                                        mesh.nodes[piece[0] as usize],
+                                        mesh.nodes[piece[1] as usize],
+                                        mesh.nodes[piece[2] as usize],
+                                        mesh.nodes[piece[3] as usize],
+                                    ) == 0.0;
+                                    let mut key = piece;
+                                    key.sort_unstable();
+                                    if flat || present.contains(&key) {
+                                        let (x, y) = (face[slot], face[(slot + 1) % 3]);
+                                        rim = Some(if x <= y { [x, y] } else { [y, x] });
+                                        break 'carrier;
+                                    }
+                                }
+                            }
+                        }
                         // **On the rim the node is on an EDGE, and an edge belongs to every tet around
                         // it.** Splitting one face's two owners would leave the rest of the ring holding
                         // the edge whole. So the whole ring is taken at once: a tet that does not have
@@ -4737,7 +4828,9 @@ pub fn cut_lattice(
                             }
                             let ring: Vec<usize> = (0..mesh.tets.len())
                                 .filter(|at| {
-                                    mesh.tets[*at].contains(&edge[0]) && mesh.tets[*at].contains(&edge[1])
+                                    !dead.contains(at)
+                                        && mesh.tets[*at].contains(&edge[0])
+                                        && mesh.tets[*at].contains(&edge[1])
                                 })
                                 .collect();
                             let wedges: Vec<usize> = ring
@@ -4752,6 +4845,30 @@ pub fn cut_lattice(
                                 .collect();
                             if wedges.is_empty() || solids.is_empty() {
                                 refused_rim += 1;
+                                rim_no_pair += 1;
+                                if diag && detail.len() < 16 {
+                                    detail.push(format!(
+                                        "[PLC] T-junction rim refusal (no pair): node {id} edge {edge:?} ring {} \
+                                         wedges {} solids {}",
+                                        ring.len(),
+                                        wedges.len(),
+                                        solids.len()
+                                    ));
+                                }
+                                continue;
+                            }
+                            // **No declared triangle may be taken apart by this.** Every face of the
+                            // ring that carries the whole edge is replaced by its two halves; where
+                            // such a face is a pending interface triangle, splitting it retires a tag
+                            // the surface still needs and `[V13]` loses the area. Measured on a3: no
+                            // triangle of any of the seven rings is tagged, so this costs nothing
+                            // there and is what stops the operation where it would.
+                            if ring.iter().any(|at| {
+                                faces_of(mesh.tets[*at]).iter().any(|f| {
+                                    f.contains(&edge[0]) && f.contains(&edge[1]) && tagged.contains(f)
+                                })
+                            }) {
+                                refused_tagged += 1;
                                 continue;
                             }
                             let mut plan: Vec<(usize, [u32; 4])> = Vec::new();
@@ -4787,11 +4904,91 @@ pub fn cut_lattice(
                                     break;
                                 }
                             }
-                            // Every wedge slot is reused and every solid is replaced, so the ring's
-                            // element count goes from `solids + wedges` to `2 x solids`; anything left
-                            // over is appended, which keeps all recorded tet indices valid.
-                            if !ok || plan.len() < ring.len() {
+                            if !ok || plan.is_empty() {
                                 refused_rim += 1;
+                                rim_piece += 1;
+                                if diag && detail.len() < 16 {
+                                    detail.push(format!(
+                                        "[PLC] T-junction rim refusal (piece): node {id} edge {edge:?} ring {} \
+                                         wedges {} solids {} pieces {}",
+                                        ring.len(),
+                                        wedges.len(),
+                                        solids.len(),
+                                        plan.len()
+                                    ));
+                                }
+                                continue;
+                            }
+                            // **The acceptance test is the ring's own boundary, not a count.** The
+                            // old test - `2 x solids` must be at least `solids + wedges` - was never
+                            // about the geometry; it was there because a slot with nothing to put in
+                            // it could not be emptied. With the surplus slots collectable this asks
+                            // the question that actually matters, and asks it exactly, on integers:
+                            // the ring is a ball of tets, and replacing its contents is sound exactly
+                            // when the faces it presents to the rest of the mesh come back unchanged,
+                            // except that a face carrying the whole edge comes back as its two
+                            // halves. A face carrying the edge AND the node is a wedge face and must
+                            // be interior to the ring - on the boundary it would have no half to be
+                            // replaced by, and dropping it would open a hole. This is `R1` written
+                            // down: the operation may not abandon conformity, so it declines instead.
+                            let mut before: BTreeMap<[u32; 3], usize> = BTreeMap::new();
+                            for at in &ring {
+                                for f in faces_of(mesh.tets[*at]) {
+                                    *before.entry(f).or_insert(0) += 1;
+                                }
+                            }
+                            let mut expect: BTreeSet<[u32; 3]> = BTreeSet::new();
+                            let mut sound = true;
+                            for (f, owners) in &before {
+                                if *owners != 1 {
+                                    continue;
+                                }
+                                if !(f.contains(&edge[0]) && f.contains(&edge[1])) {
+                                    expect.insert(*f);
+                                    continue;
+                                }
+                                let Some(other) =
+                                    f.iter().copied().find(|v| *v != edge[0] && *v != edge[1])
+                                else {
+                                    sound = false;
+                                    break;
+                                };
+                                if other == id {
+                                    sound = false;
+                                    break;
+                                }
+                                for mut half in [[edge[0], id, other], [id, edge[1], other]] {
+                                    half.sort_unstable();
+                                    expect.insert(half);
+                                }
+                            }
+                            let mut after: BTreeMap<[u32; 3], usize> = BTreeMap::new();
+                            for (_, piece) in &plan {
+                                for f in faces_of(*piece) {
+                                    *after.entry(f).or_insert(0) += 1;
+                                }
+                            }
+                            let got: BTreeSet<[u32; 3]> = after
+                                .iter()
+                                .filter(|(_, owners)| **owners == 1)
+                                .map(|(f, _)| *f)
+                                .collect();
+                            if !sound || got != expect || after.values().any(|owners| *owners > 2) {
+                                refused_rim += 1;
+                                rim_boundary += 1;
+                                if diag && detail.len() < 16 {
+                                    detail.push(format!(
+                                        "[PLC] T-junction rim refusal (boundary): node {id} edge {edge:?} ring {} \
+                                         wedges {} solids {} sound {sound} missing {:?} extra {:?} \
+                                         over2 {}",
+                                        ring.len(),
+                                        wedges.len(),
+                                        solids.len(),
+                                        expect.difference(&got).take(3).collect::<Vec<_>>(),
+                                        got.difference(&expect).take(3).collect::<Vec<_>>(),
+                                        after.values().filter(|owners| **owners > 2).count()
+                                    ));
+                                }
                                 continue;
                             }
                             for at in &ring {
@@ -4826,6 +5023,15 @@ pub fn cut_lattice(
                                     }
                                 }
                             }
+                            // **Any ring slot the plan did not fill holds a tet that has to go.**
+                            // It is a wedge - three of its four vertices are the edge and the node,
+                            // which the split has just established are one edge of the mesh - so it
+                            // encloses no volume the two halves do not already carry, and the
+                            // boundary test above has just confirmed that removing it takes nothing
+                            // with it.
+                            for at in slots.iter().skip(plan.len()) {
+                                dead.insert(*at);
+                            }
                             repaired += 1;
                     absorbed += 1;
                             continue;
@@ -4835,7 +5041,9 @@ pub fn cut_lattice(
                             continue;
                         }
                         let carriers: Vec<usize> = (0..mesh.tets.len())
-                            .filter(|at| face.iter().all(|n| mesh.tets[*at].contains(n)))
+                            .filter(|at| {
+                                !dead.contains(at) && face.iter().all(|n| mesh.tets[*at].contains(n))
+                            })
                             .collect();
                         // **Every carrier that lacks the node splits into three; a carrier that
                         // HAS it is the flat sliver and is absorbed.** One rule rather than three
@@ -4895,6 +5103,94 @@ pub fn cut_lattice(
                         }
                         if !ok || plan.len() < carriers.len() {
                             refused_shape += 1;
+                            if diag && detail.len() < 16 {
+                                let mut line = format!(
+                                    "[PLC] T-junction refusal: node {id} on face {:?} tol {tol:.6e}",
+                                    face
+                                );
+                                for slot in 0..3 {
+                                    let (u, v) = (p[slot], p[(slot + 1) % 3]);
+                                    let along = v.sub(u);
+                                    let len2 = along.dot(along);
+                                    let t = if len2 > 0.0 {
+                                        (q.sub(u).dot(along) / len2).clamp(0.0, 1.0)
+                                    } else {
+                                        0.0
+                                    };
+                                    let off = q.sub(u).sub(along.scale(t));
+                                    let vertex = q.sub(u).dot(q.sub(u)).sqrt();
+                                    line.push_str(&format!(
+                                        "; edge {}-{} off {:.6e} rim {} t {:.4} |q-{}| {:.3e}",
+                                        face[slot],
+                                        face[(slot + 1) % 3],
+                                        off.dot(off).sqrt(),
+                                        off.dot(off) <= tol * tol,
+                                        t,
+                                        face[slot],
+                                        vertex
+                                    ));
+                                }
+                                for at in &carriers {
+                                    let tet = mesh.tets[*at];
+                                    line.push_str(&format!(
+                                        "; carrier {at} {:?}{} vol {:.3e}",
+                                        tet,
+                                        if tet.contains(&id) { " HAS q" } else { "" },
+                                        crate::meshgen::predicates::tet_signed_volume(
+                                            mesh.nodes[tet[0] as usize],
+                                            mesh.nodes[tet[1] as usize],
+                                            mesh.nodes[tet[2] as usize],
+                                            mesh.nodes[tet[3] as usize],
+                                        )
+                                    ));
+                                    if tet.contains(&id) {
+                                        continue;
+                                    }
+                                    let Some(apex) = tet.iter().copied().find(|x| !face.contains(x))
+                                    else {
+                                        continue;
+                                    };
+                                    for piece in [
+                                        [face[0], face[1], id, apex],
+                                        [face[1], face[2], id, apex],
+                                        [face[2], face[0], id, apex],
+                                    ] {
+                                        let value = crate::meshgen::predicates::orient3d(
+                                            mesh.nodes[piece[0] as usize],
+                                            mesh.nodes[piece[1] as usize],
+                                            mesh.nodes[piece[2] as usize],
+                                            mesh.nodes[piece[3] as usize],
+                                        );
+                                        let mut key = piece;
+                                        key.sort_unstable();
+                                        let clash = present.contains(&key);
+                                        let owner = if clash {
+                                            mesh.tets.iter().position(|t| {
+                                                let mut k = *t;
+                                                k.sort_unstable();
+                                                k == key
+                                            })
+                                        } else {
+                                            None
+                                        };
+                                        line.push_str(&format!(
+                                            "; piece {:?} o3d {:.3e}{}",
+                                            piece,
+                                            value,
+                                            match owner {
+                                                Some(w) => format!(" CLASHES with tet {w}"),
+                                                None =>
+                                                    if value == 0.0 {
+                                                        " FLAT".to_string()
+                                                    } else {
+                                                        String::new()
+                                                    },
+                                            }
+                                        ));
+                                    }
+                                }
+                                detail.push(line);
+                            }
                             continue;
                         }
                         for at in &carriers {
@@ -4938,8 +5234,44 @@ pub fn cut_lattice(
                          rim (an edge, not a face), {refused_tagged} on a tagged interface face and \
                          {refused_shape} for shape - {why_clash} because a piece is already in the \
                      mesh, {why_degenerate} because a piece is flat, {why_no_carrier} with no \
-                     carrier and {why_all_slivers} where every carrier already has the node"
+                     carrier and {why_all_slivers} where every carrier already has the node; the \
+                     rim refusals are {rim_no_pair} with no wedge/solid pair, {rim_piece} where a \
+                     piece will not form and {rim_boundary} where the ring's boundary would not \
+                     come back unchanged"
                     ));
+                }
+                for line in detail {
+                    mesh.warnings.push(line);
+                }
+                // **Compact once, here, where nothing has read the array yet this round.** Every
+                // index the repair handed out above is an index into `mesh.tets` and stays valid
+                // until this runs; after it, the next round rebuilds its own from scratch.
+                if !dead.is_empty() {
+                    mesh.warnings.push(format!(
+                        "[PLC] T-junction repair: {} degenerate wedge(s) removed with the edge \
+                         split(s) that made them redundant",
+                        dead.len()
+                    ));
+                    let mut write = 0usize;
+                    for read in 0..mesh.tets.len() {
+                        if dead.contains(&read) {
+                            continue;
+                        }
+                        if write != read {
+                            mesh.tets[write] = mesh.tets[read];
+                            mesh.records[write] = mesh.records[read].clone();
+                            mesh.parent_of[write] = mesh.parent_of[read];
+                            mesh.regime[write] = mesh.regime[read];
+                            mesh.band_region[write] = mesh.band_region[read];
+                        }
+                        write += 1;
+                    }
+                    mesh.tets.truncate(write);
+                    mesh.records.truncate(write);
+                    mesh.parent_of.truncate(write);
+                    mesh.regime.truncate(write);
+                    mesh.band_region.truncate(write);
+                    compacted = true;
                 }
                 // An earlier version of this split only the tets that own the face, leaving `U` to
                 // claim `(a, b, q)` as a third owner - a8 went to 22 multi-shared faces. Replacing both
@@ -4950,6 +5282,27 @@ pub fn cut_lattice(
             if absorbed == 0 {
                 break;
             }
+        }
+        // **Everything derived from the element array has to be derived again.** `side_elems` is a
+        // tet index, `rim_curve` and `curve_edges` are read off the elements, and a compaction moves
+        // every index past the first hole. Re-deriving is exact where a remap would only be careful:
+        // `derive_interface` rebuilds ownership from `mesh.tets`, so it cannot disagree with the
+        // mesh it is handed. The cost is one pass over the elements, and only when a tet went.
+        if compacted {
+            mesh.interfaces = derive_interface(
+                &mesh,
+                &pending_interfaces,
+                &keys,
+                &sheets,
+                &rim_nodes,
+                &options.contact_patches,
+                options.eps,
+            );
+            mesh.rim_curve = collapsed_sheet_rim(&mesh.interfaces, &terminates_on_rim);
+            mesh.curve_edges =
+                curve_mesh_edges(&mesh.tets, &mesh.nodes, &mesh.curves, options.eps);
+            mesh.stats.n_interface_faces = mesh.interfaces.len();
+            mesh.stats.n_tets = mesh.tets.len();
         }
         // **Charge each BAD element to the arm that emitted it**, on the measure `[V4]` actually
         // reports: the smallest dihedral angle. The goal names three properties and this is the
