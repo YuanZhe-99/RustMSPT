@@ -1662,8 +1662,24 @@ pub fn cut_lattice(
         // candidate actually was. A bar at 1e-8 means the bound refused a node it could see; a bar
         // at 1e-2 means the candidate set never held one.
         let mut nearest_decade = [0usize; 16];
+        let mut probe_decade = [0usize; 16];
         let mut edge_points: BTreeMap<[u32; 2], SmallVec<[u32; 4]>> = BTreeMap::new();
         let mut face_interior: BTreeMap<[u32; 3], SmallVec<[u32; 4]>> = BTreeMap::new();
+        // **The candidate set the snap was missing, and it is a publication and not a bound.**
+        // Measured (PLAN §6.62): for every trace endpoint the snap declines to reuse, the nearest
+        // candidate it can see is 1e-1 to 1e-3 away and never closer - so the rule was never
+        // refusing a node, it was never offered one. 296 of a3's 312 trace/trace duplicate pairs
+        // are two faces meeting at a lattice edge, each cutting the input's feature edge with its
+        // own plane and landing one float32 ULP apart; both endpoints are strictly INSIDE their own
+        // face, so each goes into its own `face_interior` and neither is published anywhere the
+        // other can look.
+        //
+        // Each interior point is published against the ONE edge of its face it is nearest to. That
+        // is a total function of the point and the face - no threshold decides it - and it is what
+        // keeps this from repeating the failure of publishing everything within `quantum` of an
+        // edge, which put thousands of legitimately distinct points in one bucket and took a3's
+        // traced cells from 16,883 to 190.
+        let mut near_edge: BTreeMap<[u32; 2], SmallVec<[u32; 4]>> = BTreeMap::new();
         for (face, chords) in &chords_of {
             // Copied out before the loop: interning below takes `mesh.nodes` mutably.
             let corners = [
@@ -1752,6 +1768,11 @@ pub fn cut_lattice(
                     // the pipeline's own, applied where the pass had been ignoring it.
                     let mut snapped = None::<u32>;
                     let mut nearest_candidate = f64::INFINITY;
+                    // Print-only: the nodes the near-edge publication makes visible, measured and
+                    // not yet used. `quantum` cannot be the bound against them - it takes a3's
+                    // traced cells to 190 - so what decides is whether their distances have a gap,
+                    // and at what scale.
+                    let mut probe: SmallVec<[u32; 16]> = SmallVec::new();
                     {
                         // The candidates. For a point ON an edge they are that edge's nodes and
                         // nothing else, so the decision is a function of the edge and the two faces
@@ -1787,6 +1808,7 @@ pub fn cut_lattice(
                                     candidates.extend(
                                         edge_points.get(&key).into_iter().flatten().copied(),
                                     );
+                                    probe.extend(near_edge.get(&key).into_iter().flatten().copied());
                                 }
                             }
                         }
@@ -1820,6 +1842,24 @@ pub fn cut_lattice(
                     };
                     chord_id.insert(node_key(*point, order_quantum), id);
                     trace_faces.entry(id).or_default().insert(*face);
+                    {
+                        let mut nearest = f64::INFINITY;
+                        for other in &probe {
+                            if *other == id {
+                                continue;
+                            }
+                            let d = mesh.nodes[*other as usize].sub(placed);
+                            nearest = nearest.min(d.dot(d).sqrt());
+                        }
+                        if nearest.is_finite() {
+                            let decade = if nearest <= 0.0 {
+                                0
+                            } else {
+                                ((-nearest.log10()).floor() as i64).clamp(0, 15) as usize
+                            };
+                            probe_decade[decade] += 1;
+                        }
+                    }
                     if snapped.is_none() && nearest_candidate.is_finite() {
                         let decade = if nearest_candidate <= 0.0 {
                             0
@@ -1840,6 +1880,34 @@ pub fn cut_lattice(
                             if !entry.contains(&id) {
                                 entry.push(id);
                             }
+                            // Published against the nearest of the face's three edges, so the face
+                            // on the other side of that edge finds it. Not projected onto it -
+                            // projecting MOVES the point, and that is what cost two points of
+                            // on-surface area when it was tried (PLAN §6.40).
+                            let here = mesh.nodes[id as usize];
+                            let mut nearest = (f64::INFINITY, [0u32; 2]);
+                            for slot in 0..3 {
+                                let (a, b) = (corner(slot), corner((slot + 1) % 3));
+                                let along = b.sub(a);
+                                let len2 = along.dot(along);
+                                if len2 <= 0.0 {
+                                    continue;
+                                }
+                                let rel = here.sub(a);
+                                let t = (rel.dot(along) / len2).clamp(0.0, 1.0);
+                                let off = rel.sub(along.scale(t));
+                                let (x, y) = (face[slot], face[(slot + 1) % 3]);
+                                let key = if x <= y { [x, y] } else { [y, x] };
+                                if off.dot(off) < nearest.0 {
+                                    nearest = (off.dot(off), key);
+                                }
+                            }
+                            if nearest.0.is_finite() {
+                                let entry = near_edge.entry(nearest.1).or_default();
+                                if !entry.contains(&id) {
+                                    entry.push(id);
+                                }
+                            }
                         }
                     }
                 }
@@ -1853,6 +1921,10 @@ pub fn cut_lattice(
         println!(
             "[PLC-PASS] distance to the NEAREST candidate node for every trace endpoint the snap \
              did not reuse, by decade (1e0, 1e-1, ... 1e-15): {nearest_decade:?}"
+        );
+        println!(
+            "[PLC-PASS] distance to the nearest node the NEAR-EDGE publication makes visible, by \
+             decade (1e0, 1e-1, ... 1e-15): {probe_decade:?}"
         );
         // **How many of the interned points are, by the pipeline's own coincidence tolerance,
         // an existing node?** The pass interns on `order_quantum`, which is 1e-6 of `eps` - fine
