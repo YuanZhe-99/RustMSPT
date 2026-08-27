@@ -246,6 +246,12 @@ pub struct CutMesh {
     pub curves: Vec<LockedCurve>,
     /// The cut surface, as tagged triangles with their two side elements.
     pub interfaces: Vec<InterfaceFace>,
+    /// Which §7.1 arm each **lattice cell** took: 0 §6's table, 1 §7.4-meshed, 2 §7.4-fanned
+    /// over the whole cell, 3 escalated to §7.6, 4 fanned in the pieces its facets separate.
+    /// Diagnostic, and written to the snapshot only under `RUSTMSPT_CUT_DIAG` - it is what
+    /// says whether a defect is in a cell the kernel took or in one it refused, and the two
+    /// need different work.
+    pub plc_path: Vec<u8>,
     /// Cells the single-patch path could not take, with the reason - G6-4's input.
     pub escalated: Vec<(u32, Escalation)>,
     pub warnings: Vec<String>,
@@ -1522,6 +1528,7 @@ pub fn cut_lattice(
             .map(|thin| thin.pair_class.clone())
             .unwrap_or_default(),
         rim_curve: Vec::new(),
+        plc_path: Vec::new(),
         constraint_kind: Vec::new(),
         constraint_ref: Vec::new(),
         curve_edges: Vec::new(),
@@ -4105,6 +4112,7 @@ pub fn cut_lattice(
             pending_interfaces.push((mesh.tets.len(), *triangle, cell.component));
         }
     }
+    mesh.plc_path = path_of.clone();
     mesh.stats.n_tets = mesh.tets.len();
     if !mesh.stats.min_dihedral_deg.is_finite() {
         mesh.stats.min_dihedral_deg = 0.0;
@@ -7397,6 +7405,14 @@ pub fn cut_to_doc(mesh: &CutMesh, components: &[ArrangeComponent]) -> VtuDoc {
         // distinction - the answer differs per reason (a new table row, an upstream fix in
         // §5.2/S7, or genuine local recovery with Steiner insertion), so the design effort
         // has to go where the P3 damage actually is rather than where the cell count is.
+        let mut path: Vec<i32> = mesh
+            .parent_of
+            .iter()
+            .map(|cell| mesh.plc_path.get(*cell as usize).map_or(-1, |x| *x as i32))
+            .collect();
+        path.resize(cells, -1);
+        doc.cell_data
+            .push(DataArray::scalar("plc_path", ArrayData::I32(path)));
         let escalation_of: BTreeMap<u32, Escalation> = mesh.escalated.iter().copied().collect();
         let mut reason: Vec<i32> = mesh
             .parent_of
