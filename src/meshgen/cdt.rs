@@ -2239,6 +2239,11 @@ pub fn split_fan_refusals() -> Vec<(&'static str, u64)> {
     out
 }
 
+// AI-FUNC-SUMMARY: Record one `facet_split_fan` outcome from outside this module; side effects: bumps the diagnostic histogram.
+pub fn note_split_public(reason: &'static str) {
+    note_split(reason);
+}
+
 fn note_split(reason: &'static str) {
     if *SPLIT_FAN_DIAG.get_or_init(|| std::env::var_os("RUSTMSPT_PLC_DIAG").is_some()) {
         let mut guard = SPLIT_FAN_WHY.lock().unwrap_or_else(|e| e.into_inner());
@@ -2258,6 +2263,62 @@ fn note_split(reason: &'static str) {
 //   every split (1,314 of A-3's 1,835 cells, before this). Propagating one orientation across shared
 //   edges fixes the winding and, in the same pass, refuses a soup that is not a closed manifold:
 //   every edge must be walked once each way, which is exactly what a closed surface means.
+// AI-FUNC-SUMMARY:
+// Purpose: Say which way a triangle soup fails to be a closed orientable surface.
+// Inputs: the soup.
+// Returns: a fixed phrase naming the defect; "closed and orientable" when there is none.
+// Side effects: None.
+// Notes: Diagnostic only, and read only when `orient_soup` has already refused. The two failures
+//   need different work - an edge carried once is a cut that does not span the cell, while a soup
+//   in two parts is a cut that spans it twice - and a single refusal naming both cannot be acted
+//   on. Same argument as `constrained_tets`' split of facet recovery into edges and interior.
+fn soup_defect(soup: &[[u32; 3]]) -> &'static str {
+    let mut uses: BTreeMap<[u32; 2], usize> = BTreeMap::new();
+    for t in soup {
+        for slot in 0..3 {
+            let (a, b) = (t[slot], t[(slot + 1) % 3]);
+            *uses.entry(if a <= b { [a, b] } else { [b, a] }).or_insert(0) += 1;
+        }
+    }
+    if uses.values().any(|n| *n == 1) {
+        return "  the soup has an edge carried once - the cut stops inside the cell";
+    }
+    if uses.values().any(|n| *n > 2) {
+        return "  the soup has an edge carried three times or more";
+    }
+    // Every edge is carried twice, so the only ways left are more than one shell or a winding
+    // that cannot be made consistent - a Möbius soup, which a real surface is not.
+    let mut seen: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+    let mut by_edge: BTreeMap<[u32; 2], Vec<usize>> = BTreeMap::new();
+    for (at, t) in soup.iter().enumerate() {
+        for slot in 0..3 {
+            let (a, b) = (t[slot], t[(slot + 1) % 3]);
+            by_edge
+                .entry(if a <= b { [a, b] } else { [b, a] })
+                .or_default()
+                .push(at);
+        }
+    }
+    let mut queue = vec![0usize];
+    seen.insert(0);
+    while let Some(at) = queue.pop() {
+        for slot in 0..3 {
+            let (a, b) = (soup[at][slot], soup[at][(slot + 1) % 3]);
+            let key = if a <= b { [a, b] } else { [b, a] };
+            for other in by_edge.get(&key).into_iter().flatten() {
+                if seen.insert(*other) {
+                    queue.push(*other);
+                }
+            }
+        }
+    }
+    if seen.len() < soup.len() {
+        "  the soup is closed but in more than one shell"
+    } else {
+        "  the soup is closed and connected but cannot be wound consistently"
+    }
+}
+
 fn orient_soup(soup: &[[u32; 3]]) -> Option<Vec<[u32; 3]>> {
     if soup.is_empty() {
         return None;
@@ -2309,34 +2370,184 @@ fn orient_soup(soup: &[[u32; 3]]) -> Option<Vec<[u32; 3]>> {
     fixed.iter().all(|f| *f).then_some(out)
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Split a cap's free edges wherever the cell's boundary carries a node on them, so the two
+//   spell the same line.
+// Inputs: the cap's triangles, the nodes the cell's boundary uses, the point table and the cell's
+//   relative tolerance.
+// Returns: the cap with those edges subdivided; the same triangles when there is nothing to do.
+// Side effects: None.
+// Notes: **A piece closes only if the cap's rim and the boundary's trace are the same edges.** The
+//   cap is the clipped surface polygon; the boundary is §5.2's trace on the cell's faces, and the
+//   trace carries nodes a NEIGHBOURING cell interned which the polygon has never heard of. Where it
+//   does, one cap edge (a, b) faces two boundary edges (a, m) and (m, b) and neither side closes -
+//   a3 refuses 264 pieces on that, 213 of them open on an edge the cell's triangulation carries
+//   against 110 open on one only the cap carries, which is the two-for-one this describes.
+//
+//   Only the cap's **free** edges are split. An interior edge is shared by two cap triangles and
+//   splitting one of them alone would tear the cap; a free edge is carried once, so the split is
+//   local. No node is created and none is moved: `m` already lies on the segment, so the cap stays
+//   on the surface it came from and P3 is untouched.
+fn conform_cap_rim(
+    cap: &[[u32; 3]],
+    boundary_nodes: &[u32],
+    points: &[Vec3],
+    tol: f64,
+) -> Vec<[u32; 3]> {
+    if cap.is_empty() || boundary_nodes.is_empty() {
+        return cap.to_vec();
+    }
+    let mut out = cap.to_vec();
+    let bound = boundary_nodes.len() * 4 + 8;
+    for _round in 0..bound {
+        let mut uses: BTreeMap<[u32; 2], usize> = BTreeMap::new();
+        for t in &out {
+            for slot in 0..3 {
+                let (a, b) = (t[slot], t[(slot + 1) % 3]);
+                *uses.entry(if a <= b { [a, b] } else { [b, a] }).or_insert(0) += 1;
+            }
+        }
+        let mut split: Option<(usize, usize, u32)> = None;
+        'search: for (at, t) in out.iter().enumerate() {
+            for slot in 0..3 {
+                let (a, b) = (t[slot], t[(slot + 1) % 3]);
+                let key = if a <= b { [a, b] } else { [b, a] };
+                if uses.get(&key).copied() != Some(1) {
+                    continue;
+                }
+                let (p, q) = (points[a as usize], points[b as usize]);
+                let along = q.sub(p);
+                let length2 = along.dot(along);
+                if length2 <= 0.0 {
+                    continue;
+                }
+                for node in boundary_nodes {
+                    if t.contains(node) {
+                        continue;
+                    }
+                    let rel = points[*node as usize].sub(p);
+                    let at_t = rel.dot(along) / length2;
+                    if at_t <= 0.0 || at_t >= 1.0 {
+                        continue;
+                    }
+                    let off = rel.sub(along.scale(at_t));
+                    if off.dot(off) > tol * tol {
+                        continue;
+                    }
+                    split = Some((at, slot, *node));
+                    break 'search;
+                }
+            }
+        }
+        let Some((at, slot, node)) = split else {
+            return out;
+        };
+        let t = out[at];
+        let (a, b, c) = (t[slot], t[(slot + 1) % 3], t[(slot + 2) % 3]);
+        out[at] = [a, node, c];
+        out.push([node, b, c]);
+    }
+    out
+}
+
 pub fn facet_split_fan(
     boundary: &[[u32; 3]],
     caps: &[Vec<[u32; 3]>],
     side_of: &dyn Fn(usize, u32) -> Option<bool>,
-    side_of_face: &dyn Fn(usize, [u32; 3]) -> Option<bool>,
+    side_of_point: &dyn Fn(usize, Vec3) -> Option<bool>,
     points: &mut Vec<Vec3>,
     keys: &[NodeKey],
     tol: f64,
 ) -> Option<(Vec<[u32; 4]>, Vec<u32>)> {
+    // Where a triangle is asked about is the split's own question, so the oracle takes a point.
+    // Pulling a boundary triangle's sample a quarter of the way toward the cell's centre - on the
+    // argument that a face lying IN the surface has an arbitrary side at its own centroid - was
+    // tried and is not the cure: a3's builds moved 1,307 -> 1,311 and a6a's fell 304 -> 279, so it
+    // trades one case for another. The sample is the triangle's own centre for boundary and cap
+    // alike.
+    let side_of_face = |group: usize, t: [u32; 3]| -> Option<bool> {
+        side_of_point(
+            group,
+            points[t[0] as usize]
+                .add(points[t[1] as usize])
+                .add(points[t[2] as usize])
+                .scale(1.0 / 3.0),
+        )
+    };
     note_split(match caps.len() {
         0 => "the cell has no facet",
         1 => "offered: one surface",
         _ => "offered: two or more surfaces",
     });
-    let mut pieces: Vec<Vec<[u32; 3]>> = vec![boundary.to_vec()];
+    // **A cap is clipped to the piece it cuts, and may cut every one of them.** The cap is a whole
+    // surface patch; adding all of it to both halves of two different pieces puts each of its
+    // triangles into four, which `[V3]` reads exactly as it is - a face shared by four tets and six
+    // non-manifold edges around it. Refusing the cell instead was the first answer and it is what
+    // stranded the junctions: a3 refused 152 cells and a6a 71 on "a second surface cuts more than
+    // one piece", and every `[V6]` step of two components on either case is in a cell this fallback
+    // refused. What belongs in a piece is decided by the cuts that MADE the piece: a triangle is in
+    // it when it is on the piece's own side of each of them. `history` carries those cuts, and a
+    // triangle lying ON one of them - which is what the junction curve looks like, and what two
+    // solids in exact contact look like everywhere - bounds both sides and is kept for either.
+    //
+    // The partition test at the end is what makes this safe to try: pieces that do not close, or
+    // that do not sum to the cell, still refuse and still reach the caller's whole-cell fan.
+    let on_cut = |t: &[u32; 3], group: usize| t.iter().all(|n| side_of(group, *n).is_none());
+    let in_piece = |t: &[u32; 3], history: &[(usize, bool)]| -> bool {
+        history
+            .iter()
+            .all(|(group, want)| on_cut(t, *group) || side_of_face(*group, *t) == Some(*want))
+    };
+    // **Two components whose caps are the same triangles are ONE surface.** Two solids in exact
+    // contact share an arranged face, so S2 hands this cell the identical facet twice, once under
+    // each component - and cutting by it twice is not a finer partition, it is the same plane
+    // asked about with two different classifiers. The second pass then has to place boundary
+    // triangles whose every node lies on ITS patch as well, which no side test can do, and the
+    // pieces stop closing: a6a refuses 150 cells here and every `[V6]` step of two components on
+    // that case is in one of them. Cutting once is the whole fix; which component's classifier
+    // does the cutting does not matter, because the two name the same plane and the far side of
+    // one is the near side of the other. The identity is exact - the same node ids in the same
+    // triangles - so no tolerance decides it.
+    let signature = |cap: &Vec<[u32; 3]>| -> std::collections::BTreeSet<[u32; 3]> {
+        cap.iter()
+            .map(|t| {
+                let mut key = *t;
+                key.sort_unstable();
+                key
+            })
+            .collect()
+    };
+    let signatures: Vec<std::collections::BTreeSet<[u32; 3]>> = caps.iter().map(signature).collect();
+    let boundary_nodes: Vec<u32> = {
+        let mut nodes: Vec<u32> = boundary.iter().flatten().copied().collect();
+        nodes.sort_unstable();
+        nodes.dedup();
+        nodes
+    };
+    let caps: Vec<Vec<[u32; 3]>> = caps
+        .iter()
+        .map(|cap| {
+            let conformed = conform_cap_rim(cap, &boundary_nodes, points, tol);
+            if conformed.len() != cap.len() {
+                note_split("the cap's rim was split to the nodes the cell's boundary carries");
+            }
+            conformed
+        })
+        .collect();
+    let caps = &caps;
+    let mut pieces: Vec<(Vec<[u32; 3]>, Vec<(usize, bool)>)> =
+        vec![(boundary.to_vec(), Vec::new())];
     for (group, cap) in caps.iter().enumerate() {
         if cap.is_empty() {
             continue;
         }
-        let mut next: Vec<Vec<[u32; 3]>> = Vec::with_capacity(pieces.len() + 1);
-        // **A cap may cut at most one piece.** The cap is a whole surface patch, and adding all of
-        // it to both halves of two different pieces puts each of its triangles into four - which
-        // `[V3]` reads exactly as it is, a face shared by four tets and six non-manifold edges
-        // around it. Where a second surface really does cross both pieces, only the part of it
-        // inside each belongs there, and clipping the patch per piece is a different piece of work;
-        // until it exists the cell declines and keeps its whole-cell fan.
-        let mut cuts = 0usize;
-        for piece in pieces {
+        if (0..group).any(|other| signatures[other] == signatures[group]) {
+            note_split("a second component's cap is the same triangles - one surface, cut once");
+            continue;
+        }
+        let mut next: Vec<(Vec<[u32; 3]>, Vec<(usize, bool)>)> =
+            Vec::with_capacity(pieces.len() + 1);
+        for (piece, history) in pieces {
             let (mut above, mut below) = (Vec::new(), Vec::new());
             let mut refused: Option<&'static str> = None;
             for triangle in &piece {
@@ -2366,6 +2577,14 @@ pub fn facet_split_fan(
                     // strip between them has all its corners on the surface while lying squarely in
                     // the material between. §7.6 learned this the same way; the thing being placed
                     // is the triangle's own interior, so ask about that.
+                    //
+                    // Taking the side from the RUN of boundary triangles the cap's rim does not
+                    // separate was tried instead, on the argument that a cell face lying IN the
+                    // surface has every triangle like this and gets an arbitrary answer here. It
+                    // buys refusals (a3 334 -> 277) and no conformity: `[V6]`'s two-component steps
+                    // do not move, a3 gains 731 tets and two duplicate nodes, and `[V9]` loses six.
+                    // The rim and the boundary are not the same spelling of the same line often
+                    // enough for the runs to be the separator the argument needs.
                     None => match side_of_face(group, *triangle) {
                         Some(true) => above.push(*triangle),
                         Some(false) => below.push(*triangle),
@@ -2381,25 +2600,58 @@ pub fn facet_split_fan(
                 return None;
             }
             if above.is_empty() || below.is_empty() {
-                next.push(piece);
+                next.push((piece, history));
                 continue;
             }
             // The cap is the surface's own triangles, so the interface this fallback emits IS the
             // input surface rather than whatever a spoke happened to cut. Winding does not matter:
             // every fan tet is oriented positively below, and both the closure test and the volume
             // test are orientation-free.
-            cuts += 1;
-            if cuts > 1 {
-                note_split("a second surface cuts more than one piece");
-                return None;
+            let here: Vec<[u32; 3]> = cap
+                .iter()
+                .copied()
+                .filter(|t| in_piece(t, &history))
+                .collect();
+            if here.is_empty() {
+                note_split("the cap reaches the piece's boundary but none of it lies inside");
+                next.push((piece, history));
+                continue;
             }
-            above.extend(cap.iter().copied());
-            below.extend(cap.iter().copied());
-            next.push(above);
-            next.push(below);
+            above.extend(here.iter().copied());
+            below.extend(here.iter().copied());
+            let mut above_history = history.clone();
+            above_history.push((group, true));
+            let mut below_history = history;
+            below_history.push((group, false));
+            next.push((above, above_history));
+            next.push((below, below_history));
         }
         pieces = next;
     }
+    if pieces.len() < 2 {
+        note_split("no surface separates the cell into two pieces");
+        return None;
+    }
+    // A triangle carried twice by one piece is an edge carried four times, which `orient_soup`
+    // cannot walk and the volume double-counts. It arises where a cap lies on an earlier cut and is
+    // kept for both sides: two components in exact contact declare the same geometry twice.
+    let mut pieces: Vec<Vec<[u32; 3]>> = pieces
+        .into_iter()
+        .map(|(mut soup, _)| {
+            soup.sort_by_key(|t| {
+                let mut key = *t;
+                key.sort_unstable();
+                key
+            });
+            soup.dedup_by_key(|t| {
+                let mut key = *t;
+                key.sort_unstable();
+                key
+            });
+            soup
+        })
+        .collect();
+    pieces.retain(|piece| !piece.is_empty());
     if pieces.len() < 2 {
         note_split("no surface separates the cell into two pieces");
         return None;
@@ -2433,6 +2685,46 @@ pub fn facet_split_fan(
         // is not a body. Both questions are the one walk.
         let Some(piece) = orient_soup(piece) else {
             note_split("a piece's surface does not close - the cut does not span the cell");
+            note_split(soup_defect(piece));
+            // **And which side of the join the open edge is on.** An edge the CELL's own
+            // triangulation carries and the cap does not is a cut that stops short of the boundary;
+            // one only the cap carries is a cut that reaches past it, spelled with different nodes.
+            // They need different work, and a3 shows 213 of the first against 107 of the second.
+            {
+                let cell_edges: std::collections::BTreeSet<[u32; 2]> = boundary
+                    .iter()
+                    .flat_map(|t| {
+                        (0..3).map(move |slot| {
+                            let (a, b) = (t[slot], t[(slot + 1) % 3]);
+                            if a <= b { [a, b] } else { [b, a] }
+                        })
+                    })
+                    .collect();
+                let mut uses: BTreeMap<[u32; 2], usize> = BTreeMap::new();
+                for t in piece {
+                    for slot in 0..3 {
+                        let (a, b) = (t[slot], t[(slot + 1) % 3]);
+                        *uses.entry(if a <= b { [a, b] } else { [b, a] }).or_insert(0) += 1;
+                    }
+                }
+                let (mut of_cell, mut of_cap) = (0usize, 0usize);
+                for (edge, count) in &uses {
+                    if *count != 1 {
+                        continue;
+                    }
+                    if cell_edges.contains(edge) {
+                        of_cell += 1;
+                    } else {
+                        of_cap += 1;
+                    }
+                }
+                if of_cell > 0 {
+                    note_split("    the open edge is one the CELL's triangulation carries");
+                }
+                if of_cap > 0 {
+                    note_split("    the open edge is one only the CAP carries");
+                }
+            }
             return None;
         };
         let piece = &piece;

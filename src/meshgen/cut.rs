@@ -4111,6 +4111,10 @@ pub fn cut_lattice(
     }
 
     // --- the interface index (G6-3): side elements, derived not stored ---
+    let priority_of: BTreeMap<i32, u32> = components
+        .iter()
+        .map(|component| (component.x, component.priority))
+        .collect();
     mesh.interfaces = derive_interface(
         &mesh,
         &pending_interfaces,
@@ -4118,6 +4122,7 @@ pub fn cut_lattice(
         &sheets,
         &rim_nodes,
         &options.contact_patches,
+        &priority_of,
         options.eps,
     );
     // Where a sheet may legitimately end: the boundary of a collapsed region (G7-2's
@@ -4461,6 +4466,10 @@ pub fn cut_lattice(
             let (mut same_cell, mut cross_cell) = (0usize, 0usize);
             let mut cross_by_path = [0usize; 5];
             let mut same_by_path = [0usize; 5];
+            // **And which refusal stranded each one**, ranked the way P3's stranding is: a
+            // two-component step is a region the cell could not separate, so the class of decline
+            // that sent the cell to the fan is the thing to fix, not the step itself.
+            let mut step_by_reason: BTreeMap<&'static str, usize> = BTreeMap::new();
             for (face, at) in &sides {
                 if at.len() != 2 || tagged.contains(face) {
                     continue;
@@ -4480,6 +4489,11 @@ pub fn cut_lattice(
                     mesh.parent_of.get(at[0]).copied().unwrap_or(0) as usize,
                     mesh.parent_of.get(at[1]).copied().unwrap_or(0) as usize,
                 );
+                for parent in [a, b] {
+                    if let Some(reason) = plc_decline.get(parent).copied().flatten() {
+                        *step_by_reason.entry(reason).or_insert(0) += 1;
+                    }
+                }
                 if a == b {
                     same_cell += 1;
                     same_by_path[path_of.get(a).copied().unwrap_or(4).min(4) as usize] += 1;
@@ -4506,6 +4520,13 @@ pub fn cut_lattice(
                 cross_by_path[3],
                 cross_by_path[4]
             ));
+            let mut ranked: Vec<(&'static str, usize)> = step_by_reason.into_iter().collect();
+            ranked.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+            for (reason, count) in ranked {
+                mesh.warnings.push(format!(
+                    "[PLC]   `[V6]` step sides in a cell §7.4 refused, {count} - {reason}"
+                ));
+            }
         }
 
         // **The histogram never built: off-surface AREA charged to the emitting path.** Every
@@ -6768,6 +6789,7 @@ fn derive_interface(
     sheets: &[i32],
     rim_nodes: &BTreeSet<u32>,
     contact_patches: &[([Vec3; 3], SmallVec<[i32; 2]>)],
+    priority_of: &BTreeMap<i32, u32>,
     eps: f64,
 ) -> Vec<InterfaceFace> {
     // node -> the tets touching it, so the search for a triangle's owners is local.
@@ -6866,9 +6888,177 @@ fn derive_interface(
     out.sort_by_key(|face| (face.component, face.nodes));
     out.dedup_by_key(|face| (face.component, face.nodes));
     declare_contact_components(mesh, &mut out, contact_patches, eps);
-    out.sort_by_key(|face| (face.component, face.nodes));
-    out.dedup_by_key(|face| (face.component, face.nodes));
+    declare_labelled_boundary(mesh, &mut out, priority_of, contact_patches, eps);
+    // Deduplicated by the identity `cut_to_doc` groups on - the node ids in ascending
+    // order - and not by the array as written. `derive_interface` orders a face's nodes
+    // by quantised key while the two declaring passes below it order them numerically,
+    // so the same face reached from two of the three arrives spelled two ways; comparing
+    // the arrays lets both through and the face's tag set then names one component twice.
+    let identity = |face: &InterfaceFace| -> ([u32; 3], i32) {
+        let mut key = face.nodes;
+        key.sort_unstable();
+        (key, face.component)
+    };
+    out.sort_by_key(identity);
+    out.dedup_by_key(|face| identity(face));
     out
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Declare the material boundary the mesh's own labels define, wherever the cut did not
+//   draw it.
+// Inputs: the cut mesh, the faces derived so far, and the priorities `resolve` reads.
+// Returns: nothing; appends the missing `(component, nodes)` tags in place.
+// Side effects: None beyond the push.
+// Notes: A face whose two tets resolve to different region keys **is** a material boundary,
+//   whatever drew it. `[V13]` has always read the boundary that way - off the region keys, with
+//   no face tag consulted - and the contract requires every material boundary to be a declared
+//   interface, so a face the two rules disagree about is an undeclared boundary and nothing else.
+//   The gap is the §7.4 fan's: a cell the kernel refuses is coned from its centroid, its pieces
+//   are labelled one interior sample at a time (§7.5), and no cap list is emitted for it - so
+//   every boundary inside it goes undeclared. On A-3 that was 8,469 faces against 47,529 declared,
+//   and `[V13]` measured all of them while `[V6]` could only count them.
+//
+//   **One component at a time, on purpose.** A step of two or more is the case `[V6]`'s
+//   coincidence exemption is written for, and declaring it from the labels alone would make that
+//   exemption vacuous - every escalation chamfer would declare itself legal, which is the argument
+//   `declare_contact_components` rests on and it still holds. A one-component step needs no
+//   exemption: crossing the face enters or leaves exactly that body, which is what its surface
+//   means. So the two-component steps stay visible to `[V6]` and are fixed where they are made.
+fn declare_labelled_boundary(
+    mesh: &CutMesh,
+    out: &mut Vec<InterfaceFace>,
+    priority_of: &BTreeMap<i32, u32>,
+    patches: &[([Vec3; 3], SmallVec<[i32; 2]>)],
+    eps: f64,
+) {
+    let keys: Vec<Vec<i32>> = mesh
+        .records
+        .par_iter()
+        .map(|record| {
+            let mut key = resolve(record, priority_of);
+            key.retain(|x| *x != 0);
+            key
+        })
+        .collect();
+    let mut sides: BTreeMap<[u32; 3], SmallVec<[u32; 2]>> = BTreeMap::new();
+    for (at, tet) in mesh.tets.iter().enumerate() {
+        for slots in [[0usize, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]] {
+            let mut face = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+            face.sort_unstable();
+            sides.entry(face).or_default().push(at as u32);
+        }
+    }
+    let mut tagged: BTreeSet<([u32; 3], i32)> = BTreeSet::new();
+    for face in out.iter() {
+        let mut key = face.nodes;
+        key.sort_unstable();
+        tagged.insert((key, face.component));
+    }
+    let empty: Vec<i32> = Vec::new();
+    for (face, at) in &sides {
+        if at.len() != 2 {
+            continue;
+        }
+        let left = keys.get(at[0] as usize).unwrap_or(&empty);
+        let right = keys.get(at[1] as usize).unwrap_or(&empty);
+        let mut difference: Vec<i32> = left
+            .iter()
+            .filter(|x| !right.contains(x))
+            .chain(right.iter().filter(|x| !left.contains(x)))
+            .copied()
+            .collect();
+        difference.sort_unstable();
+        // A step of two is only ever declared where S2 says the two surfaces are **coincident**,
+        // and then for the pair it names. See `contact_chamfered_by` for what that costs.
+        if difference.len() == 2
+            && !contact_chamfered_by(mesh, face, at, &difference, patches, eps)
+        {
+            continue;
+        }
+        if difference.len() > 2 {
+            continue;
+        }
+        for component in difference {
+            if tagged.contains(&(*face, component)) {
+                continue;
+            }
+            let inside = if left.contains(&component) { 0 } else { 1 };
+            out.push(InterfaceFace {
+                nodes: *face,
+                component,
+                kind: FACE_TAG_INTERFACE,
+                side_elems: [at[inside] as i32, at[1 - inside] as i32],
+            });
+        }
+    }
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Whether a two-component step is a **contact** the fan chamfered rather than a junction
+//   the mesh lost.
+// Inputs: the mesh, the face, its two tets, the two components the step names, S2's coincident
+//   patches and the envelope tolerance.
+// Returns: true when S2 declares exactly those two components coincident and the face lies within
+//   the fan's own chamfer of one of their patches.
+// Side effects: None.
+// Notes: **Only genuine coincidence excuses a step of two, and only S2 can say where it is.** Two
+//   solids in exact contact share one boundary, so crossing the face leaves one and enters the
+//   other with no void between - `[V6]`'s exemption is written for exactly that. A junction chamfer
+//   looks the same from the labels alone (a3 has 56 faces stepping `{1} -> {2}` where the cube and
+//   the sphere merely interpenetrate), which is why nothing here reads the labels for the answer:
+//   the pair must be one S2 declared coincident, and a case with no coincident patch - a3, a1, a8 -
+//   can never reach this rule at all.
+//
+//   The distance allowed is not `eps`. `declare_contact_components` above already takes every face
+//   lying ON the patch within the envelope; what is left is the same contact **chamfered**, which
+//   the §7.4/§7.6 fan's own contract bounds at one cell ("their material boundary is chamfered by
+//   at most one cell"). So the bound is the longest edge of the two tets that share the face - the
+//   cell's own size at that point, not a number chosen here. a6a's 531 steps sit 2 to 4 times `eps`
+//   off the plane x = 0.5817 and about a quarter of a cell, which is what that bound is for.
+//
+//   The cost is stated rather than hidden: the face is declared, and `[V13]` still charges the
+//   whole displacement as off-surface area, because it measures the boundary off the region keys
+//   and never reads a tag.
+fn contact_chamfered_by(
+    mesh: &CutMesh,
+    face: &[u32; 3],
+    at: &SmallVec<[u32; 2]>,
+    pair: &[i32],
+    patches: &[([Vec3; 3], SmallVec<[i32; 2]>)],
+    eps: f64,
+) -> bool {
+    if patches.is_empty() {
+        return false;
+    }
+    let mut chamfer = 0.0f64;
+    for cell in at {
+        let tet = mesh.tets[*cell as usize];
+        for a in 0..4 {
+            for b in a + 1..4 {
+                let d = mesh.nodes[tet[b] as usize].sub(mesh.nodes[tet[a] as usize]);
+                chamfer = chamfer.max(d.dot(d).sqrt());
+            }
+        }
+    }
+    let chamfer = chamfer.max(eps);
+    let mut named: Option<&SmallVec<[i32; 2]>> = None;
+    for node in face {
+        let point = mesh.nodes[*node as usize];
+        let Some((_, here)) = patches.iter().find(|(tri, components)| {
+            let mut sorted: SmallVec<[i32; 2]> = components.clone();
+            sorted.sort_unstable();
+            sorted.as_slice() == pair && point_on_triangle(point, *tri, chamfer)
+        }) else {
+            return false;
+        };
+        match named {
+            None => named = Some(here),
+            Some(there) if there == here => {}
+            Some(_) => return false,
+        }
+    }
+    named.is_some()
 }
 
 // AI-FUNC-SUMMARY: Whether a point lies within `eps` of a triangle, plane distance and barycentric containment together; side effects: none.
@@ -8006,6 +8196,19 @@ fn plc_attempt(
                         .collect()
                 })
                 .collect();
+            // How much of the surface the filter above took away, so a refusal below can be
+            // charged to it: 258 of a3's 334 whole-cell fans are cells where it fired, which is
+            // what says the cap's own rim is where the pieces come apart.
+            let offered: usize = groups
+                .values()
+                .map(|slots| {
+                    slots
+                        .iter()
+                        .map(|slot| facets[*slot].len().saturating_sub(2))
+                        .sum::<usize>()
+                })
+                .sum();
+            let dropped = offered - caps.iter().map(|cap| cap.len()).sum::<usize>();
             let on_patch: Vec<BTreeSet<u32>> = groups
                 .values()
                 .map(|slots| slots.iter().flat_map(|slot| facets[*slot].iter().copied()).collect())
@@ -8024,14 +8227,14 @@ fn plc_attempt(
                 uncertain.set(here);
                 Some(inside)
             };
-            let side_of_face = |group: usize, triangle: [u32; 3]| -> Option<bool> {
-                let centre = base[triangle[0] as usize]
-                    .add(base[triangle[1] as usize])
-                    .add(base[triangle[2] as usize])
-                    .scale(1.0 / 3.0);
+            // The oracle takes a POINT, not a triangle: where to sample for a face is the
+            // split's own question - a boundary triangle is asked about just inside the cell and a
+            // cap triangle at its own centre - and it cannot be answered here, where nothing knows
+            // which of the two a triangle is.
+            let side_of_point = |group: usize, point: Vec3| -> Option<bool> {
                 let slot = classifier.slot_of(components[group])?;
                 let mut here = uncertain.get();
-                let inside = classifier.inside(centre, slot, &mut here);
+                let inside = classifier.inside(point, slot, &mut here);
                 uncertain.set(here);
                 Some(inside)
             };
@@ -8039,14 +8242,21 @@ fn plc_attempt(
                 &boundary_local,
                 &caps,
                 &side_of,
-                &side_of_face,
+                &side_of_point,
                 &mut arena.points,
                 &arena.keys,
                 tol,
             );
             match split {
                 Some((tets, regions)) => (tets, regions, Some(reason)),
-                None => return Err(reason),
+                None => {
+                    crate::meshgen::cdt::note_split_public(if dropped == 0 {
+                        "refused with NO cap triangle removed for lying in a cell face"
+                    } else {
+                        "refused with at least one cap triangle removed for lying in a cell face"
+                    });
+                    return Err(reason);
+                }
             }
         }
     };
@@ -8074,8 +8284,15 @@ fn plc_attempt(
             arena.points[face[2] as usize],
         ];
         let centre = p[0].add(p[1]).add(p[2]).scale(1.0 / 3.0);
+        // **Every component whose facet the face lies in, not the first one found.** Two solids in
+        // exact contact share an arranged face, so the cell holds the same facet twice, once under
+        // each component - and stopping at the first left the shared face declared for one body and
+        // undeclared for the other. `[V6]` then reads a step of two components across a face
+        // carrying one tag, which is exactly what a contact is not: a6a reported 163 of them, every
+        // one on the plane x = 0.5817 the cube and the limb share.
+        let mut named: SmallVec<[i32; 2]> = SmallVec::new();
         for (slot, facet) in facets.iter().enumerate() {
-            if facet.len() < 3 {
+            if facet.len() < 3 || named.contains(&facet_of[slot]) {
                 continue;
             }
             let corner = |at: usize| arena.points[facet[at] as usize];
@@ -8093,8 +8310,8 @@ fn plc_attempt(
                 continue;
             }
             let _ = centre;
+            named.push(facet_of[slot]);
             caps.push((*face, facet_of[slot]));
-            break;
         }
     }
     Ok(PlcCell {
