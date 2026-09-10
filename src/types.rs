@@ -85,6 +85,23 @@ impl BoundingBox {
     // Notes: A margin more negative than half an extent inverts that axis, which `volume()` already
     // reports as zero and `contains_point` as empty, so an over-eroded box is empty rather than wrong.
     // Used both to dilate a query box by a gap and to erode a domain by a particle's reach.
+    // AI-FUNC-SUMMARY:
+    // Purpose: Say whether this box meets another at all.
+    // Inputs: the other box.
+    // Returns: true when the two overlap or touch on every axis.
+    // Side effects: None.
+    // Notes: Touching counts as meeting, unlike `bbox_overlaps`, which is strict. Used to refuse a
+    // void that does not reach the domain at all - a frame or unit error rather than an empty pore
+    // network, and one that would otherwise produce a perfectly clean run of the wrong thing.
+    pub fn intersects_domain(&self, other: BoundingBox) -> bool {
+        self.min.x <= other.max.x
+            && self.max.x >= other.min.x
+            && self.min.y <= other.max.y
+            && self.max.y >= other.min.y
+            && self.min.z <= other.max.z
+            && self.max.z >= other.min.z
+    }
+
     pub fn expanded(&self, margin: f64) -> BoundingBox {
         BoundingBox {
             min: Vec3::new(self.min.x - margin, self.min.y - margin, self.min.z - margin),

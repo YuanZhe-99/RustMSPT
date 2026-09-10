@@ -652,13 +652,17 @@ fn an_unwritable_output_directory_is_an_error() {
     );
 }
 
+// A void the config names but that is not on disk is an error, not a silently
+// void-free run. The void tests cover the rest of void behaviour.
 #[test]
-fn a_void_block_is_refused_until_void_support_lands() {
+fn a_void_file_that_does_not_exist_is_an_error() {
     let tmp = tempfile::tempdir().unwrap();
     let c = case(
         tmp.path(),
-        &roomy(1, "  void: { file: \"v.stl\", crossing: forbidden, gap: 1.0 }"),
+        &roomy(1, "  void: { file: \"absent.stl\", crossing: forbidden, gap: 1.0 }"),
     );
-    let err = run_placement(&resolve(&c.config)).unwrap_err().to_string();
-    assert!(err.contains("void"), "{err}");
+    assert!(
+        run_placement(&resolve(&c.config)).is_err(),
+        "a missing void file must stop the run"
+    );
 }

@@ -31,6 +31,7 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `RustMsptError` | Core & Compute | `src/error.rs:4` | Crate-wide error enum including image encoding failures. |
 | `Result` | Core & Compute | `src/error.rs:27` | Type alias `Result<T> = std::result::Result<T, RustMsptError>` used throughout the crate. |
 | `cli_path_as_config_relative` | Core & Compute | `src/main.rs:157` | Re-expresses a command-line path so config-relative resolution keeps its meaning. |
+| `BoundingBox::intersects_domain` | Core & Compute | `src/types.rs:96` | Whether two boxes meet at all; touching counts. |
 | `BuildIdentity` | Core & Compute | `src/version.rs:18` | What this binary is: version, git commit, worktree dirtiness, features, build platform. |
 | `build_identity` | Core & Compute | `src/version.rs:36` | Returns the compiled-in build identity; the single source of truth for tool identity. |
 | `BuildIdentity::version_detail` | Core & Compute | `src/version.rs:64` | Identity as one line without the program name, for clap's `--version`. |
@@ -134,6 +135,24 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `SpatialGrid::point_to_cell_clamped` | Geometry — Core | `src/geometry/spatial.rs:93` | Maps a point to grid cell coordinates, clamped to grid bounds. |
 | `SpatialGrid::point_to_cell` | Geometry — Core | `src/geometry/spatial.rs:99` | Maps a point to grid cell coordinates, unclamped. |
 | `estimate_cell_size` | Geometry — Core | `src/geometry/spatial.rs:108` | Heuristically picks a `SpatialGrid` cell size from a set of bboxes. |
+| `VoidVolumeMethod` | Geometry — Volume & Collision | `src/geometry/void_index.rs:30` | Which method produced a void's in-domain volume. |
+| `VoidIndex` | Geometry — Volume & Collision | `src/geometry/void_index.rs:44` | A frozen void, indexed for the queries a placement run makes. |
+| `VoidIndex::build` | Geometry — Volume & Collision | `src/geometry/void_index.rs:68` | Validates a void mesh and builds its index; refuses mixed orientation. |
+| `VoidIndex::bbox` | Geometry — Volume & Collision | `src/geometry/void_index.rs:130` | The void's bounding box. |
+| `VoidIndex::shells` | Geometry — Volume & Collision | `src/geometry/void_index.rs:135` | How many closed shells the void has. |
+| `VoidIndex::is_outward` | Geometry — Volume & Collision | `src/geometry/void_index.rs:140` | Whether the void's shells wind outward. |
+| `VoidIndex::total_volume` | Geometry — Volume & Collision | `src/geometry/void_index.rs:145` | The void's total closed volume over shells with agreeing signs. |
+| `VoidIndex::contains_point` | Geometry — Volume & Collision | `src/geometry/void_index.rs:158` | Ray-parity point-in-void test over the hierarchy; correct for nested shells. |
+| `VoidIndex::near_box` | Geometry — Volume & Collision | `src/geometry/void_index.rs:199` | Box prefilter: false means far from the void and not nested in it. |
+| `VoidIndex::intersects` | Geometry — Volume & Collision | `src/geometry/void_index.rs:219` | Whether a particle's surface intersects the void's. |
+| `VoidIndex::min_distance_to` | Geometry — Volume & Collision | `src/geometry/void_index.rs:235` | Minimum surface-to-surface distance from a particle to the void. |
+| `VoidIndex::surface_distance` | Geometry — Volume & Collision | `src/geometry/void_index.rs:252` | Unsigned distance from a point to the void surface. |
+| `VoidIndex::any_vertex_inside` | Geometry — Volume & Collision | `src/geometry/void_index.rs:266` | Whether any of a mesh's vertices lies inside the void. |
+| `VoidIndex::any_void_vertex_inside` | Geometry — Volume & Collision | `src/geometry/void_index.rs:278` | Whether any void vertex lies inside a particle. |
+| `VoidIndex::volume_in_domain` | Geometry — Volume & Collision | `src/geometry/void_index.rs:297` | The void's volume inside a domain, and which method produced it. |
+| `VoidIndex::sample_surface_point` | Geometry — Volume & Collision | `src/geometry/void_index.rs:321` | Area-weighted point on the void surface with its outward normal. |
+| `VoidIndex::overlap_volume` | Geometry — Volume & Collision | `src/geometry/void_index.rs:363` | Volume of a particle inside the void, by domain-anchored voxel count. |
+| `point_inside_mesh_local` | Geometry — Volume & Collision | `src/geometry/void_index.rs:408` | Ray-parity point-in-mesh test for a small mesh with no hierarchy. |
 | `DOMAIN_FACE_NAMES` | Geometry — Volume & Collision | `src/geometry/volume.rs:454` | The six domain-face names, in clip-plane order. |
 | `mesh_volume_centroid` | Geometry — Volume & Collision | `src/geometry/volume.rs:467` | Volume centroid of a closed mesh (not the vertex mean). |
 | `shell_signed_volumes` | Geometry — Volume & Collision | `src/geometry/volume.rs:498` | Signed volume per shell, exposing per-shell orientation. |
@@ -274,6 +293,8 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `selective_prune_to_target_vf` | Pipeline — Optimize | `src/pipeline/optimize.rs:86` | Pre-annealing stage: iteratively removes particles to approach the target volume fraction while minimizing S2-loss increase. |
 | `run_sa_island` | Pipeline — Optimize | `src/pipeline/optimize.rs:285` | The core simulated-annealing loop for one island; the single most important function in the codebase. |
 | `OptimizePipeline::run` | Pipeline — Optimize | `src/pipeline/optimize.rs:797` | Top-level `Pipeline::run` orchestration: load, target computation, pruning, single/multi-island SA, save. |
+| `VoidReport` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:278` | What the run did with the frozen void, and how it measured it. |
+| `build_void_report` | Pipeline — Packing | `src/pipeline/placement.rs:1133` | Describes the frozen void for the report, including its volume method. |
 | `PlacementPipeline` | Pipeline — Packing | `src/pipeline/placement.rs:37` | Pipeline struct holding a validated `ResolvedPlacement`. |
 | `PlacementOutcome` | Pipeline — Packing | `src/pipeline/placement.rs:60` | What a completed run produced, for in-process callers. |
 | `run_placement` | Pipeline — Packing | `src/pipeline/placement.rs:75` | Runs the engine end to end and writes every output file. |

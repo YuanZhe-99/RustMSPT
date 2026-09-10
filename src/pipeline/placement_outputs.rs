@@ -258,6 +258,7 @@ pub struct ReportFile {
     pub inputs: Vec<FileEntry>,
     pub frame: FrameRecord,
     pub shapes: ShapesReport,
+    pub void: Option<VoidReport>,
     pub target: TargetReport,
     pub plan: PlanReport,
     pub actual: ActualReport,
@@ -270,6 +271,35 @@ pub struct ReportFile {
     pub stop_reason: Option<StopReason>,
     pub stop_detail: BTreeMap<String, String>,
     pub outputs: Vec<FileEntry>,
+}
+
+/// What the run did with the frozen void, and how it measured it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VoidReport {
+    pub path: String,
+    /// The digest of the file as read.
+    pub sha256_in: String,
+    /// The digest of the copy written beside the outputs. Equal to `sha256_in`
+    /// whenever a copy was made: the void is frozen, and this is how a reader
+    /// checks that rather than taking it on trust.
+    pub sha256_out: Option<String>,
+    pub shells: usize,
+    /// `outward` or `inward`. A mixed void is refused at load time.
+    pub orientation: String,
+    pub crossing: String,
+    pub gap: f64,
+    pub volume_total: f64,
+    pub volume_in_domain: f64,
+    /// `exact_shell_sum` when the void lies inside the domain, `exact_clip`
+    /// otherwise. Stated because a solid basis means the domain minus this
+    /// number, so how it was obtained changes what the target fraction means.
+    pub volume_method: String,
+    pub inside_domain: bool,
+    /// Only meaningful when crossing is allowed.
+    pub overlap_voxel_size: Option<f64>,
+    /// The phase that owns a particle's overlap with the void. Always the void:
+    /// it is frozen, so a particle crossing into it does not take that volume.
+    pub overlap_owner: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,7 +1,8 @@
 use crate::config::placement::{BoundaryMode, ResolvedBoundary};
+use crate::config::placement::VoidCrossing;
 use crate::geometry::{
     bbox_distance, bbox_overlaps, cut_face_names, mesh_collision_exact_prepared,
-    mesh_distance_exact_prepared, mesh_volume_in_bbox_exact, to_parry_trimesh, UnitQuat,
+    mesh_distance_exact_prepared, mesh_volume_in_bbox_exact, to_parry_trimesh, UnitQuat, VoidIndex,
 };
 use crate::types::{BoundingBox, Mesh, Vec3};
 use parry3d_f64::shape::TriMesh;
@@ -110,6 +111,14 @@ pub struct FeasibilityContext<'a> {
     /// spatial grid. Comparing against all of them is what the original engine
     /// does, and it is O(n) per attempt.
     pub neighbours: &'a [usize],
+    /// The frozen void, when the run has one.
+    pub void: Option<&'a VoidIndex>,
+    pub void_crossing: VoidCrossing,
+    /// `g_pv`: the clearance every particle keeps from the void surface.
+    pub void_gap: f64,
+    /// The band a void_neighbourhood run samples within, as distance from the
+    /// void surface to the particle's centroid.
+    pub neighbourhood_band: Option<(f64, f64)>,
 }
 
 /// A proposed placement, with the cheap quantities already worked out.
@@ -199,8 +208,63 @@ pub fn check_placement(
         }
     };
 
-    // Neighbours come from the spatial grid, already dilated by the gap.
     let mut shape: Option<TriMesh> = None;
+
+    // The void, if there is one. The order here is the completeness argument, and
+    // it is worth stating in full because the predicate is not obvious.
+    //
+    // For closed, non-self-intersecting surfaces, these three together are
+    // equivalent to "the particle solid and the void solid are disjoint and at
+    // least `gap` apart":
+    //   (a) no particle vertex is inside the void,
+    //   (b) the surfaces do not intersect and are at least `gap` apart,
+    //   (c) no void vertex is inside the particle.
+    // Because (b) says the surfaces never cross, each closed solid is wholly
+    // inside or wholly outside the other. (a) rules out the particle being inside
+    // the void, (c) rules out the void being inside the particle, and (b) supplies
+    // the separation. A shell strictly inside another has *all* of its vertices
+    // inside it, so neither vertex test can miss the case it exists for.
+    //
+    // The cost is bounded by the box prefilter: if no void triangle comes within
+    // `gap` of the particle's box, the particle is both far from the void and not
+    // nested in it, and none of the three tests needs to run.
+    if let Some(void) = ctx.void {
+        if let Some((lo, hi)) = ctx.neighbourhood_band {
+            let d = void.surface_distance(candidate.centre);
+            if d < lo || d > hi {
+                return Err(RejectReason::NeighbourhoodBand);
+            }
+        }
+        match ctx.void_crossing {
+            VoidCrossing::Forbidden => {
+                if void.near_box(bbox, ctx.void_gap) {
+                    if void.any_vertex_inside(candidate.mesh) {
+                        return Err(RejectReason::InsideVoid);
+                    }
+                    shape = to_parry_trimesh(candidate.mesh);
+                    if void.intersects(shape.as_ref().ok_or(RejectReason::VoidGap)?) {
+                        return Err(RejectReason::VoidGap);
+                    }
+                    let d = void.min_distance_to(shape.as_ref().ok_or(RejectReason::VoidGap)?);
+                    if d < ctx.void_gap {
+                        return Err(RejectReason::VoidGap);
+                    }
+                    if void.any_void_vertex_inside(candidate.mesh, bbox) {
+                        return Err(RejectReason::VoidEnclosed);
+                    }
+                }
+            }
+            VoidCrossing::Allowed => {
+                // Crossing is permitted, but a particle whose centre sits inside a
+                // pore is not a particle in the solid phase at all.
+                if void.contains_point(candidate.centre) {
+                    return Err(RejectReason::InsideVoid);
+                }
+            }
+        }
+    }
+
+    // Neighbours come from the spatial grid, already dilated by the gap.
     for &index in ctx.neighbours {
         let other = &ctx.placed[index];
 

@@ -8,6 +8,7 @@ pub mod render;
 pub mod s2;
 pub mod scene_render;
 pub mod spatial;
+pub mod void_index;
 pub mod volume;
 
 pub use bbox::{bbox_distance, bbox_overlaps, check_boundary_constraints_mode, mesh_bbox};
@@ -25,6 +26,7 @@ pub use metrics::{
     mesh_closedness, mesh_is_closed, mesh_metrics, scale_mesh_to_equivalent_diameter, MeshMetrics,
 };
 pub use quaternion::{sample_uniform_quaternion, transform_shell, UnitQuat};
+pub use void_index::{VoidIndex, VoidVolumeMethod};
 pub use render::{
     build_render_camera, parse_render_projection, parse_render_vec3, render_mesh_cpu,
     RenderCamera, RenderCameraSpec, RenderProjection, RenderSettings,

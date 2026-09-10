@@ -241,6 +241,7 @@ src/
     forging.rs         FFD forging simulation: simulate_forging_ffd, simulate_forging_ffd_with_tracking
     mesh_ops.rs        Mesh utilities: split_mesh_into_granules, merge_meshes, mesh_centroid, rotate_mesh_around_center, move_mesh_to_target_center, scale_mesh, translate_mesh, wrap_mesh_centroid_to_box, box_mesh, mesh_surface_area, vec_norm
     metrics.rs         Unified closed-mesh metrics: volume, surface area, equivalent-volume diameter, sphericity, target-diameter scaling
+    void_index.rs      VoidIndex: parity point-in-void over a hierarchy, box prefilter, surface distance, exact in-domain volume, area-weighted surface sampling, voxel overlap
     quaternion.rs      UnitQuat (scalar-first w,x,y,z), Shoemake uniform-on-SO(3) sampler, and transform_shell - the one definition of the placement transform
     render.rs          Shared camera model and CPU QBVH ray-cast renderer
     scene_render.rs    CPU scene renderer: all-hits transparency compositing, line overlays, markers, named view presets
@@ -303,6 +304,7 @@ tests/
   placement_primitives_tests.rs  Seeded stream, uniform-on-SO(3) sampler, volume centroid, exact in-box volume
   placement_config_tests.rs      placement: parsing, every refusal, config-relative path resolution, engine selection
   placement_sizes_tests.rs       Normal quantile against published values, truncated-lognormal and histogram samplers, multiset planner, shape library
+  placement_void_tests.rs        The void index against closed-form geometry, the three-part predicate, crossing modes, the frozen-copy digest check
   placement_pipeline_tests.rs    The engine end to end: determinism across thread counts, reconstruction from the record alone, every stop reason, gaps and clipped faces
   io_tests.rs          I/O roundtrip tests (STL, TIFF, RAW)
   pack_target_tests.rs Packing target CSV, diameter-bin controller, and sphericity scoring tests
@@ -327,6 +329,7 @@ tests/
 
 data/
   fixtures/meshgen/    Contract VTUs plus GA-5 CPU render baselines under render_baselines/cpu/
+  fixtures/placement/  make_void.py: regenerates data/input/placement/void_spheres.stl (stdlib only, --check verifies the committed file)
   input/               Default YAML configs, sample inputs, and gu2019_fig7b_pore_distribution.csv
   output/              Pipeline outputs (gitignored)
 
@@ -414,6 +417,10 @@ When inspecting code:
 - `Volume3D` uses z-major indexing: `idx = z * width * height + y * width + x`. GPU shaders must match this layout, not x-major.
 - Equivalent-volume diameter and sphericity require a closed mesh with positive finite volume and surface area; malformed/open candidates are skipped when target controls are active.
 - **The placement engine's path contract has two halves, and both are load-bearing.** Relative paths *in a config* resolve against that config file's directory; relative paths *on the command line* resolve against the working directory, as shell arguments do. `--input`/`--output` are made absolute before substitution so both hold at once. A placement config reached through the legacy working-directory default (`data/input/pack_config.yaml`, when `--config` is omitted) is refused outright rather than honoured.
+- **The void feasibility predicate is three tests, and the third is the one people leave out.** For closed, non-self-intersecting surfaces: (a) no particle vertex inside the void, (b) the surfaces do not intersect and are at least `gap` apart, (c) **no void vertex inside the particle**. Because (b) says the surfaces never cross, each closed solid is wholly inside or wholly outside the other, so (a) rules out particle-inside-void, (c) rules out void-inside-particle, and (b) gives the separation. Without (c) a particle large enough to swallow a whole pore passes every other test. A shell strictly inside another has *all* its vertices inside, so neither vertex test can miss its case. `near_box` bounds the cost: a `false` means far from the void *and* not nested in it, because a nested particle's box necessarily meets the shell's own leaves.
+- **Point-in-void is ray parity, not a pseudo-normal test.** Parity is correct for a shell nested inside another (a pore inside a pore) and does not care which way faces wind; parry's `contains_local_point` needs `TriMeshFlags::ORIENTED` and gets nesting wrong. `VoidIndex::contains_point` uses the same fixed ray direction and `1e-8` hit tolerance as `s2::point_inside_mesh`, and a test asserts the two agree on thousands of points.
+- **A void whose shells disagree about orientation is refused, not repaired.** `mesh_volume` takes the absolute value of the whole sum, so a void of two pores with one inverted would report `|V1 - V2|` instead of `V1 + V2`, and a solid-basis volume fraction computed against it would be quietly wrong. An all-inward void is accepted and reported as inward.
+- **Void overlap voxels are anchored to the domain origin, never to each particle's own box.** Two particles reaching into the same pore must agree about the same physical voxel, or their overlaps double-count where they meet.
 - **The placement engine defers three expensive things behind cheap rejections, and it matters by more than an order of magnitude.** Writing them eagerly made a small run take 3.4 seconds; deferring them took the same run, placing the same 82 particles, to 0.21. (a) The parry `TriMesh` is built only when a neighbour survives the cheap tests, because building one means building a bounding-volume hierarchy. (b) The exact in-box volume runs only for a particle whose box actually straddles the domain; one wholly inside keeps its full volume by definition. (c) The exact pair distance is reached only after a centre-to-centre sphere test and a box test have both failed to separate the pair. A particle's full volume is `scale^3` times its source shell's, never a fresh tetrahedra sum.
 - **`on_unattainable: stop` with the default `descending` order turns one impossible size into an empty result.** Largest goes first, so if the largest cannot fit, the run stops having placed nothing -- and `no_feasible_placement` then outranks `distribution_unattainable`, because a run with no particles has no distribution to describe. Pinned by `tests/placement_pipeline_tests.rs::on_unattainable_stop_ends_at_the_first_failure`.
 - **A determinism test must not compare two runs in two different temporary directories.** The record carries each source's `resolved_path`, so the files differ on that alone and the test fails for a reason that has nothing to do with determinism. Run both in one directory with different output subdirectories instead.

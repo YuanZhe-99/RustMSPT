@@ -1,13 +1,14 @@
 use crate::config::placement::{
-    BoundaryMode, OnUnattainable, OrientationMode, PlacementOrder, ResolvedDistribution,
-    ResolvedPlacement, TargetBasis,
+    BoundaryMode, OnUnattainable, OrientationMode, PlacementOrder, PositionMode,
+    ResolvedDistribution, ResolvedPlacement, TargetBasis, VoidCrossing,
 };
 use crate::error::{Result, RustMsptError};
 use crate::geometry::{
     mesh_bbox, sample_uniform_quaternion, transform_shell, UnitQuat,
 };
 use crate::geometry::spatial::SpatialGrid;
-use crate::io::{sha256_file, save_stl};
+use crate::geometry::{VoidIndex, VoidVolumeMethod};
+use crate::io::{load_stl, save_stl, sha256_file};
 use crate::pipeline::placement_feasibility::{
     check_placement, Candidate, FeasibilityContext, PlacedParticle, RejectReason,
 };
@@ -87,26 +88,51 @@ pub fn run_placement(config: &ResolvedPlacement) -> Result<PlacementOutcome> {
     let source = SizeSource::prepare(&config.distribution)?;
     let classes = build_classes(&config.classes, &source);
 
-    let basis_volume = match config.target_basis {
-        TargetBasis::Domain => config.domain.volume(),
-        // A solid basis needs the void's volume, which arrives with the void
-        // subtask. Until then a solid basis cannot be reached: validate() already
-        // refuses it without a void, and the void itself is not loaded yet.
-        TargetBasis::Solid => {
-            return Err(RustMsptError::NotAvailable(
-                "placement.target.basis: solid needs the void volume, and void support is not \
-                 implemented yet; use basis: domain for now"
-                    .to_string(),
-            ))
+    // The void is loaded and validated before anything is planned: a run whose
+    // void is unusable should say so before it spends any budget.
+    let void = match &config.void {
+        None => None,
+        Some(v) => {
+            let mesh = load_stl(&v.file)?;
+            let index = VoidIndex::build(&mesh)?;
+            if !index
+                .bbox()
+                .expanded(0.0)
+                .intersects_domain(config.domain)
+            {
+                return Err(RustMsptError::InvalidConfig(format!(
+                    "the void in {} does not meet the domain at all, which is a frame or unit \
+                     error rather than an empty pore network",
+                    v.file.display()
+                )));
+            }
+            Some(index)
         }
     };
-    if config.void.is_some() {
-        return Err(RustMsptError::NotAvailable(
-            "placement.void is not implemented yet; remove the void block to place into an empty \
-             domain"
-                .to_string(),
-        ));
-    }
+    let (void_volume_in_domain, void_volume_method) = match &void {
+        None => (0.0, None),
+        Some(index) => {
+            let (v, method) = index.volume_in_domain(config.domain);
+            (v, Some(method))
+        }
+    };
+
+    let basis_volume = match config.target_basis {
+        TargetBasis::Domain => config.domain.volume(),
+        // "Solid" means the domain minus the void, which is what a solid-phase
+        // fraction is normally quoted against.
+        TargetBasis::Solid => {
+            let solid = config.domain.volume() - void_volume_in_domain;
+            if solid <= 0.0 {
+                return Err(RustMsptError::InvalidConfig(format!(
+                    "the void fills the whole domain ({void_volume_in_domain} of \
+                     {}), so there is no solid region to place into",
+                    config.domain.volume()
+                )));
+            }
+            solid
+        }
+    };
 
     let target_volume = basis_volume * config.target_volume_fraction;
     let mut rng = seeded_rng(config.seed);
@@ -136,11 +162,34 @@ pub fn run_placement(config: &ResolvedPlacement) -> Result<PlacementOutcome> {
 
     // Write the report once before placing anything. A six-hour run that is killed
     // then leaves a file saying what it was, rather than nothing at all.
-    let mut report = blank_report(config, &tool, &frame, &library, &plan, basis_volume, threads);
+    let void_report = build_void_report(
+        config,
+        void.as_ref(),
+        void_volume_in_domain,
+        void_volume_method,
+    )?;
+    let mut report = blank_report(
+        config,
+        &tool,
+        &frame,
+        &library,
+        &plan,
+        basis_volume,
+        threads,
+        void_report,
+    );
     write_json(&config.outputs.report, &report)?;
 
     let mut state = EngineState::new(config, &library, &classes, &plan.draws);
-    place_all(config, &library, &classes, &mut rng, &mut plan.draws, &mut state);
+    place_all(
+        config,
+        &library,
+        &classes,
+        void.as_ref(),
+        &mut rng,
+        &mut plan.draws,
+        &mut state,
+    );
 
     // A top-up is allowed only when every planned size was placed and volume was
     // lost to the boundary. Drawing one after a failure would re-draw from the
@@ -156,6 +205,7 @@ pub fn run_placement(config: &ResolvedPlacement) -> Result<PlacementOutcome> {
             config,
             &library,
             &classes,
+            void.as_ref(),
             &source,
             &mut rng,
             &mut state,
@@ -285,10 +335,12 @@ impl EngineState {
 // variates up front - one for the shell, three for the orientation, three for the position - before
 // any check runs. Drawing them lazily would make the stream depend on which check short-circuited,
 // so reordering the checks later would silently change every placement.
+#[allow(clippy::too_many_arguments)]
 fn place_all(
     config: &ResolvedPlacement,
     library: &ShapeLibrary,
     classes: &[SizeClass],
+    void: Option<&VoidIndex>,
     rng: &mut ChaCha12Rng,
     draws: &mut [SizeDraw],
     state: &mut EngineState,
@@ -298,7 +350,7 @@ fn place_all(
             state.stopped_early = true;
             break;
         }
-        let placed = try_place_one(config, library, rng, draw, state);
+        let placed = try_place_one(config, library, void, rng, draw, state);
         if placed {
             if let Some(slot) = state.placed_per_class.get_mut(draw.class) {
                 *slot += 1;
@@ -326,6 +378,7 @@ fn place_all(
 fn try_place_one(
     config: &ResolvedPlacement,
     library: &ShapeLibrary,
+    void: Option<&VoidIndex>,
     rng: &mut ChaCha12Rng,
     draw: &SizeDraw,
     state: &mut EngineState,
@@ -350,12 +403,8 @@ fn try_place_one(
             }
         };
 
-        // 3 draws: the centroid. In strict mode the domain is eroded by the
-        // particle's circumscribed-sphere radius, which does NOT depend on the
-        // orientation. Eroding by the rotated bounding box instead would make the
-        // proposal box a function of the orientation, under-weighting orientations
-        // with a smaller footprint and correlating orientation with position near
-        // the walls.
+        // The particle's reach from its own centre. Rotation cannot change it, so
+        // it bounds the particle whatever orientation came up.
         let reach = shell.bounding_radius * scale;
         let box_for_centre = match config.boundary.mode {
             BoundaryMode::Strict => config
@@ -363,11 +412,44 @@ fn try_place_one(
                 .expanded(-(reach + config.boundary.min_boundary_dist)),
             BoundaryMode::Clip | BoundaryMode::Periodic => config.domain,
         };
-        let centre = Vec3::new(
-            uniform_range(rng, box_for_centre.min.x, box_for_centre.max.x),
-            uniform_range(rng, box_for_centre.min.y, box_for_centre.max.y),
-            uniform_range(rng, box_for_centre.min.z, box_for_centre.max.z),
-        );
+
+        // 3 or 4 draws: the centroid.
+        //
+        // feasible_uniform: uniform in the box above. In strict mode that box is
+        // the domain eroded by the particle's circumscribed-sphere radius, which
+        // does NOT depend on the orientation. Eroding by the *rotated* bounding
+        // box instead would make the proposal box a function of the orientation,
+        // under-weighting orientations with a smaller footprint and correlating
+        // orientation with position near the walls - exactly the kind of artefact
+        // a consumer would notice in the pair statistics.
+        //
+        // void_neighbourhood: an area-weighted point on the void surface, offset
+        // outward by a distance in the declared band. This is a deliberate
+        // construction, not a random one, and the report names it as such.
+        let centre = match config.position.mode {
+            PositionMode::FeasibleUniform => Vec3::new(
+                uniform_range(rng, box_for_centre.min.x, box_for_centre.max.x),
+                uniform_range(rng, box_for_centre.min.y, box_for_centre.max.y),
+                uniform_range(rng, box_for_centre.min.z, box_for_centre.max.z),
+            ),
+            PositionMode::VoidNeighbourhood => {
+                let (lo, hi) = config.position.band.unwrap_or((0.0, 0.0));
+                match void {
+                    Some(index) => {
+                        let (surface, normal) = index.sample_surface_point(rng);
+                        let offset = uniform_range(rng, lo, hi);
+                        surface.add(normal.scale(offset))
+                    }
+                    None => {
+                        // validate() refuses this combination, so it cannot be
+                        // reached; the draws are still consumed so the stream does
+                        // not depend on the branch taken.
+                        let _ = (u01(rng), u01(rng), u01(rng), u01(rng));
+                        Vec3::new(0.0, 0.0, 0.0)
+                    }
+                }
+            }
+        };
         if box_for_centre.volume() <= 0.0 {
             // The particle cannot fit the domain at all under this boundary rule.
             state.reject(RejectReason::OutsideDomain);
@@ -391,6 +473,16 @@ fn try_place_one(
             gap_particle_particle: config.gap_particle_particle,
             placed: &state.placed,
             neighbours: &neighbours,
+            void,
+            void_crossing: config
+                .void
+                .as_ref()
+                .map(|v| v.crossing)
+                .unwrap_or(VoidCrossing::Forbidden),
+            void_gap: config.void.as_ref().map(|v| v.gap).unwrap_or(0.0),
+            neighbourhood_band: (config.position.mode == PositionMode::VoidNeighbourhood)
+                .then_some(config.position.band)
+                .flatten(),
         };
         // The full volume is exact from the source shell: scaling by s multiplies
         // volume by s^3. Summing the transformed mesh's tetrahedra on every
@@ -408,9 +500,22 @@ fn try_place_one(
             }
             Ok(accepted) => {
                 let volume_full = proposal.volume_full;
+                // Only measured when crossing is allowed. With crossing forbidden
+                // the particle keeps a gap from the void, so the overlap is zero
+                // by construction and paying for a voxel sweep would be waste.
+                let overlap = match (void, config.void.as_ref()) {
+                    (Some(index), Some(v)) if v.crossing == VoidCrossing::Allowed => index
+                        .overlap_volume(
+                            &candidate,
+                            cand_bbox,
+                            config.domain,
+                            v.overlap_voxel_size.unwrap_or(0.0),
+                        ),
+                    _ => 0.0,
+                };
                 accept(
                     state, shell_index, library, draw, scale, rotation, centre, reach, volume_full,
-                    cand_bbox, candidate, accepted,
+                    cand_bbox, overlap, candidate, accepted,
                 );
                 return true;
             }
@@ -439,6 +544,7 @@ fn accept(
     reach: f64,
     volume_full: f64,
     bbox: crate::types::BoundingBox,
+    void_overlap_volume: f64,
     mesh: Mesh,
     accepted: crate::pipeline::placement_feasibility::Accepted,
 ) {
@@ -466,7 +572,7 @@ fn accept(
         size_class: draw.class,
         volume_full,
         volume_in_domain: accepted.volume_in_domain,
-        void_overlap_volume: 0.0,
+        void_overlap_volume,
         clipped_faces: accepted.clipped_faces,
         bbox,
         mesh,
@@ -492,6 +598,7 @@ fn run_top_up(
     config: &ResolvedPlacement,
     library: &ShapeLibrary,
     classes: &[SizeClass],
+    void: Option<&VoidIndex>,
     source: &SizeSource,
     rng: &mut ChaCha12Rng,
     state: &mut EngineState,
@@ -519,7 +626,7 @@ fn run_top_up(
             if let Some(slot) = state.top_up_drawn_per_class.get_mut(draw.class) {
                 *slot += 1;
             }
-            if try_place_one(config, library, rng, draw, state) {
+            if try_place_one(config, library, void, rng, draw, state) {
                 if let Some(slot) = state.top_up_placed_per_class.get_mut(draw.class) {
                     *slot += 1;
                 }
@@ -716,7 +823,22 @@ fn write_outputs(
                 }),
                 overlap_owner: None,
             },
-        ],
+        ]
+        .into_iter()
+        .chain(config.void.as_ref().map(|v| PhaseRecord {
+            id: 2,
+            name: "void".to_string(),
+            geometry: Some(
+                Path::new(&v.path_as_written)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| v.path_as_written.clone()),
+            ),
+            // The void owns any overlap: it is frozen, so a particle that crosses
+            // into it does not take that volume out of the void phase.
+            overlap_owner: Some("void".to_string()),
+        }))
+        .collect(),
         sources: library
             .sources
             .iter()
@@ -756,6 +878,22 @@ fn write_outputs(
             sha256: None,
             bytes: None,
         });
+    }
+
+    if let Some(v) = &config.void {
+        if config.outputs.copy_void {
+            let name = v
+                .file
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "void.stl".to_string());
+            let dest = config.outputs.dir.join(&name);
+            // Copied byte for byte, never re-written through the STL writer: the
+            // void is frozen, and the report records that its input and output
+            // digests match so a reader can check that claim rather than trust it.
+            std::fs::copy(&v.file, &dest)?;
+            outputs.push(describe_output("void", &dest));
+        }
     }
 
     // The report lists itself, but cannot contain its own digest.
@@ -856,6 +994,7 @@ fn blank_report(
     plan: &crate::pipeline::placement_sizes::SizePlan,
     basis_volume: f64,
     threads: usize,
+    void_report: Option<VoidReport>,
 ) -> ReportFile {
     let mut inputs: Vec<FileEntry> = library
         .sources
@@ -880,7 +1019,15 @@ fn blank_report(
     );
     samplers.insert(
         "position".to_string(),
-        "rejection_uniform_rsa".to_string(),
+        match config.position.mode {
+            // Uniform on the set of placements feasible given the particles
+            // already accepted. The assembly is a random sequential adsorption
+            // configuration, not an equilibrium hard-core one, and the name says
+            // so rather than claiming more than the method gives.
+            PositionMode::FeasibleUniform => "rejection_uniform_rsa".to_string(),
+            // A deliberate construction. Never reported as random.
+            PositionMode::VoidNeighbourhood => "void_neighbourhood_band".to_string(),
+        },
     );
 
     ReportFile {
@@ -896,6 +1043,7 @@ fn blank_report(
         config: describe_input("config", &config.config_path),
         inputs,
         frame: frame.clone(),
+        void: void_report,
         shapes: ShapesReport {
             files: library.sources.len(),
             shells_total: library.shells.len(),
@@ -975,6 +1123,47 @@ fn blank_report(
     }
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Describe the frozen void for the report, including how its volume was measured.
+// Inputs: the config, the built index, the in-domain volume and the method that produced it.
+// Returns: Some(report) when the run has a void.
+// Side effects: Reads the void file to hash it.
+// Notes: `sha256_out` is filled in later, once the copy exists. Recording both digests is what lets
+// a reader check the "never filled, moved or cleaned" promise instead of trusting it.
+fn build_void_report(
+    config: &ResolvedPlacement,
+    void: Option<&VoidIndex>,
+    volume_in_domain: f64,
+    method: Option<VoidVolumeMethod>,
+) -> Result<Option<VoidReport>> {
+    let (Some(v), Some(index)) = (config.void.as_ref(), void) else {
+        return Ok(None);
+    };
+    let (sha256_in, _) = sha256_file(&v.file)?;
+    Ok(Some(VoidReport {
+        path: v.path_as_written.clone(),
+        sha256_in,
+        sha256_out: None,
+        shells: index.shells(),
+        orientation: if index.is_outward() { "outward" } else { "inward" }.to_string(),
+        crossing: match v.crossing {
+            VoidCrossing::Forbidden => "forbidden".to_string(),
+            VoidCrossing::Allowed => "allowed".to_string(),
+        },
+        gap: v.gap,
+        volume_total: index.total_volume(),
+        volume_in_domain,
+        volume_method: match method {
+            Some(VoidVolumeMethod::ExactShellSum) => "exact_shell_sum".to_string(),
+            Some(VoidVolumeMethod::ExactClip) => "exact_clip".to_string(),
+            None => "none".to_string(),
+        },
+        inside_domain: method == Some(VoidVolumeMethod::ExactShellSum),
+        overlap_voxel_size: v.overlap_voxel_size,
+        overlap_owner: "void".to_string(),
+    }))
+}
+
 // AI-FUNC-SUMMARY: Describe an input file with its digest for the report; returns FileEntry; side effects: reads the file.
 fn describe_input(role: &str, path: &Path) -> FileEntry {
     match sha256_file(path) {
@@ -1049,6 +1238,12 @@ fn finish_report(
     report.budget.elapsed_s = elapsed;
     report.stop_reason = Some(stop.reason);
     report.stop_detail = stop.detail.clone();
+    if let Some(v) = report.void.as_mut() {
+        v.sha256_out = outputs
+            .iter()
+            .find(|o| o.role == "void")
+            .and_then(|o| o.sha256.clone());
+    }
     report.outputs = outputs;
 }
 

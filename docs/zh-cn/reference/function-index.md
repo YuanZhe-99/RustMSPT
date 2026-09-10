@@ -33,6 +33,7 @@
 | `RustMsptError` | Core & Compute | `src/error.rs:4` | 覆盖 I/O、YAML、TIFF、配置、网格和 GPU 失败情形的全局错误枚举。 |
 | `Result` | Core & Compute | `src/error.rs:27` | 在整个 crate 中使用的类型别名 `Result<T> = std::result::Result<T, RustMsptError>`。 |
 | `cli_path_as_config_relative` | Core & Compute | `src/main.rs:157` | 改写命令行路径，使配置相对解析仍保持其原意。 |
+| `BoundingBox::intersects_domain` | Core & Compute | `src/types.rs:96` | 两个包围盒是否相接；相切也算。 |
 | `BuildIdentity` | Core & Compute | `src/version.rs:18` | 该二进制的身份：版本、git 提交、工作树是否有改动、启用的特性、构建平台。 |
 | `build_identity` | Core & Compute | `src/version.rs:36` | 返回编译期写入的构建身份；工具身份的唯一来源。 |
 | `BuildIdentity::version_detail` | Core & Compute | `src/version.rs:64` | 不含程序名的单行身份，供 clap 的 `--version` 使用。 |
@@ -136,6 +137,24 @@
 | `SpatialGrid::point_to_cell_clamped` | Geometry — Core | `src/geometry/spatial.rs:93` | 将一个点映射到网格单元坐标，并夹紧到网格边界内。 |
 | `SpatialGrid::point_to_cell` | Geometry — Core | `src/geometry/spatial.rs:99` | 将一个点映射到网格单元坐标，不做夹紧处理。 |
 | `estimate_cell_size` | Geometry — Core | `src/geometry/spatial.rs:108` | 根据一组包围盒启发式地选取 `SpatialGrid` 的单元大小。 |
+| `VoidVolumeMethod` | Geometry — Volume & Collision | `src/geometry/void_index.rs:30` | 给出孔隙域内体积的计算方法。 |
+| `VoidIndex` | Geometry — Volume & Collision | `src/geometry/void_index.rs:44` | 冻结孔隙，为放置运行的各类查询建立索引。 |
+| `VoidIndex::build` | Geometry — Volume & Collision | `src/geometry/void_index.rs:68` | 校验孔隙网格并建立索引；朝向不一致时拒绝。 |
+| `VoidIndex::bbox` | Geometry — Volume & Collision | `src/geometry/void_index.rs:130` | 孔隙的包围盒。 |
+| `VoidIndex::shells` | Geometry — Volume & Collision | `src/geometry/void_index.rs:135` | 孔隙包含多少个闭合壳。 |
+| `VoidIndex::is_outward` | Geometry — Volume & Collision | `src/geometry/void_index.rs:140` | 孔隙各壳是否朝外缠绕。 |
+| `VoidIndex::total_volume` | Geometry — Volume & Collision | `src/geometry/void_index.rs:145` | 符号一致的各壳求和得到的孔隙总体积。 |
+| `VoidIndex::contains_point` | Geometry — Volume & Collision | `src/geometry/void_index.rs:158` | 在层次结构上做射线奇偶判定；对嵌套壳同样正确。 |
+| `VoidIndex::near_box` | Geometry — Volume & Collision | `src/geometry/void_index.rs:199` | 包围盒预筛：为假即远离孔隙且未被其嵌套。 |
+| `VoidIndex::intersects` | Geometry — Volume & Collision | `src/geometry/void_index.rs:219` | 颗粒表面是否与孔面相交。 |
+| `VoidIndex::min_distance_to` | Geometry — Volume & Collision | `src/geometry/void_index.rs:235` | 颗粒到孔隙的最小面到面距离。 |
+| `VoidIndex::surface_distance` | Geometry — Volume & Collision | `src/geometry/void_index.rs:252` | 点到孔面的无符号距离。 |
+| `VoidIndex::any_vertex_inside` | Geometry — Volume & Collision | `src/geometry/void_index.rs:266` | 网格是否有顶点落在孔隙内部。 |
+| `VoidIndex::any_void_vertex_inside` | Geometry — Volume & Collision | `src/geometry/void_index.rs:278` | 孔隙是否有顶点落在颗粒内部。 |
+| `VoidIndex::volume_in_domain` | Geometry — Volume & Collision | `src/geometry/void_index.rs:297` | 孔隙在域内的体积，以及所用的计算方法。 |
+| `VoidIndex::sample_surface_point` | Geometry — Volume & Collision | `src/geometry/void_index.rs:321` | 按面积加权在孔面上取点，并给出外法向。 |
+| `VoidIndex::overlap_volume` | Geometry — Volume & Collision | `src/geometry/void_index.rs:363` | 以域锚定的体素计数给出颗粒落在孔隙内的体积。 |
+| `point_inside_mesh_local` | Geometry — Volume & Collision | `src/geometry/void_index.rs:408` | 对无层次结构的小网格做射线奇偶判定。 |
 | `DOMAIN_FACE_NAMES` | Geometry — Volume & Collision | `src/geometry/volume.rs:454` | 六个域面名称，按裁剪平面顺序排列。 |
 | `mesh_volume_centroid` | Geometry — Volume & Collision | `src/geometry/volume.rs:467` | 闭合网格的体积质心（不是顶点均值）。 |
 | `shell_signed_volumes` | Geometry — Volume & Collision | `src/geometry/volume.rs:498` | 逐壳有符号体积，用于暴露各壳的朝向。 |
@@ -279,6 +298,8 @@
 | `selective_prune_to_target_vf` | Pipeline — Optimize | `src/pipeline/optimize.rs:86` | 退火前阶段：迭代地移除颗粒以逼近目标体积分数，同时最小化 S2 损失的增加。 |
 | `run_sa_island` | Pipeline — Optimize | `src/pipeline/optimize.rs:285` | 单个岛屿的核心模拟退火循环；是代码库中最重要的单个函数。 |
 | `OptimizePipeline::run` | Pipeline — Optimize | `src/pipeline/optimize.rs:797` | 顶层 `Pipeline::run` 编排：加载、目标计算、剪枝、单/多岛屿模拟退火、保存。 |
+| `VoidReport` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:278` | 运行如何处理冻结孔隙，以及如何度量它。 |
+| `build_void_report` | Pipeline — Packing | `src/pipeline/placement.rs:1133` | 为报告描述冻结孔隙，含其体积计算方法。 |
 | `PlacementPipeline` | Pipeline — Packing | `src/pipeline/placement.rs:37` | 持有已校验 `ResolvedPlacement` 的流水线结构体。 |
 | `PlacementOutcome` | Pipeline — Packing | `src/pipeline/placement.rs:60` | 一次完整运行的产出，供进程内调用方使用。 |
 | `run_placement` | Pipeline — Packing | `src/pipeline/placement.rs:75` | 端到端运行引擎并写出全部输出文件。 |
