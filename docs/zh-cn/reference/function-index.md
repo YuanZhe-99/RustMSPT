@@ -20,10 +20,22 @@
 | `AccelerationConfig::default` | Config | `src/config/acceleration.rs:38` | 与 serde 默认值相匹配的 Rust 层 `Default` 实现。 |
 | `RustMsptError` | Core & Compute | `src/error.rs:4` | 覆盖 I/O、YAML、TIFF、配置、网格和 GPU 失败情形的全局错误枚举。 |
 | `Result` | Core & Compute | `src/error.rs:27` | 在整个 crate 中使用的类型别名 `Result<T> = std::result::Result<T, RustMsptError>`。 |
-| `Cli` | Core & Compute | `src/main.rs:19` | 顶层 clap CLI 结构体，包装一个 `Commands` 子命令。 |
-| `Commands` | Core & Compute | `src/main.rs:25` | 7 个 CLI 子命令的枚举（Forge/Measure/Optimize/Pack/Scale/Crop/SplitFilter）。 |
-| `default_config_path` | Core & Compute | `src/main.rs:85` | 构建 `data/input/` 下的默认配置路径。 |
-| `pick_config_path` | Core & Compute | `src/main.rs:90` | 选择用户提供的配置路径，或回退到默认路径。 |
+| `BuildIdentity` | Core & Compute | `src/version.rs:18` | 该二进制的身份：版本、git 提交、工作树是否有改动、启用的特性、构建平台。 |
+| `build_identity` | Core & Compute | `src/version.rs:36` | 返回编译期写入的构建身份；工具身份的唯一来源。 |
+| `BuildIdentity::version_detail` | Core & Compute | `src/version.rs:64` | 不含程序名的单行身份，供 clap 的 `--version` 使用。 |
+| `BuildIdentity::version_line` | Core & Compute | `src/version.rs:92` | 含程序名的单行身份。 |
+| `identity_json` | Core & Compute | `src/version.rs:103` | 将身份序列化为格式化 JSON，未确定的值写为 `null`。 |
+| `non_empty` (version.rs) | Core & Compute | `src/version.rs:4` | 将构建脚本传入的空字符串映射为 `None`。 |
+| `build_identity_version_line` | Core & Compute | `src/main.rs:146` | 泄漏版本详情为 `&'static str` 供 clap 使用。 |
+| `git_output` | Core & Compute | `build.rs:11` | 构建期运行 git 命令，任何失败均返回 `None`。 |
+| `rerun_if_exists` | Core & Compute | `build.rs:25` | 仅对存在的路径输出 `rerun-if-changed`。 |
+| `emit_rerun_triggers` | Core & Compute | `build.rs:37` | 输出所有会改变所记录身份的重跑触发条件。 |
+| `enabled_features` | Core & Compute | `build.rs:62` | 从 `CARGO_FEATURE_*` 读取已启用的 cargo 特性并排序。 |
+| `main` (build.rs) | Core & Compute | `build.rs:80` | 将构建身份写入编译期环境变量。 |
+| `Cli` | Core & Compute | `src/main.rs:26` | 顶层 clap CLI 结构体，包装一个 `Commands` 子命令。 |
+| `Commands` | Core & Compute | `src/main.rs:32` | 7 个 CLI 子命令的枚举（Forge/Measure/Optimize/Pack/Scale/Crop/SplitFilter）。 |
+| `default_config_path` | Core & Compute | `src/main.rs:151` | 构建 `data/input/` 下的默认配置路径。 |
+| `pick_config_path` | Core & Compute | `src/main.rs:156` | 选择用户提供的配置路径，或回退到默认路径。 |
 | `main`（main.rs） | Core & Compute | `src/main.rs:100` | CLI 入口点：解析参数、加载配置、应用覆盖项、运行所选流水线。 |
 | `main`（precision_test.rs） | Core & Compute | `src/bin/precision_test.rs:5` | 独立的诊断二进制程序，比较 CPU 精确法、CPU 蒙特卡洛法与 GPU 蒙特卡洛法三种方法计算 S2 的精度/性能。 |
 | `Vec3` | Core & Compute | `src/types.rs:2` | 具有 `f64` 分量和基本向量代数方法的三维向量。 |
@@ -145,6 +157,9 @@
 | `GpuVolumeTransformPipeline` | GPU | `src/gpu/volume_transform.rs:5` | 用于体数据旋转裁剪的 GPU 流水线状态。 |
 | `GpuVolumeTransformPipeline::new` | GPU | `src/gpu/volume_transform.rs:23` | 初始化 wgpu 设备和体数据变换计算流水线。 |
 | `GpuVolumeTransformPipeline::rotate_and_crop` | GPU | `src/gpu/volume_transform.rs:145` | 分派旋转/裁剪/重采样内核并回读变换后的体数据。 |
+| `sha256_bytes` | I/O | `src/io/hash.rs:13` | 字节切片的 SHA-256，返回小写十六进制。 |
+| `sha256_file` | I/O | `src/io/hash.rs:25` | 流式计算文件的 SHA-256，返回十六进制摘要与字节数。 |
+| `hex_digest` | I/O | `src/io/hash.rs:42` | 将摘要渲染为小写十六进制。 |
 | `parse_ascii_vertex` | I/O | `src/io/stl.rs:9` | 将一行 ASCII STL 的 `vertex x y z` 解析为一个 `Vec3`。 |
 | `quantize_key` | I/O | `src/io/stl.rs:21` | 将一个顶点量化为固定精度的整数键，用于容差去重。 |
 | `dedup_vertex` | I/O | `src/io/stl.rs:31` | 通过量化键查找，对某个顶点与已有列表进行去重比对。 |

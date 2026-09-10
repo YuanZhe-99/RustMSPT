@@ -1,6 +1,6 @@
 # Core and Compute Reference
 
-This page documents the crate root and entry points (`src/lib.rs`, `src/main.rs`, `src/error.rs`, `src/types.rs`), the standalone diagnostic binary `src/bin/precision_test.rs`, and the CPU/GPU backend-selection layer in `src/compute/` (`mod.rs`, `backend.rs`, `policy.rs`).
+This page documents the crate root and entry points (`src/lib.rs`, `src/main.rs`, `src/error.rs`, `src/types.rs`), the build identity in `src/version.rs` and its build script `build.rs`, the standalone diagnostic binary `src/bin/precision_test.rs`, and the CPU/GPU backend-selection layer in `src/compute/` (`mod.rs`, `backend.rs`, `policy.rs`).
 
 ## Index
 
@@ -8,12 +8,24 @@ This page documents the crate root and entry points (`src/lib.rs`, `src/main.rs`
 |---|---|---|
 | `RustMsptError` | `src/error.rs:4` | Crate-wide error enum covering I/O, YAML, TIFF, config, mesh, and GPU failures. |
 | `Result` | `src/error.rs:27` | Type alias `Result<T> = std::result::Result<T, RustMsptError>` used throughout the crate. |
-| `Cli` | `src/main.rs:19` | Top-level clap CLI struct wrapping a `Commands` subcommand. |
-| `Commands` | `src/main.rs:25` | Enum of the 8 CLI subcommands, including Render. |
-| `default_config_path` | `src/main.rs:85` | Builds the default config path under `data/input/`. |
-| `pick_config_path` | `src/main.rs:90` | Chooses a user-supplied config path or falls back to the default. |
-| `main` (main.rs) | `src/main.rs:100` | CLI entry point: parses args, loads config, applies overrides, runs the selected pipeline. |
+| `Cli` | `src/main.rs:26` | Top-level clap CLI struct wrapping a `Commands` subcommand, carrying the build identity as its `--version` string. |
+| `Commands` | `src/main.rs:32` | Enum of the 12 CLI subcommands, including `version`. |
+| `default_config_path` | `src/main.rs:151` | Builds the default config path under `data/input/`. |
+| `pick_config_path` | `src/main.rs:156` | Chooses a user-supplied config path or falls back to the default. |
+| `main` (main.rs) | `src/main.rs:166` | CLI entry point: parses args, loads config, applies overrides, runs the selected pipeline. |
 | `main` (precision_test.rs) | `src/bin/precision_test.rs:5` | Standalone diagnostic binary comparing S2 computation precision/performance across CPU exact, CPU Monte Carlo, and GPU Monte Carlo methods. |
+| `BuildIdentity` | `src/version.rs:18` | What this binary is: version, git commit, worktree dirtiness, features, build platform. |
+| `build_identity` | `src/version.rs:36` | Returns the compiled-in build identity; the single source of truth for R1. |
+| `BuildIdentity::version_detail` | `src/version.rs:64` | Identity as one line without the program name, for clap's `--version`. |
+| `BuildIdentity::version_line` | `src/version.rs:92` | Identity as one line including the program name. |
+| `identity_json` | `src/version.rs:103` | Serializes the identity as pretty-printed JSON. |
+| `non_empty` (version.rs) | `src/version.rs:4` | Maps an empty build-script env string to `None`. |
+| `build_identity_version_line` | `src/main.rs:146` | Leaks the version detail as a `&'static str` for clap. |
+| `git_output` | `build.rs:11` | Runs a git command, returning `None` on any failure. |
+| `rerun_if_exists` | `build.rs:25` | Emits a `rerun-if-changed` line only for paths that exist. |
+| `emit_rerun_triggers` | `build.rs:37` | Emits every rerun trigger that can change the recorded identity. |
+| `enabled_features` | `build.rs:62` | Reads the enabled cargo features from `CARGO_FEATURE_*`. |
+| `main` (build.rs) | `build.rs:80` | Stamps the identity into compile-time environment variables. |
 | `Vec3` | `src/types.rs:2` | 3D vector of `f64` components with basic vector algebra methods. |
 | `Vec3::new` | `src/types.rs:10` | Constructs a vector from x/y/z components. |
 | `Vec3::add` | `src/types.rs:15` | Vector addition. |
@@ -78,12 +90,14 @@ Neither item is a function, so no per-function entry is given per this page's do
 | `SplitFilter` | `SplitFilterConfig` | `split_filter_config.yaml` |
 | `Render` | `RenderConfig` | `render_config.yaml` |
 
-Each variant accepts `--config <PathBuf>`, `--input <PathBuf>`, and `--output <PathBuf>`, all optional. `--config` selects which YAML file to load (see `pick_config_path`); `--input`/`--output`, when present, overwrite the corresponding path field(s) on the loaded config object before the pipeline runs.
+Each pipeline variant accepts `--config <PathBuf>`, `--input <PathBuf>`, and `--output <PathBuf>`, all optional. `--config` selects which YAML file to load (see `pick_config_path`); `--input`/`--output`, when present, overwrite the corresponding path field(s) on the loaded config object before the pipeline runs.
+
+`Version { json: bool }` is the exception: it takes no config and reads no file. It prints `build_identity().version_line()`, or `identity_json(...)` with `--json`. The same identity is clap's `--version` string, via `build_identity_version_line`.
 
 #### default_config_path
 
 - **Signature:** `fn default_config_path(file_name: &str) -> PathBuf`
-- **Source:** `src/main.rs:85`
+- **Source:** `src/main.rs:151`
 - **Purpose:** Builds the default configuration file path under `data/input/`.
 - **Parameters:**
   - `file_name` — the config file's base name (e.g. `"pack_config.yaml"`).
@@ -93,7 +107,7 @@ Each variant accepts `--config <PathBuf>`, `--input <PathBuf>`, and `--output <P
 #### pick_config_path
 
 - **Signature:** `fn pick_config_path(config: Option<PathBuf>, file_name: &str) -> PathBuf`
-- **Source:** `src/main.rs:90`
+- **Source:** `src/main.rs:156`
 - **Purpose:** Resolves the config path to use for a subcommand: the user-supplied `--config` value if given, otherwise the default under `data/input/`.
 - **Parameters:**
   - `config` — the optional `--config` CLI argument.
@@ -104,12 +118,132 @@ Each variant accepts `--config <PathBuf>`, `--input <PathBuf>`, and `--output <P
 #### main
 
 - **Signature:** `fn main() -> anyhow::Result<()>`
-- **Source:** `src/main.rs:100`
+- **Source:** `src/main.rs:166`
 - **Purpose:** Parses CLI arguments, loads the YAML config for the selected subcommand, applies `--input`/`--output` overrides, and runs the corresponding pipeline.
 - **Parameters:** None (reads `std::env::args` via `Cli::parse()`).
 - **Returns:** `Ok(())` on success; an `anyhow::Error` if config loading, path resolution, or pipeline execution (`Pipeline::run`) fails.
 - **Side effects:** Reads a YAML config file from disk; for each subcommand, constructs the matching pipeline struct (`ForgePipeline`, `MeasurePipeline`, `OptimizePipeline`, `PackPipeline`, `ScalePipeline`, `CropPipeline`, `SplitFilterPipeline`) and calls `.run()`, which in turn reads input mesh/image files and writes output files as directed by the config. Prints progress to stdout via the underlying pipelines.
 - **Notes:** This is the sole entry point of the `rustmspt` binary. The `match cli.command { ... }` block is a flat dispatch: each arm repeats the same three-step pattern (resolve path → load & mutate config → construct and run pipeline) for its subcommand; there is no shared helper across arms beyond `pick_config_path`.
+
+## version.rs and build.rs
+
+`src/version.rs` answers one question -- what is this binary? -- and is the only place that answers it. `rustmspt --version`, `rustmspt version [--json]`, and the identity stamped into placement outputs all read the same `BuildIdentity`, so they cannot disagree.
+
+The values come from `build.rs`, which runs at compile time and stamps them into environment variables read by `env!`. Two properties are deliberate:
+
+- **A checkout without git still builds.** Every git call goes through `git_output`, which returns `None` if git is missing, if there is no `.git`, or if the command fails (a repository with no commits). Undetermined values reach Rust as `None` and serialize as JSON `null`.
+- **`null` is not `false`.** "We could not determine whether the worktree was dirty" and "the worktree was clean" are different claims, so `git_dirty` is `Option<bool>`. Cleanliness is only reported when a commit could also be named.
+
+The honesty limit is worth stating: `git_dirty` describes the worktree at the moment `build.rs` last ran, which can predate an edit made after the last compile. `emit_rerun_triggers` narrows that window by rerunning the script whenever `build.rs`, `Cargo.toml`, `Cargo.lock`, `src/`, or the git refs change, but it cannot close it entirely.
+
+#### BuildIdentity
+
+- **Definition:** `src/version.rs:18`
+- **Purpose:** What this binary is, as far as the build could determine it.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `name` | `&'static str` | Package name (`CARGO_PKG_NAME`). |
+| `version` | `&'static str` | Package version (`CARGO_PKG_VERSION`). |
+| `git_commit` | `Option<&'static str>` | Full 40-character commit sha1, or `None`. |
+| `git_dirty` | `Option<bool>` | Whether the worktree had uncommitted changes when `build.rs` last ran; `None` when undetermined. |
+| `features` | `Vec<&'static str>` | Enabled cargo features, sorted. |
+| `target` | `Option<&'static str>` | Compilation target triple. |
+| `host` | `Option<&'static str>` | Host triple of the machine that compiled it. |
+| `profile` | `Option<&'static str>` | `debug` or `release`. |
+| `source_date_epoch` | `Option<&'static str>` | `SOURCE_DATE_EPOCH` when set for a reproducible build. |
+
+#### build_identity
+
+- **Signature:** `pub fn build_identity() -> BuildIdentity`
+- **Source:** `src/version.rs:36`
+- **Purpose:** Returns the identity compiled into this binary.
+- **Parameters:** None.
+- **Returns:** A `BuildIdentity` with `None` wherever the build could not determine a value.
+- **Side effects:** None -- every value is a compile-time constant; no process is spawned and no file is read at run time.
+- **Notes:** `features` is parsed from a comma-separated list; an empty list means no cargo feature was enabled beyond none at all. Because `default = []` is itself a declared feature, a default build reports `["default"]`.
+
+#### BuildIdentity::version_detail
+
+- **Signature:** `pub fn version_detail(&self) -> String`
+- **Source:** `src/version.rs:64`
+- **Purpose:** Renders the identity as one line **without** the program name.
+- **Returns:** For example `0.2.0 (git 0a8eb1c, clean; features: none)`.
+- **Side effects:** None.
+- **Notes:** clap prepends the program name to its `--version` string, so this must omit it or the name appears twice. An unknown commit renders as `git unknown`; unknown cleanliness renders as `dirt unknown`; an empty feature list renders as `none`.
+
+#### BuildIdentity::version_line
+
+- **Signature:** `pub fn version_line(&self) -> String`
+- **Source:** `src/version.rs:92`
+- **Purpose:** Renders the identity as one line **including** the program name.
+- **Returns:** For example `rustmspt 0.2.0 (git 0a8eb1c, clean; features: none)`.
+- **Side effects:** None.
+- **Notes:** Exactly `format!("{name} {detail}")`, so `rustmspt version` and `rustmspt --version` print identical text.
+
+#### identity_json
+
+- **Signature:** `pub fn identity_json(identity: &BuildIdentity) -> String`
+- **Source:** `src/version.rs:103`
+- **Purpose:** Serializes a build identity as pretty-printed JSON.
+- **Parameters:**
+  - `identity` — the identity to render.
+- **Returns:** A JSON object with every field present, `null` for undetermined values.
+- **Side effects:** None.
+- **Notes:** Falls back to `"{}"` if serialization somehow fails, so the function is total. The same object is embedded as `tool` in the placement record and run report.
+
+#### non_empty (version.rs)
+
+- **Signature:** `fn non_empty(value: &'static str) -> Option<&'static str>`
+- **Source:** `src/version.rs:4`
+- **Purpose:** Maps an empty build-script environment string to `None`.
+- **Returns:** `Some(value)` when non-empty, `None` otherwise.
+- **Side effects:** None.
+- **Notes:** `build.rs` emits an empty string for every value it could not determine; this is the one place that convention is translated into `Option`.
+
+#### git_output
+
+- **Signature:** `fn git_output(args: &[&str]) -> Option<String>`
+- **Source:** `build.rs:11`
+- **Purpose:** Runs a git command in the crate directory and returns its trimmed stdout.
+- **Parameters:**
+  - `args` — arguments appended after `git -C <CARGO_MANIFEST_DIR>`.
+- **Returns:** `Some(stdout)` when git exists and exited zero; `None` otherwise.
+- **Side effects:** Spawns a git process at build time.
+- **Notes:** Never panics. A missing git binary, an absent `.git`, and a repository with no commits are all `None` -- the build succeeds and the identity says it does not know.
+
+#### rerun_if_exists
+
+- **Signature:** `fn rerun_if_exists(path: &Path)`
+- **Source:** `build.rs:25`
+- **Purpose:** Emits a `cargo:rerun-if-changed` line only when the path exists.
+- **Side effects:** Prints a cargo directive.
+- **Notes:** Guarding on existence matters for `.git` entries: a worktree or submodule checkout has `.git` as a file, not a directory, and naming a nonexistent path would make cargo rerun the script on every build.
+
+#### emit_rerun_triggers
+
+- **Signature:** `fn emit_rerun_triggers()`
+- **Source:** `build.rs:37`
+- **Purpose:** Emits every rerun trigger that can change the recorded identity.
+- **Side effects:** Prints cargo directives.
+- **Notes:** Covers `build.rs`, `Cargo.toml`, `Cargo.lock`, `src/`, `.git/HEAD`, `.git/index`, `.git/packed-refs`, the branch ref named by `.git/HEAD`, and the `SOURCE_DATE_EPOCH` environment variable. `src/` is included so that editing any source file refreshes the dirty flag.
+
+#### enabled_features
+
+- **Signature:** `fn enabled_features() -> Vec<String>`
+- **Source:** `build.rs:62`
+- **Purpose:** Lists the cargo features enabled for this build, sorted.
+- **Returns:** Feature names in cargo spelling (lowercase, hyphenated).
+- **Side effects:** None.
+- **Notes:** Reads `CARGO_FEATURE_*` from the environment, **not** `cfg!(feature = ...)`. A build script is compiled without the crate's own features, so `cfg!` inside `build.rs` would always report them absent.
+
+#### main (build.rs)
+
+- **Signature:** `fn main()`
+- **Source:** `build.rs:80`
+- **Purpose:** Stamps the git commit, worktree cleanliness, enabled features and build platform into compile-time environment variables.
+- **Side effects:** Prints `cargo:rustc-env` and `cargo:rerun-if-changed` directives.
+- **Notes:** Emits every value as a possibly-empty string; empty means "not determined". Cleanliness is only queried once a commit has been named, so `git_dirty` cannot claim `clean` for a tree whose commit is unknown. Nothing here prints `cargo:warning`, which would fail a `-D warnings` pipeline.
 
 ## bin/precision_test.rs
 

@@ -16,6 +16,7 @@ RustMSPT is a standalone Rust toolkit for STL-based microstructure processing.
   - `mesh-render`
   - `mesh-verify`
   - `mesh`
+  - `version`
 - STL I/O:
   - Load ASCII and Binary STL (auto-detect)
   - Save Binary STL by default
@@ -111,6 +112,18 @@ Override input/output paths from CLI:
 ```bash
 cargo run -- pack --input data/input/particles.stl --output data/output/packed_result.stl
 ```
+
+Ask the binary what it is:
+
+```bash
+rustmspt --version
+rustmspt version --json
+```
+
+Both report the same build: package version, git commit, whether the worktree was dirty when the
+build script last ran, the enabled cargo features, and the build target/host/profile. Anything the
+build could not determine is `null` rather than a fabricated default, so a checkout without git
+still builds and still answers.
 
 ## Configuration
 

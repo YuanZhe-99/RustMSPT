@@ -2,12 +2,15 @@
 
 > **待翻译：** `save_image` 的详细契约见[英文 I/O 参考](../../en-us/reference/io.md#imagers)。
 
-本页记录 `src/io/mod.rs`（`io` 包的模块枢纽）、`src/io/stl.rs`（ASCII/二进制 STL 网格的读写）以及 `src/io/volume.rs`（TIFF 与 RAW 体数据的读写）。
+本页记录 `src/io/mod.rs`（`io` 包的模块枢纽）、`src/io/hash.rs`（内容哈希）、`src/io/stl.rs`（ASCII/二进制 STL 网格的读写）以及 `src/io/volume.rs`（TIFF 与 RAW 体数据的读写）。
 
 ## 索引
 
 | 函数 | 位置 | 摘要 |
 |---|---|---|
+| `sha256_bytes` | `src/io/hash.rs:13` | 字节切片的 SHA-256，返回小写十六进制。 |
+| `sha256_file` | `src/io/hash.rs:25` | 流式计算文件的 SHA-256，返回十六进制摘要与字节数。 |
+| `hex_digest` | `src/io/hash.rs:42` | 将摘要渲染为小写十六进制。 |
 | `parse_ascii_vertex` | `src/io/stl.rs:9` | 将一行 ASCII STL 的 `vertex x y z` 记录解析为 `Vec3`。 |
 | `quantize_key` | `src/io/stl.rs:21` | 将顶点量化为固定精度的整数键，用于容差去重。 |
 | `dedup_vertex` | `src/io/stl.rs:31` | 通过量化键查找，对照现有列表对顶点去重。 |
@@ -36,6 +39,41 @@
 ## 模块职责：`io/mod.rs`
 
 `src/io/mod.rs` 声明了 `stl` 和 `volume` 两个子模块，并在 `io::` 路径下重新导出它们的公共项（来自 `stl` 的 `load_stl`、`load_folder_stls`、`load_stl_or_merge_folder`、`save_stl`；来自 `volume` 的 `load_raw_folder`、`load_tiff_or_folder`、`load_tiff_or_folder_with_range`、`save_tiff_or_folder`、`save_tiff_or_folder_with_ext`、`ByteOrder`、`RawFolderSpec`、`Volume3D`、`VolumeNumericType`）。该文件本身不包含任何函数。
+
+## hash.rs
+
+#### sha256_bytes
+
+- **签名：** `pub fn sha256_bytes(bytes: &[u8]) -> String`
+- **源码：** `src/io/hash.rs:13`
+- **用途：** 计算内存中字节切片的 SHA-256 摘要。
+- **参数：**
+  - `bytes` — 待哈希的内容。
+- **返回：** 64 个小写十六进制字符的摘要。
+- **副作用：** 无。
+- **说明：** 用于放置记录与运行报告中的内容身份。这是密码学摘要，与本 crate 中另一处 "hash"（`pipeline/meshgen.rs` 的 `config_hash`，一个仅用于变更检测的非密码学 `u64`）无关。
+
+#### sha256_file
+
+- **签名：** `pub fn sha256_file(path: &Path) -> Result<(String, u64)>`
+- **源码：** `src/io/hash.rs:25`
+- **用途：** 在不将整个文件读入内存的前提下计算其内容哈希。
+- **参数：**
+  - `path` — 待读取的文件。
+- **返回：** `(小写十六进制摘要, 已哈希的字节数)`。
+- **副作用：** 打开并读取该文件。
+- **说明：** 通过 64 KiB 缓冲区流式读取，因此文件大小受限于磁盘而非内存。文件无法打开或读取时返回 `RustMsptError::Io` —— 文件缺失是错误，绝不会返回"空内容的摘要"。返回的长度即报告中每个输入与输出所记录的 `bytes`。
+
+#### hex_digest
+
+- **签名：** `fn hex_digest(digest: &[u8]) -> String`
+- **源码：** `src/io/hash.rs:42`
+- **用途：** 将原始摘要格式化为小写十六进制。
+- **参数：**
+  - `digest` — 原始摘要字节。
+- **返回：** 长度为 `2 * digest.len()` 的小写十六进制字符串。
+- **副作用：** 无。
+- **说明：** 私有函数；两个公开入口共用它，因此二者的格式不可能出现分歧。
 
 ## stl.rs
 

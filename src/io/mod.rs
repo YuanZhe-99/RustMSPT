@@ -1,8 +1,10 @@
+pub mod hash;
 pub mod image;
 pub mod stl;
 pub mod volume;
 pub mod vtu;
 
+pub use hash::{sha256_bytes, sha256_file};
 pub use image::save_image;
 pub use vtu::{load_vtu, save_vtu, ArrayData, DataArray, VtuDoc, VtuEncoding};
 pub use stl::{

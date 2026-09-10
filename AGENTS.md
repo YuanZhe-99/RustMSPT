@@ -132,7 +132,9 @@ cargo run --release -- <subcommand> [--config <path>] [--input <path>] [--output
 ./target/release/rustmspt <subcommand> --config data/input/<subcommand>_config.yaml
 ```
 
-Available subcommands: `split-filter`, `pack`, `optimize`, `measure`, `forge`, `scale`, `crop`, `render`, `mesh-render`, `mesh-verify`, `mesh`
+Available subcommands: `split-filter`, `pack`, `optimize`, `measure`, `forge`, `scale`, `crop`, `render`, `mesh-render`, `mesh-verify`, `mesh`, `version`
+
+`rustmspt --version` and `rustmspt version [--json]` report the same build identity: package version, git commit, whether the worktree was dirty when `build.rs` last ran, the enabled cargo features, and the build target/host/profile. Undetermined values are `null`, never a fabricated default -- a checkout without git still builds and still answers.
 
 ## 5. Testing
 
@@ -191,6 +193,7 @@ src/
   lib.rs               Crate root, re-exports
   types.rs             Core types: Vec3, Mesh, Triangle, BoundingBox, Volume3D
   error.rs             Error type (thiserror)
+  version.rs           BuildIdentity: the single source for the version subcommand, --version, and the identity stamped into placement outputs
 
   config/              YAML config deserialization
     mod.rs             Re-exports all config structs
@@ -242,8 +245,9 @@ src/
     volume.rs          Volume ops: mesh_volume, mesh_signed_volume, clip_mesh_by_bbox, particle_volume_in_bbox, volume_fraction_in_bbox, volume_fraction_of_meshes_in_bbox, orient_components_to_positive_volume
 
   io/                  File I/O
+    hash.rs            sha256_bytes / sha256_file: content identity for inputs and outputs
     image.rs           PNG output for validated RGBA render buffers
-    mod.rs             Re-exports: load_stl, save_stl, load_folder_stls, load_tiff_or_folder_with_range, save_tiff_or_folder_with_ext, load_raw_folder, Volume3D, ByteOrder, RawFolderSpec, load_vtu, save_vtu, VtuDoc
+    mod.rs             Re-exports: load_stl, save_stl, load_folder_stls, load_tiff_or_folder_with_range, save_tiff_or_folder_with_ext, load_raw_folder, Volume3D, ByteOrder, RawFolderSpec, load_vtu, save_vtu, VtuDoc, sha256_bytes, sha256_file
     stl.rs             STL ASCII/binary load and binary save
     volume.rs          TIFF and RAW volume I/O
     vtu.rs             Contract VTU (VTK XML UnstructuredGrid) writer + subset reader (PLAN_mesh_generation.md §7)
@@ -321,8 +325,10 @@ docs/
     examples/              One walkthrough per CLI subcommand, plus a dedicated packing-target-distribution walkthrough
   zh-cn/                Chinese mirror of en-us/, structurally identical (see TRANSLATION_GUIDE.md)
 
+build.rs               Build script: stamps the git commit, worktree dirtiness, enabled cargo features and build platform into compile-time env vars for src/version.rs
 PLAN.md                Portable GPU/CPU co-execution roadmap and implementation plan
 PLAN_mesh_generation.md  GPU-accelerated mesh-generation module design (rev 2) + implementation status
+PLAN_pack_v2.md        Seeded, recorded, void-aware placement design + implementation status (git-excluded via .git/info/exclude)
 ```
 
 ## 7. Architecture
@@ -682,11 +688,14 @@ See [Algorithm Overview](#3-algorithm-overview) above (each algorithm doc has it
 | `rustfft` | FFT for exact S2 computation |
 | `rayon` | Data parallelism |
 | `rand` | Random number generation for SA and Monte Carlo |
+| `rand_chacha` | ChaCha12 seeded RNG: the reproducible stream behind seeded runs (named because `StdRng`'s algorithm is not stable across `rand` versions) |
+| `sha2` | SHA-256 content identity for config, inputs and outputs |
 | `tiff` | TIFF image I/O |
 | `image` | PNG encoding/decoding for rendered RGBA images |
 | `clap` | CLI argument parsing |
 | `csv` | Target pore-diameter distribution parsing |
 | `serde` + `serde_yaml` | YAML config deserialization |
+| `serde_json` | JSON serialization of the build identity and the placement record/report. Note: `mesh-verify`'s report predates this dependency and is still hand-rolled (`src/meshgen/verify.rs`); new JSON goes through `serde_json`. |
 | `indicatif` | Progress bars |
 | `wgpu` | GPU compute abstraction (optional, feature `gpu`) |
 | `pollster` | Async-to-sync bridge for wgpu init (optional, feature `gpu`) |

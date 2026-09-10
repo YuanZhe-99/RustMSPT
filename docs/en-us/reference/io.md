@@ -1,11 +1,14 @@
 # I/O Reference
 
-This page documents `src/io/mod.rs`, PNG output in `image.rs`, STL I/O in `stl.rs`, and TIFF/RAW volume I/O in `volume.rs`.
+This page documents `src/io/mod.rs`, content hashing in `hash.rs`, PNG output in `image.rs`, STL I/O in `stl.rs`, and TIFF/RAW volume I/O in `volume.rs`.
 
 ## Index
 
 | Function | Location | Summary |
 |---|---|---|
+| `sha256_bytes` | `src/io/hash.rs:13` | SHA-256 of a byte slice as lowercase hex. |
+| `sha256_file` | `src/io/hash.rs:25` | Streams a file through SHA-256, returning the hex digest and the byte count. |
+| `hex_digest` | `src/io/hash.rs:42` | Renders a digest as lowercase hexadecimal. |
 | `save_image` | `src/io/image.rs:11` | Validates and writes a top-row-first RGBA8 PNG. |
 | `parse_ascii_vertex` | `src/io/stl.rs:9` | Parses one ASCII STL `vertex x y z` line into a `Vec3`. |
 | `quantize_key` | `src/io/stl.rs:21` | Quantizes a vertex to a fixed-precision integer key for tolerant deduplication. |
@@ -35,6 +38,41 @@ This page documents `src/io/mod.rs`, PNG output in `image.rs`, STL I/O in `stl.r
 ## Module role: `io/mod.rs`
 
 `src/io/mod.rs` declares the `stl` and `volume` submodules and re-exports their public items at the `io::` path (`load_stl`, `load_folder_stls`, `load_stl_or_merge_folder`, `save_stl` from `stl`; `load_raw_folder`, `load_tiff_or_folder`, `load_tiff_or_folder_with_range`, `save_tiff_or_folder`, `save_tiff_or_folder_with_ext`, `ByteOrder`, `RawFolderSpec`, `Volume3D`, `VolumeNumericType` from `volume`). It contains no functions of its own.
+
+## hash.rs
+
+#### sha256_bytes
+
+- **Signature:** `pub fn sha256_bytes(bytes: &[u8]) -> String`
+- **Source:** `src/io/hash.rs:13`
+- **Purpose:** Computes the SHA-256 digest of an in-memory byte slice.
+- **Parameters:**
+  - `bytes` — the content to hash.
+- **Returns:** The digest as 64 lowercase hexadecimal characters.
+- **Side effects:** None.
+- **Notes:** Content identity for the placement record and run report. This is a cryptographic digest, unrelated to the crate's other "hash" -- `pipeline/meshgen.rs`'s `config_hash`, which is a non-cryptographic `u64` used only for change detection.
+
+#### sha256_file
+
+- **Signature:** `pub fn sha256_file(path: &Path) -> Result<(String, u64)>`
+- **Source:** `src/io/hash.rs:25`
+- **Purpose:** Hashes a file's contents without loading the whole file into memory.
+- **Parameters:**
+  - `path` — the file to read.
+- **Returns:** `(lowercase hex digest, number of bytes hashed)`.
+- **Side effects:** Opens and reads the file.
+- **Notes:** Reads through a 64 KiB buffer, so file size is bounded by disk, not by memory. Returns `RustMsptError::Io` when the file cannot be opened or read -- a missing file is an error, never the digest of nothing. The returned length is what the report records as `bytes` for each input and output.
+
+#### hex_digest
+
+- **Signature:** `fn hex_digest(digest: &[u8]) -> String`
+- **Source:** `src/io/hash.rs:42`
+- **Purpose:** Formats a raw digest as lowercase hexadecimal.
+- **Parameters:**
+  - `digest` — the raw digest bytes.
+- **Returns:** A `2 * digest.len()`-character lowercase hex string.
+- **Side effects:** None.
+- **Notes:** Private; shared by both public entry points so the two can never disagree on formatting.
 
 ## image.rs
 

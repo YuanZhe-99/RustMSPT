@@ -2,7 +2,7 @@
 
 > **待翻译：** `RenderedImage`、`select_backend_for_workload`、`RustMsptError::Image` 和 `Render` CLI 的详细契约见[英文参考](../../en-us/reference/core-and-compute.md)。
 
-本页文档记录了 crate 根与入口点（`src/lib.rs`、`src/main.rs`、`src/error.rs`、`src/types.rs`）、独立诊断二进制文件 `src/bin/precision_test.rs`，以及 `src/compute/` 中的 CPU/GPU 后端选择层（`mod.rs`、`backend.rs`、`policy.rs`）。
+本页文档记录了 crate 根与入口点（`src/lib.rs`、`src/main.rs`、`src/error.rs`、`src/types.rs`）、`src/version.rs` 中的构建身份及其构建脚本 `build.rs`、独立诊断二进制文件 `src/bin/precision_test.rs`，以及 `src/compute/` 中的 CPU/GPU 后端选择层（`mod.rs`、`backend.rs`、`policy.rs`）。
 
 ## 索引
 
@@ -10,11 +10,11 @@
 |---|---|---|
 | `RustMsptError` | `src/error.rs:4` | 覆盖 I/O、YAML、TIFF、配置、网格及 GPU 失败的 crate 级错误枚举。 |
 | `Result` | `src/error.rs:27` | 类型别名 `Result<T> = std::result::Result<T, RustMsptError>`，在整个 crate 中使用。 |
-| `Cli` | `src/main.rs:19` | 顶层 clap CLI 结构体，包装一个 `Commands` 子命令。 |
-| `Commands` | `src/main.rs:25` | 7 个 CLI 子命令（Forge/Measure/Optimize/Pack/Scale/Crop/SplitFilter）的枚举。 |
-| `default_config_path` | `src/main.rs:85` | 在 `data/input/` 下构建默认配置路径。 |
-| `pick_config_path` | `src/main.rs:90` | 选择用户提供的配置路径，或回退到默认路径。 |
-| `main`（main.rs） | `src/main.rs:100` | CLI 入口点：解析参数、加载配置、应用覆盖项、运行所选流水线。 |
+| `Cli` | `src/main.rs:26` | 顶层 clap CLI 结构体，包装一个 `Commands` 子命令。 |
+| `Commands` | `src/main.rs:32` | 7 个 CLI 子命令（Forge/Measure/Optimize/Pack/Scale/Crop/SplitFilter）的枚举。 |
+| `default_config_path` | `src/main.rs:151` | 在 `data/input/` 下构建默认配置路径。 |
+| `pick_config_path` | `src/main.rs:156` | 选择用户提供的配置路径，或回退到默认路径。 |
+| `main`（main.rs） | `src/main.rs:166` | CLI 入口点：解析参数、加载配置、应用覆盖项、运行所选流水线。 |
 | `main`（precision_test.rs） | `src/bin/precision_test.rs:5` | 独立诊断二进制文件，比较 CPU 精确法、CPU 蒙特卡洛法与 GPU 蒙特卡洛法之间 S2 计算的精度/性能。 |
 | `Vec3` | `src/types.rs:2` | 由 `f64` 分量组成的三维向量，带基本向量代数方法。 |
 | `Vec3::new` | `src/types.rs:10` | 由 x/y/z 分量构造一个向量。 |
@@ -63,7 +63,7 @@
 
 ### CLI 结构
 
-`Cli`（`src/main.rs:19`）是顶层 `#[derive(Parser)]` 结构体；它持有单个 `command: Commands` 字段。`Commands`（`src/main.rs:25`）是一个 `#[derive(Subcommand)]` 枚举，包含七个变体，每个都携带相同的三个可选参数：
+`Cli`（`src/main.rs:26`）是顶层 `#[derive(Parser)]` 结构体；它持有单个 `command: Commands` 字段。`Commands`（`src/main.rs:32`）是一个 `#[derive(Subcommand)]` 枚举，包含七个变体，每个都携带相同的三个可选参数：
 
 | 子命令 | 加载的配置结构体 | 默认配置文件 |
 |---|---|---|
@@ -80,7 +80,7 @@
 #### default_config_path
 
 - **签名：** `fn default_config_path(file_name: &str) -> PathBuf`
-- **源码位置：** `src/main.rs:85`
+- **源码位置：** `src/main.rs:151`
 - **用途：** 在 `data/input/` 下构建默认配置文件路径。
 - **参数：**
   - `file_name` — 配置文件的基础名（例如 `"pack_config.yaml"`）。
@@ -90,7 +90,7 @@
 #### pick_config_path
 
 - **签名：** `fn pick_config_path(config: Option<PathBuf>, file_name: &str) -> PathBuf`
-- **源码位置：** `src/main.rs:90`
+- **源码位置：** `src/main.rs:156`
 - **用途：** 解析某个子命令要使用的配置路径：若给出了用户提供的 `--config` 值则使用它，否则使用 `data/input/` 下的默认路径。
 - **参数：**
   - `config` — 可选的 `--config` CLI 参数。
@@ -101,12 +101,132 @@
 #### main
 
 - **签名：** `fn main() -> anyhow::Result<()>`
-- **源码位置：** `src/main.rs:100`
+- **源码位置：** `src/main.rs:166`
 - **用途：** 解析 CLI 参数，为所选子命令加载 YAML 配置，应用 `--input`/`--output` 覆盖项，并运行相应的流水线。
 - **参数：** 无（通过 `Cli::parse()` 读取 `std::env::args`）。
 - **返回值：** 成功时为 `Ok(())`；若配置加载、路径解析或流水线执行（`Pipeline::run`）失败，则为 `anyhow::Error`。
 - **副作用：** 从磁盘读取 YAML 配置文件；针对每个子命令，构造对应的流水线结构体（`ForgePipeline`、`MeasurePipeline`、`OptimizePipeline`、`PackPipeline`、`ScalePipeline`、`CropPipeline`、`SplitFilterPipeline`）并调用 `.run()`，后者继而读取输入网格/图像文件，并按配置指示写入输出文件。通过底层流水线向标准输出打印进度。
 - **说明：** 这是 `rustmspt` 二进制文件唯一的入口点。`match cli.command { ... }` 代码块是扁平的分发结构：每个分支针对其子命令重复相同的三步模式（解析路径 → 加载并修改配置 → 构造并运行流水线）；除 `pick_config_path` 外，各分支之间没有共享的辅助函数。
+
+## version.rs 与 build.rs
+
+`src/version.rs` 只回答一个问题——这个二进制是什么——并且是唯一回答它的地方。`rustmspt --version`、`rustmspt version [--json]` 以及写入放置输出的身份都读取同一个 `BuildIdentity`，因此它们不可能互相矛盾。
+
+这些值来自 `build.rs`：它在编译期运行，把结果写入由 `env!` 读取的环境变量。有两条性质是刻意为之的：
+
+- **没有 git 的检出仍然能构建。** 所有 git 调用都经由 `git_output`，当 git 不存在、没有 `.git`、或命令失败（例如没有任何提交的仓库）时返回 `None`。未确定的值在 Rust 侧是 `None`，序列化为 JSON `null`。
+- **`null` 不等于 `false`。** "无法确定工作树是否有改动"与"工作树是干净的"是两种不同的断言，因此 `git_dirty` 的类型是 `Option<bool>`。只有在同时能给出提交号时才会报告干净与否。
+
+诚实性的边界值得说明：`git_dirty` 描述的是 `build.rs` 最后一次运行时的工作树状态，可能早于最后一次编译之后所做的修改。`emit_rerun_triggers` 通过在 `build.rs`、`Cargo.toml`、`Cargo.lock`、`src/` 或 git 引用变化时重跑脚本来缩小这个窗口，但无法将其完全消除。
+
+#### BuildIdentity
+
+- **定义：** `src/version.rs:18`
+- **用途：** 在构建所能确定的范围内，说明这个二进制是什么。
+
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| `name` | `&'static str` | 包名（`CARGO_PKG_NAME`）。 |
+| `version` | `&'static str` | 包版本（`CARGO_PKG_VERSION`）。 |
+| `git_commit` | `Option<&'static str>` | 完整的 40 字符提交 sha1，或 `None`。 |
+| `git_dirty` | `Option<bool>` | `build.rs` 最后一次运行时工作树是否有未提交改动；未确定时为 `None`。 |
+| `features` | `Vec<&'static str>` | 已启用的 cargo 特性，已排序。 |
+| `target` | `Option<&'static str>` | 编译目标三元组。 |
+| `host` | `Option<&'static str>` | 执行编译的主机三元组。 |
+| `profile` | `Option<&'static str>` | `debug` 或 `release`。 |
+| `source_date_epoch` | `Option<&'static str>` | 为可重现构建设置的 `SOURCE_DATE_EPOCH`。 |
+
+#### build_identity
+
+- **签名：** `pub fn build_identity() -> BuildIdentity`
+- **源码：** `src/version.rs:36`
+- **用途：** 返回编译进该二进制的身份。
+- **参数：** 无。
+- **返回：** `BuildIdentity`，构建无法确定的字段为 `None`。
+- **副作用：** 无——所有值都是编译期常量，运行时不派生进程、不读文件。
+- **说明：** `features` 由逗号分隔的列表解析而来；空列表表示未启用任何 cargo 特性。由于 `default = []` 本身也是一个声明的特性，默认构建会报告 `["default"]`。
+
+#### BuildIdentity::version_detail
+
+- **签名：** `pub fn version_detail(&self) -> String`
+- **源码：** `src/version.rs:64`
+- **用途：** 将身份渲染为**不含**程序名的单行文本。
+- **返回：** 例如 `0.2.0 (git 0a8eb1c, clean; features: none)`。
+- **副作用：** 无。
+- **说明：** clap 会在其 `--version` 字符串前自动加上程序名，因此这里必须省略，否则名字会出现两次。未知提交渲染为 `git unknown`；未知的干净状态渲染为 `dirt unknown`；空特性列表渲染为 `none`。
+
+#### BuildIdentity::version_line
+
+- **签名：** `pub fn version_line(&self) -> String`
+- **源码：** `src/version.rs:92`
+- **用途：** 将身份渲染为**含**程序名的单行文本。
+- **返回：** 例如 `rustmspt 0.2.0 (git 0a8eb1c, clean; features: none)`。
+- **副作用：** 无。
+- **说明：** 恰好是 `format!("{name} {detail}")`，因此 `rustmspt version` 与 `rustmspt --version` 打印完全相同的文本。
+
+#### identity_json
+
+- **签名：** `pub fn identity_json(identity: &BuildIdentity) -> String`
+- **源码：** `src/version.rs:103`
+- **用途：** 将构建身份序列化为格式化 JSON。
+- **参数：**
+  - `identity` — 待渲染的身份。
+- **返回：** 包含全部字段的 JSON 对象，未确定的值为 `null`。
+- **副作用：** 无。
+- **说明：** 序列化万一失败则回退为 `"{}"`，因此该函数是全函数。同一对象会作为 `tool` 嵌入放置记录与运行报告。
+
+#### non_empty (version.rs)
+
+- **签名：** `fn non_empty(value: &'static str) -> Option<&'static str>`
+- **源码：** `src/version.rs:4`
+- **用途：** 将构建脚本传入的空字符串映射为 `None`。
+- **返回：** 非空时为 `Some(value)`，否则为 `None`。
+- **副作用：** 无。
+- **说明：** `build.rs` 对每个无法确定的值输出空字符串；这里是唯一把该约定翻译成 `Option` 的地方。
+
+#### git_output
+
+- **签名：** `fn git_output(args: &[&str]) -> Option<String>`
+- **源码：** `build.rs:11`
+- **用途：** 在 crate 目录下运行 git 命令并返回去除首尾空白的 stdout。
+- **参数：**
+  - `args` — 追加在 `git -C <CARGO_MANIFEST_DIR>` 之后的参数。
+- **返回：** git 存在且退出码为零时返回 `Some(stdout)`，否则为 `None`。
+- **副作用：** 构建期派生一个 git 进程。
+- **说明：** 绝不 panic。缺少 git 二进制、没有 `.git`、以及没有任何提交的仓库，三种情况都返回 `None`——构建成功，而身份如实声明自己不知道。
+
+#### rerun_if_exists
+
+- **签名：** `fn rerun_if_exists(path: &Path)`
+- **源码：** `build.rs:25`
+- **用途：** 仅当路径存在时才输出 `cargo:rerun-if-changed`。
+- **副作用：** 打印一条 cargo 指令。
+- **说明：** 对 `.git` 条目而言，检查存在性很重要：worktree 或 submodule 检出中的 `.git` 是文件而非目录；而指定一个不存在的路径会让 cargo 在每次构建时都重跑脚本。
+
+#### emit_rerun_triggers
+
+- **签名：** `fn emit_rerun_triggers()`
+- **源码：** `build.rs:37`
+- **用途：** 输出所有会改变所记录身份的重跑触发条件。
+- **副作用：** 打印 cargo 指令。
+- **说明：** 覆盖 `build.rs`、`Cargo.toml`、`Cargo.lock`、`src/`、`.git/HEAD`、`.git/index`、`.git/packed-refs`、`.git/HEAD` 所指向的分支引用，以及环境变量 `SOURCE_DATE_EPOCH`。包含 `src/` 是为了让任何源文件的修改都能刷新 dirty 标志。
+
+#### enabled_features
+
+- **签名：** `fn enabled_features() -> Vec<String>`
+- **源码：** `build.rs:62`
+- **用途：** 列出本次构建启用的 cargo 特性，已排序。
+- **返回：** cargo 写法的特性名（小写、连字符）。
+- **副作用：** 无。
+- **说明：** 从环境变量 `CARGO_FEATURE_*` 读取，**而非** `cfg!(feature = ...)`。构建脚本的编译不带 crate 自身的特性，因此在 `build.rs` 内部使用 `cfg!` 会一律报告特性未启用。
+
+#### main (build.rs)
+
+- **签名：** `fn main()`
+- **源码：** `build.rs:80`
+- **用途：** 将 git 提交、工作树是否干净、已启用特性与构建平台写入编译期环境变量。
+- **副作用：** 打印 `cargo:rustc-env` 与 `cargo:rerun-if-changed` 指令。
+- **说明：** 每个值都以"可能为空"的字符串输出，空表示"未确定"。只有在已经确定提交号之后才会查询干净状态，因此 `git_dirty` 不可能对一个提交未知的工作树声称 `clean`。此处不打印 `cargo:warning`，否则会让启用 `-D warnings` 的流水线失败。
 
 ## bin/precision_test.rs
 

@@ -2,7 +2,8 @@ use rustmspt::config::parse_box_dimensions;
 use rustmspt::geometry::{box_mesh, split_mesh_into_granules};
 use rustmspt::io::{
     load_raw_folder, load_stl, load_tiff_or_folder, save_stl, save_tiff_or_folder,
-    save_tiff_or_folder_with_ext, ByteOrder, RawFolderSpec, Volume3D, VolumeNumericType,
+    save_tiff_or_folder_with_ext, sha256_bytes, sha256_file, ByteOrder, RawFolderSpec, Volume3D,
+    VolumeNumericType,
 };
 use std::fs;
 
@@ -140,4 +141,59 @@ fn tiff_file_and_folder_roundtrip() {
     assert_eq!(from_tif_folder.depth, 3);
     assert_eq!(from_tif_folder.numeric_type, VolumeNumericType::U16);
     assert_eq!(from_tif_folder.data, volume.data);
+}
+
+// Published SHA-256 vectors (FIPS 180-4 / RFC 6234). Pinning them here means a
+// wrong digest is caught by arithmetic, not by agreement with our own code.
+#[test]
+fn sha256_matches_the_published_vectors() {
+    assert_eq!(
+        sha256_bytes(b""),
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    );
+    assert_eq!(
+        sha256_bytes(b"abc"),
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    );
+    assert_eq!(
+        sha256_bytes(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
+        "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
+    );
+    assert_eq!(sha256_bytes(b"abc").len(), 64);
+    assert!(sha256_bytes(b"abc").chars().all(|c| c.is_ascii_hexdigit()));
+}
+
+// The streaming file hash must agree with the in-memory hash and report the
+// number of bytes it actually hashed, including across its internal buffer
+// boundary (64 KiB).
+#[test]
+fn sha256_file_agrees_with_sha256_bytes_across_the_buffer_boundary() {
+    let tmp = tempfile::tempdir().expect("tempdir should be created");
+
+    let empty = tmp.path().join("empty.bin");
+    fs::write(&empty, b"").expect("write empty file");
+    let (digest, bytes) = sha256_file(&empty).expect("hash empty file");
+    assert_eq!(digest, sha256_bytes(b""));
+    assert_eq!(bytes, 0);
+
+    let small = tmp.path().join("small.bin");
+    fs::write(&small, b"abc").expect("write small file");
+    let (digest, bytes) = sha256_file(&small).expect("hash small file");
+    assert_eq!(digest, sha256_bytes(b"abc"));
+    assert_eq!(bytes, 3);
+
+    // 200 000 bytes spans three reads of the 64 KiB buffer.
+    let payload: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+    let large = tmp.path().join("large.bin");
+    fs::write(&large, &payload).expect("write large file");
+    let (digest, bytes) = sha256_file(&large).expect("hash large file");
+    assert_eq!(digest, sha256_bytes(&payload));
+    assert_eq!(bytes, payload.len() as u64);
+}
+
+// A missing file is an error, not a digest of nothing.
+#[test]
+fn sha256_file_errors_on_a_missing_file() {
+    let tmp = tempfile::tempdir().expect("tempdir should be created");
+    assert!(sha256_file(&tmp.path().join("absent.bin")).is_err());
 }

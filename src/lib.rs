@@ -6,6 +6,7 @@ pub mod io;
 pub mod meshgen;
 pub mod pipeline;
 pub mod types;
+pub mod version;
 
 #[cfg(feature = "gpu")]
 pub mod gpu;

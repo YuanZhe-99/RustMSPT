@@ -16,11 +16,13 @@ use rustmspt::pipeline::render::RenderPipeline;
 use rustmspt::pipeline::scale::ScalePipeline;
 use rustmspt::pipeline::split_filter::SplitFilterPipeline;
 use rustmspt::pipeline::Pipeline;
+use rustmspt::version::{build_identity, identity_json};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Parser)]
 #[command(name = "rustmspt")]
 #[command(about = "Rust Microstructure Processing Toolbox", long_about = None)]
+#[command(version = build_identity_version_line())]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -59,6 +61,12 @@ enum Commands {
         input: Option<PathBuf>,
         #[arg(long)]
         output: Option<PathBuf>,
+    },
+    /// Report what this binary is: version, git commit, worktree state, features.
+    Version {
+        /// Print a machine-readable JSON object instead of one line.
+        #[arg(long)]
+        json: bool,
     },
     Render {
         #[arg(long)]
@@ -127,6 +135,16 @@ enum Commands {
         #[arg(long)]
         output: Option<PathBuf>,
     },
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Provide clap's --version string, which is the same line the version subcommand prints.
+// Inputs: None.
+// Returns: A leaked static string holding the identity line.
+// Side effects: Leaks one small allocation for the lifetime of the process.
+// Notes: clap needs a &'static str and prepends the program name itself, so this omits the name.
+fn build_identity_version_line() -> &'static str {
+    Box::leak(build_identity().version_detail().into_boxed_str())
 }
 
 // AI-FUNC-SUMMARY: Build the default config file path under data/input; returns PathBuf; side effects: None.
@@ -208,6 +226,14 @@ fn main() -> anyhow::Result<()> {
                 conf.output.path = output.to_string_lossy().to_string();
             }
             PackPipeline { config: conf }.run()?;
+        }
+        Commands::Version { json } => {
+            let identity = build_identity();
+            if json {
+                println!("{}", identity_json(&identity));
+            } else {
+                println!("{}", identity.version_line());
+            }
         }
         Commands::Render {
             config,

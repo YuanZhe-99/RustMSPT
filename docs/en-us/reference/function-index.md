@@ -18,11 +18,23 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `AccelerationConfig::default` | Config | `src/config/acceleration.rs:38` | Rust-level `Default` impl matching the serde defaults. |
 | `RustMsptError` | Core & Compute | `src/error.rs:4` | Crate-wide error enum including image encoding failures. |
 | `Result` | Core & Compute | `src/error.rs:27` | Type alias `Result<T> = std::result::Result<T, RustMsptError>` used throughout the crate. |
-| `Cli` | Core & Compute | `src/main.rs:19` | Top-level clap CLI struct wrapping a `Commands` subcommand. |
-| `Commands` | Core & Compute | `src/main.rs:25` | Enum of the 8 CLI subcommands, including Render. |
-| `default_config_path` | Core & Compute | `src/main.rs:85` | Builds the default config path under `data/input/`. |
-| `pick_config_path` | Core & Compute | `src/main.rs:90` | Chooses a user-supplied config path or falls back to the default. |
-| `main` (main.rs) | Core & Compute | `src/main.rs:100` | CLI entry point: parses args, loads config, applies overrides, runs the selected pipeline. |
+| `BuildIdentity` | Core & Compute | `src/version.rs:18` | What this binary is: version, git commit, worktree dirtiness, features, build platform. |
+| `build_identity` | Core & Compute | `src/version.rs:36` | Returns the compiled-in build identity; the single source of truth for tool identity. |
+| `BuildIdentity::version_detail` | Core & Compute | `src/version.rs:64` | Identity as one line without the program name, for clap's `--version`. |
+| `BuildIdentity::version_line` | Core & Compute | `src/version.rs:92` | Identity as one line including the program name. |
+| `identity_json` | Core & Compute | `src/version.rs:103` | Serializes the identity as pretty-printed JSON with `null` for undetermined values. |
+| `non_empty` (version.rs) | Core & Compute | `src/version.rs:4` | Maps an empty build-script env string to `None`. |
+| `build_identity_version_line` | Core & Compute | `src/main.rs:146` | Leaks the version detail as a `&'static str` for clap. |
+| `git_output` | Core & Compute | `build.rs:11` | Runs a git command at build time, returning `None` on any failure. |
+| `rerun_if_exists` | Core & Compute | `build.rs:25` | Emits a `rerun-if-changed` line only for paths that exist. |
+| `emit_rerun_triggers` | Core & Compute | `build.rs:37` | Emits every rerun trigger that can change the recorded identity. |
+| `enabled_features` | Core & Compute | `build.rs:62` | Reads enabled cargo features from `CARGO_FEATURE_*`, sorted. |
+| `main` (build.rs) | Core & Compute | `build.rs:80` | Stamps the build identity into compile-time environment variables. |
+| `Cli` | Core & Compute | `src/main.rs:26` | Top-level clap CLI struct wrapping a `Commands` subcommand. |
+| `Commands` | Core & Compute | `src/main.rs:32` | Enum of the 8 CLI subcommands, including Render. |
+| `default_config_path` | Core & Compute | `src/main.rs:151` | Builds the default config path under `data/input/`. |
+| `pick_config_path` | Core & Compute | `src/main.rs:156` | Chooses a user-supplied config path or falls back to the default. |
+| `main` (main.rs) | Core & Compute | `src/main.rs:166` | CLI entry point: parses args, loads config, applies overrides, runs the selected pipeline. |
 | `main` (precision_test.rs) | Core & Compute | `src/bin/precision_test.rs:5` | Standalone diagnostic binary comparing S2 computation precision/performance across CPU exact, CPU Monte Carlo, and GPU Monte Carlo methods. |
 | `Vec3` | Core & Compute | `src/types.rs:2` | 3D vector of `f64` components with basic vector algebra methods. |
 | `Vec3::new` | Core & Compute | `src/types.rs:10` | Constructs a vector from x/y/z components. |
@@ -280,6 +292,9 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `shade_intensity` | Geometry — Core | `src/geometry/render.rs` | Computes ambient/diffuse headlight intensity. |
 | `shade_channel` | Geometry — Core | `src/geometry/render.rs` | Applies intensity to one u8 channel. |
 | `render_mesh_cpu` | Geometry — Core | `src/geometry/render.rs` | Parallel QBVH ray-cast renderer. |
+| `sha256_bytes` | I/O | `src/io/hash.rs:13` | SHA-256 of a byte slice as lowercase hex. |
+| `sha256_file` | I/O | `src/io/hash.rs:25` | Streams a file through SHA-256, returning the hex digest and byte count. |
+| `hex_digest` | I/O | `src/io/hash.rs:42` | Renders a digest as lowercase hexadecimal. |
 | `save_image` | I/O | `src/io/image.rs` | Validates and writes RGBA8 PNG. |
 | `request_adapter_device` | GPU | `src/gpu/context.rs` | Shared filtered wgpu device request. |
 | `RenderVertex` | GPU | `src/gpu/render.rs` | Packed position/flat-normal vertex. |
