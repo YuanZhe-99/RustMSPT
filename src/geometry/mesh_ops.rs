@@ -234,3 +234,97 @@ pub fn box_mesh(bbox: BoundingBox) -> Mesh {
 
     Mesh { vertices: v, faces }
 }
+
+// AI-FUNC-SUMMARY:
+// Purpose: Build a closed, outward-oriented triangulated sphere by recursive subdivision of an icosahedron.
+// Inputs: centre, radius, and subdivision level (0 = the bare icosahedron).
+// Returns: a Mesh with 20 * 4^level faces and no duplicate vertices.
+// Side effects: None.
+// Notes: A sphere, unlike a box, has a well-defined distance to another sphere at every point, so
+// gaps and overlap volumes between two of them can be checked against a closed-form answer rather
+// than against this crate's own arithmetic. Vertices are deduplicated by quantized midpoint key, so
+// the result is watertight and mesh_is_closed accepts it. Level grows the face count fourfold each
+// step; level 3 (1280 faces) is about the largest that stays comfortable in a unit test.
+pub fn icosphere_mesh(center: Vec3, radius: f64, level: u32) -> Mesh {
+    let phi = (1.0 + 5.0_f64.sqrt()) / 2.0;
+    let mut verts: Vec<Vec3> = vec![
+        Vec3::new(-1.0, phi, 0.0),
+        Vec3::new(1.0, phi, 0.0),
+        Vec3::new(-1.0, -phi, 0.0),
+        Vec3::new(1.0, -phi, 0.0),
+        Vec3::new(0.0, -1.0, phi),
+        Vec3::new(0.0, 1.0, phi),
+        Vec3::new(0.0, -1.0, -phi),
+        Vec3::new(0.0, 1.0, -phi),
+        Vec3::new(phi, 0.0, -1.0),
+        Vec3::new(phi, 0.0, 1.0),
+        Vec3::new(-phi, 0.0, -1.0),
+        Vec3::new(-phi, 0.0, 1.0),
+    ];
+    let mut faces: Vec<[usize; 3]> = vec![
+        [0, 11, 5],
+        [0, 5, 1],
+        [0, 1, 7],
+        [0, 7, 10],
+        [0, 10, 11],
+        [1, 5, 9],
+        [5, 11, 4],
+        [11, 10, 2],
+        [10, 7, 6],
+        [7, 1, 8],
+        [3, 9, 4],
+        [3, 4, 2],
+        [3, 2, 6],
+        [3, 6, 8],
+        [3, 8, 9],
+        [4, 9, 5],
+        [2, 4, 11],
+        [6, 2, 10],
+        [8, 6, 7],
+        [9, 8, 1],
+    ];
+
+    for _ in 0..level {
+        let mut midpoints: std::collections::BTreeMap<(usize, usize), usize> =
+            std::collections::BTreeMap::new();
+        let mut next: Vec<[usize; 3]> = Vec::with_capacity(faces.len() * 4);
+        for tri in &faces {
+            let mut mid = [0usize; 3];
+            for (edge, slot) in [(0usize, 1usize), (1, 2), (2, 0)].iter().zip(mid.iter_mut()) {
+                let (i, j) = (tri[edge.0], tri[edge.1]);
+                let key = if i < j { (i, j) } else { (j, i) };
+                *slot = *midpoints.entry(key).or_insert_with(|| {
+                    let m = verts[i].add(verts[j]).scale(0.5);
+                    verts.push(m);
+                    verts.len() - 1
+                });
+            }
+            next.push([tri[0], mid[0], mid[2]]);
+            next.push([mid[0], tri[1], mid[1]]);
+            next.push([mid[2], mid[1], tri[2]]);
+            next.push([mid[0], mid[1], mid[2]]);
+        }
+        faces = next;
+    }
+
+    let vertices = verts
+        .into_iter()
+        .map(|v| {
+            let n = vec_norm(v);
+            let unit = if n > 0.0 { v.scale(1.0 / n) } else { v };
+            center.add(unit.scale(radius))
+        })
+        .collect();
+
+    Mesh {
+        vertices,
+        faces: faces
+            .into_iter()
+            .map(|t| Triangle {
+                a: t[0],
+                b: t[1],
+                c: t[2],
+            })
+            .collect(),
+    }
+}

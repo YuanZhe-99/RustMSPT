@@ -201,6 +201,13 @@ fn plane_basis(normal: Vec3) -> (Vec3, Vec3) {
 // Returns: Mesh representing the cap surface.
 // Side effects: None.
 // Notes: Uses quantized point deduplication and angular sorting around the centroid.
+// `edges`/`used` are BTreeSet, not HashSet, and must stay that way: ring traversal order decides
+// each ring's vertex-mean centre, which is a float sum, which perturbs the capped volume in its
+// last bits. HashSet's RandomState is seeded per process AND bumped per instance, so the same mesh
+// clipped twice would not give the same number. Two known limitations remain, which is why the
+// placement engine uses mesh_volume_in_bbox_exact instead of this path: a ring that is not
+// star-shaped about its own vertex mean is re-ordered into a different polygon, and a ring nested
+// inside another is emitted with the same winding, so a hole is filled rather than subtracted.
 fn triangulate_cap_from_segments(segments: &[(Vec3, Vec3)], normal: Vec3) -> Mesh {
     if segments.is_empty() {
         return Mesh::empty();
@@ -209,7 +216,7 @@ fn triangulate_cap_from_segments(segments: &[(Vec3, Vec3)], normal: Vec3) -> Mes
     let mut points: Vec<Vec3> = Vec::new();
     let mut point_map: std::collections::HashMap<(i64, i64, i64), usize> = std::collections::HashMap::new();
     let mut adjacency: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
-    let mut edges: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    let mut edges: std::collections::BTreeSet<(usize, usize)> = std::collections::BTreeSet::new();
 
     let add_point = |p: Vec3,
                      points: &mut Vec<Vec3>,
@@ -238,7 +245,7 @@ fn triangulate_cap_from_segments(segments: &[(Vec3, Vec3)], normal: Vec3) -> Mes
         }
     }
 
-    let mut used: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    let mut used: std::collections::BTreeSet<(usize, usize)> = std::collections::BTreeSet::new();
     let (u_axis, v_axis) = plane_basis(normal);
     let mut cap = Mesh::empty();
 
@@ -433,4 +440,257 @@ pub fn volume_fraction_of_meshes_in_bbox(meshes: &[Mesh], bbox: BoundingBox) -> 
         .sum();
 
     (in_box_volume / box_volume).clamp(0.0, 1.0)
+}
+
+/// A polygon mid-clip: each vertex paired with the id of the clip plane that
+/// created the edge arriving at it, or `None` when that edge came from the mesh.
+type TaggedPolygon = Vec<(Vec3, Option<usize>)>;
+
+/// A tagged polygon plus whether it is a cap this routine built rather than a
+/// piece of the original surface. Only the latter decides which faces were cut.
+type ClipPiece = (TaggedPolygon, bool);
+
+/// Which axis-aligned domain face a clip cut against, in the names the record uses.
+pub const DOMAIN_FACE_NAMES: [&str; 6] = ["xmin", "xmax", "ymin", "ymax", "zmin", "zmax"];
+
+// AI-FUNC-SUMMARY:
+// Purpose: Compute the volume centroid of a closed mesh (the centre of mass at unit density).
+// Inputs: mesh reference.
+// Returns: Some(centroid), or None when the signed volume is zero or non-finite.
+// Side effects: None.
+// Notes: NOT mesh_centroid, which is the mean of the vertices and therefore depends on how finely
+// each region happens to be tessellated. This is the quantity the placement record calls
+// shell_centroid and translation: it is the pivot the published transform rotates about, so a
+// reader that recomputed a vertex mean instead would reconstruct a different particle.
+// Sums signed tetrahedra from the origin, so it is exact for any closed orientable mesh and
+// independent of where the origin sits.
+pub fn mesh_volume_centroid(mesh: &Mesh) -> Option<Vec3> {
+    let mut volume = 0.0;
+    let mut moment = Vec3::new(0.0, 0.0, 0.0);
+    for f in &mesh.faces {
+        let a = mesh.vertices[f.a];
+        let b = mesh.vertices[f.b];
+        let c = mesh.vertices[f.c];
+        let v = a.dot(b.cross(c)) / 6.0;
+        volume += v;
+        moment = moment.add(a.add(b).add(c).scale(v / 4.0));
+    }
+    if !volume.is_finite() || volume.abs() <= f64::MIN_POSITIVE {
+        return None;
+    }
+    let centroid = moment.scale(1.0 / volume);
+    if centroid.x.is_finite() && centroid.y.is_finite() && centroid.z.is_finite() {
+        Some(centroid)
+    } else {
+        None
+    }
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Report the signed volume of every edge-connected shell of a mesh, in shell order.
+// Inputs: mesh reference.
+// Returns: one signed volume per shell, in the order split_mesh_into_granules yields them.
+// Side effects: None.
+// Notes: The signs are the point. mesh_volume takes the absolute value of the whole sum, so a mesh
+// whose shells disagree about orientation reports |V1 - V2| rather than V1 + V2 - a void made of
+// two pores, one of them inverted, would silently report almost nothing. Callers that need a total
+// must check the signs agree first.
+pub fn shell_signed_volumes(mesh: &Mesh) -> Vec<f64> {
+    split_mesh_into_granules(mesh)
+        .iter()
+        .map(mesh_signed_volume)
+        .collect()
+}
+
+// AI-FUNC-SUMMARY: Signed distance from a point to a plane, positive on the normal's side; returns f64; side effects: none.
+fn plane_signed_distance(p: Vec3, origin: Vec3, normal: Vec3) -> f64 {
+    p.sub(origin).dot(normal)
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Clip a tagged polygon against one half-space, tagging every edge the clip itself created.
+// Inputs: polygon as (vertex, tag of the edge arriving at that vertex), plane origin/normal, plane id, tolerance.
+// Returns: the clipped polygon in the same tagged representation.
+// Side effects: None.
+// Notes: Sutherland-Hodgman, with one addition: the single edge the clip introduces along the plane
+// is tagged `Some(plane_id)`, and inherited edges keep their tag. Tagging during the clip rather
+// than detecting coplanar edges afterwards is what makes a face lying flush against the plane
+// behave correctly - all its vertices count as inside, no edge is tagged, and the face is treated
+// as the genuine boundary it is instead of as the boundary of a phantom cap.
+fn clip_tagged_polygon(
+    poly: &[(Vec3, Option<usize>)],
+    origin: Vec3,
+    normal: Vec3,
+    plane_id: usize,
+    eps: f64,
+) -> TaggedPolygon {
+    if poly.is_empty() {
+        return Vec::new();
+    }
+    let mut out: TaggedPolygon = Vec::with_capacity(poly.len() + 2);
+    for i in 0..poly.len() {
+        let (c, _) = poly[i];
+        let (n, tag) = poly[(i + 1) % poly.len()];
+        let dc = plane_signed_distance(c, origin, normal);
+        let dn = plane_signed_distance(n, origin, normal);
+        let in_c = dc >= -eps;
+        let in_n = dn >= -eps;
+        match (in_c, in_n) {
+            (true, true) => out.push((n, tag)),
+            (true, false) => {
+                out.push((clip_segment_plane_intersection(c, n, dc, dn), tag));
+            }
+            (false, true) => {
+                out.push((
+                    clip_segment_plane_intersection(c, n, dc, dn),
+                    Some(plane_id),
+                ));
+                out.push((n, tag));
+            }
+            (false, false) => {}
+        }
+    }
+    out
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Compute a closed mesh's volume restricted to an axis-aligned box, and which box faces cut it.
+// Inputs: the mesh (closed, consistently oriented outward) and the box.
+// Returns: (volume inside the box, one flag per box face in DOMAIN_FACE_NAMES order marking a real cut).
+// Side effects: None.
+// Notes: The placement engine's volume routine, and the reason it does not call
+// particle_volume_in_bbox. Planes are applied one at a time; after each, the hole that plane opened
+// is closed by fanning every edge the clip created back to one fixed apex on that plane. A fan
+// reproduces a closed loop's signed area exactly no matter what shape the loop has - the overlapping
+// pieces cancel - so nothing here assumes a cap is star-shaped, and a loop nested inside another
+// arrives with the opposite winding and subtracts itself. That is what triangulate_cap_from_segments
+// gets wrong. Capping before moving to the next plane is also what supplies each later cap with its
+// corner edges: the segment where two box faces meet bounds both caps but lies on neither's surface,
+// so a routine that clipped all six planes first would leave every multi-plane cap loop open.
+// Every sum runs in face order with no set iteration, so the result is bit-reproducible.
+// The mesh must be closed and outward-oriented; an inward-oriented one returns a negative volume,
+// which the caller should read as an orientation error rather than clamp. Note that box_mesh emits
+// inward-facing triangles, so a box fixture must be flipped before it is measured here.
+pub fn mesh_volume_in_bbox_exact(mesh: &Mesh, bbox: BoundingBox) -> (f64, [bool; 6]) {
+    let centre = Vec3::new(
+        (bbox.min.x + bbox.max.x) * 0.5,
+        (bbox.min.y + bbox.max.y) * 0.5,
+        (bbox.min.z + bbox.max.z) * 0.5,
+    );
+    // (plane origin, inward normal, fan apex on that plane)
+    let planes: [(Vec3, Vec3, Vec3); 6] = [
+        (
+            Vec3::new(bbox.min.x, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(bbox.min.x, centre.y, centre.z),
+        ),
+        (
+            Vec3::new(bbox.max.x, 0.0, 0.0),
+            Vec3::new(-1.0, 0.0, 0.0),
+            Vec3::new(bbox.max.x, centre.y, centre.z),
+        ),
+        (
+            Vec3::new(0.0, bbox.min.y, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(centre.x, bbox.min.y, centre.z),
+        ),
+        (
+            Vec3::new(0.0, bbox.max.y, 0.0),
+            Vec3::new(0.0, -1.0, 0.0),
+            Vec3::new(centre.x, bbox.max.y, centre.z),
+        ),
+        (
+            Vec3::new(0.0, 0.0, bbox.min.z),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(centre.x, centre.y, bbox.min.z),
+        ),
+        (
+            Vec3::new(0.0, 0.0, bbox.max.z),
+            Vec3::new(0.0, 0.0, -1.0),
+            Vec3::new(centre.x, centre.y, bbox.max.z),
+        ),
+    ];
+    let eps = 1e-9;
+
+    // Each entry is (tagged polygon, whether it came from a cap rather than the mesh).
+    let mut polys: Vec<ClipPiece> = mesh
+        .faces
+        .iter()
+        .map(|f| {
+            (
+                vec![
+                    (mesh.vertices[f.a], None),
+                    (mesh.vertices[f.b], None),
+                    (mesh.vertices[f.c], None),
+                ],
+                false,
+            )
+        })
+        .collect();
+
+    for (plane_id, (origin, normal, apex)) in planes.iter().enumerate() {
+        let mut next: Vec<ClipPiece> = Vec::with_capacity(polys.len());
+        let mut cap_edges: Vec<(Vec3, Vec3)> = Vec::new();
+        for (poly, is_cap) in &polys {
+            let clipped = clip_tagged_polygon(poly, *origin, *normal, plane_id, eps);
+            if clipped.len() < 3 {
+                continue;
+            }
+            for i in 0..clipped.len() {
+                let (a, _) = clipped[i];
+                let (b, tag) = clipped[(i + 1) % clipped.len()];
+                if tag == Some(plane_id) {
+                    cap_edges.push((a, b));
+                }
+            }
+            next.push((clipped, *is_cap));
+        }
+        // The cap's boundary runs opposite to the surface edges that opened it, so
+        // the fan triangle for edge a -> b is (apex, b, a).
+        for (a, b) in cap_edges {
+            next.push((vec![(*apex, None), (b, None), (a, None)], true));
+        }
+        polys = next;
+        if polys.is_empty() {
+            break;
+        }
+    }
+
+    let mut volume = 0.0;
+    let mut cut = [false; 6];
+    for (poly, is_cap) in &polys {
+        if poly.len() >= 3 {
+            let p0 = poly[0].0;
+            for i in 1..(poly.len() - 1) {
+                volume += p0.dot(poly[i].0.cross(poly[i + 1].0)) / 6.0;
+            }
+        }
+        // A face counts as cut only when a surviving piece of the original surface
+        // still carries an edge the clip created. A cap's own edges do not count,
+        // and neither does a polygon that a later plane removed entirely.
+        if !is_cap {
+            for (_, tag) in poly {
+                if let Some(plane_id) = tag {
+                    cut[*plane_id] = true;
+                }
+            }
+        }
+    }
+
+    (volume, cut)
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Name the domain faces a clip actually cut, for the placement record's `clipped.faces`.
+// Inputs: the per-face cut flags from mesh_volume_in_bbox_exact.
+// Returns: face names in DOMAIN_FACE_NAMES order.
+// Side effects: None.
+// Notes: The names match the vocabulary the consuming project already uses for domain faces.
+pub fn cut_face_names(cut: [bool; 6]) -> Vec<&'static str> {
+    DOMAIN_FACE_NAMES
+        .iter()
+        .zip(cut.iter())
+        .filter(|(_, hit)| **hit)
+        .map(|(name, _)| *name)
+        .collect()
 }

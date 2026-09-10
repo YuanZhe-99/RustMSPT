@@ -38,6 +38,7 @@
 | `pick_config_path` | Core & Compute | `src/main.rs:156` | 选择用户提供的配置路径，或回退到默认路径。 |
 | `main`（main.rs） | Core & Compute | `src/main.rs:100` | CLI 入口点：解析参数、加载配置、应用覆盖项、运行所选流水线。 |
 | `main`（precision_test.rs） | Core & Compute | `src/bin/precision_test.rs:5` | 独立的诊断二进制程序，比较 CPU 精确法、CPU 蒙特卡洛法与 GPU 蒙特卡洛法三种方法计算 S2 的精度/性能。 |
+| `BoundingBox::expanded` | Core & Compute | `src/types.rs:88` | 按同一裕量在六个面上放大或收缩包围盒。 |
 | `Vec3` | Core & Compute | `src/types.rs:2` | 具有 `f64` 分量和基本向量代数方法的三维向量。 |
 | `Vec3::new` | Core & Compute | `src/types.rs:10` | 用 x/y/z 分量构造一个向量。 |
 | `Vec3::add` | Core & Compute | `src/types.rs:15` | 向量加法。 |
@@ -87,6 +88,16 @@
 | `l2_norm` | Geometry — Analysis | `src/geometry/s2.rs:806` | 两个 S2 向量在其共同长度前缀上的欧几里得距离。 |
 | `calculate_s2_with_gpu` | Geometry — Analysis | `src/geometry/s2.rs:825` | 针对蒙特卡洛/"both" 方法的 GPU 加速 S2，带 CPU 回退。*（特性 `gpu`）* |
 | `calculate_s2_gpu_exact` | Geometry — Analysis | `src/geometry/s2.rs:855` | GPU 加速的精确 S2（GPU 体素化 + GPU 球壳配对计数）。*（特性 `gpu`）* |
+| `UnitQuat` | Geometry — Core | `src/geometry/quaternion.rs:17` | 标量在前的单位四元数 `[w, x, y, z]`，规范化为 `w >= 0`。 |
+| `UnitQuat::identity` | Geometry — Core | `src/geometry/quaternion.rs:26` | 单位旋转。 |
+| `UnitQuat::new` | Geometry — Core | `src/geometry/quaternion.rs:42` | 对原始分量做归一化与符号规范化。 |
+| `UnitQuat::to_wxyz` | Geometry — Core | `src/geometry/quaternion.rs:58` | 按记录发布的顺序返回四个分量。 |
+| `UnitQuat::norm` | Geometry — Core | `src/geometry/quaternion.rs:63` | 分量的欧氏范数，用于校验是否为单位四元数。 |
+| `UnitQuat::rotate_point` | Geometry — Core | `src/geometry/quaternion.rs:75` | 绕原点旋转一个点。 |
+| `UnitQuat::to_matrix` | Geometry — Core | `src/geometry/quaternion.rs:89` | 由四元数导出的行主序 3x3 旋转矩阵。 |
+| `sample_uniform_quaternion` | Geometry — Core | `src/geometry/quaternion.rs:123` | Shoemake 方法：恰好三个均匀数给出 Haar 均匀旋转。 |
+| `transform_shell` | Geometry — Core | `src/geometry/quaternion.rs:148` | 缩放、绕质心旋转、再平移这一变换的唯一定义。 |
+| `icosphere_mesh` | Geometry — Core | `src/geometry/mesh_ops.rs:248` | 细分二十面体得到的闭合、外向球面网格。 |
 | `mesh_bbox` | Geometry — Core | `src/geometry/bbox.rs:8` | 网格的轴对齐包围盒。 |
 | `bbox_overlaps` | Geometry — Core | `src/geometry/bbox.rs:28` | 两个包围盒之间的严格重叠测试。 |
 | `bbox_distance` | Geometry — Core | `src/geometry/bbox.rs:38` | 两个包围盒之间的最小欧几里得距离。 |
@@ -110,6 +121,13 @@
 | `SpatialGrid::point_to_cell_clamped` | Geometry — Core | `src/geometry/spatial.rs:93` | 将一个点映射到网格单元坐标，并夹紧到网格边界内。 |
 | `SpatialGrid::point_to_cell` | Geometry — Core | `src/geometry/spatial.rs:99` | 将一个点映射到网格单元坐标，不做夹紧处理。 |
 | `estimate_cell_size` | Geometry — Core | `src/geometry/spatial.rs:108` | 根据一组包围盒启发式地选取 `SpatialGrid` 的单元大小。 |
+| `DOMAIN_FACE_NAMES` | Geometry — Volume & Collision | `src/geometry/volume.rs:454` | 六个域面名称，按裁剪平面顺序排列。 |
+| `mesh_volume_centroid` | Geometry — Volume & Collision | `src/geometry/volume.rs:467` | 闭合网格的体积质心（不是顶点均值）。 |
+| `shell_signed_volumes` | Geometry — Volume & Collision | `src/geometry/volume.rs:498` | 逐壳有符号体积，用于暴露各壳的朝向。 |
+| `plane_signed_distance` | Geometry — Volume & Collision | `src/geometry/volume.rs:506` | 点到平面的有符号距离。 |
+| `clip_tagged_polygon` | Geometry — Volume & Collision | `src/geometry/volume.rs:520` | 带标记的 Sutherland-Hodgman 裁剪，标出裁剪新建的边。 |
+| `mesh_volume_in_bbox_exact` | Geometry — Volume & Collision | `src/geometry/volume.rs:574` | 逐平面封盖，给出精确的域内体积与被切的面。 |
+| `cut_face_names` | Geometry — Volume & Collision | `src/geometry/volume.rs:689` | 给出真正被裁剪切到的域面名称。 |
 | `mesh_volume` | Geometry — Volume & Collision | `src/geometry/volume.rs:6` | 通过散度定理计算封闭网格的绝对体积。 |
 | `mesh_signed_volume` | Geometry — Volume & Collision | `src/geometry/volume.rs:18` | 封闭网格的带符号体积（符号反映面片缠绕方向）。 |
 | `orient_components_to_positive_volume` | Geometry — Volume & Collision | `src/geometry/volume.rs:35` | 翻转任何带符号体积为负的连通分量的缠绕方向。 |
@@ -185,6 +203,10 @@
 | `save_tiff_or_folder_with_ext` | I/O | `src/io/volume.rs:524` | 将 `Volume3D` 保存为一个多页 TIFF 文件或一个逐切片 TIFF 文件夹，并可配置扩展名。 |
 | `save_tiff_or_folder` | I/O | `src/io/volume.rs:586` | 使用默认的 `.tiff` 扩展名，将 `Volume3D` 保存为 TIFF 文件或切片序列文件夹。 |
 | `Pipeline::run`（trait） | Pipeline — Core | `src/pipeline/mod.rs:17` | 每个流水线结构体实现的 trait 方法，用于端到端执行。 |
+| `seeded_rng` | Pipeline — Core | `src/pipeline/rng.rs:13` | 构建带种子运行所使用的 ChaCha12 随机流。 |
+| `u01` | Pipeline — Core | `src/pipeline/rng.rs:32` | 唯一的均匀分布原语：一次抽取，落在 `[0, 1)`。 |
+| `uniform_range` | Pipeline — Core | `src/pipeline/rng.rs:45` | 在 `[lo, hi)` 上抽取一个均匀值；退化区间返回 `lo`。 |
+| `uniform_index` | Pipeline — Core | `src/pipeline/rng.rs:62` | 从 `0..n` 中均匀抽取一个下标。 |
 | `create_progress_bar` | Pipeline — Core | `src/pipeline/mod.rs:25` | 用给定的模板和填充字符构建一个感知 tty 的 indicatif 进度条。 |
 | `RotationMode`（枚举） | Pipeline — Core | `src/pipeline/rotation.rs:6` | 表示不旋转、固定轴或随机轴。 |
 | `parse_rotation_mode` | Pipeline — Core | `src/pipeline/rotation.rs:18` | 将 `none/x/y/z/vector/any` 配置字符串解析为一个 `RotationMode`。 |

@@ -36,6 +36,7 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `pick_config_path` | Core & Compute | `src/main.rs:156` | Chooses a user-supplied config path or falls back to the default. |
 | `main` (main.rs) | Core & Compute | `src/main.rs:166` | CLI entry point: parses args, loads config, applies overrides, runs the selected pipeline. |
 | `main` (precision_test.rs) | Core & Compute | `src/bin/precision_test.rs:5` | Standalone diagnostic binary comparing S2 computation precision/performance across CPU exact, CPU Monte Carlo, and GPU Monte Carlo methods. |
+| `BoundingBox::expanded` | Core & Compute | `src/types.rs:88` | Grows or shrinks a box by the same margin on every side. |
 | `Vec3` | Core & Compute | `src/types.rs:2` | 3D vector of `f64` components with basic vector algebra methods. |
 | `Vec3::new` | Core & Compute | `src/types.rs:10` | Constructs a vector from x/y/z components. |
 | `Vec3::add` | Core & Compute | `src/types.rs:15` | Vector addition. |
@@ -85,6 +86,16 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `l2_norm` | Geometry — Analysis | `src/geometry/s2.rs:806` | Euclidean distance between two S2 vectors over their common-length prefix. |
 | `calculate_s2_with_gpu` | Geometry — Analysis | `src/geometry/s2.rs:825` | GPU-accelerated S2 for Monte Carlo/"both" methods, with CPU fallback. *(feature `gpu`)* |
 | `calculate_s2_gpu_exact` | Geometry — Analysis | `src/geometry/s2.rs:855` | GPU-accelerated exact S2 (GPU voxelization + GPU shell pair counting). *(feature `gpu`)* |
+| `UnitQuat` | Geometry — Core | `src/geometry/quaternion.rs:17` | Scalar-first unit quaternion `[w, x, y, z]`, canonicalised to `w >= 0`. |
+| `UnitQuat::identity` | Geometry — Core | `src/geometry/quaternion.rs:26` | The identity rotation. |
+| `UnitQuat::new` | Geometry — Core | `src/geometry/quaternion.rs:42` | Normalizes and sign-canonicalizes raw components. |
+| `UnitQuat::to_wxyz` | Geometry — Core | `src/geometry/quaternion.rs:58` | The four components in the record's published order. |
+| `UnitQuat::norm` | Geometry — Core | `src/geometry/quaternion.rs:63` | Euclidean norm of the components, for verifying unitness. |
+| `UnitQuat::rotate_point` | Geometry — Core | `src/geometry/quaternion.rs:75` | Rotates a point about the origin. |
+| `UnitQuat::to_matrix` | Geometry — Core | `src/geometry/quaternion.rs:89` | Row-major 3x3 rotation matrix derived from the quaternion. |
+| `sample_uniform_quaternion` | Geometry — Core | `src/geometry/quaternion.rs:123` | Shoemake's Haar-uniform rotation from exactly three uniforms. |
+| `transform_shell` | Geometry — Core | `src/geometry/quaternion.rs:148` | The single definition of scale, then rotate, then translate. |
+| `icosphere_mesh` | Geometry — Core | `src/geometry/mesh_ops.rs:248` | Closed outward-oriented subdivided icosahedron sphere. |
 | `mesh_bbox` | Geometry — Core | `src/geometry/bbox.rs:8` | Axis-aligned bounding box of a mesh. |
 | `bbox_overlaps` | Geometry — Core | `src/geometry/bbox.rs:28` | Strict overlap test between two bounding boxes. |
 | `bbox_distance` | Geometry — Core | `src/geometry/bbox.rs:38` | Minimum Euclidean distance between two bounding boxes. |
@@ -108,6 +119,13 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `SpatialGrid::point_to_cell_clamped` | Geometry — Core | `src/geometry/spatial.rs:93` | Maps a point to grid cell coordinates, clamped to grid bounds. |
 | `SpatialGrid::point_to_cell` | Geometry — Core | `src/geometry/spatial.rs:99` | Maps a point to grid cell coordinates, unclamped. |
 | `estimate_cell_size` | Geometry — Core | `src/geometry/spatial.rs:108` | Heuristically picks a `SpatialGrid` cell size from a set of bboxes. |
+| `DOMAIN_FACE_NAMES` | Geometry — Volume & Collision | `src/geometry/volume.rs:454` | The six domain-face names, in clip-plane order. |
+| `mesh_volume_centroid` | Geometry — Volume & Collision | `src/geometry/volume.rs:467` | Volume centroid of a closed mesh (not the vertex mean). |
+| `shell_signed_volumes` | Geometry — Volume & Collision | `src/geometry/volume.rs:498` | Signed volume per shell, exposing per-shell orientation. |
+| `plane_signed_distance` | Geometry — Volume & Collision | `src/geometry/volume.rs:506` | Signed distance from a point to a plane. |
+| `clip_tagged_polygon` | Geometry — Volume & Collision | `src/geometry/volume.rs:520` | Sutherland-Hodgman clip that tags the edge the clip created. |
+| `mesh_volume_in_bbox_exact` | Geometry — Volume & Collision | `src/geometry/volume.rs:574` | Exact in-box volume and which faces cut, capping plane by plane. |
+| `cut_face_names` | Geometry — Volume & Collision | `src/geometry/volume.rs:689` | Names the domain faces a clip actually cut. |
 | `mesh_volume` | Geometry — Volume & Collision | `src/geometry/volume.rs:6` | Absolute volume of a closed mesh via the divergence theorem. |
 | `mesh_signed_volume` | Geometry — Volume & Collision | `src/geometry/volume.rs:18` | Signed volume of a closed mesh (sign reflects face winding). |
 | `orient_components_to_positive_volume` | Geometry — Volume & Collision | `src/geometry/volume.rs:35` | Flips winding of any connected component with negative signed volume. |
@@ -180,6 +198,10 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `save_tiff_or_folder_with_ext` | I/O | `src/io/volume.rs:524` | Saves a `Volume3D` as a multi-page TIFF file or a folder of per-slice TIFF files, with configurable extension. |
 | `save_tiff_or_folder` | I/O | `src/io/volume.rs:586` | Saves a `Volume3D` to TIFF file or folder sequence with the default `.tiff` extension. |
 | `Pipeline::run` (trait) | Pipeline — Core | `src/pipeline/mod.rs:17` | Trait method every pipeline struct implements to execute end-to-end. |
+| `seeded_rng` | Pipeline — Core | `src/pipeline/rng.rs:13` | Builds the ChaCha12 stream a seeded run draws every variate from. |
+| `u01` | Pipeline — Core | `src/pipeline/rng.rs:32` | The single uniform primitive: one draw in `[0, 1)`. |
+| `uniform_range` | Pipeline — Core | `src/pipeline/rng.rs:45` | One uniform in `[lo, hi)`; degenerate ranges yield `lo`. |
+| `uniform_index` | Pipeline — Core | `src/pipeline/rng.rs:62` | One index uniformly from `0..n`. |
 | `create_progress_bar` | Pipeline — Core | `src/pipeline/mod.rs:25` | Builds a tty-aware indicatif progress bar with a given template and fill characters. |
 | `RotationMode` (enum) | Pipeline — Core | `src/pipeline/rotation.rs:6` | Represents no rotation, a fixed axis, or a random axis. |
 | `parse_rotation_mode` | Pipeline — Core | `src/pipeline/rotation.rs:18` | Parses `none/x/y/z/vector/any` config strings into a `RotationMode`. |

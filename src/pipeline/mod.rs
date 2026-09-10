@@ -8,6 +8,7 @@ pub mod optimize;
 pub mod pack;
 pub mod pack_targets;
 pub mod render;
+pub mod rng;
 pub mod rotation;
 pub mod scale;
 pub mod split_filter;

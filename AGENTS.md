@@ -238,6 +238,7 @@ src/
     forging.rs         FFD forging simulation: simulate_forging_ffd, simulate_forging_ffd_with_tracking
     mesh_ops.rs        Mesh utilities: split_mesh_into_granules, merge_meshes, mesh_centroid, rotate_mesh_around_center, move_mesh_to_target_center, scale_mesh, translate_mesh, wrap_mesh_centroid_to_box, box_mesh, mesh_surface_area, vec_norm
     metrics.rs         Unified closed-mesh metrics: volume, surface area, equivalent-volume diameter, sphericity, target-diameter scaling
+    quaternion.rs      UnitQuat (scalar-first w,x,y,z), Shoemake uniform-on-SO(3) sampler, and transform_shell - the one definition of the placement transform
     render.rs          Shared camera model and CPU QBVH ray-cast renderer
     scene_render.rs    CPU scene renderer: all-hits transparency compositing, line overlays, markers, named view presets
     s2.rs              S2 (two-point correlation): calculate_s2, approximate_s2, l2_norm, build_bbox_occupancy, FFT-based exact S2, Monte Carlo S2
@@ -283,7 +284,8 @@ src/
     pack.rs            PackPipeline: sequential particle placement with optional target diameter distribution and mean-sphericity steering
     pack_targets.rs    Packing target CSV parser, diameter-bin debt controller, sphericity scoring, and distribution summaries
     render.rs          RenderPipeline: STL viewpoint rendering to PNG
-    rotation.rs        Shared: RotationMode, parse_rotation_mode, sample_rotation_axis
+    rng.rs             Seeded ChaCha12 stream (seeded_rng) and the single uniform primitive (u01) every sampler builds on
+    rotation.rs        Shared: RotationMode, parse_rotation_mode, sample_rotation_axis (the legacy axis-and-angle sampler, not uniform on SO(3))
     scale.rs           ScalePipeline: unit conversion / factor scaling
     split_filter.rs    SplitFilterPipeline: connected-component split + geometric filtering
 
@@ -398,6 +400,12 @@ When inspecting code:
 - The `acceleration` config field uses `#[serde(default)]` so existing YAML configs without it continue to work. Tests constructing config structs manually must include `acceleration: Default::default()`.
 - `Volume3D` uses z-major indexing: `idx = z * width * height + y * width + x`. GPU shaders must match this layout, not x-major.
 - Equivalent-volume diameter and sphericity require a closed mesh with positive finite volume and surface area; malformed/open candidates are skipped when target controls are active.
+- **`box_mesh` emits inward-facing triangles.** A unit cube from it has signed volume **-1**, not +1. Real STL data is outward: every shell of `data/input/particles.stl` measures positive, and so does `icosphere_mesh`. `mesh_volume` takes the absolute value, which is why this has never mattered; anything orientation-sensitive (`mesh_volume_in_bbox_exact`, `shell_signed_volumes`, any future boolean) must flip a box fixture first. Pinned by `tests/placement_primitives_tests.rs::box_mesh_is_inward_oriented_and_the_other_fixtures_are_not`.
+- **`mesh_volume` returns `total.abs()`** (`src/geometry/volume.rs:14`), so a multi-shell mesh whose shells disagree about orientation reports `|V1 - V2|` rather than `V1 + V2`. Never call it on a void made of several pores; use `shell_signed_volumes` and check the signs agree.
+- **`mesh_centroid` is the mean of the vertices, not the centre of mass.** It therefore moves when a region is tessellated more finely. `rotate_mesh_around_center` and `move_mesh_to_target_center` both pivot on it. The placement record's `shell_centroid` and `translation` are `mesh_volume_centroid` instead, and the two visibly disagree on any unevenly tessellated mesh.
+- **`triangulate_cap_from_segments` must keep its `BTreeSet`s.** They were `HashSet`s, whose `RandomState` is seeded per process *and* bumped per instance, so ring traversal order - and through it each ring's float centre, and through that the clipped volume's last bits - differed between two calls in the same process. Two known geometric limitations remain and are why the placement engine uses `mesh_volume_in_bbox_exact` instead: a ring that is not star-shaped about its own vertex mean is re-ordered into a different polygon, and a nested ring is emitted with the same winding, so a hole is filled rather than subtracted.
+- **`nalgebra` stores quaternions `[i, j, k, w]`; the placement record publishes `[w, x, y, z]`.** Reading one as the other yields a plausible, wrong orientation rather than an error. `UnitQuat` is scalar-first, and a test builds the same numbers through `nalgebra` to prove the orders agree.
+- **`save_stl` refuses an empty mesh** (`src/io/stl.rs:259`), so a run that placed nothing must not call it; it writes its report and exits zero instead.
 - Packing diameter frequencies are count frequencies over successfully placed full components, not volume-weighted frequencies. Failed placement attempts must never update bin or sphericity state.
 - Tests constructing `PackingParams` directly must include `target_diameter_distribution_csv`, `target_mean_sphericity`, and `mean_sphericity_tolerance`.
 - `RenderedImage.rgba` is top-row-first RGBA8 and must contain exactly `width * height * 4` bytes.
@@ -665,6 +673,16 @@ and "this phase is done" unless it is stated.
 - **Rayon** is the primary parallelism framework project-wide; thread pools are created per-pipeline via `ThreadPoolBuilder`.
 - **Voxelization**: `build_bbox_occupancy` parallelizes over x-slabs with `par_chunks_mut`, using ray-casting `point_inside_mesh` for correct 3D solid containment (parry3d `TriMesh::contains_local_point()` is unreliable without pseudo normals).
 - **Island model**: when `optimization.islands > 1`, independent SA instances run in parallel via `std::thread::scope`, each with its own dedicated `ThreadPool` (`ThreadPool` is not `Clone` — see [Common Pitfalls](#10-common-pitfalls)).
+
+### Determinism
+
+Seeded runs promise: same seed, same inputs, same binary, same placement - on any thread count. Four rules keep that promise, and breaking any one of them is silent.
+
+- **One stream, one thread.** Every variate comes from a single `ChaCha12Rng` (`src/pipeline/rng.rs`), drawn only on the calling thread. The seed is expanded with SHA-256 rather than `SeedableRng::seed_from_u64`, whose expansion is not stable across `rand_core` majors.
+- **A fixed consumption schedule.** Each attempt draws all of its variates up front, before any check runs. If a check could short-circuit before a draw, reordering the checks later would silently desynchronise the stream.
+- **One uniform primitive.** Everything is built from `u01`, not `rand`'s `gen_range`/`Uniform`, which are explicitly not value-stable across `rand` minor versions.
+- **Parallel sections stay pure and order-free.** `par_iter().any(...)` and `.reduce(f64::INFINITY, f64::min)` are safe: the first is a boolean, the second returns an element of the input. A parallel `.sum()` over `f64` is **not** - its result depends on the reduction tree, hence on the thread count - so volume accumulates sequentially in acceptance order, and the report emits that same accumulator rather than re-summing. `find_any`/`position_any` are forbidden; use `find_first`. Counters are incremented in the sequential caller after a parallel section returns, never inside its closure.
+- **No `HashMap`/`HashSet` iteration order may reach an output.** Rejection counters and any map in a record or report are fixed structs or `BTreeMap`. See the `triangulate_cap_from_segments` pitfall for what this looked like when it was violated.
 
 ### Packing Targets
 See [Packing Target Diameter Distribution](#packing-target-diameter-distribution) above and `docs/en-us/algorithms/packing-target-diameter-distribution.md` for the full picture. Load-bearing facts not covered there:

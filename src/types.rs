@@ -76,6 +76,21 @@ impl BoundingBox {
             && p.y <= self.max.y
             && p.z <= self.max.z
     }
+
+    // AI-FUNC-SUMMARY:
+    // Purpose: Grow (or, with a negative margin, shrink) a box by the same amount on every side.
+    // Inputs: the margin to apply to each face.
+    // Returns: the adjusted box.
+    // Side effects: None.
+    // Notes: A margin more negative than half an extent inverts that axis, which `volume()` already
+    // reports as zero and `contains_point` as empty, so an over-eroded box is empty rather than wrong.
+    // Used both to dilate a query box by a gap and to erode a domain by a particle's reach.
+    pub fn expanded(&self, margin: f64) -> BoundingBox {
+        BoundingBox {
+            min: Vec3::new(self.min.x - margin, self.min.y - margin, self.min.z - margin),
+            max: Vec3::new(self.max.x + margin, self.max.y + margin, self.max.z + margin),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
