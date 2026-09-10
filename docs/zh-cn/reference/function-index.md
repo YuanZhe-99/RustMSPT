@@ -298,6 +298,12 @@
 | `selective_prune_to_target_vf` | Pipeline — Optimize | `src/pipeline/optimize.rs:86` | 退火前阶段：迭代地移除颗粒以逼近目标体积分数，同时最小化 S2 损失的增加。 |
 | `run_sa_island` | Pipeline — Optimize | `src/pipeline/optimize.rs:285` | 单个岛屿的核心模拟退火循环；是代码库中最重要的单个函数。 |
 | `OptimizePipeline::run` | Pipeline — Optimize | `src/pipeline/optimize.rs:797` | 顶层 `Pipeline::run` 编排：加载、目标计算、剪枝、单/多岛屿模拟退火、保存。 |
+| `PHASE_MATRIX` | Pipeline — Packing | `src/pipeline/placement_labels.rs:12` | 标签场中相编码 0。 |
+| `VoxelLabelsHeader` | Pipeline — Packing | `src/pipeline/placement_labels.rs:21` | 标签体数据的说明：间距、原点、排布与相表。 |
+| `PhaseLabel` | Pipeline — Packing | `src/pipeline/placement_labels.rs:38` | 一个相编码及其名称。 |
+| `write_voxel_labels` | Pipeline — Packing | `src/pipeline/placement_labels.rs:56` | 写出三相标签场与逐体素颗粒标识场。 |
+| `particle_at` | Pipeline — Packing | `src/pipeline/placement_labels.rs:178` | 查找包含某点的已放置颗粒。 |
+| `point_in_particle` | Pipeline — Packing | `src/pipeline/placement_labels.rs:189` | 对单个颗粒网格做射线奇偶包含判定。 |
 | `VoidReport` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:278` | 运行如何处理冻结孔隙，以及如何度量它。 |
 | `build_void_report` | Pipeline — Packing | `src/pipeline/placement.rs:1133` | 为报告描述冻结孔隙，含其体积计算方法。 |
 | `PlacementPipeline` | Pipeline — Packing | `src/pipeline/placement.rs:37` | 持有已校验 `ResolvedPlacement` 的流水线结构体。 |

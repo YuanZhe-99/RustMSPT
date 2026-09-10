@@ -9,6 +9,7 @@ pub mod pack;
 pub mod pack_targets;
 pub mod placement;
 pub mod placement_feasibility;
+pub mod placement_labels;
 pub mod placement_library;
 pub mod placement_outputs;
 pub mod placement_sizes;

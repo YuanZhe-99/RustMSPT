@@ -293,6 +293,12 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `selective_prune_to_target_vf` | Pipeline — Optimize | `src/pipeline/optimize.rs:86` | Pre-annealing stage: iteratively removes particles to approach the target volume fraction while minimizing S2-loss increase. |
 | `run_sa_island` | Pipeline — Optimize | `src/pipeline/optimize.rs:285` | The core simulated-annealing loop for one island; the single most important function in the codebase. |
 | `OptimizePipeline::run` | Pipeline — Optimize | `src/pipeline/optimize.rs:797` | Top-level `Pipeline::run` orchestration: load, target computation, pruning, single/multi-island SA, save. |
+| `PHASE_MATRIX` | Pipeline — Packing | `src/pipeline/placement_labels.rs:12` | Phase code 0 in the written label field. |
+| `VoxelLabelsHeader` | Pipeline — Packing | `src/pipeline/placement_labels.rs:21` | What the label stacks are: spacing, origin, layout, phase table. |
+| `PhaseLabel` | Pipeline — Packing | `src/pipeline/placement_labels.rs:38` | One phase code and its name. |
+| `write_voxel_labels` | Pipeline — Packing | `src/pipeline/placement_labels.rs:56` | Writes the three-phase label field and the per-voxel particle id field. |
+| `particle_at` | Pipeline — Packing | `src/pipeline/placement_labels.rs:178` | Finds which placed particle, if any, contains a point. |
+| `point_in_particle` | Pipeline — Packing | `src/pipeline/placement_labels.rs:189` | Ray-parity containment for one particle mesh. |
 | `VoidReport` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:278` | What the run did with the frozen void, and how it measured it. |
 | `build_void_report` | Pipeline — Packing | `src/pipeline/placement.rs:1133` | Describes the frozen void for the report, including its volume method. |
 | `PlacementPipeline` | Pipeline — Packing | `src/pipeline/placement.rs:37` | Pipeline struct holding a validated `ResolvedPlacement`. |

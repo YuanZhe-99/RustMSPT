@@ -217,7 +217,15 @@ pub fn run_placement(config: &ResolvedPlacement) -> Result<PlacementOutcome> {
     let elapsed = started.elapsed().as_secs_f64();
     let stop = decide_stop(config, &state, &plan, target_volume, elapsed);
 
-    let outputs = write_outputs(config, &library, &state, &tool, &frame, &classes)?;
+    let outputs = write_outputs(
+        config,
+        &library,
+        &state,
+        &tool,
+        &frame,
+        &classes,
+        void.as_ref(),
+    )?;
     finish_report(
         &mut report,
         config,
@@ -776,6 +784,7 @@ fn decide_stop(
 // Notes: A run that placed nothing writes no STL: save_stl refuses an empty mesh, and calling it
 // would turn "stopped short" into a non-zero exit, contradicting the contract that stopping short
 // is a result. The record and the report are written either way.
+#[allow(clippy::too_many_arguments)]
 fn write_outputs(
     config: &ResolvedPlacement,
     library: &ShapeLibrary,
@@ -783,6 +792,7 @@ fn write_outputs(
     tool: &ToolRecord,
     frame: &FrameRecord,
     classes: &[SizeClass],
+    void: Option<&VoidIndex>,
 ) -> Result<Vec<FileEntry>> {
     let mut outputs = Vec::new();
 
@@ -878,6 +888,19 @@ fn write_outputs(
             sha256: None,
             bytes: None,
         });
+    }
+
+    if let Some(voxel_size) = config.outputs.voxel_labels {
+        let written = crate::pipeline::placement_labels::write_voxel_labels(
+            config, voxel_size, &state.placed, void,
+        )?;
+        for path in written {
+            let role = path
+                .file_stem()
+                .map(|s| format!("voxel_{}", s.to_string_lossy()))
+                .unwrap_or_else(|| "voxel_labels".to_string());
+            outputs.push(describe_output(&role, &path));
+        }
     }
 
     if let Some(v) = &config.void {
