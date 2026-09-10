@@ -261,6 +261,91 @@
 | `r#box` | `BoxConfig` | `box` | — | 堆积域包围盒。 |
 | `packing` | `PackingParams` | `packing` | — | 堆积算法参数。 |
 
+## `placement.rs`
+
+`placement:` 块用于配置带种子、可复原、感知孔隙的打包引擎。一份 `pack` 配置**恰好**携带 `placement:`
+与 `packing:` 之一；`load_pack_document` 只读一次文件，先探测存在哪个键，再反序列化为对应引擎的类型。
+两者同时出现或都不出现，都会得到同时点名这两个键的 `InvalidConfig`，因此像 `placment:` 这样的拼写错误
+会直接说明问题所在，而不是以另一个引擎结构体"缺少字段"的形式浮现。
+
+### 与本 crate 其他配置不同的两条约定
+
+**未知键会被拒绝。** 本块中每个结构体都设置了 `#[serde(deny_unknown_fields)]`。较早的配置结构体
+刻意没有这样做：其中拼错的键会被忽略，运行继续并采用默认值。而在这里，拼错的键会悄然改变所放置的
+内容，且事后无从追查，因此按名字拒绝。该规则适用于任意嵌套层级。
+
+**没有任何路径有默认值，且从不查阅工作目录。** 契约一句话说清：*配置中的相对路径相对于该配置文件
+所在目录解析；从不查阅当前工作目录。* 它的另一半同样关键：*命令行上给出的路径按 shell 的含义解析，
+即相对于当前工作目录。* 因此 `--input` 与 `--output` 在被代入本块之前会先转为绝对路径，使两条规则同时成立。
+
+旧版默认配置路径（省略 `--config` 时相对工作目录解析的 `data/input/pack_config.yaml`）对原引擎仍然有效。
+以该方式找到的 placement 配置会被**拒绝**：本引擎承诺其读取的任何路径都不依赖于从何处启动，
+而迁就一个工作目录默认值会悄悄破坏这一承诺。
+
+### 各项拒绝规则及其理由
+
+| 规则 | 理由 |
+|---|---|
+| `crossing: forbidden` 时要求 `void.gap > 0` | parry 对相交的两个形状返回距离 `0.0`，于是 `0.0 >= 0.0` 通过，零间隙什么也禁止不了。 |
+| `crossing: allowed` 时必须给出 `void.overlap_volume.voxel_size` | 重叠量在体素网格上度量，其分辨率是调用方必须自己承担的代价与精度权衡，因此没有默认值。 |
+| `crossing: forbidden` 时拒绝 `overlap_volume` | 它永远不会被读取，而被悄悄忽略的字段就是被悄悄写错的字段。 |
+| `position.mode: void_neighbourhood` 需要 `void` 与 `band` | 否则没有可环绕采样的对象。 |
+| `feasible_uniform` 下拒绝 `position.band` | 与上面的 `overlap_volume` 同理。 |
+| `target.basis: solid` 需要 `void` | "solid" 指域减去孔隙。没有孔隙时两种基准重合，此时 `domain` 才是诚实的说法。 |
+| 有 `void` 时拒绝 `boundary.mode: periodic` | 周期镜像的颗粒需要与冻结孔隙的周期镜像比对，而孔隙在域外的含义尚未确立。 |
+| `size.distribution` 的参数必须与 `kind` 匹配 | `kind: histogram` 下出现 `median` 并非作者本意，因此点名而非忽略。 |
+| 各轴的域范围必须为有限正数 | 写作 `!extent.is_finite() || extent <= 0.0` 而非 `max <= min`，从而连 NaN 边界一并拒绝：与 NaN 的任何比较都为假。 |
+| `target.volume_fraction` 严格落在 `(0, 1)` 内 | 0 与 1 都不构成一次打包。 |
+
+`size.distribution` 是带 `kind` 字段的普通结构体，而不是内部标签枚举。serde 会把内部标签枚举经由
+map 缓冲，`deny_unknown_fields` 在该路径上不会触发——`{kind: lognormal, mediann: 12}` 会被接受，
+而真正的 `median` 只是缺失。
+
+### 字段
+
+| 字段 | 类型 | 必填 | 默认值 | 含义 |
+|---|---|---|---|---|
+| `seed` | `u64` | 是 | — | 为整次运行提供种子。可用 `--seed` 覆盖。 |
+| `frame.unit` | `String` | 是 | — | 仅为标签。没有任何量按它缩放；它会被复制进每份输出，使读者知道这些数字的含义。 |
+| `domain.min` / `.max` | `[f64; 3]` | 是 | — | 打包盒，以显式的两个角点给出。 |
+| `shapes.files` | `[String]` | 是 | — | 一个或多个 STL；每个按首面顺序拆分为闭合壳。列表顺序确定源索引。 |
+| `shapes.selection` | 枚举 | 否 | `uniform` | 在所有文件的所有壳上均匀选取。 |
+| `shapes.filters.max_aspect_ratio` | `f64` | 否 | 无 | 包围盒最长与最短边之比。与尺度无关，故只对形状库施加一次。 |
+| `shapes.filters.max_sharpness_ratio` | `f64` | 否 | 无 | `Area^3 / (36 pi Volume^2)`；球为 1.0。同样与尺度无关。 |
+| `void.file` | `String` | 有 `void` 时 | — | 冻结孔隙 STL。绝不被填补、移动或清理。 |
+| `void.crossing` | `forbidden` \| `allowed` | 否 | `forbidden` | 颗粒是否可以与孔隙相交。 |
+| `void.gap` | `f64` | 有 `void` 时 | — | `g_pv`，每颗粒与孔面保持的间隙。 |
+| `void.overlap_volume.voxel_size` | `f64` | `allowed` 时 | — | 逐颗粒孔隙重叠度量的分辨率。 |
+| `size.distribution.kind` | `lognormal` \| `histogram` | 是 | — | 采用哪种目标数量分布。 |
+| `size.distribution.{median,sigma_log,min,max}` | `f64` | `lognormal` 时 | — | 直径上的截断对数正态分布。 |
+| `size.distribution.csv` | `String` | `histogram` 时 | — | `bin,right,frequency` 格式的 CSV，与旧引擎读取的格式相同。 |
+| `size.classes` | 结构体 | 否 | 对数正态为 10 个等宽区间；直方图用其自身的 bin | 目标与实际对照所用的统计分组。 |
+| `size.on_unattainable` | `skip_reported` \| `stop` | 否 | `skip_reported` | 抽到的尺寸无法放置时如何处理。两种情形运行都以 `distribution_unattainable` 结束；都不会补抽替代。 |
+| `size.placement_order` | `descending` \| `drawn` | 否 | `descending` | 大颗粒才是先放不下的那批，因此先放它们。 |
+| `orientation.mode` | `uniform_so3` \| `fixed` | 否 | `uniform_so3` | Shoemake 均匀单位四元数，在 SO(3) 上服从 Haar 分布。 |
+| `position.mode` | `feasible_uniform` \| `void_neighbourhood` | 否 | `feasible_uniform` | 后者是刻意构造，绝不作为"随机"上报。 |
+| `position.band` | `[f64; 2]` | `void_neighbourhood` 时 | — | 距孔面的距离带。 |
+| `boundary.mode` | `strict` \| `clip` \| `periodic` | 否 | `strict` | 颗粒是否可以跨越域边界。 |
+| `boundary.min_boundary_dist` | `f64` | 否 | `0.0` | 与域壁的间隙。 |
+| `boundary.min_cross_boundary_depth` | `f64` | 否 | `0.0` | 跨界颗粒的最小保留深度（`clip` 模式）。 |
+| `gaps.particle_particle` | `f64` | 否 | `0.0` | `g_pp`，已放置颗粒之间的间隙。 |
+| `target.volume_fraction` | `f64` | 是 | — | 严格介于 0 与 1 之间。 |
+| `target.basis` | `domain` \| `solid` | 否 | 有孔隙时为 `solid`，否则为 `domain` | 该分数以何为基准。 |
+| `target.tolerance` | `f64` | 否 | `0.01` | 判定是否达标的相对容差。显式给出，因此不会由一个看不见的 epsilon 决定停止原因。 |
+| `budget.attempts_per_particle` | `usize` | 否 | `2000` | |
+| `budget.total_attempts` | `usize` | 否 | `2000000` | |
+| `budget.wall_time_s` | `f64` | 否 | 无 | |
+| `budget.max_top_up_batches` | `usize` | 否 | `5` | |
+| `threads` | `i32` | 否 | `-1` | `-1` 表示使用全部可用核心。可用 `--threads` 覆盖。 |
+| `outputs.dir` | `String` | 是 | — | 下列其余名称都是该目录内的文件名。 |
+| `outputs.particles_stl` | `String` | 否 | `particles.stl` | |
+| `outputs.record` | `String` | 否 | `particles.json` | |
+| `outputs.report` | `String` | 否 | `run_report.json` | |
+| `outputs.size_csv` | `String` | 否 | `size_distribution.csv` | |
+| `outputs.copy_void` | `bool` | 否 | `true` | 在输出旁原样复制孔隙文件。 |
+| `outputs.per_particle_stl` | `bool` | 否 | `false` | |
+| `outputs.voxel_labels.voxel_size` | `f64` | 否 | 无 | 设置后写出三相标签体数据。 |
+
 ## `scale.rs`
 
 ### `ScalingParams`

@@ -1,8 +1,8 @@
 use clap::{Parser, Subcommand};
 use rustmspt::config::{
-    load_yaml, CropConfig, ForgingConfig, MeasurementConfig, MeshGenConfig, MeshRenderConfig,
-    MeshVerifyConfig, OptimizationConfig, PackingConfig, RenderConfig, ScaleConfig,
-    SplitFilterConfig,
+    load_pack_document, load_yaml, CropConfig, ForgingConfig,
+    MeasurementConfig, MeshGenConfig, MeshRenderConfig, MeshVerifyConfig, OptimizationConfig,
+    PackDocument, RenderConfig, ScaleConfig, SplitFilterConfig,
 };
 use rustmspt::pipeline::crop::CropPipeline;
 use rustmspt::pipeline::forge::ForgePipeline;
@@ -12,6 +12,7 @@ use rustmspt::pipeline::mesh_verify::MeshVerifyPipeline;
 use rustmspt::pipeline::meshgen::MeshGenPipeline;
 use rustmspt::pipeline::optimize::OptimizePipeline;
 use rustmspt::pipeline::pack::PackPipeline;
+use rustmspt::pipeline::placement::PlacementPipeline;
 use rustmspt::pipeline::render::RenderPipeline;
 use rustmspt::pipeline::scale::ScalePipeline;
 use rustmspt::pipeline::split_filter::SplitFilterPipeline;
@@ -61,6 +62,13 @@ enum Commands {
         input: Option<PathBuf>,
         #[arg(long)]
         output: Option<PathBuf>,
+        /// Seed the placement engine. Only the `placement:` engine is reproducible;
+        /// passing this with a `packing:` config is an error rather than a no-op.
+        #[arg(long)]
+        seed: Option<u64>,
+        /// Worker threads for the placement engine; -1 uses every available core.
+        #[arg(long)]
+        threads: Option<i32>,
     },
     /// Report what this binary is: version, git commit, worktree state, features.
     Version {
@@ -135,6 +143,26 @@ enum Commands {
         #[arg(long)]
         output: Option<PathBuf>,
     },
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Re-express a path given on the command line so it survives config-relative resolution.
+// Inputs: the config file's directory, the path as typed.
+// Returns: the path as a string that resolve_against(dir, _) maps back to the same file.
+// Side effects: None.
+// Notes: A command-line path means what a shell means by it - relative to the working directory -
+// while everything in the config resolves against the config's directory. Making the CLI path
+// absolute first is what keeps both rules true at once; without it, `--input shapes/a.stl` run from
+// elsewhere would silently resolve beside the config instead.
+fn cli_path_as_config_relative(given: &Path) -> String {
+    if given.is_absolute() {
+        given.to_string_lossy().to_string()
+    } else {
+        match std::env::current_dir() {
+            Ok(cwd) => cwd.join(given).to_string_lossy().to_string(),
+            Err(_) => given.to_string_lossy().to_string(),
+        }
+    }
 }
 
 // AI-FUNC-SUMMARY:
@@ -216,16 +244,70 @@ fn main() -> anyhow::Result<()> {
             config,
             input,
             output,
+            seed,
+            threads,
         } => {
+            let explicit_config = config.is_some();
             let path = pick_config_path(config, "pack_config.yaml");
-            let mut conf: PackingConfig = load_yaml(&path)?;
-            if let Some(input) = input {
-                conf.input.path = input.to_string_lossy().to_string();
+            match load_pack_document(&path)? {
+                PackDocument::Placement(mut params) => {
+                    if !explicit_config {
+                        // The legacy default path is resolved against the working
+                        // directory. The placement engine promises that no path it
+                        // reads depends on where it was launched from, so it refuses
+                        // to be reached that way at all rather than quietly honouring
+                        // a CWD-relative default.
+                        return Err(anyhow::anyhow!(
+                            "a placement config must be given with --config: {} was found relative to the \
+                             current directory, and the placement engine resolves every path \
+                             against its config file, never the working directory",
+                            path.display()
+                        ));
+                    }
+                    if let Some(seed) = seed {
+                        params.seed = seed;
+                    }
+                    if let Some(threads) = threads {
+                        params.threads = threads;
+                    }
+                    // A path typed on the command line is a shell argument, so it means
+                    // what the shell means: relative to the working directory. A path
+                    // written in the config means relative to the config. Both halves
+                    // of that rule are load-bearing, and this is where they meet.
+                    if let Some(input) = input {
+                        params.shapes.files = vec![cli_path_as_config_relative(&input)];
+                    }
+                    if let Some(output) = output {
+                        params.outputs.dir = cli_path_as_config_relative(&output);
+                    }
+                    let resolved = params.validate(&path)?;
+                    PlacementPipeline { config: resolved }.run()?;
+                }
+                PackDocument::Legacy(mut conf) => {
+                    if seed.is_some() {
+                        return Err(anyhow::anyhow!(
+                            "--seed applies to the placement engine, and {} selects the original packing \
+                             engine, which draws from an unseeded thread-local generator. Ignoring \
+                             the flag would report a run as reproducible when it is not.",
+                            path.display()
+                        ));
+                    }
+                    if threads.is_some() {
+                        return Err(anyhow::anyhow!(
+                            "--threads applies to the placement engine; the original packing engine takes \
+                             its worker count from packing.cpu_max in {}",
+                            path.display()
+                        ));
+                    }
+                    if let Some(input) = input {
+                        conf.input.path = input.to_string_lossy().to_string();
+                    }
+                    if let Some(output) = output {
+                        conf.output.path = output.to_string_lossy().to_string();
+                    }
+                    PackPipeline { config: *conf }.run()?;
+                }
             }
-            if let Some(output) = output {
-                conf.output.path = output.to_string_lossy().to_string();
-            }
-            PackPipeline { config: conf }.run()?;
         }
         Commands::Version { json } => {
             let identity = build_identity();

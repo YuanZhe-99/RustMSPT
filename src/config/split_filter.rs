@@ -32,5 +32,9 @@ pub struct SplitFilterConfig {
     pub input: InputPath,
     pub output: SplitFilterOutput,
     pub filter: Option<SplitFilterRules>,
+    /// Seeds the lognormal rebalance's shuffle. Absent means the previous
+    /// behaviour exactly: an unseeded thread-local generator, so the kept set is
+    /// not reproducible. Present makes the run repeatable.
+    pub seed: Option<u64>,
 }
 

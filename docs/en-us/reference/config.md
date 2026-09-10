@@ -271,6 +271,97 @@ Not structs — this file provides plain functions and `deserialize_with` helper
 | `r#box` | `BoxConfig` | `box` | — | Packing domain bounding box. |
 | `packing` | `PackingParams` | `packing` | — | Packing algorithm parameters. |
 
+## `placement.rs`
+
+The `placement:` block configures the seeded, recorded, void-aware packing engine. A `pack` config
+carries **exactly one** of `placement:` or `packing:`; `load_pack_document` reads the file once,
+probes which key is present, and deserializes into that engine's type. Both keys present, or
+neither, is an `InvalidConfig` naming both, so a misspelling like `placment:` says what is wrong
+instead of surfacing as a missing field from the other engine's struct.
+
+### Two conventions that differ from every other config in this crate
+
+**Unknown keys are refused.** Every struct in this block sets `#[serde(deny_unknown_fields)]`. The
+older config structs deliberately do not: a misspelled key there is ignored and the run continues
+with a default. Here a misspelled key would silently change what was placed, in a way no later
+inspection could recover, so it is refused by name. This applies at every nesting level.
+
+**No path has a default, and the working directory is never consulted.** The contract, in one
+sentence: *relative paths in a config resolve against the directory containing that config file;
+the current working directory is never consulted.* Its other half is equally load-bearing: *paths
+given on the command line resolve against the current working directory, as shell arguments do.*
+`--input` and `--output` are therefore made absolute before they are substituted into the block, so
+both rules hold at once.
+
+The legacy default config path (`data/input/pack_config.yaml`, resolved against the working
+directory when `--config` is omitted) still exists for the original engine. A placement config
+reached that way is **refused**: the engine promises that no path it reads depends on where it was
+launched from, and honouring a working-directory default would quietly break that promise.
+
+### Refusals, and why each exists
+
+| Rule | Why |
+|---|---|
+| `void.gap > 0` when `crossing: forbidden` | parry reports distance `0.0` for two shapes that intersect, so `0.0 >= 0.0` passes and a zero gap forbids nothing. |
+| `void.overlap_volume.voxel_size` required when `crossing: allowed` | The overlap is measured on a voxel grid; its resolution is a cost-and-accuracy trade the caller must own, so there is no default. |
+| `overlap_volume` refused when `crossing: forbidden` | It would never be read, and a field that is silently ignored is a field that is silently wrong. |
+| `position.mode: void_neighbourhood` needs a `void` and a `band` | There is nothing to sample around otherwise. |
+| `position.band` refused with `feasible_uniform` | Same reason as `overlap_volume` above. |
+| `target.basis: solid` needs a `void` | "Solid" means the domain minus the void. Without one the two bases coincide, and `domain` says so honestly. |
+| `boundary.mode: periodic` refused with a `void` | A wrapped particle image would have to be checked against a wrapped image of a frozen void, and what the void means outside the domain is not established. |
+| `size.distribution` parameters must match `kind` | `median` under `kind: histogram` is a config the author did not mean; it is named rather than ignored. |
+| domain extent positive and finite on every axis | Written as `!extent.is_finite() || extent <= 0.0` rather than `max <= min`, so a NaN bound is refused too: every comparison against NaN is false. |
+| `target.volume_fraction` strictly inside `(0, 1)` | 0 and 1 are not packings. |
+
+`size.distribution` is a plain struct with a `kind` field rather than an internally tagged enum.
+Serde buffers an internally tagged enum through a map, and `deny_unknown_fields` does not fire on
+that path -- `{kind: lognormal, mediann: 12}` would be accepted with `median` simply missing.
+
+### Fields
+
+| Field | Type | Required | Default | Meaning |
+|---|---|---|---|---|
+| `seed` | `u64` | yes | — | Seeds the whole run. Overridable with `--seed`. |
+| `frame.unit` | `String` | yes | — | A label. Nothing scales by it; it is copied into every output so a reader knows what the numbers mean. |
+| `domain.min` / `.max` | `[f64; 3]` | yes | — | The packing box, as explicit corners. |
+| `shapes.files` | `[String]` | yes | — | One or more STLs; each is split into closed shells in first-face order. List order fixes the source index. |
+| `shapes.selection` | enum | no | `uniform` | Uniform over every shell of every file. |
+| `shapes.filters.max_aspect_ratio` | `f64` | no | none | Longest bbox extent over shortest. Scale-invariant, so it is applied once to the library. |
+| `shapes.filters.max_sharpness_ratio` | `f64` | no | none | `Area^3 / (36 pi Volume^2)`; 1.0 for a sphere. Also scale-invariant. |
+| `void.file` | `String` | with `void` | — | The frozen void STL. Never filled, moved or cleaned. |
+| `void.crossing` | `forbidden` \| `allowed` | no | `forbidden` | Whether a particle may intersect the void. |
+| `void.gap` | `f64` | with `void` | — | `g_pv`, the clearance every particle keeps from the void surface. |
+| `void.overlap_volume.voxel_size` | `f64` | with `allowed` | — | Resolution of the per-particle void-overlap measurement. |
+| `size.distribution.kind` | `lognormal` \| `histogram` | yes | — | Which target number distribution. |
+| `size.distribution.{median,sigma_log,min,max}` | `f64` | with `lognormal` | — | Truncated lognormal in diameter. |
+| `size.distribution.csv` | `String` | with `histogram` | — | A `bin,right,frequency` CSV, the same format the legacy engine reads. |
+| `size.classes` | struct | no | 10 equal-width bands (lognormal); the histogram's own bins | Reporting classes for target-against-actual. |
+| `size.on_unattainable` | `skip_reported` \| `stop` | no | `skip_reported` | What to do when a drawn size cannot be placed. Either way the run ends `distribution_unattainable`; neither draws a replacement. |
+| `size.placement_order` | `descending` \| `drawn` | no | `descending` | Large particles are the ones that stop fitting, so they go first. |
+| `orientation.mode` | `uniform_so3` \| `fixed` | no | `uniform_so3` | Shoemake's uniform unit quaternion, Haar-uniform on SO(3). |
+| `position.mode` | `feasible_uniform` \| `void_neighbourhood` | no | `feasible_uniform` | The second is a deliberate construction and is never reported as random. |
+| `position.band` | `[f64; 2]` | with `void_neighbourhood` | — | Distance band from the void surface. |
+| `boundary.mode` | `strict` \| `clip` \| `periodic` | no | `strict` | Whether a particle may straddle the domain boundary. |
+| `boundary.min_boundary_dist` | `f64` | no | `0.0` | Clearance from the domain wall. |
+| `boundary.min_cross_boundary_depth` | `f64` | no | `0.0` | Minimum retained depth for a straddling particle (`clip` mode). |
+| `gaps.particle_particle` | `f64` | no | `0.0` | `g_pp`, the clearance between placed particles. |
+| `target.volume_fraction` | `f64` | yes | — | Strictly between 0 and 1. |
+| `target.basis` | `domain` \| `solid` | no | `solid` with a void, else `domain` | What the fraction is of. |
+| `target.tolerance` | `f64` | no | `0.01` | Relative tolerance deciding whether the target was reached. Explicit, so no invisible epsilon decides the stop reason. |
+| `budget.attempts_per_particle` | `usize` | no | `2000` | |
+| `budget.total_attempts` | `usize` | no | `2000000` | |
+| `budget.wall_time_s` | `f64` | no | none | |
+| `budget.max_top_up_batches` | `usize` | no | `5` | |
+| `threads` | `i32` | no | `-1` | `-1` uses every available core. Overridable with `--threads`. |
+| `outputs.dir` | `String` | yes | — | Every other output name is a file inside it. |
+| `outputs.particles_stl` | `String` | no | `particles.stl` | |
+| `outputs.record` | `String` | no | `particles.json` | |
+| `outputs.report` | `String` | no | `run_report.json` | |
+| `outputs.size_csv` | `String` | no | `size_distribution.csv` | |
+| `outputs.copy_void` | `bool` | no | `true` | Copies the void verbatim beside the output. |
+| `outputs.per_particle_stl` | `bool` | no | `false` | |
+| `outputs.voxel_labels.voxel_size` | `f64` | no | none | Writes the three-phase label stacks when set. |
+
 ## `scale.rs`
 
 ### `ScalingParams`

@@ -348,6 +348,7 @@ fn split_filter_pipeline_smoke() {
                     over_factor: None,
                 }),
             }),
+            seed: None,
         },
     };
 

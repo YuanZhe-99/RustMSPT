@@ -6,6 +6,18 @@
 
 | 条目 | 模块 | 源码位置 | 概述 |
 |---|---|---|---|
+| `PlacementParams` | Config | `src/config/placement.rs:22` | YAML 中书写的 `placement:` 块，尚未校验。 |
+| `PlacementParams::validate` | Config | `src/config/placement.rs:584` | 施加所有跨字段规则并解析所有路径，得到 `ResolvedPlacement`。 |
+| `ResolvedPlacement` | Config | `src/config/placement.rs:386` | 已校验的放置块：路径已解析，且不再留有可选项。 |
+| `PackDocument` | Config | `src/config/placement.rs:469` | `pack` 配置选中的引擎：`Placement` 或 `Legacy`。 |
+| `load_pack_document` | Config | `src/config/placement.rs:498` | 两遍解析的探针，判定配置选中的打包引擎。 |
+| `resolve_against` | Config | `src/config/placement.rs:531` | 把配置中书写的路径按词法拼接到配置所在目录上。 |
+| `config_dir` | Config | `src/config/placement.rs:547` | 配置中相对路径所依据的目录；没有父目录时为 `.`。 |
+| `require_positive` | Config | `src/config/placement.rs:555` | 按字段名拒绝非有限或非正的数值。 |
+| `require_non_negative` | Config | `src/config/placement.rs:565` | 按字段名拒绝非有限或为负的数值。 |
+| `missing` (placement.rs) | Config | `src/config/placement.rs:902` | 为某个 kind 必需却缺失的分布参数构造错误。 |
+| `default_threads` | Config | `src/config/placement.rs:47` | 线程设置的默认值 `-1`，表示使用全部可用核心。 |
+| `default_vf_tolerance` | Config | `src/config/placement.rs:279` | 目标体积分数的默认相对容差。 |
 | `load_yaml` | Config | `src/config/mod.rs:47` | 读取一个文件并将其作为 YAML 反序列化为类型化的配置结构体。 |
 | `parse_box_dimensions` | Config | `src/config/mod.rs:58` | 将一个 3 或 6 元素的尺寸切片转换为 `BoundingBox`。 |
 | `parse_usize_like` | Config | `src/config/deserialize.rs:4` | 从字符串解析 `usize`，去除下划线分隔符。 |
@@ -20,6 +32,7 @@
 | `AccelerationConfig::default` | Config | `src/config/acceleration.rs:38` | 与 serde 默认值相匹配的 Rust 层 `Default` 实现。 |
 | `RustMsptError` | Core & Compute | `src/error.rs:4` | 覆盖 I/O、YAML、TIFF、配置、网格和 GPU 失败情形的全局错误枚举。 |
 | `Result` | Core & Compute | `src/error.rs:27` | 在整个 crate 中使用的类型别名 `Result<T> = std::result::Result<T, RustMsptError>`。 |
+| `cli_path_as_config_relative` | Core & Compute | `src/main.rs:157` | 改写命令行路径，使配置相对解析仍保持其原意。 |
 | `BuildIdentity` | Core & Compute | `src/version.rs:18` | 该二进制的身份：版本、git 提交、工作树是否有改动、启用的特性、构建平台。 |
 | `build_identity` | Core & Compute | `src/version.rs:36` | 返回编译期写入的构建身份；工具身份的唯一来源。 |
 | `BuildIdentity::version_detail` | Core & Compute | `src/version.rs:64` | 不含程序名的单行身份，供 clap 的 `--version` 使用。 |
@@ -203,6 +216,7 @@
 | `save_tiff_or_folder_with_ext` | I/O | `src/io/volume.rs:524` | 将 `Volume3D` 保存为一个多页 TIFF 文件或一个逐切片 TIFF 文件夹，并可配置扩展名。 |
 | `save_tiff_or_folder` | I/O | `src/io/volume.rs:586` | 使用默认的 `.tiff` 扩展名，将 `Volume3D` 保存为 TIFF 文件或切片序列文件夹。 |
 | `Pipeline::run`（trait） | Pipeline — Core | `src/pipeline/mod.rs:17` | 每个流水线结构体实现的 trait 方法，用于端到端执行。 |
+| `PlacementPipeline` | Pipeline — Core | `src/pipeline/placement.rs:10` | 持有已校验 `ResolvedPlacement` 的流水线结构体。 |
 | `seeded_rng` | Pipeline — Core | `src/pipeline/rng.rs:13` | 构建带种子运行所使用的 ChaCha12 随机流。 |
 | `u01` | Pipeline — Core | `src/pipeline/rng.rs:32` | 唯一的均匀分布原语：一次抽取，落在 `[0, 1)`。 |
 | `uniform_range` | Pipeline — Core | `src/pipeline/rng.rs:45` | 在 `[lo, hi)` 上抽取一个均匀值；退化区间返回 `lo`。 |

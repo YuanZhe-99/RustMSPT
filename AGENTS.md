@@ -134,6 +134,8 @@ cargo run --release -- <subcommand> [--config <path>] [--input <path>] [--output
 
 Available subcommands: `split-filter`, `pack`, `optimize`, `measure`, `forge`, `scale`, `crop`, `render`, `mesh-render`, `mesh-verify`, `mesh`, `version`
 
+`pack` selects an engine from the config it is given: a top-level `placement:` block runs the seeded, recorded, void-aware engine; a `packing:` block runs the original one, unchanged. Exactly one must be present. `--seed` and `--threads` apply to the placement engine only, and passing either with a `packing:` config is an error rather than a silent no-op -- ignoring a determinism flag would report a run as reproducible when it is not.
+
 `rustmspt --version` and `rustmspt version [--json]` report the same build identity: package version, git commit, whether the worktree was dirty when `build.rs` last ran, the enabled cargo features, and the build target/host/profile. Undetermined values are `null`, never a fabricated default -- a checkout without git still builds and still answers.
 
 ## 5. Testing
@@ -203,7 +205,8 @@ src/
     forging.rs         ForgingConfig, ForgingParams
     measurement.rs     MeasurementConfig, MeasurementParams
     optimization.rs    OptimizationConfig, OptimizationParams, TargetConfig
-    packing.rs         PackingConfig, PackingParams, PackingFilters
+    packing.rs         PackingConfig, PackingParams, PackingFilters (the original engine)
+    placement.rs       The placement: block, its validation and path resolution, and the two-pass probe that decides which pack engine a config selects
     render.rs          RenderConfig and camera/image parameters
     mesh_render.rs     MeshRenderConfig: views, filters, coloring, opacities for mesh-render
     mesh_verify.rs     MeshVerifyConfig, MeshVerifyParams, VerifyGateParams for mesh-verify
@@ -283,14 +286,18 @@ src/
     optimize.rs        OptimizePipeline: simulated annealing with island model
     pack.rs            PackPipeline: sequential particle placement with optional target diameter distribution and mean-sphericity steering
     pack_targets.rs    Packing target CSV parser, diameter-bin debt controller, sphericity scoring, and distribution summaries
+    placement.rs       PlacementPipeline: the seeded, recorded, void-aware packing engine (placement: block)
     render.rs          RenderPipeline: STL viewpoint rendering to PNG
     rng.rs             Seeded ChaCha12 stream (seeded_rng) and the single uniform primitive (u01) every sampler builds on
     rotation.rs        Shared: RotationMode, parse_rotation_mode, sample_rotation_axis (the legacy axis-and-angle sampler, not uniform on SO(3))
     scale.rs           ScalePipeline: unit conversion / factor scaling
-    split_filter.rs    SplitFilterPipeline: connected-component split + geometric filtering
+    split_filter.rs    SplitFilterPipeline: connected-component split + geometric filtering (optional seed makes the lognormal rebalance reproducible)
 
 tests/
   core_tests.rs        Unit tests for geometry kernels
+  version_tests.rs     Build identity: version, commit, dirtiness, features, JSON shape
+  placement_primitives_tests.rs  Seeded stream, uniform-on-SO(3) sampler, volume centroid, exact in-box volume
+  placement_config_tests.rs      placement: parsing, every refusal, config-relative path resolution, engine selection
   io_tests.rs          I/O roundtrip tests (STL, TIFF, RAW)
   pack_target_tests.rs Packing target CSV, diameter-bin controller, and sphericity scoring tests
   pipeline_smoke_tests.rs  Integration tests for the pre-render pipelines with synthetic data
@@ -400,6 +407,7 @@ When inspecting code:
 - The `acceleration` config field uses `#[serde(default)]` so existing YAML configs without it continue to work. Tests constructing config structs manually must include `acceleration: Default::default()`.
 - `Volume3D` uses z-major indexing: `idx = z * width * height + y * width + x`. GPU shaders must match this layout, not x-major.
 - Equivalent-volume diameter and sphericity require a closed mesh with positive finite volume and surface area; malformed/open candidates are skipped when target controls are active.
+- **The placement engine's path contract has two halves, and both are load-bearing.** Relative paths *in a config* resolve against that config file's directory; relative paths *on the command line* resolve against the working directory, as shell arguments do. `--input`/`--output` are made absolute before substitution so both hold at once. A placement config reached through the legacy working-directory default (`data/input/pack_config.yaml`, when `--config` is omitted) is refused outright rather than honoured.
 - **`box_mesh` emits inward-facing triangles.** A unit cube from it has signed volume **-1**, not +1. Real STL data is outward: every shell of `data/input/particles.stl` measures positive, and so does `icosphere_mesh`. `mesh_volume` takes the absolute value, which is why this has never mattered; anything orientation-sensitive (`mesh_volume_in_bbox_exact`, `shell_signed_volumes`, any future boolean) must flip a box fixture first. Pinned by `tests/placement_primitives_tests.rs::box_mesh_is_inward_oriented_and_the_other_fixtures_are_not`.
 - **`mesh_volume` returns `total.abs()`** (`src/geometry/volume.rs:14`), so a multi-shell mesh whose shells disagree about orientation reports `|V1 - V2|` rather than `V1 + V2`. Never call it on a void made of several pores; use `shell_signed_volumes` and check the signs agree.
 - **`mesh_centroid` is the mean of the vertices, not the centre of mass.** It therefore moves when a region is tessellated more finely. `rotate_mesh_around_center` and `move_mesh_to_target_center` both pivot on it. The placement record's `shell_centroid` and `translation` are `mesh_volume_centroid` instead, and the two visibly disagree on any unevenly tessellated mesh.
@@ -407,7 +415,7 @@ When inspecting code:
 - **`nalgebra` stores quaternions `[i, j, k, w]`; the placement record publishes `[w, x, y, z]`.** Reading one as the other yields a plausible, wrong orientation rather than an error. `UnitQuat` is scalar-first, and a test builds the same numbers through `nalgebra` to prove the orders agree.
 - **`save_stl` refuses an empty mesh** (`src/io/stl.rs:259`), so a run that placed nothing must not call it; it writes its report and exits zero instead.
 - Packing diameter frequencies are count frequencies over successfully placed full components, not volume-weighted frequencies. Failed placement attempts must never update bin or sphericity state.
-- Tests constructing `PackingParams` directly must include `target_diameter_distribution_csv`, `target_mean_sphericity`, and `mean_sphericity_tolerance`.
+- Tests constructing `PackingParams` directly must include `target_diameter_distribution_csv`, `target_mean_sphericity`, and `mean_sphericity_tolerance`; tests constructing `SplitFilterConfig` must include `seed`. None of these config structs uses `#[serde(default)]` on those fields, so YAML omits them freely but a Rust struct literal cannot. The `placement:` structs are the exception on the YAML side too: every one of them sets `deny_unknown_fields`, so a misspelled key there is refused rather than defaulted.
 - `RenderedImage.rgba` is top-row-first RGBA8 and must contain exactly `width * height * 4` bytes.
 - wgpu texture readback rows must be padded to `COPY_BYTES_PER_ROW_ALIGNMENT` (256 bytes) and unpadded before PNG encoding.
 - CPU/GPU render tests must use tolerance at triangle edges; parry3d uses f64 QBVH ray casting while wgpu rasterization uses f32.

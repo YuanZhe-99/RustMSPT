@@ -8,6 +8,7 @@ pub mod mesh_verify;
 pub mod meshgen;
 pub mod optimization;
 pub mod packing;
+pub mod placement;
 pub mod render;
 pub mod scale;
 pub mod split_filter;
@@ -87,6 +88,10 @@ pub use meshgen::{
 };
 pub use optimization::{OptimizationConfig, OptimizationParams, TargetConfig};
 pub use packing::{PackingConfig, PackingFilters, PackingParams};
+pub use placement::{
+    config_dir, load_pack_document, resolve_against, BoundaryMode, PackDocument,
+    PlacementParams, ResolvedPlacement, TargetBasis, VoidCrossing,
+};
 pub use render::{RenderConfig, RenderParams};
 pub use scale::{ScaleConfig, ScalingParams};
 pub use split_filter::{SplitFilterConfig, SplitFilterOutput, SplitFilterRules, SplitFilterVolume};

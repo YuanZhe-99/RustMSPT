@@ -4,6 +4,18 @@ Master index of every documented function, struct, enum, and constant across `sr
 
 | Item | Module | Source | Summary |
 |---|---|---|---|
+| `PlacementParams` | Config | `src/config/placement.rs:22` | The `placement:` block as written in YAML, before validation. |
+| `PlacementParams::validate` | Config | `src/config/placement.rs:584` | Applies every cross-field rule and resolves every path into a `ResolvedPlacement`. |
+| `ResolvedPlacement` | Config | `src/config/placement.rs:386` | A checked placement block with paths resolved and nothing left optional. |
+| `PackDocument` | Config | `src/config/placement.rs:469` | Which engine a `pack` config selected: `Placement` or `Legacy`. |
+| `load_pack_document` | Config | `src/config/placement.rs:498` | Two-pass probe deciding which packing engine a config selects. |
+| `resolve_against` | Config | `src/config/placement.rs:531` | Lexically joins a config-written path onto the config's directory. |
+| `config_dir` | Config | `src/config/placement.rs:547` | The directory a config's relative paths resolve against; `.` when it has none. |
+| `require_positive` | Config | `src/config/placement.rs:555` | Refuses a non-finite or non-positive value by field name. |
+| `require_non_negative` | Config | `src/config/placement.rs:565` | Refuses a non-finite or negative value by field name. |
+| `missing` (placement.rs) | Config | `src/config/placement.rs:902` | Builds the error for a distribution parameter a kind requires. |
+| `default_threads` | Config | `src/config/placement.rs:47` | Default thread setting, `-1` meaning every available core. |
+| `default_vf_tolerance` | Config | `src/config/placement.rs:279` | Default relative tolerance on the target volume fraction. |
 | `load_yaml` | Config | `src/config/mod.rs:47` | Reads a file and deserializes it as YAML into a typed config struct. |
 | `parse_box_dimensions` | Config | `src/config/mod.rs:58` | Converts a 3- or 6-element dimensions slice into a `BoundingBox`. |
 | `parse_usize_like` | Config | `src/config/deserialize.rs:4` | Parses a `usize` from a string, stripping underscore separators. |
@@ -18,6 +30,7 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `AccelerationConfig::default` | Config | `src/config/acceleration.rs:38` | Rust-level `Default` impl matching the serde defaults. |
 | `RustMsptError` | Core & Compute | `src/error.rs:4` | Crate-wide error enum including image encoding failures. |
 | `Result` | Core & Compute | `src/error.rs:27` | Type alias `Result<T> = std::result::Result<T, RustMsptError>` used throughout the crate. |
+| `cli_path_as_config_relative` | Core & Compute | `src/main.rs:157` | Re-expresses a command-line path so config-relative resolution keeps its meaning. |
 | `BuildIdentity` | Core & Compute | `src/version.rs:18` | What this binary is: version, git commit, worktree dirtiness, features, build platform. |
 | `build_identity` | Core & Compute | `src/version.rs:36` | Returns the compiled-in build identity; the single source of truth for tool identity. |
 | `BuildIdentity::version_detail` | Core & Compute | `src/version.rs:64` | Identity as one line without the program name, for clap's `--version`. |
@@ -198,6 +211,7 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `save_tiff_or_folder_with_ext` | I/O | `src/io/volume.rs:524` | Saves a `Volume3D` as a multi-page TIFF file or a folder of per-slice TIFF files, with configurable extension. |
 | `save_tiff_or_folder` | I/O | `src/io/volume.rs:586` | Saves a `Volume3D` to TIFF file or folder sequence with the default `.tiff` extension. |
 | `Pipeline::run` (trait) | Pipeline — Core | `src/pipeline/mod.rs:17` | Trait method every pipeline struct implements to execute end-to-end. |
+| `PlacementPipeline` | Pipeline — Core | `src/pipeline/placement.rs:10` | Pipeline struct holding a validated `ResolvedPlacement`. |
 | `seeded_rng` | Pipeline — Core | `src/pipeline/rng.rs:13` | Builds the ChaCha12 stream a seeded run draws every variate from. |
 | `u01` | Pipeline — Core | `src/pipeline/rng.rs:32` | The single uniform primitive: one draw in `[0, 1)`. |
 | `uniform_range` | Pipeline — Core | `src/pipeline/rng.rs:45` | One uniform in `[lo, hi)`; degenerate ranges yield `lo`. |

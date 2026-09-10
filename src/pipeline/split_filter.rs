@@ -222,7 +222,12 @@ fn erf_approx(x: f64) -> f64 {
 // Inputs: mutable keep flags, volume array, and SplitFilterVolume config with bins/over_factor.
 // Returns: None (mutates keep to mark excess particles as false).
 // Side effects: Mutates keep array; uses RNG for shuffling within over-represented bins.
-fn apply_lognormal_rebalance(keep: &mut [bool], volumes: &[f64], cfg: &SplitFilterVolume) {
+fn apply_lognormal_rebalance(
+    keep: &mut [bool],
+    volumes: &[f64],
+    cfg: &SplitFilterVolume,
+    seed: Option<u64>,
+) {
     let candidates: Vec<usize> = keep
         .iter()
         .enumerate()
@@ -269,7 +274,12 @@ fn apply_lognormal_rebalance(keep: &mut [bool], volumes: &[f64], cfg: &SplitFilt
     }
 
     let total = candidates.len() as f64;
-    let mut rng = rand::thread_rng();
+    // Absent seed keeps the original unseeded generator, so an existing config
+    // behaves exactly as it did; a seed makes the kept set reproducible.
+    let mut rng: Box<dyn rand::RngCore> = match seed {
+        Some(seed) => Box::new(crate::pipeline::rng::seeded_rng(seed)),
+        None => Box::new(rand::thread_rng()),
+    };
 
     for b in 0..bins {
         let Some(indices) = by_bin.get_mut(&b) else {
@@ -439,7 +449,7 @@ impl Pipeline for SplitFilterPipeline {
                             after,
                         );
                     } else if mode == "lognormal_rebalance" {
-                        apply_lognormal_rebalance(&mut keep, &volumes, vol_cfg);
+                        apply_lognormal_rebalance(&mut keep, &volumes, vol_cfg, self.config.seed);
                         let after = count_kept(&keep);
                         report_step(
                             &mut report_lines,

@@ -7,6 +7,7 @@ pub mod meshgen;
 pub mod optimize;
 pub mod pack;
 pub mod pack_targets;
+pub mod placement;
 pub mod render;
 pub mod rng;
 pub mod rotation;
