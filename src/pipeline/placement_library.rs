@@ -1,12 +1,12 @@
 use crate::config::placement::ShapeFilters;
 use crate::error::{Result, RustMsptError};
 use crate::geometry::{
-    mesh_bbox, mesh_closedness, mesh_metrics, mesh_surface_area, mesh_volume_centroid,
-    mesh_signed_volume, split_mesh_into_granules, translate_mesh,
+    mesh_bbox, mesh_closedness, mesh_metrics, mesh_signed_volume, mesh_volume_centroid,
+    split_mesh_into_granules, translate_mesh,
 };
 use crate::io::{load_stl, sha256_bytes, sha256_file};
 use crate::types::{BoundingBox, Mesh, Vec3};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// One candidate shape: a closed shell from a source file, measured and centred.
 #[derive(Debug, Clone)]
@@ -286,21 +286,5 @@ fn shell_geometry_sha256(shell: &Mesh) -> String {
     sha256_bytes(&bytes)
 }
 
-// AI-FUNC-SUMMARY: Report the surface area of a shell, for callers that already hold one; returns f64; side effects: none.
-pub fn shell_surface_area(shell: &Mesh) -> f64 {
-    mesh_surface_area(shell)
-}
 
-// AI-FUNC-SUMMARY: Resolve a source file's display path for messages; returns the path as written; side effects: none.
-pub fn source_label(library: &ShapeLibrary, source_index: usize) -> &str {
-    library
-        .sources
-        .get(source_index)
-        .map(|s| s.path_as_written.as_str())
-        .unwrap_or("<unknown source>")
-}
 
-// AI-FUNC-SUMMARY: True when the path names a file the loader can open; returns bool; side effects: touches the filesystem.
-pub fn is_readable(path: &Path) -> bool {
-    path.is_file()
-}
