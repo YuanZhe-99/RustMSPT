@@ -44,6 +44,9 @@ rustmspt 0.2.0 (git 77642fd, dirty; features: default)
 
 `--version` 与 `version` 打印完全相同的文本：两者都是 `build_identity().version_line()`。
 
+上面的提交号与 dirty 标志来自产出这段记录的那一次具体构建。你自己的构建会报告它自己的值——这正是该
+子命令的意义所在；不要把这两个值当作常量来读。
+
 ## 各字段的含义，以及它们不主张什么
 
 | 字段 | 含义 |

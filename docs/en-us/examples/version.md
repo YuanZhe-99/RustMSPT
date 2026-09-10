@@ -46,6 +46,10 @@ rustmspt 0.2.0 (git 77642fd, dirty; features: default)
 
 `--version` and `version` print identical text: both are `build_identity().version_line()`.
 
+The commit and the dirty flag above are from the particular build that produced this capture. Your
+own build will report its own, which is the whole point of the subcommand; do not read these two
+values as constants.
+
 ## What the fields mean, and what they do not claim
 
 | Field | Meaning |
