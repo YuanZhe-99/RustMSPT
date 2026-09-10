@@ -1,0 +1,60 @@
+# Seeded, recorded placement into an empty domain.
+#
+# A `pack` config carries exactly one of `placement:` or `packing:`, and which
+# one decides the engine. This selects the seeded, recorded, void-aware engine.
+# For the original packing loop see pack_config.yaml, which is unchanged.
+#
+# Every relative path below resolves against the directory holding THIS file
+# (data/input/), never against the working directory.
+placement:
+  # Required. The same seed, inputs and binary give the same placement, on any
+  # thread count. Overridable with --seed.
+  seed: 20260910
+
+  # A label, copied into every output. Nothing scales by it.
+  frame:
+    unit: "um"
+
+  domain:
+    min: [0, 0, 0]
+    max: [100, 100, 100]
+
+  shapes:
+    # Each file is split into closed shells in first-face order. List order
+    # fixes the source index, so (source, shell) is a reproducible address.
+    files: ["particles.stl"]
+    # Scale-invariant, so they are applied once to the library rather than to
+    # every rescaled candidate.
+    filters:
+      max_aspect_ratio: 3.0
+
+  size:
+    # A truncated lognormal in diameter. The alternative is
+    # { kind: histogram, csv: "..." }, which reads the same CSV format the
+    # original engine uses.
+    distribution:
+      kind: lognormal
+      median: 12.0
+      sigma_log: 0.35
+      min: 6.0
+      max: 24.0
+    # Reporting classes for the target-against-actual table.
+    classes: { kind: equal_width, count: 6 }
+
+  # Shoemake's uniform unit quaternion: Haar-uniform on SO(3). The original
+  # engine's rotation_mode: any is an axis-and-angle sampler and is not.
+  orientation: { mode: uniform_so3 }
+
+  # Clearance between placed particles.
+  gaps: { particle_particle: 1.0 }
+
+  target:
+    volume_fraction: 0.10
+    # basis defaults to `domain` without a void, `solid` with one.
+
+  budget:
+    attempts_per_particle: 3000
+    total_attempts: 2000000
+
+  outputs:
+    dir: "../output/placement"

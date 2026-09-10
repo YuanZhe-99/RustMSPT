@@ -40,11 +40,11 @@ Documentation lives in three tiers, each answering a different question:
 
 | Tier | Location | Answers |
 |---|---|---|
-| Conceptual / design | `docs/en-us/algorithms/*.md` (7 files) | *Why* does this algorithm exist and *how* does it work, end to end? |
-| Function-level contract | `docs/en-us/reference/*.md` (11 files + `function-index.md`) | What exactly does *this function* take, return, and mutate? |
+| Conceptual / design | `docs/en-us/algorithms/*.md` (9 files) | *Why* does this algorithm exist and *how* does it work, end to end? |
+| Function-level contract | `docs/en-us/reference/*.md` (15 files + `function-index.md`) | What exactly does *this function* take, return, and mutate? |
 | Implementation | `src/*.rs`, with inline `// AI-FUNC-SUMMARY` comments above almost every function | What does the code actually do, line by line? |
 
-**Master lookup table:** [`docs/en-us/reference/function-index.md`](docs/en-us/reference/function-index.md) lists every documented function, struct, enum, and constant (422 rows) with its source location and a one-line summary, compiled from the `## Index` table at the top of each reference doc. If you know a function's name but not which file documents it, search this file first.
+**Master lookup table:** [`docs/en-us/reference/function-index.md`](docs/en-us/reference/function-index.md) lists every documented function, struct, enum, and constant (697 rows) with its source location and a one-line summary, compiled from the `## Index` table at the top of each reference doc. If you know a function's name but not which file documents it, search this file first.
 
 **Topic → doc mapping.** If you don't know the function name either, start from what you're trying to understand:
 
@@ -66,6 +66,8 @@ Documentation lives in three tiers, each answering a different question:
 | Mesh generation geometry/topology (S2 registry/CDT/overlay, lattice, cut, band k-templates; later labels) | `SPEC_meshgen_geometry.md` — **normative frozen spec**, read before touching `src/meshgen/`; it supersedes `PLAN_mesh_generation.md` prose where they differ | `reference/meshgen.md` for implemented G2-1..G2-3 |
 | Mesh generation numerics (exact predicates, C1/C2 DD escalation, later GPU certificates) | `SPEC_meshgen_numerics.md` — **normative frozen spec**, companion to the geometry spec; lists the predicate and arithmetic class of every decision site | `reference/meshgen.md`, `reference/mesh-verify.md` |
 | Mesh generation data contracts (VTU schema v1, snapshot naming, verifier check catalog + JSON schema, accuracy gates) | `SPEC_meshgen_contracts.md` — **normative frozen spec**; fixture VTUs at `data/fixtures/meshgen/` (regenerate with `uv run data/fixtures/meshgen/generate_fixtures.py data/fixtures/meshgen`) | `reference/mesh-render-and-vtu.md` |
+| Seeded, recorded, void-aware placement (`pack` with a `placement:` block) | `algorithms/void-aware-placement.md` | `reference/pipeline-placement.md`, `reference/config.md` (`placement.rs`) |
+| Build identity (`version`, `--version`, the `tool` block in placement outputs) | — | `reference/core-and-compute.md` |
 | Config / YAML deserialization | — | `reference/config.md` |
 | STL / TIFF / RAW I/O | — | `reference/io.md` |
 | CLI entry point, core types, compute backend selection | — | `reference/core-and-compute.md` |
@@ -339,7 +341,7 @@ docs/
   TRANSLATION_GUIDE.md  EN->ZH terminology glossary and translation conventions
   en-us/
     README.md           English docs landing page
-    reference/           Per-module function/struct reference (11 files) + function-index.md
+    reference/           Per-module function/struct reference (15 files) + function-index.md
     algorithms/           Conceptual algorithm docs (S2, SA/island model, FFD, packing targets, PCA crop, spatial grid, mesh clipping)
     examples/              One walkthrough per CLI subcommand, plus a dedicated packing-target-distribution walkthrough
   zh-cn/                Chinese mirror of en-us/, structurally identical (see TRANSLATION_GUIDE.md)

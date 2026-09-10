@@ -25,6 +25,7 @@ RustMSPT（Rust Microstructure Processing Toolbox，Rust 微结构处理工具�
 | [io.md](reference/io.md) | `io/{image,stl,volume}.rs` |
 | [pipeline-core.md](reference/pipeline-core.md) | `pipeline/{mod,rotation,scale,forge,measure,render}.rs` |
 | [pipeline-crop-and-splitfilter.md](reference/pipeline-crop-and-splitfilter.md) | `pipeline/{crop,split_filter}.rs` |
+| [pipeline-placement.md](reference/pipeline-placement.md) | `pipeline/placement*.rs`、`geometry/void_index.rs` —— 带种子、可复原、感知孔隙的引擎 |
 | [pipeline-packing.md](reference/pipeline-packing.md) | `pipeline/{pack,pack_targets}.rs` |
 | [mesh-render-and-vtu.md](reference/mesh-render-and-vtu.md) | `io/vtu.rs`、`meshgen/render_scene.rs`、`geometry/scene_render.rs`、`pipeline/mesh_render.rs`、`config/mesh_render.rs` |
 | [mesh-verify.md](reference/mesh-verify.md) | `meshgen/{predicates,verify}.rs`、`pipeline/mesh_verify.rs`、`config/mesh_verify.rs` |
@@ -43,6 +44,7 @@ RustMSPT（Rust Microstructure Processing Toolbox，Rust 微结构处理工具�
 | [packing-target-diameter-distribution.md](algorithms/packing-target-diameter-distribution.md) | `pack` 流水线的目标粒径直方图分箱分配与球形度导向控制（最新功能） |
 | [pca-volume-alignment-crop.md](algorithms/pca-volume-alignment-crop.md) | `crop` 流水线基于 PCA 的取向估计与旋转/裁剪 |
 | [spatial-grid-collision.md](algorithms/spatial-grid-collision.md) | 邻域查询加速以及精确/周期性碰撞检测 |
+| [void-aware-placement.md](algorithms/void-aware-placement.md) | 确定性、尺寸集合、孔隙判据及其完备性、停止原因的优先级 |
 | [mesh-clipping-volume-fraction.md](algorithms/mesh-clipping-volume-fraction.md) | Sutherland-Hodgman 网格裁剪与体积分数统计 |
 | [stl-rendering.md](algorithms/stl-rendering.md) | 共享相机取景、CPU 光线投射与 GPU 离屏光栅化 |
 
@@ -59,6 +61,9 @@ RustMSPT（Rust Microstructure Processing Toolbox，Rust 微结构处理工具�
 | [split-filter.md](examples/split-filter.md) | `split-filter` |
 | [optimize.md](examples/optimize.md) | `optimize` |
 | [pack.md](examples/pack.md) | `pack`（普通体积分数堆积） |
+| [pack-placement.md](examples/pack-placement.md) | 带 `placement:` 块的 `pack` —— 带种子、可复原的放置 |
+| [pack-void.md](examples/pack-void.md) | 围绕冻结孔隙的 `pack` |
+| [version.md](examples/version.md) | `version` —— 这个二进制是什么 |
 | [pack-target-distribution.md](examples/pack-target-distribution.md) | `pack`（带目标粒径分布导向） |
 | [render.md](examples/render.md) | `render` |
 | [mesh-render.md](examples/mesh-render.md) | `mesh-render`（VTU 体网格渲染器） |

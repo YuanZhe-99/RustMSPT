@@ -1,6 +1,6 @@
 # RustMSPT Documentation (English)
 
-RustMSPT (Rust Microstructure Processing Toolbox) is a Rust toolkit for STL/CT-volume microstructure processing, providing eight pipelines — `split-filter`, `pack`, `optimize`, `measure`, `forge`, `scale`, `crop`, `render` — built on shared geometry, I/O, and (optionally GPU-accelerated) compute-kernel modules.
+RustMSPT (Rust Microstructure Processing Toolbox) is a Rust toolkit for STL/CT-volume microstructure processing, providing pipelines for `split-filter`, `pack`, `optimize`, `measure`, `forge`, `scale`, `crop`, `render`, `mesh-render`, `mesh-verify` and `mesh`, plus a `version` subcommand, built on shared geometry, I/O, and (optionally GPU-accelerated) compute-kernel modules.
 
 This directory documents the codebase at the function level, explains its core algorithms conceptually, and walks through each pipeline with real, captured example output. It complements, and is built from the same source as, the `// AI-FUNC-SUMMARY` comments that already annotate almost every function in `src/` — see [AGENTS.md](../../AGENTS.md) for that convention and the "Function Reading Policy" it defines.
 
@@ -25,7 +25,8 @@ Mirrors the `src/` module layout. Each document opens with an `## Index` table (
 | [io.md](reference/io.md) | `io/{image,stl,volume}.rs` |
 | [pipeline-core.md](reference/pipeline-core.md) | `pipeline/{mod,rotation,scale,forge,measure,render}.rs` |
 | [pipeline-crop-and-splitfilter.md](reference/pipeline-crop-and-splitfilter.md) | `pipeline/{crop,split_filter}.rs` |
-| [pipeline-packing.md](reference/pipeline-packing.md) | `pipeline/{pack,pack_targets}.rs` |
+| [pipeline-packing.md](reference/pipeline-packing.md) | `pipeline/{pack,pack_targets}.rs` — the original packing engine |
+| [pipeline-placement.md](reference/pipeline-placement.md) | `pipeline/placement*.rs`, `geometry/void_index.rs` — the seeded, recorded, void-aware engine |
 | [pipeline-optimize.md](reference/pipeline-optimize.md) | `pipeline/optimize.rs` |
 | [mesh-render-and-vtu.md](reference/mesh-render-and-vtu.md) | `io/vtu.rs`, `meshgen/render_scene.rs`, `geometry/scene_render.rs`, `pipeline/mesh_render.rs`, `config/mesh_render.rs` |
 | [mesh-verify.md](reference/mesh-verify.md) | `meshgen/{predicates,verify}.rs`, `pipeline/mesh_verify.rs`, `config/mesh_verify.rs` |
@@ -44,6 +45,7 @@ Higher-level explanations of the non-obvious algorithms behind the reference doc
 | [pca-volume-alignment-crop.md](algorithms/pca-volume-alignment-crop.md) | The `crop` pipeline's PCA-based orientation estimation and rotate/crop |
 | [spatial-grid-collision.md](algorithms/spatial-grid-collision.md) | Neighbor-query acceleration and exact/periodic collision detection |
 | [mesh-clipping-volume-fraction.md](algorithms/mesh-clipping-volume-fraction.md) | Sutherland-Hodgman mesh clipping and volume-fraction accounting |
+| [void-aware-placement.md](algorithms/void-aware-placement.md) | Determinism, the size multiset, the void predicate and why it is complete, the stop-reason precedence |
 | [stl-rendering.md](algorithms/stl-rendering.md) | Shared camera framing, CPU ray casting, and GPU offscreen rasterization |
 
 ## Examples (per-pipeline walkthroughs)
@@ -59,7 +61,10 @@ Each walkthrough shows a realistic config, the exact CLI command, and output cap
 | [split-filter.md](examples/split-filter.md) | `split-filter` |
 | [optimize.md](examples/optimize.md) | `optimize` |
 | [pack.md](examples/pack.md) | `pack` (plain volume-fraction packing) |
-| [pack-target-distribution.md](examples/pack-target-distribution.md) | `pack` with target diameter distribution steering |
+| [pack-target-distribution.md](examples/pack-target-distribution.md) | `pack` with target diameter distribution steering (original engine) |
+| [pack-placement.md](examples/pack-placement.md) | `pack` with a `placement:` block — seeded, recorded placement |
+| [pack-void.md](examples/pack-void.md) | `pack` around a frozen void |
+| [version.md](examples/version.md) | `version` — what this binary is |
 | [render.md](examples/render.md) | `render` |
 | [mesh-render.md](examples/mesh-render.md) | `mesh-render` (VTU volume-mesh renderer) |
 | [mesh.md](examples/mesh.md) | `mesh` (tetrahedral mesh generation, S0/S1/G2-1..G2-3) |
@@ -73,4 +78,4 @@ Each walkthrough shows a realistic config, the exact CLI command, and output cap
 
 ## Chinese translation
 
-This documentation is English-only for now. See [../TRANSLATION_GUIDE.md](../TRANSLATION_GUIDE.md) for the terminology glossary and conventions that will govern the `docs/zh-cn/` mirror.
+`docs/zh-cn/` mirrors this tree: the same 40 files at the same relative paths. See [../TRANSLATION_GUIDE.md](../TRANSLATION_GUIDE.md) for the terminology glossary and the conventions that govern it.

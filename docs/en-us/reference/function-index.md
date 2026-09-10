@@ -232,7 +232,7 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `save_tiff_or_folder_with_ext` | I/O | `src/io/volume.rs:524` | Saves a `Volume3D` as a multi-page TIFF file or a folder of per-slice TIFF files, with configurable extension. |
 | `save_tiff_or_folder` | I/O | `src/io/volume.rs:586` | Saves a `Volume3D` to TIFF file or folder sequence with the default `.tiff` extension. |
 | `Pipeline::run` (trait) | Pipeline — Core | `src/pipeline/mod.rs:17` | Trait method every pipeline struct implements to execute end-to-end. |
-| `PlacementPipeline` | Pipeline — Core | `src/pipeline/placement.rs:10` | Pipeline struct holding a validated `ResolvedPlacement`. |
+| `PlacementPipeline` | Pipeline — Core | `src/pipeline/placement.rs:38` | Pipeline struct holding a validated `ResolvedPlacement`. |
 | `seeded_rng` | Pipeline — Core | `src/pipeline/rng.rs:13` | Builds the ChaCha12 stream a seeded run draws every variate from. |
 | `u01` | Pipeline — Core | `src/pipeline/rng.rs:32` | The single uniform primitive: one draw in `[0, 1)`. |
 | `uniform_range` | Pipeline — Core | `src/pipeline/rng.rs:45` | One uniform in `[lo, hi)`; degenerate ranges yield `lo`. |
@@ -300,36 +300,36 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `particle_at` | Pipeline — Packing | `src/pipeline/placement_labels.rs:178` | Finds which placed particle, if any, contains a point. |
 | `point_in_particle` | Pipeline — Packing | `src/pipeline/placement_labels.rs:189` | Ray-parity containment for one particle mesh. |
 | `VoidReport` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:278` | What the run did with the frozen void, and how it measured it. |
-| `build_void_report` | Pipeline — Packing | `src/pipeline/placement.rs:1133` | Describes the frozen void for the report, including its volume method. |
-| `PlacementPipeline` | Pipeline — Packing | `src/pipeline/placement.rs:37` | Pipeline struct holding a validated `ResolvedPlacement`. |
-| `PlacementOutcome` | Pipeline — Packing | `src/pipeline/placement.rs:60` | What a completed run produced, for in-process callers. |
-| `run_placement` | Pipeline — Packing | `src/pipeline/placement.rs:75` | Runs the engine end to end and writes every output file. |
-| `resolve_threads` | Pipeline — Packing | `src/pipeline/placement.rs:195` | Turns a thread setting into a worker count, at least 1. |
-| `EngineState` | Pipeline — Packing | `src/pipeline/placement.rs:207` | Everything the placement loop accumulates. |
-| `place_all` | Pipeline — Packing | `src/pipeline/placement.rs:288` | Attempts every planned size in order, accepting what fits. |
-| `try_place_one` | Pipeline — Packing | `src/pipeline/placement.rs:326` | Tries one size within its per-particle attempt budget. |
-| `accept` | Pipeline — Packing | `src/pipeline/placement.rs:431` | Commits an accepted candidate into the geometry and the record. |
-| `run_top_up` | Pipeline — Packing | `src/pipeline/placement.rs:491` | Draws further batches when clipping alone left the target short. |
-| `decide_stop` | Pipeline — Packing | `src/pipeline/placement.rs:557` | Decides which of the four stop reasons a run ended with. |
-| `write_outputs` | Pipeline — Packing | `src/pipeline/placement.rs:672` | Writes the geometry, the per-particle record and the size CSV. |
-| `entity_id` | Pipeline — Packing | `src/pipeline/placement.rs:772` | The stable id of a placed particle. |
-| `particle_record` | Pipeline — Packing | `src/pipeline/placement.rs:777` | Turns one placed particle into its record entry. |
-| `size_class_rows` | Pipeline — Packing | `src/pipeline/placement.rs:825` | Builds the per-class target-against-actual rows. |
-| `blank_report` | Pipeline — Packing | `src/pipeline/placement.rs:851` | The report as it stands before placement starts. |
-| `describe_input` | Pipeline — Packing | `src/pipeline/placement.rs:979` | Describes an input file with its digest for the report. |
-| `finish_report` | Pipeline — Packing | `src/pipeline/placement.rs:998` | Fills in everything the finished run knows. |
-| `summary` (placement.rs) | Pipeline — Packing | `src/pipeline/placement.rs:1056` | Builds the human-readable stdout summary. |
-| `read_record` | Pipeline — Packing | `src/pipeline/placement.rs:1117` | Reads a written per-particle record back. |
-| `read_report` | Pipeline — Packing | `src/pipeline/placement.rs:1125` | Reads a written run report back. |
-| `RejectReason` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:15` | Why a proposed placement was not accepted; the report's keys. |
-| `RejectReason::as_str` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:38` | The stable report key for a rejection reason. |
-| `PlacedParticle` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:68` | A particle that cleared every check, with its cached shape. |
-| `PlacedParticle::volume_in_domain_solid` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:98` | The particle volume counting toward the solid phase. |
-| `FeasibilityContext` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:104` | Everything a feasibility check reads. |
-| `Candidate` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:116` | A proposed placement with its cheap quantities precomputed. |
-| `Accepted` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:130` | What a passing check worked out along the way. |
-| `check_placement` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:155` | Runs every feasibility rule in order, returning the one that stopped it. |
-| `retained_depth` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:291` | How far a straddling particle still reaches inside the domain. |
+| `build_void_report` | Pipeline — Packing | `src/pipeline/placement.rs:1156` | Describes the frozen void for the report, including its volume method. |
+| `PlacementPipeline` | Pipeline — Packing | `src/pipeline/placement.rs:38` | Pipeline struct holding a validated `ResolvedPlacement`. |
+| `PlacementOutcome` | Pipeline — Packing | `src/pipeline/placement.rs:61` | What a completed run produced, for in-process callers. |
+| `run_placement` | Pipeline — Packing | `src/pipeline/placement.rs:76` | Runs the engine end to end and writes every output file. |
+| `resolve_threads` | Pipeline — Packing | `src/pipeline/placement.rs:253` | Turns a thread setting into a worker count, at least 1. |
+| `EngineState` | Pipeline — Packing | `src/pipeline/placement.rs:265` | Everything the placement loop accumulates. |
+| `place_all` | Pipeline — Packing | `src/pipeline/placement.rs:347` | Attempts every planned size in order, accepting what fits. |
+| `try_place_one` | Pipeline — Packing | `src/pipeline/placement.rs:386` | Tries one size within its per-particle attempt budget. |
+| `accept` | Pipeline — Packing | `src/pipeline/placement.rs:544` | Commits an accepted candidate into the geometry and the record. |
+| `run_top_up` | Pipeline — Packing | `src/pipeline/placement.rs:605` | Draws further batches when clipping alone left the target short. |
+| `decide_stop` | Pipeline — Packing | `src/pipeline/placement.rs:788` | Decides which of the four stop reasons a run ended with. |
+| `write_outputs` | Pipeline — Packing | `src/pipeline/placement.rs:788` | Writes the geometry, the per-particle record and the size CSV. |
+| `entity_id` | Pipeline — Packing | `src/pipeline/placement.rs:933` | The stable id of a placed particle. |
+| `particle_record` | Pipeline — Packing | `src/pipeline/placement.rs:938` | Turns one placed particle into its record entry. |
+| `size_class_rows` | Pipeline — Packing | `src/pipeline/placement.rs:986` | Builds the per-class target-against-actual rows. |
+| `blank_report` | Pipeline — Packing | `src/pipeline/placement.rs:1012` | The report as it stands before placement starts. |
+| `describe_input` | Pipeline — Packing | `src/pipeline/placement.rs:1191` | Describes an input file with its digest for the report. |
+| `finish_report` | Pipeline — Packing | `src/pipeline/placement.rs:1210` | Fills in everything the finished run knows. |
+| `summary` (placement.rs) | Pipeline — Packing | `src/pipeline/placement.rs:1274` | Builds the human-readable stdout summary. |
+| `read_record` | Pipeline — Packing | `src/pipeline/placement.rs:1335` | Reads a written per-particle record back. |
+| `read_report` | Pipeline — Packing | `src/pipeline/placement.rs:1343` | Reads a written run report back. |
+| `RejectReason` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:16` | Why a proposed placement was not accepted; the report's keys. |
+| `RejectReason::as_str` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:39` | The stable report key for a rejection reason. |
+| `PlacedParticle` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:69` | A particle that cleared every check, with its cached shape. |
+| `PlacedParticle::volume_in_domain_solid` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:99` | The particle volume counting toward the solid phase. |
+| `FeasibilityContext` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:105` | Everything a feasibility check reads. |
+| `Candidate` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:125` | A proposed placement with its cheap quantities precomputed. |
+| `Accepted` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:139` | What a passing check worked out along the way. |
+| `check_placement` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:164` | Runs every feasibility rule in order, returning the one that stopped it. |
+| `retained_depth` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:355` | How far a straddling particle still reaches inside the domain. |
 | `ToolRecord` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:15` | The build identity as it appears in a record or report. |
 | `StopReason` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:53` | The fixed four-word vocabulary a run may stop with. |
 | `ParticleRecord` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:133` | One placed particle's entry in the record file. |
@@ -337,9 +337,9 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `conventions` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:173` | States every convention a reader needs to reconstruct a particle. |
 | `ReportFile` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:246` | The run report file's top-level shape. |
 | `SizeClassRow` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:226` | One class's target, drawn, placed, shortfall and top-up counts. |
-| `write_json` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:350` | Writes a JSON value to disk, creating parent directories. |
-| `describe_output` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:370` | Describes a written output file for the report's manifest. |
-| `write_size_distribution_csv` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:394` | Writes the per-size-class comparison CSV. |
+| `write_json` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:380` | Writes a JSON value to disk, creating parent directories. |
+| `describe_output` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:400` | Describes a written output file for the report's manifest. |
+| `write_size_distribution_csv` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:424` | Writes the per-size-class comparison CSV. |
 | `inverse_normal_cdf` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:21` | Wichura AS241 standard-normal quantile, error below 1e-15. |
 | `poly` (placement_sizes.rs) | Pipeline — Packing | `src/pipeline/placement_sizes.rs:133` | Horner evaluation of highest-degree-first coefficients. |
 | `normal_cdf` (placement_sizes.rs) | Pipeline — Packing | `src/pipeline/placement_sizes.rs:142` | Standard normal CDF via the complementary error function. |

@@ -1,0 +1,60 @@
+# Placement around a frozen void.
+#
+# The void is never filled, moved or cleaned. It is copied byte for byte beside
+# the outputs, and the report records its digest before and after, so the freeze
+# is something a reader can check rather than take on trust.
+#
+# Every relative path below resolves against the directory holding THIS file.
+placement:
+  seed: 20260910
+
+  frame:
+    unit: "um"
+
+  domain:
+    min: [0, 0, 0]
+    max: [100, 100, 100]
+
+  shapes:
+    files: ["particles.stl"]
+    filters:
+      max_aspect_ratio: 3.0
+
+  void:
+    # Three spherical pores. Regenerate with:
+    #   python3 data/fixtures/placement/make_void.py data/input/placement/void_spheres.stl
+    file: "placement/void_spheres.stl"
+    # `forbidden`: the whole particle keeps `gap` from the void surface.
+    # `allowed`: a particle may reach in, and the overlap is measured and owned
+    # by the void, which then needs overlap_volume.voxel_size.
+    crossing: forbidden
+    # g_pv. Must be greater than zero when crossing is forbidden: two shapes
+    # that intersect report distance 0.0, so a zero gap forbids nothing.
+    gap: 2.0
+
+  size:
+    distribution:
+      kind: lognormal
+      median: 10.0
+      sigma_log: 0.3
+      min: 5.0
+      max: 20.0
+    classes: { kind: equal_width, count: 5 }
+
+  orientation: { mode: uniform_so3 }
+  gaps: { particle_particle: 1.0 }
+
+  target:
+    volume_fraction: 0.12
+    # The domain minus the void, which is what a solid-phase fraction is
+    # normally quoted against.
+    basis: solid
+
+  budget:
+    attempts_per_particle: 3000
+    total_attempts: 2000000
+
+  outputs:
+    dir: "../output/placement_void"
+    # Uncomment to also write the three-phase label field and per-voxel ids.
+    # voxel_labels: { voxel_size: 1.0 }

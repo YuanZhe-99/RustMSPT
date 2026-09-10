@@ -113,6 +113,31 @@ Override input/output paths from CLI:
 cargo run -- pack --input data/input/particles.stl --output data/output/packed_result.stl
 ```
 
+### Pack: two engines
+
+`pack` selects an engine from the config it is given.
+
+- A top-level **`placement:`** block runs the seeded, recorded, void-aware engine: a reproducible
+  run, a per-particle transform record, packing around a frozen void, and a JSON report that says
+  why it stopped. See `data/input/placement_config.yaml` and
+  `data/input/placement_void_config.yaml`.
+- A top-level **`packing:`** block runs the original packing loop, unchanged. See
+  `data/input/pack_config.yaml`.
+
+Exactly one must be present.
+
+```bash
+cargo run --release -- pack --config data/input/placement_config.yaml
+cargo run --release -- pack --config data/input/placement_void_config.yaml
+```
+
+Relative paths inside a config resolve against that config file's directory, never against the
+working directory. Paths given on the command line resolve against the working directory, as shell
+arguments do.
+
+`--seed` and `--threads` apply to the placement engine only; passing either with a `packing:` config
+is an error rather than a silent no-op.
+
 Ask the binary what it is:
 
 ```bash

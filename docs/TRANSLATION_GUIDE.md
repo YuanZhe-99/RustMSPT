@@ -12,40 +12,50 @@ This guide scopes the `docs/zh-cn/` translation. It is a process document, not i
 docs/zh-cn/
   README.md
   reference/
-    function-index.md
-    core-and-compute.md
     config.md
+    core-and-compute.md
+    function-index.md
+    geometry-analysis.md
     geometry-core.md
     geometry-volume-collision.md
-    geometry-analysis.md
     gpu.md
     io.md
+    mesh-render-and-vtu.md
+    mesh-verify.md
+    meshgen.md
     pipeline-core.md
     pipeline-crop-and-splitfilter.md
-    pipeline-packing.md
     pipeline-optimize.md
+    pipeline-packing.md
+    pipeline-placement.md
   algorithms/
-    s2-two-point-correlation.md
-    simulated-annealing-island-model.md
     ffd-forging.md
+    mesh-clipping-volume-fraction.md
     packing-target-diameter-distribution.md
     pca-volume-alignment-crop.md
+    s2-two-point-correlation.md
+    simulated-annealing-island-model.md
     spatial-grid-collision.md
-    mesh-clipping-volume-fraction.md
     stl-rendering.md
+    void-aware-placement.md
   examples/
+    crop.md
     forge.md
     measure.md
-    scale.md
-    crop.md
-    split-filter.md
+    mesh-render.md
+    mesh.md
     optimize.md
-    pack.md
+    pack-placement.md
     pack-target-distribution.md
+    pack-void.md
+    pack.md
     render.md
+    scale.md
+    split-filter.md
+    version.md
 ```
 
-29 files total (1 README + 11 reference files + 8 algorithm files + 9 example files).
+40 files total (1 README + 16 reference files + 9 algorithm files + 14 example files). This list is generated from `docs/en-us/`; if the two trees ever disagree, that tree is the authority and this list is what is wrong.
 
 ## What to translate vs. what to keep in English
 
@@ -105,6 +115,20 @@ Baseline proposed terms, extracted from the English corpus. Flag ambiguous or co
 | granule | 颗粒（分量） | the codebase uses "granule" for one connected-component particle; keep consistent with "颗粒" used for particle elsewhere, disambiguate with context |
 | lognormal rebalancing | 对数正态重平衡 | |
 | edge-artifact trimming | 边缘伪影裁剪 | CT-scan context |
+| placement (the `placement:` engine) | 放置 | reserve 放置 for this engine; keep 堆积/填充 for the original `packing:` one, so the two are never confused |
+| void (frozen pore field) | 孔隙 | the frozen void an assembly is packed around; "冻结孔隙" on first use in a document |
+| feasible set | 可放置集合 | the set of placements satisfying every constraint; do not shorten to 可行集, which loses "placement" |
+| random sequential adsorption (RSA) | 随机顺序吸附 (RSA) | keep the "RSA" abbreviation; it is what distinguishes the assembly from an equilibrium hard-core one |
+| stop reason | 停止原因 | the fixed four-word vocabulary; keep the four values themselves untranslated, they are JSON literals |
+| shortfall (per size class) | 缺口 | what was drawn but not placed; never 不足, which reads as a general inadequacy |
+| top-up (batch) | 补抽 | drawing further sizes after clipping losses; the verb matters more than the noun |
+| shell (of a mesh) | 壳 | one closed connected component of a surface; distinguish from 颗粒 (the placed particle) |
+| acceptance index | 接受序号 | the 0-based order a particle was accepted in |
+| entity id | 实体标识 | keep the JSON field name `entity_id` untranslated |
+| build identity | 构建身份 | what `version --json` reports |
+| clearance / gap (`g_pv`, `g_pp`) | 间隙 | keep the symbols `g_pv` and `g_pp` untranslated |
+| bounding radius | 包围半径 | distance from a shell's centroid to its furthest vertex |
+| volume centroid | 体积质心 | always distinguish from 顶点均值 (vertex mean); the two are different points and the record depends on which |
 
 This list is a starting point, not exhaustive — the translator should extend it as new terms surface, and should keep it in sync with this file (or split it into its own glossary file under `docs/zh-cn/` if it grows large).
 
