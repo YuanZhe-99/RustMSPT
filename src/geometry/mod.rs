@@ -21,7 +21,9 @@ pub use mesh_ops::{
     rotate_mesh_around_center, scale_mesh, split_mesh_into_granules, translate_mesh, vec_norm,
     wrap_mesh_centroid_to_box,
 };
-pub use metrics::{mesh_metrics, scale_mesh_to_equivalent_diameter, MeshMetrics};
+pub use metrics::{
+    mesh_closedness, mesh_is_closed, mesh_metrics, scale_mesh_to_equivalent_diameter, MeshMetrics,
+};
 pub use quaternion::{sample_uniform_quaternion, transform_shell, UnitQuat};
 pub use render::{
     build_render_camera, parse_render_projection, parse_render_vec3, render_mesh_cpu,

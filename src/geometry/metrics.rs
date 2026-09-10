@@ -17,14 +17,33 @@ pub struct MeshMetrics {
 // Inputs: candidate mesh.
 // Returns: true for consistently oriented closed shells with valid volume.
 // Side effects: None.
-fn mesh_is_closed(mesh: &Mesh) -> bool {
-    if mesh.is_empty()
-        || mesh
-            .vertices
-            .iter()
-            .any(|vertex| !vertex.x.is_finite() || !vertex.y.is_finite() || !vertex.z.is_finite())
+// Notes: A thin wrapper over mesh_closedness, which says *why* a mesh fails. Callers that report a
+// rejection to a user should use that instead: "shell 3 of particles.stl has 12 boundary edges" is
+// actionable where "not closed" is not.
+pub fn mesh_is_closed(mesh: &Mesh) -> bool {
+    mesh_closedness(mesh).is_ok()
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Decide whether a mesh is a consistently oriented closed manifold, and if not, say why.
+// Inputs: candidate mesh.
+// Returns: Ok(()) when closed; Err(reason) naming the first violation found, with counts where they help.
+// Side effects: None.
+// Notes: The reason is written to be shown to a user, so it names quantities they can look for in
+// their own file. Checks run in the order they can be decided cheaply: emptiness and non-finite
+// coordinates, then face validity and duplication, then edge incidence and winding, then per-shell
+// signed volume. Only the first failure is reported; a mesh with several problems is fixed one at
+// a time anyway.
+pub fn mesh_closedness(mesh: &Mesh) -> std::result::Result<(), String> {
+    if mesh.is_empty() {
+        return Err("the mesh has no vertices or no faces".to_string());
+    }
+    if let Some(index) = mesh
+        .vertices
+        .iter()
+        .position(|v| !v.x.is_finite() || !v.y.is_finite() || !v.z.is_finite())
     {
-        return false;
+        return Err(format!("vertex {index} has a non-finite coordinate"));
     }
 
     let mut edges: HashMap<(usize, usize), (usize, i32, Vec<usize>)> = HashMap::new();
@@ -33,16 +52,20 @@ fn mesh_is_closed(mesh: &Mesh) -> bool {
         if face.a >= mesh.vertices.len()
             || face.b >= mesh.vertices.len()
             || face.c >= mesh.vertices.len()
-            || face.a == face.b
-            || face.b == face.c
-            || face.c == face.a
         {
-            return false;
+            return Err(format!(
+                "face {face_index} indexes a vertex that does not exist"
+            ));
+        }
+        if face.a == face.b || face.b == face.c || face.c == face.a {
+            return Err(format!("face {face_index} is degenerate: it repeats a vertex"));
         }
         let mut face_key = [face.a, face.b, face.c];
         face_key.sort_unstable();
         if !faces.insert(face_key) {
-            return false;
+            return Err(format!(
+                "face {face_index} duplicates an earlier face on the same three vertices"
+            ));
         }
         for (from, to) in [(face.a, face.b), (face.b, face.c), (face.c, face.a)] {
             let key = if from < to { (from, to) } else { (to, from) };
@@ -56,12 +79,30 @@ fn mesh_is_closed(mesh: &Mesh) -> bool {
         }
     }
 
-    if edges.is_empty()
-        || edges
-            .values()
-            .any(|(incidence, direction, _)| *incidence != 2 || *direction != 0)
-    {
-        return false;
+    if edges.is_empty() {
+        return Err("the mesh has no edges".to_string());
+    }
+    let boundary = edges.values().filter(|(n, _, _)| *n == 1).count();
+    let non_manifold = edges.values().filter(|(n, _, _)| *n > 2).count();
+    let inconsistent = edges
+        .values()
+        .filter(|(n, dir, _)| *n == 2 && *dir != 0)
+        .count();
+    if boundary > 0 {
+        return Err(format!(
+            "the mesh is open: {boundary} edge(s) belong to only one face"
+        ));
+    }
+    if non_manifold > 0 {
+        return Err(format!(
+            "the mesh is non-manifold: {non_manifold} edge(s) belong to more than two faces"
+        ));
+    }
+    if inconsistent > 0 {
+        return Err(format!(
+            "face winding is inconsistent across {inconsistent} edge(s): the two faces sharing an \
+             edge traverse it the same way instead of opposite ways"
+        ));
     }
 
     let mut neighbors = vec![Vec::new(); mesh.faces.len()];
@@ -91,10 +132,13 @@ fn mesh_is_closed(mesh: &Mesh) -> bool {
             }
         }
         if !signed_volume.is_finite() || signed_volume == 0.0 {
-            return false;
+            return Err(
+                "a connected shell encloses zero volume, so it is a surface rather than a solid"
+                    .to_string(),
+            );
         }
     }
-    true
+    Ok(())
 }
 
 // AI-FUNC-SUMMARY:

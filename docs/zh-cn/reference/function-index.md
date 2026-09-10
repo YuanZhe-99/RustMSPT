@@ -79,6 +79,8 @@
 | `FallbackReason` | Core & Compute | `src/compute/policy.rs:4` | 记录为何无法满足所请求的后端，以及实际改用了什么。 |
 | `BackendSelection` | Core & Compute | `src/compute/policy.rs:10` | 后端选择的结果：选定的 `ComputeBackend` 加上可选的 `FallbackReason`。 |
 | `select_backend` | Core & Compute | `src/compute/policy.rs:21` | 计算密集型流水线使用的中央 CPU/GPU/Auto 调度策略。 |
+| `mesh_closedness` | Geometry — Analysis | `src/geometry/metrics.rs:37` | 判定网格是否为朝向一致的闭合流形；若否，说明原因。 |
+| `mesh_is_closed` | Geometry — Analysis | `src/geometry/metrics.rs:23` | `mesh_closedness` 的布尔包装。 |
 | `MeshMetrics` | Geometry — Analysis | `src/geometry/metrics.rs:8` | 保存体积、表面积、等体积直径和球形度的结构体。 |
 | `mesh_is_closed` | Geometry — Analysis | `src/geometry/metrics.rs:20` | 验证网格是否为流形、朝向一致、体积非零的壳体（或壳体集合）。 |
 | `mesh_metrics` | Geometry — Analysis | `src/geometry/metrics.rs:105` | 为一个封闭网格计算体积、表面积、等体积直径和球形度。 |
@@ -277,6 +279,30 @@
 | `selective_prune_to_target_vf` | Pipeline — Optimize | `src/pipeline/optimize.rs:86` | 退火前阶段：迭代地移除颗粒以逼近目标体积分数，同时最小化 S2 损失的增加。 |
 | `run_sa_island` | Pipeline — Optimize | `src/pipeline/optimize.rs:285` | 单个岛屿的核心模拟退火循环；是代码库中最重要的单个函数。 |
 | `OptimizePipeline::run` | Pipeline — Optimize | `src/pipeline/optimize.rs:797` | 顶层 `Pipeline::run` 编排：加载、目标计算、剪枝、单/多岛屿模拟退火、保存。 |
+| `inverse_normal_cdf` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:21` | Wichura AS241 标准正态分位数，误差低于 1e-15。 |
+| `poly` (placement_sizes.rs) | Pipeline — Packing | `src/pipeline/placement_sizes.rs:133` | 对最高次在前的系数做 Horner 求值。 |
+| `normal_cdf` (placement_sizes.rs) | Pipeline — Packing | `src/pipeline/placement_sizes.rs:142` | 经由互补误差函数计算标准正态 CDF。 |
+| `erfc` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:153` | 互补误差函数，用于把截断边界换算成概率。 |
+| `SizeDraw` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:175` | 一次抽取的直径，附带其统计分组与抽取序号。 |
+| `SizeClass` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:185` | 一个直径区间及其应占的颗粒份额。 |
+| `SizeSource` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:192` | 已就绪的目标数量分布：截断对数正态或直方图。 |
+| `SizeSource::prepare` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:218` | 准备分布源：读取直方图 CSV 并预先算好截断概率。 |
+| `SizeSource::sample` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:272` | 抽取一个直径，恰好消耗一个 u64。 |
+| `SizeSource::support` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:309` | 该分布源能产生的最小与最大直径。 |
+| `SizeSource::mass_between` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:381` | 目标分布落在两个直径之间的份额。 |
+| `build_classes` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:329` | 构造目标与实际对照所用的统计分组。 |
+| `build_equal_width` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:355` | 把分布支撑集切成等宽分组并给出各自份额。 |
+| `class_for_diameter` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:430` | 查找直径所属分组；最上端边界为闭区间。 |
+| `SizePlan` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:449` | 运行打算放置的尺寸集合，在任何放置之前抽定。 |
+| `plan_size_multiset` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:473` | 抽取整个尺寸集合，停在离目标更近的那个数量上。 |
+| `order_for_placement` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:534` | 把尺寸集合按从大到小排序，或还原为抽取顺序。 |
+| `ShapeShell` | Pipeline — Packing | `src/pipeline/placement_library.rs:13` | 一个闭合壳：已度量、已居中、已计算摘要。 |
+| `ShapeSource` | Pipeline — Packing | `src/pipeline/placement_library.rs:41` | 构成形状库的源文件，附带摘要与壳数统计。 |
+| `RejectedShell` | Pipeline — Packing | `src/pipeline/placement_library.rs:53` | 读入但未保留的壳，以及未保留的原因。 |
+| `ShapeLibrary` | Pipeline — Packing | `src/pipeline/placement_library.rs:61` | 运行可抽取的全部形状，以及读入但未保留的部分。 |
+| `load_shape_library` | Pipeline — Packing | `src/pipeline/placement_library.rs:85` | 加载、拆分、度量并过滤形状文件。 |
+| `filter_reason` | Pipeline — Packing | `src/pipeline/placement_library.rs:236` | 指出某个壳未通过哪条形状库过滤规则。 |
+| `shell_geometry_sha256` | Pipeline — Packing | `src/pipeline/placement_library.rs:276` | 对壳的几何计算摘要，使文件重排可被察觉。 |
 | `TARGET_BIN_PROBES` | Pipeline — Packing | `src/pipeline/pack.rs:27` | 某个选定分箱在被排除出本轮重新选择之前，可容忍的最大连续放置失败次数。 |
 | `PackPipeline` | Pipeline — Packing | `src/pipeline/pack.rs:29` | 包装一个 `PackingConfig` 的流水线结构体；实现了 `Pipeline`。 |
 | `CandidateProposal` | Pipeline — Packing | `src/pipeline/pack.rs:34` | 一个抽取出的候选网格及其可选的预计算 `MeshMetrics`。 |

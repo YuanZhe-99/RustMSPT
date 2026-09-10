@@ -77,6 +77,8 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `FallbackReason` | Core & Compute | `src/compute/policy.rs:4` | Records why a requested backend could not be honored and what was requested instead. |
 | `BackendSelection` | Core & Compute | `src/compute/policy.rs:10` | Result of backend selection: chosen `ComputeBackend` plus optional `FallbackReason`. |
 | `select_backend` | Core & Compute | `src/compute/policy.rs:21` | Central CPU/GPU/Auto dispatch policy used by compute-heavy pipelines. |
+| `mesh_closedness` | Geometry — Analysis | `src/geometry/metrics.rs:37` | Decides whether a mesh is a closed oriented manifold, and if not, says why. |
+| `mesh_is_closed` | Geometry — Analysis | `src/geometry/metrics.rs:23` | Boolean wrapper over `mesh_closedness`. |
 | `MeshMetrics` | Geometry — Analysis | `src/geometry/metrics.rs:8` | Struct holding volume, surface area, equivalent diameter, and sphericity. |
 | `mesh_is_closed` | Geometry — Analysis | `src/geometry/metrics.rs:20` | Validates that a mesh is a manifold, consistently-oriented, nonzero-volume shell (or set of shells). |
 | `mesh_metrics` | Geometry — Analysis | `src/geometry/metrics.rs:105` | Computes volume, surface area, equivalent diameter, and sphericity for a closed mesh. |
@@ -272,6 +274,30 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `selective_prune_to_target_vf` | Pipeline — Optimize | `src/pipeline/optimize.rs:86` | Pre-annealing stage: iteratively removes particles to approach the target volume fraction while minimizing S2-loss increase. |
 | `run_sa_island` | Pipeline — Optimize | `src/pipeline/optimize.rs:285` | The core simulated-annealing loop for one island; the single most important function in the codebase. |
 | `OptimizePipeline::run` | Pipeline — Optimize | `src/pipeline/optimize.rs:797` | Top-level `Pipeline::run` orchestration: load, target computation, pruning, single/multi-island SA, save. |
+| `inverse_normal_cdf` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:21` | Wichura AS241 standard-normal quantile, error below 1e-15. |
+| `poly` (placement_sizes.rs) | Pipeline — Packing | `src/pipeline/placement_sizes.rs:133` | Horner evaluation of highest-degree-first coefficients. |
+| `normal_cdf` (placement_sizes.rs) | Pipeline — Packing | `src/pipeline/placement_sizes.rs:142` | Standard normal CDF via the complementary error function. |
+| `erfc` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:153` | Complementary error function, used to turn truncation bounds into probabilities. |
+| `SizeDraw` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:175` | One drawn diameter with its reporting class and draw order. |
+| `SizeClass` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:185` | A diameter band and the share of particles it should hold. |
+| `SizeSource` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:192` | A prepared target number distribution: truncated lognormal or histogram. |
+| `SizeSource::prepare` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:218` | Prepares a source, loading the histogram CSV and precomputing truncation. |
+| `SizeSource::sample` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:272` | Draws one diameter, consuming exactly one u64. |
+| `SizeSource::support` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:309` | The smallest and largest diameter the source can produce. |
+| `SizeSource::mass_between` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:381` | The share of the target distribution between two diameters. |
+| `build_classes` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:329` | Builds the reporting classes target and actual are compared over. |
+| `build_equal_width` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:355` | Splits a source's support into equal-width classes with their shares. |
+| `class_for_diameter` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:430` | Finds a diameter's reporting class; the top edge is inclusive. |
+| `SizePlan` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:449` | The sizes a run intends to place, drawn before any placement. |
+| `plan_size_multiset` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:473` | Draws the whole multiset, stopping at whichever count lands closer to the target. |
+| `order_for_placement` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:534` | Orders a drawn multiset largest-first, or back into draw order. |
+| `ShapeShell` | Pipeline — Packing | `src/pipeline/placement_library.rs:13` | One closed shell: measured, centred, and digested. |
+| `ShapeSource` | Pipeline — Packing | `src/pipeline/placement_library.rs:41` | A source file the library was built from, with its digest and shell counts. |
+| `RejectedShell` | Pipeline — Packing | `src/pipeline/placement_library.rs:53` | A shell read but not kept, and why. |
+| `ShapeLibrary` | Pipeline — Packing | `src/pipeline/placement_library.rs:61` | Every shape a run may draw from, plus what was read and not kept. |
+| `load_shape_library` | Pipeline — Packing | `src/pipeline/placement_library.rs:85` | Loads, splits, measures and filters the shape files. |
+| `filter_reason` | Pipeline — Packing | `src/pipeline/placement_library.rs:236` | Says which library filter a shell failed, if any. |
+| `shell_geometry_sha256` | Pipeline — Packing | `src/pipeline/placement_library.rs:276` | Digests a shell's geometry so a re-ordered file is detectable. |
 | `TARGET_BIN_PROBES` | Pipeline — Packing | `src/pipeline/pack.rs:27` | Max consecutive placement failures tolerated for a chosen bin before it is excluded from this round's re-selection. |
 | `PackPipeline` | Pipeline — Packing | `src/pipeline/pack.rs:29` | Pipeline struct wrapping a `PackingConfig`; implements `Pipeline`. |
 | `CandidateProposal` | Pipeline — Packing | `src/pipeline/pack.rs:34` | One drawn candidate mesh plus its optional precomputed `MeshMetrics`. |
