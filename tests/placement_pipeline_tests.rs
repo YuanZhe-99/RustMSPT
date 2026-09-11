@@ -137,6 +137,7 @@ fn a_plain_run_places_particles_and_writes_every_output() {
     for key in [
         "outside_domain",
         "particle_overlap",
+        "particle_enclosed",
         "particle_gap",
         "zero_in_domain_volume",
         "inside_void",
@@ -396,6 +397,11 @@ fn every_placed_pair_clears_the_required_gap() {
         }
     }
     assert!(measured > 0, "no pair was close enough to be worth measuring");
+
+    // The gap and the nesting rule are two halves of one property: a particle
+    // inside another clears every gap, measured across the space between the two
+    // surfaces. Checking only the gap is what let the defect ship.
+    assert_nothing_nested(&particles, &boxes);
 }
 
 #[test]
@@ -665,4 +671,109 @@ fn a_void_file_that_does_not_exist_is_an_error() {
         run_placement(&resolve(&c.config)).is_err(),
         "a missing void file must stop the run"
     );
+}
+
+// ------------------------------------------------------ no particle inside another
+
+/// Rebuilds each placed particle as its own mesh from the merged STL, using the
+/// record's `triangle_range`. The engine's own geometry is never consulted: a
+/// property re-measured with the engine's own helpers would only restate whatever
+/// the engine believed.
+fn particles_from_outputs(dir: &Path) -> (Vec<Mesh>, Vec<rustmspt::types::BoundingBox>) {
+    let record = read_record(&dir.join("out/particles.json")).unwrap();
+    let merged = load_stl(&dir.join("out/particles.stl")).unwrap();
+    let meshes = record
+        .particles
+        .iter()
+        .map(|p| {
+            let (s, e) = (p.triangle_range[0], p.triangle_range[1]);
+            let mut m = Mesh::empty();
+            for f in &merged.faces[s..e] {
+                let base = m.vertices.len();
+                m.vertices.push(merged.vertices[f.a]);
+                m.vertices.push(merged.vertices[f.b]);
+                m.vertices.push(merged.vertices[f.c]);
+                m.faces.push(rustmspt::types::Triangle {
+                    a: base,
+                    b: base + 1,
+                    c: base + 2,
+                });
+            }
+            m
+        })
+        .collect();
+    let boxes = record
+        .particles
+        .iter()
+        .map(|p| rustmspt::types::BoundingBox {
+            min: Vec3::new(p.bbox.min[0], p.bbox.min[1], p.bbox.min[2]),
+            max: Vec3::new(p.bbox.max[0], p.bbox.max[1], p.bbox.max[2]),
+        })
+        .collect();
+    (meshes, boxes)
+}
+
+/// Fails if any particle lies wholly inside another, measured with the scanning
+/// point-in-mesh test rather than with the hierarchy one the engine uses.
+fn assert_nothing_nested(meshes: &[Mesh], boxes: &[rustmspt::types::BoundingBox]) {
+    let contains = |outer: rustmspt::types::BoundingBox, inner: rustmspt::types::BoundingBox| {
+        inner.min.x >= outer.min.x
+            && inner.min.y >= outer.min.y
+            && inner.min.z >= outer.min.z
+            && inner.max.x <= outer.max.x
+            && inner.max.y <= outer.max.y
+            && inner.max.z <= outer.max.z
+    };
+    for i in 0..meshes.len() {
+        for j in 0..meshes.len() {
+            if i == j || !contains(boxes[j], boxes[i]) {
+                continue;
+            }
+            let probe = meshes[i].vertices[0];
+            assert!(
+                !rustmspt::geometry::point_inside_mesh(&meshes[j], probe),
+                "particle {i} lies inside particle {j}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_particle_is_never_placed_inside_another() {
+    // A wide size ratio is what exposes this: the centroid region in which a small
+    // particle fits inside a large one grows as the cube of the difference in
+    // radii, so the shipped examples' 6-to-24 range makes it a once-in-a-thousand-
+    // runs event while 1.5-to-16 makes it routine. Before the nesting test existed
+    // this configuration placed particles inside other particles and still reported
+    // target_reached.
+    let tmp = tempfile::tempdir().unwrap();
+    let body = r#"
+placement:
+  seed: 3
+  frame: { unit: "um" }
+  domain: { min: [0, 0, 0], max: [40, 40, 40] }
+  shapes:
+    files: ["shapes.stl"]
+  size:
+    distribution: { kind: lognormal, median: 6.0, sigma_log: 0.6, min: 1.5, max: 16.0 }
+    classes: { kind: equal_width, count: 5 }
+  gaps: { particle_particle: 0.3 }
+  target: { volume_fraction: 0.25 }
+  budget: { attempts_per_particle: 3000, total_attempts: 2000000 }
+  outputs:
+    dir: "out"
+"#;
+    let c = case(tmp.path(), body);
+    run_placement(&resolve(&c.config)).unwrap();
+
+    let report = read_report(&c.dir.join("out/run_report.json")).unwrap();
+    assert!(
+        report.rejections["particle_enclosed"] > 0,
+        "this configuration is supposed to propose nested placements, so that \
+         rejecting them is what the rest of the test observes; it proposed none"
+    );
+
+    let (meshes, boxes) = particles_from_outputs(&c.dir);
+    assert!(meshes.len() > 20, "only {} particles placed", meshes.len());
+    assert_nothing_nested(&meshes, &boxes);
 }

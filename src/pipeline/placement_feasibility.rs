@@ -1,8 +1,9 @@
 use crate::config::placement::{BoundaryMode, ResolvedBoundary};
 use crate::config::placement::VoidCrossing;
 use crate::geometry::{
-    bbox_distance, bbox_overlaps, cut_face_names, mesh_collision_exact_prepared,
-    mesh_distance_exact_prepared, mesh_volume_in_bbox_exact, to_parry_trimesh, UnitQuat, VoidIndex,
+    bbox_distance, bbox_overlaps, cut_face_names, mesh_distance_exact_prepared,
+    mesh_solids_nested_prepared, mesh_surfaces_intersect_prepared, mesh_volume_in_bbox_exact,
+    to_parry_trimesh, UnitQuat, VoidIndex,
 };
 use crate::types::{BoundingBox, Mesh, Vec3};
 use parry3d_f64::shape::TriMesh;
@@ -24,8 +25,12 @@ pub enum RejectReason {
     VoidGap,
     /// The particle would swallow a void shell, or sit inside one.
     VoidEnclosed,
-    /// The particle intersects one already placed.
+    /// The particle's surface crosses that of one already placed.
     ParticleOverlap,
+    /// The particle lies wholly inside one already placed, or would swallow one.
+    /// Two closed surfaces in that arrangement never cross, so nothing in
+    /// `ParticleOverlap` can see it.
+    ParticleEnclosed,
     /// The particle clears every other one, but by less than the required gap.
     ParticleGap,
     /// Nothing of the particle is left inside the domain.
@@ -44,6 +49,7 @@ impl RejectReason {
             RejectReason::VoidGap => "void_gap",
             RejectReason::VoidEnclosed => "void_enclosed",
             RejectReason::ParticleOverlap => "particle_overlap",
+            RejectReason::ParticleEnclosed => "particle_enclosed",
             RejectReason::ParticleGap => "particle_gap",
             RejectReason::ZeroInDomainVolume => "zero_in_domain_volume",
             RejectReason::NeighbourhoodBand => "neighbourhood_band",
@@ -52,7 +58,7 @@ impl RejectReason {
 
     /// Every reason, in the order the checks run. The report emits its tally in
     /// this order so the counts read as a funnel rather than as an arbitrary map.
-    pub const ALL: [RejectReason; 9] = [
+    pub const ALL: [RejectReason; 10] = [
         RejectReason::NeighbourhoodBand,
         RejectReason::OutsideDomain,
         RejectReason::BoundaryDepth,
@@ -60,6 +66,7 @@ impl RejectReason {
         RejectReason::VoidGap,
         RejectReason::VoidEnclosed,
         RejectReason::ParticleOverlap,
+        RejectReason::ParticleEnclosed,
         RejectReason::ParticleGap,
         RejectReason::ZeroInDomainVolume,
     ];
@@ -228,6 +235,13 @@ pub fn check_placement(
     // The cost is bounded by the box prefilter: if no void triangle comes within
     // `gap` of the particle's box, the particle is both far from the void and not
     // nested in it, and none of the three tests needs to run.
+    //
+    // The same argument governs a pair of particles, and the neighbour loop below
+    // runs it: (b) is `mesh_surfaces_intersect_prepared` plus the distance test,
+    // and (a) and (c) collapse into the single symmetric
+    // `mesh_solids_nested_prepared`. v0.2.0 proved the argument here and then left
+    // both vertex tests out of the particle arm, which is how it came to place
+    // particles inside other particles and report the target as reached.
     if let Some(void) = ctx.void {
         if let Some((lo, hi)) = ctx.neighbourhood_band {
             let d = void.surface_distance(candidate.centre);
@@ -287,13 +301,26 @@ pub fn check_placement(
         if shape.is_none() {
             shape = to_parry_trimesh(candidate.mesh);
         }
-        if mesh_collision_exact_prepared(
+        if mesh_surfaces_intersect_prepared(
             Some(bbox),
             shape.as_ref(),
             Some(other.bbox),
             other.shape.as_ref(),
         ) {
             return Err(RejectReason::ParticleOverlap);
+        }
+        // The same nesting case the void arm above tests for, asked of a pair of
+        // particles. Surface intersection cannot see it and the distance below
+        // reports the gap between the two surfaces as if it were clearance, so
+        // without this a particle sits inside another and its volume is counted
+        // twice. One box comparison settles almost every pair.
+        if mesh_solids_nested_prepared(
+            Some(bbox),
+            shape.as_ref(),
+            Some(other.bbox),
+            other.shape.as_ref(),
+        ) {
+            return Err(RejectReason::ParticleEnclosed);
         }
         if ctx.gap_particle_particle > 0.0 {
             let d = mesh_distance_exact_prepared(

@@ -14,7 +14,8 @@ pub mod volume;
 pub use bbox::{bbox_distance, bbox_overlaps, check_boundary_constraints_mode, mesh_bbox};
 pub use collision::{
     generate_periodic_ghosts, mesh_collision_exact, mesh_collision_exact_prepared,
-    mesh_distance_exact, mesh_distance_exact_prepared, to_parry_trimesh,
+    mesh_distance_exact, mesh_distance_exact_prepared, mesh_solids_nested_prepared,
+    mesh_surfaces_intersect_prepared, to_parry_trimesh, trimesh_contains_point,
 };
 pub use forging::{simulate_forging_ffd, simulate_forging_ffd_with_tracking};
 pub use mesh_ops::{

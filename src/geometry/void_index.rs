@@ -1,6 +1,6 @@
 use crate::error::{Result, RustMsptError};
 use crate::geometry::bbox::mesh_bbox;
-use crate::geometry::collision::to_parry_trimesh;
+use crate::geometry::collision::{to_parry_trimesh, trimesh_contains_point, HIT_EPS, RAY_DIR};
 use crate::geometry::mesh_ops::split_mesh_into_granules;
 use crate::geometry::volume::{mesh_signed_volume, mesh_volume_in_bbox_exact};
 use crate::pipeline::rng::u01;
@@ -12,18 +12,6 @@ use parry3d_f64::query::RayCast;
 use parry3d_f64::shape::{TriMesh, Triangle as PTriangle};
 use rand_chacha::rand_core::RngCore;
 
-/// The fixed ray direction used for point-in-void parity, and the tolerance below
-/// which two hits along it count as the same crossing.
-///
-/// The same direction and tolerance as `s2::point_inside_mesh`, so the two agree
-/// on every point. It is deliberately not axis-aligned: an axis-aligned ray hits
-/// far more edges and vertices exactly, which is where parity goes wrong.
-const RAY_DIR: Vec3 = Vec3 {
-    x: 0.942_809_041_582_063_4,
-    y: 0.270_598_050_073_098_5,
-    z: 0.196_116_135_138_184_02,
-};
-const HIT_EPS: f64 = 1e-8;
 
 /// Which method produced a void's in-domain volume.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,36 +143,15 @@ impl VoidIndex {
     // 1e-8 hit tolerance as s2::point_inside_mesh, so the two agree. Parity, not a pseudo-normal
     // test: parity is correct for a shell nested inside another and does not care which way the
     // faces wind, and a void made of pores inside pores is a real case.
+    // Notes on the shared implementation: the parity walk itself lives in
+    // collision::trimesh_contains_point, which every solid-containment question in the crate now
+    // goes through. The box pre-check stays here because a void's box is usually a small part of
+    // the domain, and most queried points are nowhere near it.
     pub fn contains_point(&self, p: Vec3) -> bool {
         if !self.bbox.expanded(1e-9).contains_point(p) {
             return false;
         }
-        let origin = Point::new(p.x, p.y, p.z);
-        let dir = parry3d_f64::math::Vector::new(RAY_DIR.x, RAY_DIR.y, RAY_DIR.z);
-        let ray = parry3d_f64::query::Ray::new(origin, dir);
-
-        let mut hits: Vec<f64> = Vec::new();
-        let mut visit = |triangle: &u32| {
-            let t = self.shape.triangle(*triangle);
-            if let Some(toi) = t.cast_local_ray(&ray, f64::MAX, false) {
-                hits.push(toi);
-            }
-            true
-        };
-        let mut visitor =
-            parry3d_f64::query::visitors::RayIntersectionsVisitor::new(&ray, f64::MAX, &mut visit);
-        self.shape.qbvh().traverse_depth_first(&mut visitor);
-
-        hits.sort_by(|a, b| a.total_cmp(b));
-        let mut crossings = 0usize;
-        let mut last = f64::NEG_INFINITY;
-        for t in hits {
-            if t >= 0.0 && (t - last).abs() > HIT_EPS {
-                crossings += 1;
-                last = t;
-            }
-        }
-        crossings % 2 == 1
+        trimesh_contains_point(&self.shape, p)
     }
 
     // AI-FUNC-SUMMARY:

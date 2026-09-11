@@ -5,7 +5,10 @@ use rustmspt::config::{
     ScaleConfig, ScalingParams, SplitFilterConfig, SplitFilterOutput, SplitFilterRules,
     SplitFilterVolume, TargetConfig,
 };
-use rustmspt::geometry::{box_mesh, mesh_metrics, split_mesh_into_granules};
+use rustmspt::geometry::{
+    box_mesh, icosphere_mesh, mesh_bbox, mesh_collision_exact, mesh_metrics, mesh_volume_centroid,
+    point_inside_mesh, scale_mesh, split_mesh_into_granules, translate_mesh,
+};
 use rustmspt::io::{load_stl, load_tiff_or_folder, save_stl};
 use rustmspt::pipeline::crop::CropPipeline;
 use rustmspt::pipeline::forge::ForgePipeline;
@@ -485,4 +488,120 @@ fn crop_pipeline_smoke() {
     assert!(out_vol.height > 0);
     assert!(out_vol.depth > 0);
     assert!(out_vol.data.iter().any(|v| *v > 0));
+}
+
+#[test]
+fn packing_pipeline_never_nests_particles() {
+    // The original packing loop shares its narrow phase with the placement engine,
+    // so it shared the defect: surface intersection cannot see one closed solid
+    // inside another, and the min_neighbor_distance test reports the space between
+    // the two surfaces as if it were clearance.
+    //
+    // Two halves, because the loop is unseeded and how often it proposes a nested
+    // placement swings with the run. The property half does catch the real thing -
+    // on the unfixed loop it found a nested pair here - but it cannot be relied on
+    // to: whether the larger diameter bin ever fits the remaining volume budget
+    // changes the particle count by an order of magnitude between runs, and on the
+    // unfixed loop a 22-unit box nested nothing at 121, 134 or 413 particles while a
+    // 30-unit box nested 81 pairs at 1052. A run that size costs minutes in a debug
+    // build. So the second half asks the rule directly, through the exact call the
+    // loop makes (`mesh_collision_exact`, src/pipeline/pack.rs), and always fails
+    // without the fix.
+    let tmp = tempfile::tempdir().expect("tempdir should be created");
+    let input = tmp.path().join("input.stl");
+    let output = tmp.path().join("packed_nesting.stl");
+    let csv_path = tmp.path().join("two_humped.csv");
+    save_stl(&input, &icosphere_mesh(Vec3::new(0.0, 0.0, 0.0), 1.0, 2), "sphere")
+        .expect("sphere should be written");
+    fs::write(&csv_path, "bin,right,frequency\n2.5,3.5,0.8\n12.0,14.0,0.2\n")
+        .expect("distribution fixture should be written");
+
+    let pipeline = PackPipeline {
+        config: PackingConfig {
+            input: InputPath {
+                path: input.to_string_lossy().to_string(),
+            },
+            output: OutputPath {
+                path: output.to_string_lossy().to_string(),
+            },
+            r#box: BoxConfig {
+                dimensions: vec![0.0, 0.0, 0.0, 20.0, 20.0, 20.0],
+            },
+            packing: PackingParams {
+                target_volume_fraction: 0.12,
+                mode: 1,
+                max_attempts: 600,
+                min_neighbor_distance: Some(0.3),
+                rotation_mode: Some("any".to_string()),
+                rotation_axis_vector: Some(vec![0.0, 0.0, 1.0]),
+                min_boundary_dist: Some(0.0),
+                min_cross_boundary_depth: Some(0.0),
+                cpu_max: Some(2),
+                orient_to_positive_volume: Some(false),
+                target_diameter_distribution_csv: Some(csv_path.to_string_lossy().to_string()),
+                target_mean_sphericity: None,
+                mean_sphericity_tolerance: None,
+                filters: Some(PackingFilters {
+                    min_volume: None,
+                    max_aspect_ratio: None,
+                    max_sharpness_ratio: None,
+                }),
+            },
+        },
+    };
+
+    pipeline.run().expect("packing pipeline should run");
+    let packed = load_stl(&output).expect("packed STL should load");
+    let parts = split_mesh_into_granules(&packed);
+    // How many particles land is not this test's subject and is not reproducible:
+    // the loop is unseeded, and whether the larger diameter bin ever fits the
+    // remaining volume budget swings the count by an order of magnitude between
+    // runs. Only that something was placed is asserted.
+    assert!(!parts.is_empty(), "the run placed nothing");
+
+    // The property, on whatever this unseeded run produced.
+    let boxes: Vec<_> = parts.iter().map(|p| mesh_bbox(p).expect("bbox")).collect();
+    for i in 0..parts.len() {
+        for j in 0..parts.len() {
+            let (inner, outer) = (boxes[i], boxes[j]);
+            if i == j
+                || inner.min.x < outer.min.x
+                || inner.min.y < outer.min.y
+                || inner.min.z < outer.min.z
+                || inner.max.x > outer.max.x
+                || inner.max.y > outer.max.y
+                || inner.max.z > outer.max.z
+            {
+                continue;
+            }
+            assert!(
+                !point_inside_mesh(&parts[j], parts[i].vertices[0]),
+                "particle {i} lies inside particle {j}"
+            );
+        }
+    }
+
+    // And the rule itself, through the loop's own call. A particle from this run,
+    // scaled up around its own centre, then one of the run's real particles moved
+    // to its centre: the arrangement the loop must refuse, asked exactly the way
+    // pack.rs asks it. The large one is built rather than hoped for, because
+    // whether the loop places two very different sizes depends on whether the
+    // larger bin ever fits the remaining volume budget, which is not this test's
+    // subject.
+    let guest = &parts[0];
+    let mut host = guest.clone();
+    scale_mesh(&mut host, 4.0);
+    let centre = mesh_volume_centroid(guest).expect("a volume centroid");
+    let host_centre = mesh_volume_centroid(&host).expect("a volume centroid");
+    translate_mesh(&mut host, centre.sub(host_centre));
+    let host_volume = mesh_metrics(&host).expect("metrics").volume;
+    let guest_volume = mesh_metrics(guest).expect("metrics").volume;
+    assert!(
+        host_volume > 8.0 * guest_volume,
+        "the host must be able to contain the guest: {host_volume} vs {guest_volume}"
+    );
+    assert!(
+        mesh_collision_exact(guest, &host),
+        "the packing loop's own collision call accepted a particle buried inside another"
+    );
 }
