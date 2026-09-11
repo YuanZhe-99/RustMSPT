@@ -73,6 +73,30 @@ internally:
    `TriMesh` shapes (built via `to_parry_trimesh`), which perform triangle-level BVH-accelerated
    queries. Missing bounding boxes or shapes are treated conservatively — the functions return
    `true` (possible collision) / a permissive distance rather than silently ignoring the pair.
+3. **Nesting.** `mesh_solids_nested_prepared` asks whether one closed solid lies wholly inside the
+   other, which neither stage above can see.
+
+### Why nesting needs its own test
+
+`intersection_test` answers a question about *surfaces*, and two closed surfaces with one wholly
+inside the other never cross. `query::distance` then measures across the space between them and
+reports a comfortable clearance: a sphere of radius 1 centred inside one of radius 3 reads as
+`1.96` apart. A packing loop that asks only those two accepts the arrangement, and duly places
+particles inside other particles — which is what `pack` did through v0.2.0, on both engines, until
+the placement engine's own outputs were re-measured downstream.
+
+`mesh_solids_nested_prepared` costs a box comparison for almost every pair: a solid inside another
+has its bounding box inside the other's, so anything else returns immediately. Only when one box
+does contain the other is a single ray cast needed — `trimesh_contains_point`, the same parity walk
+`VoidIndex::contains_point` uses, with the same ray direction and hit tolerance as
+`s2::point_inside_mesh`. **One vertex settles it**, given that the surfaces do not intersect: a
+closed shell strictly inside another has *all* of its vertices inside it. A vertex, never the
+centroid — a non-convex shell's centroid can sit outside its own solid, in a concavity another
+particle may legitimately occupy.
+
+`mesh_collision_exact_prepared` is the surface test **or** the nesting test, in that order, and it
+is what "these two meshes collide" means everywhere in the crate: the solids share space, not that
+the surfaces cross.
 
 So the full pipeline for any given candidate-vs-existing pair is: **grid cell lookup (find
 candidates) → AABB overlap/distance test (cheap reject) → exact parry3d intersection/distance

@@ -123,6 +123,12 @@ packing:
 略超过 `0.02` 的目标值，因为流水线一旦某次放置使运行中的体积分数达到或超过目标值就会停止，
 而不会尝试精确落在目标值上。
 
+> **以上数字只是某一次运行的结果。** `packing:` 引擎不接受种子，因此同一份配置在不同运行之间颗粒数会变化
+> ——连续四次运行实测为 52、60、60、62。只有体积分数被停止规则钉住，且只钉住下界。若需要可精确复现的运行，
+> 请使用 `placement:` 引擎（[pack-placement.md](pack-placement.md)），它接受种子并记录自己做了什么。自
+> 0.2.1 起，本循环同样会拒绝整体位于已放置颗粒内部的候选；参见
+> [spatial-grid-collision.md](../algorithms/spatial-grid-collision.md) 的"为何嵌套需要独立的检测"一节。
+
 输出的 STL 文件 `/tmp/rustmspt-doc-examples/pack_plain_result.stl` 是一个真实的二进制 STL 文件
 （磁盘上 1,195,884 字节），包含 23,916 个三角形——即全部 63 个已放置颗粒实例的并集，
 每个实例都是 `data/input/particles.stl` 中 14 个候选壳之一的旋转/平移副本。

@@ -135,24 +135,24 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `SpatialGrid::point_to_cell_clamped` | Geometry — Core | `src/geometry/spatial.rs:93` | Maps a point to grid cell coordinates, clamped to grid bounds. |
 | `SpatialGrid::point_to_cell` | Geometry — Core | `src/geometry/spatial.rs:99` | Maps a point to grid cell coordinates, unclamped. |
 | `estimate_cell_size` | Geometry — Core | `src/geometry/spatial.rs:108` | Heuristically picks a `SpatialGrid` cell size from a set of bboxes. |
-| `VoidVolumeMethod` | Geometry — Volume & Collision | `src/geometry/void_index.rs:30` | Which method produced a void's in-domain volume. |
-| `VoidIndex` | Geometry — Volume & Collision | `src/geometry/void_index.rs:44` | A frozen void, indexed for the queries a placement run makes. |
-| `VoidIndex::build` | Geometry — Volume & Collision | `src/geometry/void_index.rs:68` | Validates a void mesh and builds its index; refuses mixed orientation. |
-| `VoidIndex::bbox` | Geometry — Volume & Collision | `src/geometry/void_index.rs:130` | The void's bounding box. |
-| `VoidIndex::shells` | Geometry — Volume & Collision | `src/geometry/void_index.rs:135` | How many closed shells the void has. |
-| `VoidIndex::is_outward` | Geometry — Volume & Collision | `src/geometry/void_index.rs:140` | Whether the void's shells wind outward. |
-| `VoidIndex::total_volume` | Geometry — Volume & Collision | `src/geometry/void_index.rs:145` | The void's total closed volume over shells with agreeing signs. |
-| `VoidIndex::contains_point` | Geometry — Volume & Collision | `src/geometry/void_index.rs:158` | Ray-parity point-in-void test over the hierarchy; correct for nested shells. |
-| `VoidIndex::near_box` | Geometry — Volume & Collision | `src/geometry/void_index.rs:199` | Box prefilter: false means far from the void and not nested in it. |
-| `VoidIndex::intersects` | Geometry — Volume & Collision | `src/geometry/void_index.rs:219` | Whether a particle's surface intersects the void's. |
-| `VoidIndex::min_distance_to` | Geometry — Volume & Collision | `src/geometry/void_index.rs:235` | Minimum surface-to-surface distance from a particle to the void. |
-| `VoidIndex::surface_distance` | Geometry — Volume & Collision | `src/geometry/void_index.rs:252` | Unsigned distance from a point to the void surface. |
-| `VoidIndex::any_vertex_inside` | Geometry — Volume & Collision | `src/geometry/void_index.rs:266` | Whether any of a mesh's vertices lies inside the void. |
-| `VoidIndex::any_void_vertex_inside` | Geometry — Volume & Collision | `src/geometry/void_index.rs:278` | Whether any void vertex lies inside a particle. |
-| `VoidIndex::volume_in_domain` | Geometry — Volume & Collision | `src/geometry/void_index.rs:297` | The void's volume inside a domain, and which method produced it. |
-| `VoidIndex::sample_surface_point` | Geometry — Volume & Collision | `src/geometry/void_index.rs:321` | Area-weighted point on the void surface with its outward normal. |
-| `VoidIndex::overlap_volume` | Geometry — Volume & Collision | `src/geometry/void_index.rs:363` | Volume of a particle inside the void, by domain-anchored voxel count. |
-| `point_inside_mesh_local` | Geometry — Volume & Collision | `src/geometry/void_index.rs:408` | Ray-parity point-in-mesh test for a small mesh with no hierarchy. |
+| `VoidVolumeMethod` | Geometry — Volume & Collision | `src/geometry/void_index.rs:18` | Which method produced a void's in-domain volume. |
+| `VoidIndex` | Geometry — Volume & Collision | `src/geometry/void_index.rs:32` | A frozen void, indexed for the queries a placement run makes. |
+| `VoidIndex::build` | Geometry — Volume & Collision | `src/geometry/void_index.rs:56` | Validates a void mesh and builds its index; refuses mixed orientation. |
+| `VoidIndex::bbox` | Geometry — Volume & Collision | `src/geometry/void_index.rs:118` | The void's bounding box. |
+| `VoidIndex::shells` | Geometry — Volume & Collision | `src/geometry/void_index.rs:123` | How many closed shells the void has. |
+| `VoidIndex::is_outward` | Geometry — Volume & Collision | `src/geometry/void_index.rs:128` | Whether the void's shells wind outward. |
+| `VoidIndex::total_volume` | Geometry — Volume & Collision | `src/geometry/void_index.rs:133` | The void's total closed volume over shells with agreeing signs. |
+| `VoidIndex::contains_point` | Geometry — Volume & Collision | `src/geometry/void_index.rs:150` | Ray-parity point-in-void test over the hierarchy; correct for nested shells. |
+| `VoidIndex::near_box` | Geometry — Volume & Collision | `src/geometry/void_index.rs:166` | Box prefilter: false means far from the void and not nested in it. |
+| `VoidIndex::intersects` | Geometry — Volume & Collision | `src/geometry/void_index.rs:186` | Whether a particle's surface intersects the void's. |
+| `VoidIndex::min_distance_to` | Geometry — Volume & Collision | `src/geometry/void_index.rs:202` | Minimum surface-to-surface distance from a particle to the void. |
+| `VoidIndex::surface_distance` | Geometry — Volume & Collision | `src/geometry/void_index.rs:219` | Unsigned distance from a point to the void surface. |
+| `VoidIndex::any_vertex_inside` | Geometry — Volume & Collision | `src/geometry/void_index.rs:233` | Whether any of a mesh's vertices lies inside the void. |
+| `VoidIndex::any_void_vertex_inside` | Geometry — Volume & Collision | `src/geometry/void_index.rs:245` | Whether any void vertex lies inside a particle. |
+| `VoidIndex::volume_in_domain` | Geometry — Volume & Collision | `src/geometry/void_index.rs:264` | The void's volume inside a domain, and which method produced it. |
+| `VoidIndex::sample_surface_point` | Geometry — Volume & Collision | `src/geometry/void_index.rs:288` | Area-weighted point on the void surface with its outward normal. |
+| `VoidIndex::overlap_volume` | Geometry — Volume & Collision | `src/geometry/void_index.rs:330` | Volume of a particle inside the void, by domain-anchored voxel count. |
+| `point_inside_mesh_local` | Geometry — Volume & Collision | `src/geometry/void_index.rs:375` | Ray-parity point-in-mesh test for a small mesh with no hierarchy. |
 | `DOMAIN_FACE_NAMES` | Geometry — Volume & Collision | `src/geometry/volume.rs:454` | The six domain-face names, in clip-plane order. |
 | `mesh_volume_centroid` | Geometry — Volume & Collision | `src/geometry/volume.rs:467` | Volume centroid of a closed mesh (not the vertex mean). |
 | `shell_signed_volumes` | Geometry — Volume & Collision | `src/geometry/volume.rs:498` | Signed volume per shell, exposing per-shell orientation. |
@@ -175,12 +175,15 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `particle_volume_in_bbox` | Geometry — Volume & Collision | `src/geometry/volume.rs:404` | Volume of a mesh after clipping it to a bounding box. |
 | `volume_fraction_in_bbox` | Geometry — Volume & Collision | `src/geometry/volume.rs:410` | Volume fraction of a single mesh within a bounding box. |
 | `volume_fraction_of_meshes_in_bbox` | Geometry — Volume & Collision | `src/geometry/volume.rs:420` | Total volume fraction of multiple meshes within a bounding box (parallel). |
-| `to_parry_trimesh` | Geometry — Volume & Collision | `src/geometry/collision.rs:14` | Converts a `Mesh` into a parry3d `TriMesh`. |
-| `mesh_collision_exact_prepared` | Geometry — Volume & Collision | `src/geometry/collision.rs:42` | Bbox-filtered exact collision test given pre-built bboxes/shapes. |
-| `mesh_distance_exact_prepared` | Geometry — Volume & Collision | `src/geometry/collision.rs:80` | Bbox-filtered exact distance query given pre-built bboxes/shapes. |
-| `mesh_collision_exact` | Geometry — Volume & Collision | `src/geometry/collision.rs:125` | Convenience wrapper: builds bbox/shape then tests collision. |
-| `mesh_distance_exact` | Geometry — Volume & Collision | `src/geometry/collision.rs:134` | Convenience wrapper: builds bbox/shape then computes distance. |
-| `generate_periodic_ghosts` | Geometry — Volume & Collision | `src/geometry/collision.rs:148` | Generates translated ghost copies of a mesh for periodic boundary collision. |
+| `to_parry_trimesh` | Geometry — Volume & Collision | `src/geometry/collision.rs:29` | Converts a `Mesh` into a parry3d `TriMesh`. |
+| `trimesh_contains_point` | Geometry — Volume & Collision | `src/geometry/collision.rs:61` | Ray-parity point-in-solid test over a shape's bounding-volume hierarchy. |
+| `mesh_surfaces_intersect_prepared` | Geometry — Volume & Collision | `src/geometry/collision.rs:99` | Bbox-filtered exact test for whether two mesh surfaces cross. |
+| `mesh_solids_nested_prepared` | Geometry — Volume & Collision | `src/geometry/collision.rs:150` | Whether one closed solid lies wholly inside the other. |
+| `mesh_collision_exact_prepared` | Geometry — Volume & Collision | `src/geometry/collision.rs:196` | Whether two mesh solids overlap: surfaces cross, or one contains the other. |
+| `mesh_distance_exact_prepared` | Geometry — Volume & Collision | `src/geometry/collision.rs:214` | Bbox-filtered exact distance query given pre-built bboxes/shapes. |
+| `mesh_collision_exact` | Geometry — Volume & Collision | `src/geometry/collision.rs:259` | Convenience wrapper: builds bbox/shape then tests collision. |
+| `mesh_distance_exact` | Geometry — Volume & Collision | `src/geometry/collision.rs:268` | Convenience wrapper: builds bbox/shape then computes distance. |
+| `generate_periodic_ghosts` | Geometry — Volume & Collision | `src/geometry/collision.rs:282` | Generates translated ghost copies of a mesh for periodic boundary collision. |
 | `simulate_forging_ffd` | Geometry — Volume & Collision | `src/geometry/forging.rs:10` | Simple Z-axis FFD compression with lateral bulge. |
 | `simulate_forging_ffd_with_tracking` | Geometry — Volume & Collision | `src/geometry/forging.rs:43` | Axis-configurable FFD forging with void densification and ROI bbox tracking. |
 | `GpuContext` | GPU | `src/gpu/context.rs:3` | Holds adapter name and buffer-size capabilities after successful GPU init. |
@@ -321,15 +324,15 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `summary` (placement.rs) | Pipeline — Packing | `src/pipeline/placement.rs:1274` | Builds the human-readable stdout summary. |
 | `read_record` | Pipeline — Packing | `src/pipeline/placement.rs:1335` | Reads a written per-particle record back. |
 | `read_report` | Pipeline — Packing | `src/pipeline/placement.rs:1343` | Reads a written run report back. |
-| `RejectReason` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:16` | Why a proposed placement was not accepted; the report's keys. |
-| `RejectReason::as_str` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:39` | The stable report key for a rejection reason. |
-| `PlacedParticle` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:69` | A particle that cleared every check, with its cached shape. |
-| `PlacedParticle::volume_in_domain_solid` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:99` | The particle volume counting toward the solid phase. |
-| `FeasibilityContext` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:105` | Everything a feasibility check reads. |
-| `Candidate` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:125` | A proposed placement with its cheap quantities precomputed. |
-| `Accepted` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:139` | What a passing check worked out along the way. |
-| `check_placement` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:164` | Runs every feasibility rule in order, returning the one that stopped it. |
-| `retained_depth` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:355` | How far a straddling particle still reaches inside the domain. |
+| `RejectReason` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:17` | Why a proposed placement was not accepted; the report's keys. |
+| `RejectReason::as_str` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:44` | The stable report key for a rejection reason. |
+| `PlacedParticle` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:76` | A particle that cleared every check, with its cached shape. |
+| `PlacedParticle::volume_in_domain_solid` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:106` | The particle volume counting toward the solid phase. |
+| `FeasibilityContext` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:112` | Everything a feasibility check reads. |
+| `Candidate` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:132` | A proposed placement with its cheap quantities precomputed. |
+| `Accepted` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:146` | What a passing check worked out along the way. |
+| `check_placement` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:171` | Runs every feasibility rule in order, returning the one that stopped it. |
+| `retained_depth` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:382` | How far a straddling particle still reaches inside the domain. |
 | `ToolRecord` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:15` | The build identity as it appears in a record or report. |
 | `StopReason` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:53` | The fixed four-word vocabulary a run may stop with. |
 | `ParticleRecord` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:133` | One placed particle's entry in the record file. |

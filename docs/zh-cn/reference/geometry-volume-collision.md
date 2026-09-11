@@ -21,12 +21,15 @@
 | `particle_volume_in_bbox` | `src/geometry/volume.rs:404` | 网格裁剪到包围盒后的体积。 |
 | `volume_fraction_in_bbox` | `src/geometry/volume.rs:410` | 单个网格在包围盒内的体积分数。 |
 | `volume_fraction_of_meshes_in_bbox` | `src/geometry/volume.rs:420` | 多个网格在包围盒内的总体积分数（并行计算）。 |
-| `to_parry_trimesh` | `src/geometry/collision.rs:14` | 将 `Mesh` 转换为 parry3d 的 `TriMesh`。 |
-| `mesh_collision_exact_prepared` | `src/geometry/collision.rs:42` | 给定预先构建的包围盒/形状，进行带包围盒过滤的精确碰撞检测。 |
-| `mesh_distance_exact_prepared` | `src/geometry/collision.rs:80` | 给定预先构建的包围盒/形状，进行带包围盒过滤的精确距离查询。 |
-| `mesh_collision_exact` | `src/geometry/collision.rs:125` | 便捷封装：构建包围盒/形状后测试碰撞。 |
-| `mesh_distance_exact` | `src/geometry/collision.rs:134` | 便捷封装：构建包围盒/形状后计算距离。 |
-| `generate_periodic_ghosts` | `src/geometry/collision.rs:148` | 为周期边界碰撞生成网格的平移镜像副本。 |
+| `to_parry_trimesh` | `src/geometry/collision.rs:29` | 将 `Mesh` 转换为 parry3d 的 `TriMesh`。 |
+| `trimesh_contains_point` | `src/geometry/collision.rs:61` | 借助形状的层次包围体，以射线奇偶判定点是否位于实体内部。 |
+| `mesh_surfaces_intersect_prepared` | `src/geometry/collision.rs:99` | 给定预先构建的包围盒/形状，精确判定两个网格*表面*是否相交。 |
+| `mesh_solids_nested_prepared` | `src/geometry/collision.rs:150` | 判定两个闭合实体中是否有一个整体位于另一个内部。 |
+| `mesh_collision_exact_prepared` | `src/geometry/collision.rs:196` | 判定两个网格*实体*是否重叠：表面相交，或一个包含另一个。 |
+| `mesh_distance_exact_prepared` | `src/geometry/collision.rs:214` | 给定预先构建的包围盒/形状，进行带包围盒过滤的精确距离查询。 |
+| `mesh_collision_exact` | `src/geometry/collision.rs:259` | 便捷封装：构建包围盒/形状后测试碰撞。 |
+| `mesh_distance_exact` | `src/geometry/collision.rs:268` | 便捷封装：构建包围盒/形状后计算距离。 |
+| `generate_periodic_ghosts` | `src/geometry/collision.rs:282` | 为周期边界碰撞生成网格的平移镜像副本。 |
 | `simulate_forging_ffd` | `src/geometry/forging.rs:10` | 简单的 Z 轴 FFD 压缩加侧向鼓起。 |
 | `simulate_forging_ffd_with_tracking` | `src/geometry/forging.rs:43` | 轴可配置的 FFD 锻造，带孔隙致密化与 ROI 包围盒跟踪。 |
 
@@ -191,7 +194,7 @@
 #### to_parry_trimesh
 
 - **签名：** `pub fn to_parry_trimesh(mesh: &Mesh) -> Option<TriMesh>`
-- **源码位置：** `src/geometry/collision.rs:14`
+- **源码位置：** `src/geometry/collision.rs:29`
 - **用途：** 将内部的 `Mesh` 转换为 `parry3d_f64::shape::TriMesh`，用于精确几何查询。
 - **参数：**
   - `mesh` — 待转换的网格。
@@ -199,36 +202,75 @@
 - **副作用：** 无。
 - **说明：** parry3d 的 `TriMesh` 使用 `u32` 索引，因此超过约 40 亿个顶点的网格无法转换；此项针对每个索引显式检查。
 
-#### mesh_collision_exact_prepared
+#### trimesh_contains_point
 
-- **签名：** `pub fn mesh_collision_exact_prepared(a_bbox: Option<BoundingBox>, a_shape: Option<&TriMesh>, b_bbox: Option<BoundingBox>, b_shape: Option<&TriMesh>) -> bool`
-- **源码位置：** `src/geometry/collision.rs:42`
-- **用途：** 在给定两个网格预先计算好的包围盒与 parry3d 形状的情况下，先经过包围盒粗筛阶段，再执行精确的精筛阶段测试，判断两个网格是否碰撞。
+- **签名：** `pub fn trimesh_contains_point(shape: &TriMesh, p: Vec3) -> bool`
+- **源码位置：** `src/geometry/collision.rs:61`
+- **用途：** 借助闭合表面自身的层次包围体，判定一个点是否位于该表面内部。
+- **参数：**
+  - `shape` — 已建立索引的表面。
+  - `p` — 查询点。
+- **返回值：** 点位于内部时为 `true`。
+- **副作用：** 无。
+- **说明：** 在 QBVH 上做射线奇偶遍历，使用全 crate 统一的 `RAY_DIR` 与 `HIT_EPS`——与 [`point_inside_mesh`](geometry-analysis.md#point_inside_mesh) 相同的固定非轴对齐方向与 `1e-8` 命中容差，因此层次测试与扫描测试逐点一致；`tests/collision_tests.rs` 对此有断言。采用奇偶而非伪法向测试：奇偶对嵌套壳是正确的，且不关心面的绕向——这一点很重要，因为 `box_mesh` 绕向朝内，而真实 STL 数据绕向朝外。`VoidIndex::contains_point` 在其自身的包围盒预检之后委托到此处。
+- **另请参阅：** [`point_inside_mesh`](geometry-analysis.md#point_inside_mesh)、[`mesh_solids_nested_prepared`](#mesh_solids_nested_prepared)。
+
+#### mesh_surfaces_intersect_prepared
+
+- **签名：** `pub fn mesh_surfaces_intersect_prepared(a_bbox: Option<BoundingBox>, a_shape: Option<&TriMesh>, b_bbox: Option<BoundingBox>, b_shape: Option<&TriMesh>) -> bool`
+- **源码位置：** `src/geometry/collision.rs:99`
+- **用途：** 在给定两个网格预先计算好的包围盒与 parry3d 形状的情况下，先经过包围盒粗筛阶段，再执行精确的精筛阶段测试，判断两个网格*表面*是否相交。
 - **参数：**
   - `a_bbox`、`b_bbox` — 两个网格预先计算好的包围盒。
   - `a_shape`、`b_shape` — 两个网格预先计算好的 parry3d `TriMesh` 形状。
-- **返回值：** 若形状相交则为 `true`。若任一包围盒缺失，或（包围盒检查通过后）任一形状缺失，或 `parry3d` 的 `query::intersection_test` 本身出错（`.unwrap_or(true)`），则保守地返回 `true`。
+- **返回值：** 若表面相交则为 `true`。若任一包围盒缺失，或（包围盒检查通过后）任一形状缺失，或 `parry3d` 的 `query::intersection_test` 本身出错（`.unwrap_or(true)`），则保守地返回 `true`。
 - **副作用：** 无。
-- **说明：** 首先检查 `bbox_overlaps(a_bbox, b_bbox)` 作为廉价的提前退出（若包围盒不重叠则立即返回 `false`）；只有通过该检查后才以恒等等距变换运行精确的 parry3d 相交测试（假定网格已经处于世界空间坐标系下，未经过单独的变换偏移）。
-- **另请参阅：** [`bbox_overlaps`](geometry-core.md#bbox_overlaps)。
+- **说明：** 首先检查 `bbox_overlaps(a_bbox, b_bbox)` 作为廉价的提前退出；只有通过该检查后才以恒等等距变换运行精确的 parry3d 相交测试（假定网格已经处于世界空间坐标系下）。**它本身不是碰撞检测**：一个闭合表面整体位于另一个内部时，两者从不相交。除非确实只关心表面这一问题，否则应调用 `mesh_collision_exact_prepared`。
+- **另请参阅：** [`bbox_overlaps`](geometry-core.md#bbox_overlaps)、[`mesh_collision_exact_prepared`](#mesh_collision_exact_prepared)。
+
+#### mesh_solids_nested_prepared
+
+- **签名：** `pub fn mesh_solids_nested_prepared(a_bbox: Option<BoundingBox>, a_shape: Option<&TriMesh>, b_bbox: Option<BoundingBox>, b_shape: Option<&TriMesh>) -> bool`
+- **源码位置：** `src/geometry/collision.rs:150`
+- **用途：** 判定两个闭合实体中是否有一个整体位于另一个内部。
+- **参数：**
+  - `a_bbox`、`b_bbox` — 预先计算好的包围盒。
+  - `a_shape`、`b_shape` — 预先计算好的 parry3d 形状。
+- **返回值：** 任一实体包含另一个时为 `true`。当包围盒或形状缺失时返回 `false` 而非 `true`，因为调用方的表面检测对该情形已经给出了保守答案。
+- **副作用：** 无。
+- **说明：** 这正是表面相交看不到、而表面距离会当作宽裕间隙报出的情形：`query::distance` 跨越两个表面之间的空隙度量，于是半径 1 的球体位于半径 3 的球体中心时读数为 `1.96`。包围盒比较（容差 `1e-9`）先行，并解决几乎所有配对，因为位于另一个内部的实体其包围盒必然位于对方之内；只有在一个包围盒确实包含另一个时，才需要一次 `trimesh_contains_point` 射线投射。在两个表面不相交的前提下，**一个顶点即可定论**：严格位于另一个闭合壳内部的闭合壳，其**全部**顶点都在其内。用顶点，绝不用质心——非凸壳的质心可能落在其自身实体之外、落在某个凹陷中，而那里是另一个颗粒可以合法占据的位置。调用方应与 `mesh_surfaces_intersect_prepared` 配对使用，后者提供该前提。
+- **另请参阅：** [`trimesh_contains_point`](#trimesh_contains_point)、[`mesh_collision_exact_prepared`](#mesh_collision_exact_prepared)。
+
+#### mesh_collision_exact_prepared
+
+- **签名：** `pub fn mesh_collision_exact_prepared(a_bbox: Option<BoundingBox>, a_shape: Option<&TriMesh>, b_bbox: Option<BoundingBox>, b_shape: Option<&TriMesh>) -> bool`
+- **源码位置：** `src/geometry/collision.rs:196`
+- **用途：** 判定两个网格*实体*是否重叠——表面相交，或一个包含另一个。
+- **参数：**
+  - `a_bbox`、`b_bbox` — 两个网格预先计算好的包围盒。
+  - `a_shape`、`b_shape` — 两个网格预先计算好的 parry3d `TriMesh` 形状。
+- **返回值：** 实体重叠时为 `true`；数据缺失时保守返回 `true`，该行为继承自 `mesh_surfaces_intersect_prepared`。
+- **副作用：** 无。
+- **说明：** 即 `mesh_surfaces_intersect_prepared || mesh_solids_nested_prepared`，且按此顺序——廉价的表面检测会在嵌套检测产生任何开销之前排除几乎所有配对。此处的"碰撞"指两个实体共享空间，而非两个表面相交；这是两个不同的问题，只问前者是一个真实的缺陷。直到 v0.2.0 为止，本函数*只是*前者，于是两个堆积引擎都会把颗粒整个放进别的颗粒里面：一次 3 µm 到 45 µm 粒径范围的 `placement:` 运行，146 个颗粒中有 28 个位于另一个颗粒内部，并在重复计入域体积 2.1% 的分数上报告 `target_reached`。
+- **另请参阅：** [`mesh_surfaces_intersect_prepared`](#mesh_surfaces_intersect_prepared)、[`mesh_solids_nested_prepared`](#mesh_solids_nested_prepared)。
 
 #### mesh_distance_exact_prepared
 
 - **签名：** `pub fn mesh_distance_exact_prepared(a_bbox: Option<BoundingBox>, a_shape: Option<&TriMesh>, b_bbox: Option<BoundingBox>, b_shape: Option<&TriMesh>) -> f64`
-- **源码位置：** `src/geometry/collision.rs:80`
+- **源码位置：** `src/geometry/collision.rs:214`
 - **用途：** 在给定预先计算好的包围盒与 parry3d 形状的情况下，以包围盒距离作为快速路径，计算两个网格间的最小欧氏距离。
 - **参数：**
   - `a_bbox`、`b_bbox` — 预先计算好的包围盒。
   - `a_shape`、`b_shape` — 预先计算好的 parry3d 形状。
 - **返回值：** `>= 0.0` 的距离。若任一包围盒缺失（回退情形，并非真正的"接触"信号），或两网格被判定为重叠，则返回 `0.0`。
 - **副作用：** 无。
-- **说明：** 逻辑为：计算 `bbox_d = bbox_distance(a_bbox, b_bbox)`。若 `bbox_d > 0.0`（包围盒分离），则精确形状距离至少为 `bbox_d`，因此计算形状间的 `query::distance`（若形状缺失或查询出错则回退为 `bbox_d`）——包围盒分离即保证网格不重叠，因而跳过碰撞检查。若 `bbox_d == 0.0`（包围盒接触或重叠），则必须通过 `mesh_collision_exact_prepared` 检查实际是否重叠；若确实重叠，返回 `0.0`；否则回退到精确的 `query::distance` 调用（若形状缺失或查询失败，默认返回 `0.0`）。
+- **说明：** 逻辑为：计算 `bbox_d = bbox_distance(a_bbox, b_bbox)`。若 `bbox_d > 0.0`（包围盒分离），则精确形状距离至少为 `bbox_d`，因此计算形状间的 `query::distance`（若形状缺失或查询出错则回退为 `bbox_d`）——包围盒分离即保证网格不重叠，因而跳过碰撞检查。若 `bbox_d == 0.0`（包围盒接触或重叠），则必须通过 `mesh_collision_exact_prepared` 检查实际是否重叠；若确实重叠，返回 `0.0`；否则回退到精确的 `query::distance` 调用（若形状缺失或查询失败，默认返回 `0.0`）。因此**嵌套**配对报出 `0.0`，而非两个表面之间的空隙：嵌套蕴含包围盒重叠，故快速路径无法绕过碰撞调用，而该调用如今返回 `true`。
 - **另请参阅：** [`bbox_distance`](geometry-core.md#bbox_distance)、[`mesh_collision_exact_prepared`](#mesh_collision_exact_prepared)。
 
 #### mesh_collision_exact
 
 - **签名：** `pub fn mesh_collision_exact(a: &Mesh, b: &Mesh) -> bool`
-- **源码位置：** `src/geometry/collision.rs:125`
+- **源码位置：** `src/geometry/collision.rs:259`
 - **用途：** 便捷封装函数，为两个网格即时计算包围盒与 parry3d 形状，然后测试碰撞。
 - **参数：**
   - `a`、`b` — 待测试的两个网格。
@@ -240,7 +282,7 @@
 #### mesh_distance_exact
 
 - **签名：** `pub fn mesh_distance_exact(a: &Mesh, b: &Mesh) -> f64`
-- **源码位置：** `src/geometry/collision.rs:134`
+- **源码位置：** `src/geometry/collision.rs:268`
 - **用途：** 便捷封装函数，为两个网格即时计算包围盒与 parry3d 形状，然后计算它们的精确距离。
 - **参数：**
   - `a`、`b` — 待测量的两个网格。
@@ -251,7 +293,7 @@
 #### generate_periodic_ghosts
 
 - **签名：** `pub fn generate_periodic_ghosts(mesh: &Mesh, box_bounds: BoundingBox) -> Vec<Mesh>`
-- **源码位置：** `src/geometry/collision.rs:148`
+- **源码位置：** `src/geometry/collision.rs:282`
 - **用途：** 生成网格的平移"镜像"副本，沿各轴组合按堆积盒的尺寸偏移，以支持周期边界条件下的碰撞检测（靠近盒子一个面的颗粒可能与靠近对面的颗粒发生碰撞）。
 - **参数：**
   - `mesh` — 待生成镜像的源网格。

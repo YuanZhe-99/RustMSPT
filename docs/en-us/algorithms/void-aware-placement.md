@@ -191,6 +191,16 @@ the case it exists for.
 (c) is the one people leave out, and without it a particle large enough to swallow a whole pore
 passes every other test.
 
+**The same predicate governs a pair of particles**, and v0.2.0 did not apply it there. Between two
+particles there is no "which one is the void" asymmetry, so (a) and (c) collapse into one symmetric
+question — does either solid contain the other — answered by `mesh_solids_nested_prepared`, while
+(b) is `mesh_surfaces_intersect_prepared` plus the gap test. Leaving it out is not a subtle loss:
+on a lognormal from 3 µm to 45 µm at a 0.30 target, v0.2.0 placed 146 particles of which **28 lay
+wholly inside another** — one of them three deep — double-counting 2.1 % of the domain and
+reporting `target_reached` on an inflated fraction. The shipped examples never showed it because
+their 6-to-24 range makes the nesting region about 500 µm³ in a 10⁶ µm³ domain. A rejection is
+reported as `particle_enclosed`.
+
 `g_pv > 0` is required, not merely recommended: `parry`'s `query::distance` returns exactly `0.0` for
 two shapes that intersect, so `0.0 >= 0.0` would pass and a zero gap would forbid nothing. The config
 refuses it by name.
@@ -254,8 +264,9 @@ is what makes the report's rejection tally readable as a funnel:
 4. `void_gap`
 5. `void_enclosed`
 6. `particle_overlap`
-7. `particle_gap`
-8. `zero_in_domain_volume`
+7. `particle_enclosed`
+8. `particle_gap`
+9. `zero_in_domain_volume`
 
 Three expensive things are deliberately **deferred** behind cheap rejections, and it matters by more
 than an order of magnitude: writing them eagerly made an 86-particle run take 3.44 s, and deferring

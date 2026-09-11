@@ -19,24 +19,24 @@ selects the original loop instead, which is documented in
 
 | Item | Location | Summary |
 |---|---|---|
-| `VoidVolumeMethod` | `src/geometry/void_index.rs:30` | Which method produced a void's in-domain volume. |
-| `VoidIndex` | `src/geometry/void_index.rs:44` | A frozen void, indexed for the queries a placement run makes. |
-| `VoidIndex::build` | `src/geometry/void_index.rs:68` | Validates a void mesh and builds its index; refuses mixed orientation. |
-| `VoidIndex::bbox` | `src/geometry/void_index.rs:130` | The void's bounding box. |
-| `VoidIndex::shells` | `src/geometry/void_index.rs:135` | How many closed shells the void has. |
-| `VoidIndex::is_outward` | `src/geometry/void_index.rs:140` | Whether the void's shells wind outward. |
-| `VoidIndex::total_volume` | `src/geometry/void_index.rs:145` | The void's total closed volume over shells with agreeing signs. |
-| `VoidIndex::contains_point` | `src/geometry/void_index.rs:158` | Ray-parity point-in-void test over the hierarchy; correct for nested shells. |
-| `VoidIndex::near_box` | `src/geometry/void_index.rs:199` | Box prefilter: false means far from the void and not nested in it. |
-| `VoidIndex::intersects` | `src/geometry/void_index.rs:219` | Whether a particle's surface intersects the void's. |
-| `VoidIndex::min_distance_to` | `src/geometry/void_index.rs:235` | Minimum surface-to-surface distance from a particle to the void. |
-| `VoidIndex::surface_distance` | `src/geometry/void_index.rs:252` | Unsigned distance from a point to the void surface. |
-| `VoidIndex::any_vertex_inside` | `src/geometry/void_index.rs:266` | Whether any of a mesh's vertices lies inside the void. |
-| `VoidIndex::any_void_vertex_inside` | `src/geometry/void_index.rs:278` | Whether any void vertex lies inside a particle. |
-| `VoidIndex::volume_in_domain` | `src/geometry/void_index.rs:297` | The void's volume inside a domain, and which method produced it. |
-| `VoidIndex::sample_surface_point` | `src/geometry/void_index.rs:321` | Area-weighted point on the void surface with its outward normal. |
-| `VoidIndex::overlap_volume` | `src/geometry/void_index.rs:363` | Volume of a particle inside the void, by domain-anchored voxel count. |
-| `point_inside_mesh_local` | `src/geometry/void_index.rs:408` | Ray-parity point-in-mesh test for a small mesh with no hierarchy. |
+| `VoidVolumeMethod` | `src/geometry/void_index.rs:18` | Which method produced a void's in-domain volume. |
+| `VoidIndex` | `src/geometry/void_index.rs:32` | A frozen void, indexed for the queries a placement run makes. |
+| `VoidIndex::build` | `src/geometry/void_index.rs:56` | Validates a void mesh and builds its index; refuses mixed orientation. |
+| `VoidIndex::bbox` | `src/geometry/void_index.rs:118` | The void's bounding box. |
+| `VoidIndex::shells` | `src/geometry/void_index.rs:123` | How many closed shells the void has. |
+| `VoidIndex::is_outward` | `src/geometry/void_index.rs:128` | Whether the void's shells wind outward. |
+| `VoidIndex::total_volume` | `src/geometry/void_index.rs:133` | The void's total closed volume over shells with agreeing signs. |
+| `VoidIndex::contains_point` | `src/geometry/void_index.rs:150` | Ray-parity point-in-void test; a bbox pre-check, then `trimesh_contains_point`. |
+| `VoidIndex::near_box` | `src/geometry/void_index.rs:166` | Box prefilter: false means far from the void and not nested in it. |
+| `VoidIndex::intersects` | `src/geometry/void_index.rs:186` | Whether a particle's surface intersects the void's. |
+| `VoidIndex::min_distance_to` | `src/geometry/void_index.rs:202` | Minimum surface-to-surface distance from a particle to the void. |
+| `VoidIndex::surface_distance` | `src/geometry/void_index.rs:219` | Unsigned distance from a point to the void surface. |
+| `VoidIndex::any_vertex_inside` | `src/geometry/void_index.rs:233` | Whether any of a mesh's vertices lies inside the void. |
+| `VoidIndex::any_void_vertex_inside` | `src/geometry/void_index.rs:245` | Whether any void vertex lies inside a particle. |
+| `VoidIndex::volume_in_domain` | `src/geometry/void_index.rs:264` | The void's volume inside a domain, and which method produced it. |
+| `VoidIndex::sample_surface_point` | `src/geometry/void_index.rs:288` | Area-weighted point on the void surface with its outward normal. |
+| `VoidIndex::overlap_volume` | `src/geometry/void_index.rs:330` | Volume of a particle inside the void, by domain-anchored voxel count. |
+| `point_inside_mesh_local` | `src/geometry/void_index.rs:375` | Ray-parity point-in-mesh test for a small mesh with no hierarchy. |
 | `PlacementPipeline` | `src/pipeline/placement.rs:38` | Pipeline struct holding a validated `ResolvedPlacement`. |
 | `PHASE_MATRIX` | `src/pipeline/placement_labels.rs:12` | Phase code 0 in the written label field. |
 | `VoxelLabelsHeader` | `src/pipeline/placement_labels.rs:21` | What the label stacks are: spacing, origin, layout, phase table. |
@@ -66,15 +66,15 @@ selects the original loop instead, which is documented in
 | `summary` (placement.rs) | `src/pipeline/placement.rs:1274` | Builds the human-readable stdout summary. |
 | `read_record` | `src/pipeline/placement.rs:1335` | Reads a written per-particle record back. |
 | `read_report` | `src/pipeline/placement.rs:1343` | Reads a written run report back. |
-| `RejectReason` | `src/pipeline/placement_feasibility.rs:16` | Why a proposed placement was not accepted; the report's keys. |
-| `RejectReason::as_str` | `src/pipeline/placement_feasibility.rs:39` | The stable report key for a rejection reason. |
-| `PlacedParticle` | `src/pipeline/placement_feasibility.rs:69` | A particle that cleared every check, with its cached shape. |
-| `PlacedParticle::volume_in_domain_solid` | `src/pipeline/placement_feasibility.rs:99` | The particle volume counting toward the solid phase. |
-| `FeasibilityContext` | `src/pipeline/placement_feasibility.rs:105` | Everything a feasibility check reads. |
-| `Candidate` | `src/pipeline/placement_feasibility.rs:125` | A proposed placement with its cheap quantities precomputed. |
-| `Accepted` | `src/pipeline/placement_feasibility.rs:139` | What a passing check worked out along the way. |
-| `check_placement` | `src/pipeline/placement_feasibility.rs:164` | Runs every feasibility rule in order, returning the one that stopped it. |
-| `retained_depth` | `src/pipeline/placement_feasibility.rs:355` | How far a straddling particle still reaches inside the domain. |
+| `RejectReason` | `src/pipeline/placement_feasibility.rs:17` | Why a proposed placement was not accepted; the report's keys. Ten variants. |
+| `RejectReason::as_str` | `src/pipeline/placement_feasibility.rs:44` | The stable report key for a rejection reason. |
+| `PlacedParticle` | `src/pipeline/placement_feasibility.rs:76` | A particle that cleared every check, with its cached shape. |
+| `PlacedParticle::volume_in_domain_solid` | `src/pipeline/placement_feasibility.rs:106` | The particle volume counting toward the solid phase. |
+| `FeasibilityContext` | `src/pipeline/placement_feasibility.rs:112` | Everything a feasibility check reads. |
+| `Candidate` | `src/pipeline/placement_feasibility.rs:132` | A proposed placement with its cheap quantities precomputed. |
+| `Accepted` | `src/pipeline/placement_feasibility.rs:146` | What a passing check worked out along the way. |
+| `check_placement` | `src/pipeline/placement_feasibility.rs:171` | Runs every feasibility rule in order, returning the one that stopped it. |
+| `retained_depth` | `src/pipeline/placement_feasibility.rs:382` | How far a straddling particle still reaches inside the domain. |
 | `ToolRecord` | `src/pipeline/placement_outputs.rs:15` | The build identity as it appears in a record or report. |
 | `StopReason` | `src/pipeline/placement_outputs.rs:53` | The fixed four-word vocabulary a run may stop with. |
 | `ParticleRecord` | `src/pipeline/placement_outputs.rs:133` | One placed particle's entry in the record file. |
@@ -187,6 +187,13 @@ list, so nothing may emit a fifth value.
   loop.
 - `RejectReason::ALL` is the report's emission order and reads as a funnel. The exact clip check is
   *evaluated* after the neighbour tests, for cost; the tally order is the documented rule order.
+- `particle_overlap` and `particle_enclosed` are two different failures and the second is the one
+  v0.2.0 was missing. Surfaces that cross give the first; one particle wholly inside another gives
+  the second, and the surfaces in that arrangement never cross while the gap test reads the space
+  between them as clearance. The void arm had both halves of the argument from the start; the
+  particle arm did not, which is how a run came to place 28 of 146 particles inside another and
+  report `target_reached`. See
+  [void-aware-placement.md](../algorithms/void-aware-placement.md#61-the-predicate-and-why-it-is-complete).
 - `VoidIndex` has a deliberately terse `Debug`: the mesh and its hierarchy would fill a screen and
   say nothing a reader wants.
 - The report lists itself in `outputs` with a null digest. A file cannot contain its own hash, and an

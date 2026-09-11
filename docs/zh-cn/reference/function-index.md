@@ -137,24 +137,24 @@
 | `SpatialGrid::point_to_cell_clamped` | Geometry — Core | `src/geometry/spatial.rs:93` | 将一个点映射到网格单元坐标，并夹紧到网格边界内。 |
 | `SpatialGrid::point_to_cell` | Geometry — Core | `src/geometry/spatial.rs:99` | 将一个点映射到网格单元坐标，不做夹紧处理。 |
 | `estimate_cell_size` | Geometry — Core | `src/geometry/spatial.rs:108` | 根据一组包围盒启发式地选取 `SpatialGrid` 的单元大小。 |
-| `VoidVolumeMethod` | Geometry — Volume & Collision | `src/geometry/void_index.rs:30` | 给出孔隙域内体积的计算方法。 |
-| `VoidIndex` | Geometry — Volume & Collision | `src/geometry/void_index.rs:44` | 冻结孔隙，为放置运行的各类查询建立索引。 |
-| `VoidIndex::build` | Geometry — Volume & Collision | `src/geometry/void_index.rs:68` | 校验孔隙网格并建立索引；朝向不一致时拒绝。 |
-| `VoidIndex::bbox` | Geometry — Volume & Collision | `src/geometry/void_index.rs:130` | 孔隙的包围盒。 |
-| `VoidIndex::shells` | Geometry — Volume & Collision | `src/geometry/void_index.rs:135` | 孔隙包含多少个闭合壳。 |
-| `VoidIndex::is_outward` | Geometry — Volume & Collision | `src/geometry/void_index.rs:140` | 孔隙各壳是否朝外缠绕。 |
-| `VoidIndex::total_volume` | Geometry — Volume & Collision | `src/geometry/void_index.rs:145` | 符号一致的各壳求和得到的孔隙总体积。 |
-| `VoidIndex::contains_point` | Geometry — Volume & Collision | `src/geometry/void_index.rs:158` | 在层次结构上做射线奇偶判定；对嵌套壳同样正确。 |
-| `VoidIndex::near_box` | Geometry — Volume & Collision | `src/geometry/void_index.rs:199` | 包围盒预筛：为假即远离孔隙且未被其嵌套。 |
-| `VoidIndex::intersects` | Geometry — Volume & Collision | `src/geometry/void_index.rs:219` | 颗粒表面是否与孔面相交。 |
-| `VoidIndex::min_distance_to` | Geometry — Volume & Collision | `src/geometry/void_index.rs:235` | 颗粒到孔隙的最小面到面距离。 |
-| `VoidIndex::surface_distance` | Geometry — Volume & Collision | `src/geometry/void_index.rs:252` | 点到孔面的无符号距离。 |
-| `VoidIndex::any_vertex_inside` | Geometry — Volume & Collision | `src/geometry/void_index.rs:266` | 网格是否有顶点落在孔隙内部。 |
-| `VoidIndex::any_void_vertex_inside` | Geometry — Volume & Collision | `src/geometry/void_index.rs:278` | 孔隙是否有顶点落在颗粒内部。 |
-| `VoidIndex::volume_in_domain` | Geometry — Volume & Collision | `src/geometry/void_index.rs:297` | 孔隙在域内的体积，以及所用的计算方法。 |
-| `VoidIndex::sample_surface_point` | Geometry — Volume & Collision | `src/geometry/void_index.rs:321` | 按面积加权在孔面上取点，并给出外法向。 |
-| `VoidIndex::overlap_volume` | Geometry — Volume & Collision | `src/geometry/void_index.rs:363` | 以域锚定的体素计数给出颗粒落在孔隙内的体积。 |
-| `point_inside_mesh_local` | Geometry — Volume & Collision | `src/geometry/void_index.rs:408` | 对无层次结构的小网格做射线奇偶判定。 |
+| `VoidVolumeMethod` | Geometry — Volume & Collision | `src/geometry/void_index.rs:18` | 给出孔隙域内体积的计算方法。 |
+| `VoidIndex` | Geometry — Volume & Collision | `src/geometry/void_index.rs:32` | 冻结孔隙，为放置运行的各类查询建立索引。 |
+| `VoidIndex::build` | Geometry — Volume & Collision | `src/geometry/void_index.rs:56` | 校验孔隙网格并建立索引；朝向不一致时拒绝。 |
+| `VoidIndex::bbox` | Geometry — Volume & Collision | `src/geometry/void_index.rs:118` | 孔隙的包围盒。 |
+| `VoidIndex::shells` | Geometry — Volume & Collision | `src/geometry/void_index.rs:123` | 孔隙包含多少个闭合壳。 |
+| `VoidIndex::is_outward` | Geometry — Volume & Collision | `src/geometry/void_index.rs:128` | 孔隙各壳是否朝外缠绕。 |
+| `VoidIndex::total_volume` | Geometry — Volume & Collision | `src/geometry/void_index.rs:133` | 符号一致的各壳求和得到的孔隙总体积。 |
+| `VoidIndex::contains_point` | Geometry — Volume & Collision | `src/geometry/void_index.rs:150` | 在层次结构上做射线奇偶判定；对嵌套壳同样正确。 |
+| `VoidIndex::near_box` | Geometry — Volume & Collision | `src/geometry/void_index.rs:166` | 包围盒预筛：为假即远离孔隙且未被其嵌套。 |
+| `VoidIndex::intersects` | Geometry — Volume & Collision | `src/geometry/void_index.rs:186` | 颗粒表面是否与孔面相交。 |
+| `VoidIndex::min_distance_to` | Geometry — Volume & Collision | `src/geometry/void_index.rs:202` | 颗粒到孔隙的最小面到面距离。 |
+| `VoidIndex::surface_distance` | Geometry — Volume & Collision | `src/geometry/void_index.rs:219` | 点到孔面的无符号距离。 |
+| `VoidIndex::any_vertex_inside` | Geometry — Volume & Collision | `src/geometry/void_index.rs:233` | 网格是否有顶点落在孔隙内部。 |
+| `VoidIndex::any_void_vertex_inside` | Geometry — Volume & Collision | `src/geometry/void_index.rs:245` | 孔隙是否有顶点落在颗粒内部。 |
+| `VoidIndex::volume_in_domain` | Geometry — Volume & Collision | `src/geometry/void_index.rs:264` | 孔隙在域内的体积，以及所用的计算方法。 |
+| `VoidIndex::sample_surface_point` | Geometry — Volume & Collision | `src/geometry/void_index.rs:288` | 按面积加权在孔面上取点，并给出外法向。 |
+| `VoidIndex::overlap_volume` | Geometry — Volume & Collision | `src/geometry/void_index.rs:330` | 以域锚定的体素计数给出颗粒落在孔隙内的体积。 |
+| `point_inside_mesh_local` | Geometry — Volume & Collision | `src/geometry/void_index.rs:375` | 对无层次结构的小网格做射线奇偶判定。 |
 | `DOMAIN_FACE_NAMES` | Geometry — Volume & Collision | `src/geometry/volume.rs:454` | 六个域面名称，按裁剪平面顺序排列。 |
 | `mesh_volume_centroid` | Geometry — Volume & Collision | `src/geometry/volume.rs:467` | 闭合网格的体积质心（不是顶点均值）。 |
 | `shell_signed_volumes` | Geometry — Volume & Collision | `src/geometry/volume.rs:498` | 逐壳有符号体积，用于暴露各壳的朝向。 |
@@ -177,12 +177,15 @@
 | `particle_volume_in_bbox` | Geometry — Volume & Collision | `src/geometry/volume.rs:404` | 网格裁剪到一个包围盒后的体积。 |
 | `volume_fraction_in_bbox` | Geometry — Volume & Collision | `src/geometry/volume.rs:410` | 单个网格在一个包围盒内的体积分数。 |
 | `volume_fraction_of_meshes_in_bbox` | Geometry — Volume & Collision | `src/geometry/volume.rs:420` | 多个网格在一个包围盒内的总体积分数（并行计算）。 |
-| `to_parry_trimesh` | Geometry — Volume & Collision | `src/geometry/collision.rs:14` | 将一个 `Mesh` 转换为 parry3d 的 `TriMesh`。 |
-| `mesh_collision_exact_prepared` | Geometry — Volume & Collision | `src/geometry/collision.rs:42` | 在给定预先构建的包围盒/形状的情况下，进行经包围盒过滤的精确碰撞测试。 |
-| `mesh_distance_exact_prepared` | Geometry — Volume & Collision | `src/geometry/collision.rs:80` | 在给定预先构建的包围盒/形状的情况下，进行经包围盒过滤的精确距离查询。 |
-| `mesh_collision_exact` | Geometry — Volume & Collision | `src/geometry/collision.rs:125` | 便捷封装：构建包围盒/形状后测试碰撞。 |
-| `mesh_distance_exact` | Geometry — Volume & Collision | `src/geometry/collision.rs:134` | 便捷封装：构建包围盒/形状后计算距离。 |
-| `generate_periodic_ghosts` | Geometry — Volume & Collision | `src/geometry/collision.rs:148` | 为周期边界碰撞生成一个网格经平移的镜像副本。 |
+| `to_parry_trimesh` | Geometry — Volume & Collision | `src/geometry/collision.rs:29` | 将一个 `Mesh` 转换为 parry3d 的 `TriMesh`。 |
+| `trimesh_contains_point` | Geometry — Volume & Collision | `src/geometry/collision.rs:61` | 借助形状的层次包围体，以射线奇偶判定点是否位于实体内部。 |
+| `mesh_surfaces_intersect_prepared` | Geometry — Volume & Collision | `src/geometry/collision.rs:99` | 给定预先构建的包围盒/形状，精确判定两个网格表面是否相交。 |
+| `mesh_solids_nested_prepared` | Geometry — Volume & Collision | `src/geometry/collision.rs:150` | 判定两个闭合实体中是否有一个整体位于另一个内部。 |
+| `mesh_collision_exact_prepared` | Geometry — Volume & Collision | `src/geometry/collision.rs:196` | 判定两个网格实体是否重叠：表面相交，或一个包含另一个。 |
+| `mesh_distance_exact_prepared` | Geometry — Volume & Collision | `src/geometry/collision.rs:214` | 在给定预先构建的包围盒/形状的情况下，进行经包围盒过滤的精确距离查询。 |
+| `mesh_collision_exact` | Geometry — Volume & Collision | `src/geometry/collision.rs:259` | 便捷封装：构建包围盒/形状后测试碰撞。 |
+| `mesh_distance_exact` | Geometry — Volume & Collision | `src/geometry/collision.rs:268` | 便捷封装：构建包围盒/形状后计算距离。 |
+| `generate_periodic_ghosts` | Geometry — Volume & Collision | `src/geometry/collision.rs:282` | 为周期边界碰撞生成一个网格经平移的镜像副本。 |
 | `simulate_forging_ffd` | Geometry — Volume & Collision | `src/geometry/forging.rs:10` | 带侧向鼓凸的简单 Z 轴自由变形压缩。 |
 | `simulate_forging_ffd_with_tracking` | Geometry — Volume & Collision | `src/geometry/forging.rs:43` | 带孔隙致密化和感兴趣区域包围盒跟踪、轴向可配置的自由变形锻造。 |
 | `GpuContext` | GPU | `src/gpu/context.rs:3` | GPU 初始化成功后持有适配器名称与缓冲区大小能力信息。 |
@@ -326,15 +329,15 @@
 | `summary` (placement.rs) | Pipeline — Packing | `src/pipeline/placement.rs:1274` | 构造供人阅读的 stdout 摘要。 |
 | `read_record` | Pipeline — Packing | `src/pipeline/placement.rs:1335` | 读回已写出的逐颗粒记录。 |
 | `read_report` | Pipeline — Packing | `src/pipeline/placement.rs:1343` | 读回已写出的运行报告。 |
-| `RejectReason` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:16` | 候选放置未被接受的原因；即报告中的键。 |
-| `RejectReason::as_str` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:39` | 拒绝原因在报告中的稳定键名。 |
-| `PlacedParticle` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:69` | 通过全部检查的颗粒，附带缓存的形状。 |
-| `PlacedParticle::volume_in_domain_solid` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:99` | 计入固相的颗粒体积。 |
-| `FeasibilityContext` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:105` | 可行性检查所读取的全部内容。 |
-| `Candidate` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:125` | 候选放置，附带已预先算好的廉价量。 |
-| `Accepted` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:139` | 通过检查过程中顺带算出的结果。 |
-| `check_placement` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:164` | 按序运行全部可行性规则，返回拦下它的那一条。 |
-| `retained_depth` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:355` | 跨界颗粒仍伸入域内的深度。 |
+| `RejectReason` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:17` | 候选放置未被接受的原因；即报告中的键。 |
+| `RejectReason::as_str` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:44` | 拒绝原因在报告中的稳定键名。 |
+| `PlacedParticle` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:76` | 通过全部检查的颗粒，附带缓存的形状。 |
+| `PlacedParticle::volume_in_domain_solid` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:106` | 计入固相的颗粒体积。 |
+| `FeasibilityContext` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:112` | 可行性检查所读取的全部内容。 |
+| `Candidate` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:132` | 候选放置，附带已预先算好的廉价量。 |
+| `Accepted` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:146` | 通过检查过程中顺带算出的结果。 |
+| `check_placement` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:171` | 按序运行全部可行性规则，返回拦下它的那一条。 |
+| `retained_depth` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:382` | 跨界颗粒仍伸入域内的深度。 |
 | `ToolRecord` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:15` | 记录与报告中出现的构建身份。 |
 | `StopReason` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:53` | 运行可用的四词固定停止原因词表。 |
 | `ParticleRecord` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:133` | 记录文件中单个已放置颗粒的条目。 |

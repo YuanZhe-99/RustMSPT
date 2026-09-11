@@ -129,6 +129,9 @@ Baseline proposed terms, extracted from the English corpus. Flag ambiguous or co
 | clearance / gap (`g_pv`, `g_pp`) | 间隙 | keep the symbols `g_pv` and `g_pp` untranslated |
 | bounding radius | 包围半径 | distance from a shell's centroid to its furthest vertex |
 | volume centroid | 体积质心 | always distinguish from 顶点均值 (vertex mean); the two are different points and the record depends on which |
+| nested (one closed solid wholly inside another) | 嵌套 | the arrangement surface intersection cannot see; never 包含, which reads as set membership rather than as geometry |
+| solid (as opposed to surface) | 实体 | the distinction the collision predicate turns on: 表面相交 is not 实体重叠 |
+| `particle_enclosed` | — | a report key; keep untranslated, like the other rejection reasons |
 
 This list is a starting point, not exhaustive — the translator should extend it as new terms surface, and should keep it in sync with this file (or split it into its own glossary file under `docs/zh-cn/` if it grows large).
 

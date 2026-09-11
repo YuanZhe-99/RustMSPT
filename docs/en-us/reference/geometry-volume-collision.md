@@ -21,12 +21,15 @@ This page documents three `src/geometry/` submodules: `volume.rs` (mesh volume c
 | `particle_volume_in_bbox` | `src/geometry/volume.rs:404` | Volume of a mesh after clipping it to a bounding box. |
 | `volume_fraction_in_bbox` | `src/geometry/volume.rs:410` | Volume fraction of a single mesh within a bounding box. |
 | `volume_fraction_of_meshes_in_bbox` | `src/geometry/volume.rs:420` | Total volume fraction of multiple meshes within a bounding box (parallel). |
-| `to_parry_trimesh` | `src/geometry/collision.rs:14` | Converts a `Mesh` into a parry3d `TriMesh`. |
-| `mesh_collision_exact_prepared` | `src/geometry/collision.rs:42` | Bbox-filtered exact collision test given pre-built bboxes/shapes. |
-| `mesh_distance_exact_prepared` | `src/geometry/collision.rs:80` | Bbox-filtered exact distance query given pre-built bboxes/shapes. |
-| `mesh_collision_exact` | `src/geometry/collision.rs:125` | Convenience wrapper: builds bbox/shape then tests collision. |
-| `mesh_distance_exact` | `src/geometry/collision.rs:134` | Convenience wrapper: builds bbox/shape then computes distance. |
-| `generate_periodic_ghosts` | `src/geometry/collision.rs:148` | Generates translated ghost copies of a mesh for periodic boundary collision. |
+| `to_parry_trimesh` | `src/geometry/collision.rs:29` | Converts a `Mesh` into a parry3d `TriMesh`. |
+| `trimesh_contains_point` | `src/geometry/collision.rs:61` | Ray-parity point-in-solid test over a shape's bounding-volume hierarchy. |
+| `mesh_surfaces_intersect_prepared` | `src/geometry/collision.rs:99` | Bbox-filtered exact test for whether two mesh *surfaces* cross. |
+| `mesh_solids_nested_prepared` | `src/geometry/collision.rs:150` | Whether one closed solid lies wholly inside the other. |
+| `mesh_collision_exact_prepared` | `src/geometry/collision.rs:196` | Whether two mesh *solids* overlap: surfaces cross, or one contains the other. |
+| `mesh_distance_exact_prepared` | `src/geometry/collision.rs:214` | Bbox-filtered exact distance query given pre-built bboxes/shapes. |
+| `mesh_collision_exact` | `src/geometry/collision.rs:259` | Convenience wrapper: builds bbox/shape then tests collision. |
+| `mesh_distance_exact` | `src/geometry/collision.rs:268` | Convenience wrapper: builds bbox/shape then computes distance. |
+| `generate_periodic_ghosts` | `src/geometry/collision.rs:282` | Generates translated ghost copies of a mesh for periodic boundary collision. |
 | `simulate_forging_ffd` | `src/geometry/forging.rs:10` | Simple Z-axis FFD compression with lateral bulge. |
 | `simulate_forging_ffd_with_tracking` | `src/geometry/forging.rs:43` | Axis-configurable FFD forging with void densification and ROI bbox tracking. |
 
@@ -191,7 +194,7 @@ This module wraps [parry3d](https://parry.rs/)'s exact triangle-mesh intersectio
 #### to_parry_trimesh
 
 - **Signature:** `pub fn to_parry_trimesh(mesh: &Mesh) -> Option<TriMesh>`
-- **Source:** `src/geometry/collision.rs:14`
+- **Source:** `src/geometry/collision.rs:29`
 - **Purpose:** Converts an internal `Mesh` into a `parry3d_f64::shape::TriMesh` for use in exact geometric queries.
 - **Parameters:**
   - `mesh` — the mesh to convert.
@@ -199,36 +202,75 @@ This module wraps [parry3d](https://parry.rs/)'s exact triangle-mesh intersectio
 - **Side effects:** None.
 - **Notes:** parry3d's `TriMesh` uses `u32` indices, so meshes with more than ~4 billion vertices cannot be converted; this is checked explicitly per index.
 
-#### mesh_collision_exact_prepared
+#### trimesh_contains_point
 
-- **Signature:** `pub fn mesh_collision_exact_prepared(a_bbox: Option<BoundingBox>, a_shape: Option<&TriMesh>, b_bbox: Option<BoundingBox>, b_shape: Option<&TriMesh>) -> bool`
-- **Source:** `src/geometry/collision.rs:42`
-- **Purpose:** Tests whether two meshes collide, given their pre-computed bounding boxes and parry3d shapes, using a bbox broad-phase before the exact narrow-phase test.
+- **Signature:** `pub fn trimesh_contains_point(shape: &TriMesh, p: Vec3) -> bool`
+- **Source:** `src/geometry/collision.rs:61`
+- **Purpose:** Decides whether a point lies inside a closed surface, using that surface's bounding-volume hierarchy.
+- **Parameters:**
+  - `shape` — the indexed surface.
+  - `p` — the query point.
+- **Returns:** `true` when the point is inside.
+- **Side effects:** None.
+- **Notes:** Ray parity over the QBVH, using the crate-wide `RAY_DIR` and `HIT_EPS` — the same fixed non-axis-aligned direction and `1e-8` hit tolerance as [`point_inside_mesh`](geometry-analysis.md#point_inside_mesh), so the hierarchy test and the scanning test agree point for point; `tests/collision_tests.rs` asserts as much. Parity, not a pseudo-normal test: parity is correct for a shell nested inside another and does not care which way the faces wind, which matters because `box_mesh` winds inward while real STL data winds outward. `VoidIndex::contains_point` delegates here after its own bbox pre-check.
+- **See also:** [`point_inside_mesh`](geometry-analysis.md#point_inside_mesh), [`mesh_solids_nested_prepared`](#mesh_solids_nested_prepared).
+
+#### mesh_surfaces_intersect_prepared
+
+- **Signature:** `pub fn mesh_surfaces_intersect_prepared(a_bbox: Option<BoundingBox>, a_shape: Option<&TriMesh>, b_bbox: Option<BoundingBox>, b_shape: Option<&TriMesh>) -> bool`
+- **Source:** `src/geometry/collision.rs:99`
+- **Purpose:** Tests whether two mesh *surfaces* cross, given pre-computed bounding boxes and parry3d shapes, using a bbox broad-phase before the exact narrow-phase test.
 - **Parameters:**
   - `a_bbox`, `b_bbox` — pre-computed bounding boxes for the two meshes.
   - `a_shape`, `b_shape` — pre-computed parry3d `TriMesh` shapes for the two meshes.
-- **Returns:** `true` if the shapes intersect. Conservatively returns `true` if either bbox is missing, or if either shape is missing (after the bbox check passes), or if `parry3d`'s `query::intersection_test` itself errors (`.unwrap_or(true)`).
+- **Returns:** `true` if the surfaces intersect. Conservatively returns `true` if either bbox is missing, or if either shape is missing (after the bbox check passes), or if `parry3d`'s `query::intersection_test` itself errors (`.unwrap_or(true)`).
 - **Side effects:** None.
-- **Notes:** First checks `bbox_overlaps(a_bbox, b_bbox)` as a cheap early-out (returns `false` immediately if the boxes don't overlap); only then runs the exact parry3d intersection test with identity isometries (meshes are assumed to already be in world-space coordinates, not offset via a separate transform).
-- **See also:** [`bbox_overlaps`](geometry-core.md#bbox_overlaps).
+- **Notes:** First checks `bbox_overlaps(a_bbox, b_bbox)` as a cheap early-out; only then runs the exact parry3d intersection test with identity isometries (meshes are assumed to already be in world-space coordinates). **On its own this is not a collision test**: two closed surfaces with one wholly inside the other never cross. Call `mesh_collision_exact_prepared` unless the surface question is specifically what is wanted.
+- **See also:** [`bbox_overlaps`](geometry-core.md#bbox_overlaps), [`mesh_collision_exact_prepared`](#mesh_collision_exact_prepared).
+
+#### mesh_solids_nested_prepared
+
+- **Signature:** `pub fn mesh_solids_nested_prepared(a_bbox: Option<BoundingBox>, a_shape: Option<&TriMesh>, b_bbox: Option<BoundingBox>, b_shape: Option<&TriMesh>) -> bool`
+- **Source:** `src/geometry/collision.rs:150`
+- **Purpose:** Tests whether one closed solid lies wholly inside the other.
+- **Parameters:**
+  - `a_bbox`, `b_bbox` — pre-computed bounding boxes.
+  - `a_shape`, `b_shape` — pre-computed parry3d shapes.
+- **Returns:** `true` when either solid contains the other. Returns `false` — not `true` — when a bbox or shape is missing, because the caller's surface test has already answered conservatively for that case.
+- **Side effects:** None.
+- **Notes:** The case surface intersection cannot see and surface distance reports as a comfortable clearance: `query::distance` measures across the gap between the two surfaces, so a sphere of radius 1 centred inside one of radius 3 reads as `1.96` apart. The bbox comparison (with a `1e-9` tolerance) comes first and settles almost every pair, since a solid inside another has its box inside the other's; only then is one `trimesh_contains_point` ray cast needed. **One vertex is enough**, given that the surfaces do not intersect: a closed shell strictly inside another has *all* of its vertices inside it. A vertex, never the centroid — a non-convex shell's centroid can sit outside its own solid, in a concavity another particle may legitimately occupy. Callers pair this with `mesh_surfaces_intersect_prepared`, which supplies that premise.
+- **See also:** [`trimesh_contains_point`](#trimesh_contains_point), [`mesh_collision_exact_prepared`](#mesh_collision_exact_prepared).
+
+#### mesh_collision_exact_prepared
+
+- **Signature:** `pub fn mesh_collision_exact_prepared(a_bbox: Option<BoundingBox>, a_shape: Option<&TriMesh>, b_bbox: Option<BoundingBox>, b_shape: Option<&TriMesh>) -> bool`
+- **Source:** `src/geometry/collision.rs:196`
+- **Purpose:** Tests whether two mesh *solids* overlap — either their surfaces cross, or one contains the other.
+- **Parameters:**
+  - `a_bbox`, `b_bbox` — pre-computed bounding boxes for the two meshes.
+  - `a_shape`, `b_shape` — pre-computed parry3d `TriMesh` shapes for the two meshes.
+- **Returns:** `true` if the solids overlap; conservatively `true` when data is missing, inherited from `mesh_surfaces_intersect_prepared`.
+- **Side effects:** None.
+- **Notes:** `mesh_surfaces_intersect_prepared || mesh_solids_nested_prepared`, in that order — the cheap surface test rejects almost every pair before the nesting test costs anything. "Collide" here means the solids share space, not that the surfaces cross; those are different questions, and asking only the first is a real defect. Through v0.2.0 this function *was* only the first, and both packing engines duly placed particles wholly inside other particles: a `placement:` run at a 3-to-45 µm size range put 28 of 146 particles inside another and reported `target_reached` on a fraction that counted 2.1 % of the domain twice.
+- **See also:** [`mesh_surfaces_intersect_prepared`](#mesh_surfaces_intersect_prepared), [`mesh_solids_nested_prepared`](#mesh_solids_nested_prepared).
 
 #### mesh_distance_exact_prepared
 
 - **Signature:** `pub fn mesh_distance_exact_prepared(a_bbox: Option<BoundingBox>, a_shape: Option<&TriMesh>, b_bbox: Option<BoundingBox>, b_shape: Option<&TriMesh>) -> f64`
-- **Source:** `src/geometry/collision.rs:80`
+- **Source:** `src/geometry/collision.rs:214`
 - **Purpose:** Computes the minimum Euclidean distance between two meshes, given pre-computed bounding boxes and parry3d shapes, using bbox distance as a fast path.
 - **Parameters:**
   - `a_bbox`, `b_bbox` — pre-computed bounding boxes.
   - `a_shape`, `b_shape` — pre-computed parry3d shapes.
 - **Returns:** A distance `>= 0.0`. Returns `0.0` if either bbox is missing (fallback, not a true "touching" signal), and `0.0` whenever the meshes are found to overlap.
 - **Side effects:** None.
-- **Notes:** Logic: compute `bbox_d = bbox_distance(a_bbox, b_bbox)`. If `bbox_d > 0.0` (boxes are separated), the exact shape distance is at least `bbox_d`, so it computes `query::distance` between the shapes (falling back to `bbox_d` if shapes are missing or the query errors) — bboxes being separated guarantees the meshes don't overlap, so this skips the collision check. If `bbox_d == 0.0` (boxes touch or overlap), it must check for actual overlap via `mesh_collision_exact_prepared`; if they do overlap, returns `0.0`; otherwise falls through to an exact `query::distance` call (defaulting to `0.0` if shapes are missing or the query fails).
+- **Notes:** Logic: compute `bbox_d = bbox_distance(a_bbox, b_bbox)`. If `bbox_d > 0.0` (boxes are separated), the exact shape distance is at least `bbox_d`, so it computes `query::distance` between the shapes (falling back to `bbox_d` if shapes are missing or the query errors) — bboxes being separated guarantees the meshes don't overlap, so this skips the collision check. If `bbox_d == 0.0` (boxes touch or overlap), it must check for actual overlap via `mesh_collision_exact_prepared`; if they do overlap, returns `0.0`; otherwise falls through to an exact `query::distance` call (defaulting to `0.0` if shapes are missing or the query fails). A **nested** pair therefore reports `0.0`, not the gap between the two surfaces: nesting implies the boxes overlap, so the fast path cannot bypass the collision call, and that call now answers `true`.
 - **See also:** [`bbox_distance`](geometry-core.md#bbox_distance), [`mesh_collision_exact_prepared`](#mesh_collision_exact_prepared).
 
 #### mesh_collision_exact
 
 - **Signature:** `pub fn mesh_collision_exact(a: &Mesh, b: &Mesh) -> bool`
-- **Source:** `src/geometry/collision.rs:125`
+- **Source:** `src/geometry/collision.rs:259`
 - **Purpose:** Convenience wrapper that computes bounding boxes and parry3d shapes on the fly for two meshes, then tests collision.
 - **Parameters:**
   - `a`, `b` — the two meshes to test.
@@ -240,7 +282,7 @@ This module wraps [parry3d](https://parry.rs/)'s exact triangle-mesh intersectio
 #### mesh_distance_exact
 
 - **Signature:** `pub fn mesh_distance_exact(a: &Mesh, b: &Mesh) -> f64`
-- **Source:** `src/geometry/collision.rs:134`
+- **Source:** `src/geometry/collision.rs:268`
 - **Purpose:** Convenience wrapper that computes bounding boxes and parry3d shapes on the fly for two meshes, then computes their exact distance.
 - **Parameters:**
   - `a`, `b` — the two meshes to measure between.
@@ -251,7 +293,7 @@ This module wraps [parry3d](https://parry.rs/)'s exact triangle-mesh intersectio
 #### generate_periodic_ghosts
 
 - **Signature:** `pub fn generate_periodic_ghosts(mesh: &Mesh, box_bounds: BoundingBox) -> Vec<Mesh>`
-- **Source:** `src/geometry/collision.rs:148`
+- **Source:** `src/geometry/collision.rs:282`
 - **Purpose:** Generates translated "ghost" copies of a mesh, shifted by the packing box's dimensions along each axis combination, to support collision detection under periodic boundary conditions (a particle near one face of the box can collide with particles near the opposite face).
 - **Parameters:**
   - `mesh` — the source mesh to generate ghosts of.

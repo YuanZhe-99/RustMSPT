@@ -154,6 +154,14 @@ q = ( √u₁·cos 2πu₃,  √(1−u₁)·sin 2πu₂,  √(1−u₁)·cos 2π
 
 (c) 正是常被略去的那一条；没有它，一个大到足以吞下整个孔的颗粒会通过其余所有检查。
 
+**同一判据同样支配颗粒两两之间的关系**，而 v0.2.0 没有把它用在那里。两个颗粒之间不存在"哪一个是孔隙"
+的不对称性，于是 (a) 与 (c) 合并为一个对称的问题——两个实体中是否有一个包含另一个——由
+`mesh_solids_nested_prepared` 回答；(b) 则是 `mesh_surfaces_intersect_prepared` 加上间隙判定。略去它
+并非细微的损失：在 3 µm 到 45 µm 的对数正态分布、目标 0.30 下，v0.2.0 放置了 146 个颗粒，其中
+**28 个整体位于另一个颗粒内部**——有一个嵌套了三层——重复计入了域体积的 2.1%，并在被高估的体积分数上
+报告 `target_reached`。随附示例从未暴露该问题，因为其 6 到 24 的粒径范围使可嵌套区域在 10⁶ µm³ 的域中
+仅约 500 µm³。此类拒绝以 `particle_enclosed` 上报。
+
 `g_pv > 0` 是必需而非建议：`parry` 的 `query::distance` 对相交的两个形状恰好返回 `0.0`，于是
 `0.0 >= 0.0` 会通过，零间隙将什么也禁止不了。配置会按名字拒绝它。
 
@@ -208,8 +216,9 @@ volume.in_domain_solid = volume.in_domain − void_overlap_volume_in_domain
 4. `void_gap`
 5. `void_enclosed`
 6. `particle_overlap`
-7. `particle_gap`
-8. `zero_in_domain_volume`
+7. `particle_enclosed`
+8. `particle_gap`
+9. `zero_in_domain_volume`
 
 有三项昂贵的工作被刻意**推迟**到廉价拒绝之后，其影响超过一个数量级：即时计算时，一次 86 颗粒的运行
 耗时 3.44 秒；推迟之后，同样的运行、放置同样的颗粒，只需 0.21 秒。

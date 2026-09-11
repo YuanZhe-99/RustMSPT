@@ -138,6 +138,12 @@ Real captured stdout from the run above (`real 0m0.235s`):
 [Info] Orientation fix enabled: false
 ```
 
+> **Every number on this page is one run's.** The `packing:` engine takes no seed, so the count, the
+> per-bin actuals and the attempt counts all move between runs of this same config; only the volume
+> fraction is pinned, and only from below, by the stopping rule. The shape of the comparison is what
+> the page is about, not the digits. See the same note in [pack.md](pack.md). Since 0.2.1 the loop
+> also rejects a candidate that would sit wholly inside a placed particle.
+
 44 particles were placed at a final volume fraction of `0.030078` (just past the `0.03` target).
 Of those 44, 3 were used at their **natural** size (their unscaled equivalent diameter already fell
 in the bin `choose_bin` picked for them), 41 were **scaled** (rescaled to a target bin's midpoint

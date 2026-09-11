@@ -17,24 +17,24 @@
 
 | 条目 | 位置 | 摘要 |
 |---|---|---|
-| `VoidVolumeMethod` | `src/geometry/void_index.rs:30` | 给出孔隙域内体积的计算方法。 |
-| `VoidIndex` | `src/geometry/void_index.rs:44` | 冻结孔隙，为放置运行的各类查询建立索引。 |
-| `VoidIndex::build` | `src/geometry/void_index.rs:68` | 校验孔隙网格并建立索引；朝向不一致时拒绝。 |
-| `VoidIndex::bbox` | `src/geometry/void_index.rs:130` | 孔隙的包围盒。 |
-| `VoidIndex::shells` | `src/geometry/void_index.rs:135` | 孔隙包含多少个闭合壳。 |
-| `VoidIndex::is_outward` | `src/geometry/void_index.rs:140` | 孔隙各壳是否朝外缠绕。 |
-| `VoidIndex::total_volume` | `src/geometry/void_index.rs:145` | 符号一致的各壳求和得到的孔隙总体积。 |
-| `VoidIndex::contains_point` | `src/geometry/void_index.rs:158` | 在层次结构上做射线奇偶判定；对嵌套壳同样正确。 |
-| `VoidIndex::near_box` | `src/geometry/void_index.rs:199` | 包围盒预筛：为假即远离孔隙且未被其嵌套。 |
-| `VoidIndex::intersects` | `src/geometry/void_index.rs:219` | 颗粒表面是否与孔面相交。 |
-| `VoidIndex::min_distance_to` | `src/geometry/void_index.rs:235` | 颗粒到孔隙的最小面到面距离。 |
-| `VoidIndex::surface_distance` | `src/geometry/void_index.rs:252` | 点到孔面的无符号距离。 |
-| `VoidIndex::any_vertex_inside` | `src/geometry/void_index.rs:266` | 网格是否有顶点落在孔隙内部。 |
-| `VoidIndex::any_void_vertex_inside` | `src/geometry/void_index.rs:278` | 孔隙是否有顶点落在颗粒内部。 |
-| `VoidIndex::volume_in_domain` | `src/geometry/void_index.rs:297` | 孔隙在域内的体积，以及所用的计算方法。 |
-| `VoidIndex::sample_surface_point` | `src/geometry/void_index.rs:321` | 按面积加权在孔面上取点，并给出外法向。 |
-| `VoidIndex::overlap_volume` | `src/geometry/void_index.rs:363` | 以域锚定的体素计数给出颗粒落在孔隙内的体积。 |
-| `point_inside_mesh_local` | `src/geometry/void_index.rs:408` | 对无层次结构的小网格做射线奇偶判定。 |
+| `VoidVolumeMethod` | `src/geometry/void_index.rs:18` | 给出孔隙域内体积的计算方法。 |
+| `VoidIndex` | `src/geometry/void_index.rs:32` | 冻结孔隙，为放置运行的各类查询建立索引。 |
+| `VoidIndex::build` | `src/geometry/void_index.rs:56` | 校验孔隙网格并建立索引；朝向不一致时拒绝。 |
+| `VoidIndex::bbox` | `src/geometry/void_index.rs:118` | 孔隙的包围盒。 |
+| `VoidIndex::shells` | `src/geometry/void_index.rs:123` | 孔隙包含多少个闭合壳。 |
+| `VoidIndex::is_outward` | `src/geometry/void_index.rs:128` | 孔隙各壳是否朝外缠绕。 |
+| `VoidIndex::total_volume` | `src/geometry/void_index.rs:133` | 符号一致的各壳求和得到的孔隙总体积。 |
+| `VoidIndex::contains_point` | `src/geometry/void_index.rs:150` | 在层次结构上做射线奇偶判定；对嵌套壳同样正确。 |
+| `VoidIndex::near_box` | `src/geometry/void_index.rs:166` | 包围盒预筛：为假即远离孔隙且未被其嵌套。 |
+| `VoidIndex::intersects` | `src/geometry/void_index.rs:186` | 颗粒表面是否与孔面相交。 |
+| `VoidIndex::min_distance_to` | `src/geometry/void_index.rs:202` | 颗粒到孔隙的最小面到面距离。 |
+| `VoidIndex::surface_distance` | `src/geometry/void_index.rs:219` | 点到孔面的无符号距离。 |
+| `VoidIndex::any_vertex_inside` | `src/geometry/void_index.rs:233` | 网格是否有顶点落在孔隙内部。 |
+| `VoidIndex::any_void_vertex_inside` | `src/geometry/void_index.rs:245` | 孔隙是否有顶点落在颗粒内部。 |
+| `VoidIndex::volume_in_domain` | `src/geometry/void_index.rs:264` | 孔隙在域内的体积，以及所用的计算方法。 |
+| `VoidIndex::sample_surface_point` | `src/geometry/void_index.rs:288` | 按面积加权在孔面上取点，并给出外法向。 |
+| `VoidIndex::overlap_volume` | `src/geometry/void_index.rs:330` | 以域锚定的体素计数给出颗粒落在孔隙内的体积。 |
+| `point_inside_mesh_local` | `src/geometry/void_index.rs:375` | 对无层次结构的小网格做射线奇偶判定。 |
 | `PlacementPipeline` | `src/pipeline/placement.rs:38` | 持有已校验 `ResolvedPlacement` 的流水线结构体。 |
 | `PHASE_MATRIX` | `src/pipeline/placement_labels.rs:12` | 标签场中相编码 0。 |
 | `VoxelLabelsHeader` | `src/pipeline/placement_labels.rs:21` | 标签体数据的说明：间距、原点、排布与相表。 |
@@ -64,15 +64,15 @@
 | `summary` (placement.rs) | `src/pipeline/placement.rs:1274` | 构造供人阅读的 stdout 摘要。 |
 | `read_record` | `src/pipeline/placement.rs:1335` | 读回已写出的逐颗粒记录。 |
 | `read_report` | `src/pipeline/placement.rs:1343` | 读回已写出的运行报告。 |
-| `RejectReason` | `src/pipeline/placement_feasibility.rs:16` | 候选放置未被接受的原因；即报告中的键。 |
-| `RejectReason::as_str` | `src/pipeline/placement_feasibility.rs:39` | 拒绝原因在报告中的稳定键名。 |
-| `PlacedParticle` | `src/pipeline/placement_feasibility.rs:69` | 通过全部检查的颗粒，附带缓存的形状。 |
-| `PlacedParticle::volume_in_domain_solid` | `src/pipeline/placement_feasibility.rs:99` | 计入固相的颗粒体积。 |
-| `FeasibilityContext` | `src/pipeline/placement_feasibility.rs:105` | 可行性检查所读取的全部内容。 |
-| `Candidate` | `src/pipeline/placement_feasibility.rs:125` | 候选放置，附带已预先算好的廉价量。 |
-| `Accepted` | `src/pipeline/placement_feasibility.rs:139` | 通过检查过程中顺带算出的结果。 |
-| `check_placement` | `src/pipeline/placement_feasibility.rs:164` | 按序运行全部可行性规则，返回拦下它的那一条。 |
-| `retained_depth` | `src/pipeline/placement_feasibility.rs:355` | 跨界颗粒仍伸入域内的深度。 |
+| `RejectReason` | `src/pipeline/placement_feasibility.rs:17` | 候选放置未被接受的原因；即报告中的键。 |
+| `RejectReason::as_str` | `src/pipeline/placement_feasibility.rs:44` | 拒绝原因在报告中的稳定键名。 |
+| `PlacedParticle` | `src/pipeline/placement_feasibility.rs:76` | 通过全部检查的颗粒，附带缓存的形状。 |
+| `PlacedParticle::volume_in_domain_solid` | `src/pipeline/placement_feasibility.rs:106` | 计入固相的颗粒体积。 |
+| `FeasibilityContext` | `src/pipeline/placement_feasibility.rs:112` | 可行性检查所读取的全部内容。 |
+| `Candidate` | `src/pipeline/placement_feasibility.rs:132` | 候选放置，附带已预先算好的廉价量。 |
+| `Accepted` | `src/pipeline/placement_feasibility.rs:146` | 通过检查过程中顺带算出的结果。 |
+| `check_placement` | `src/pipeline/placement_feasibility.rs:171` | 按序运行全部可行性规则，返回拦下它的那一条。 |
+| `retained_depth` | `src/pipeline/placement_feasibility.rs:382` | 跨界颗粒仍伸入域内的深度。 |
 | `ToolRecord` | `src/pipeline/placement_outputs.rs:15` | 记录与报告中出现的构建身份。 |
 | `StopReason` | `src/pipeline/placement_outputs.rs:53` | 运行可用的四词固定停止原因词表。 |
 | `ParticleRecord` | `src/pipeline/placement_outputs.rs:133` | 记录文件中单个已放置颗粒的条目。 |
@@ -179,6 +179,11 @@ run_placement
   比较都重建一个，这正是其碰撞循环的主要开销。
 - `RejectReason::ALL` 是报告的输出顺序，读起来像一个漏斗。精确裁剪检查出于开销考虑被安排在邻居检查
   *之后* 求值；而计数的排列顺序是文档所述的规则顺序。
+- `particle_overlap` 与 `particle_enclosed` 是两种不同的失败，而后者正是 v0.2.0 所缺的那一种。表面
+  相交给出前者；一个颗粒整体位于另一个内部给出后者——而该布局下两个表面从不相交，间隙判定又会把两者
+  之间的空间读作间隙。孔隙那一支从一开始就具备论证的两半，颗粒这一支却没有；这正是某次运行把 146 个
+  颗粒中的 28 个放进另一个颗粒内部、却报告 `target_reached` 的原因。参见
+  [void-aware-placement.md](../algorithms/void-aware-placement.md) 第 6.1 节。
 - `VoidIndex` 的 `Debug` 实现刻意精简：网格及其层次结构会刷满一屏，却说不出读者想要的任何信息。
 - 报告在 `outputs` 中列出自身，摘要为 null。文件无法包含自身的哈希；若不如此，逐一校验清单中每个
   摘要的适配器就会在唯一那个不可能有摘要的条目上卡住。

@@ -166,7 +166,7 @@
        `min_boundary_dist`、`min_cross_boundary_depth`）。
      - 构建 `collision_set` = 全部已放置网格，当 `packing.mode == 3`（周期边界模式）时，再
        扩展每个已放置网格的 `generate_periodic_ghosts`。运行一次并行（`thread_pool.install`）
-       的包围盒剪枝精确碰撞检查（`mesh_collision_exact`）；当设置了 `min_neighbor_distance`
+       的包围盒剪枝精确碰撞检查（`mesh_collision_exact`，自 0.2.1 起同时拒绝整体位于已放置颗粒内部、或会把已放置颗粒吞入的候选——该布局下两个闭合表面从不相交，因此直到 v0.2.0 本循环都会接受它们，而 `min_neighbor_distance` 会把两个表面之间的空间读作间隙；参见 [spatial-grid-collision.md](../algorithms/spatial-grid-collision.md) 的"为何嵌套需要独立的检测"一节）；当设置了 `min_neighbor_distance`
        时，包围盒距离剪枝改用该阈值而非普通重叠判断。
      - 若 `min_neighbor_distance > 0`，运行第二次并行遍历，计算与任何已存在网格的最小精确
        表面距离（`mesh_distance_exact`），若低于该阈值则拒绝。

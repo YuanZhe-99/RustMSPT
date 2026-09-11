@@ -176,9 +176,9 @@ The header of `data/output/placement/particles.json`, captured:
   "schema_version": "rustmspt.placement.record/1",
   "tool": {
     "name": "rustmspt",
-    "version": "0.2.0",
-    "git_commit": "77642fdae99098cf810984f3b5086d469a721e8e",
-    "git_dirty": true,
+    "version": "0.2.1",
+    "git_commit": "b63b1a308208efcc39069c2a16d16057900a5219",
+    "git_dirty": false,
     "features": [
       "default"
     ],

@@ -127,6 +127,13 @@ The run completed in `real 0m0.290s` and placed 63 particles, landing at a final
 of `0.020161` — just over the `0.02` target, since the pipeline stops as soon as a placement pushes
 the running volume fraction at or past the target rather than trying to land exactly on it.
 
+> **These numbers are one run's.** The `packing:` engine takes no seed, so the count varies between
+> runs of this same config — measured at 52, 60, 60 and 62 on four consecutive runs. Only the volume
+> fraction is pinned, and only from below, by the stopping rule. For a run that reproduces exactly,
+> use the `placement:` engine ([pack-placement.md](pack-placement.md)), which takes a seed and
+> records what it did. Since 0.2.1 this loop also rejects a candidate that would sit wholly inside a
+> placed particle; see [spatial-grid-collision.md](../algorithms/spatial-grid-collision.md#why-nesting-needs-its-own-test).
+
 The output STL, `/tmp/rustmspt-doc-examples/pack_plain_result.stl`, is a real binary STL file
 (1,195,884 bytes on disk) containing 23,916 triangles — the union of all 63 placed particle
 instances, each a rotated/translated copy of one of the 14 candidate shells from
