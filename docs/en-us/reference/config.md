@@ -56,19 +56,19 @@ Shared sub-config embedded in `MeasurementParams` and `OptimizationParams` to co
 `AccelerationConfig` also implements `Default` (mirroring the same defaults as the `#[serde(default = ...)]` functions), so it can be omitted entirely from YAML.
 
 #### default_backend
-`fn default_backend() -> String` — `src/config/acceleration.rs:21`. Serde default for `backend`: returns `"wgpu"`. No side effects.
+`fn default_backend() -> String` — `src/config/acceleration.rs:23`. Serde default for `backend`: returns `"wgpu"`. No side effects.
 
 #### default_true
-`fn default_true() -> bool` — `src/config/acceleration.rs:25`. Serde default for `cpu_fallback`: returns `true`. No side effects.
+`fn default_true() -> bool` — `src/config/acceleration.rs:27`. Serde default for `cpu_fallback`: returns `true`. No side effects.
 
 #### default_gpu_min_voxels
-`fn default_gpu_min_voxels() -> usize` — `src/config/acceleration.rs:29`. Serde default for `gpu_min_voxels`: returns `250_000`. No side effects.
+`fn default_gpu_min_voxels() -> usize` — `src/config/acceleration.rs:31`. Serde default for `gpu_min_voxels`: returns `250_000`. No side effects.
 
 #### default_gpu_min_pixels
 `fn default_gpu_min_pixels() -> usize` — serde default for `gpu_min_pixels`: returns `250_000`. No side effects.
 
 #### default_gpu_precision
-`fn default_gpu_precision() -> String` — `src/config/acceleration.rs:33`. Serde default for `gpu_precision`: returns `"f32"`. No side effects.
+`fn default_gpu_precision() -> String` — `src/config/acceleration.rs:40`. Serde default for `gpu_precision`: returns `"f32"`. No side effects.
 
 #### AccelerationConfig::default
 - **Signature:** `fn default() -> Self` (`impl Default for AccelerationConfig`)
@@ -125,6 +125,9 @@ Only present when `CropInput.r#type == "raw"`; describes how to interpret a raw 
 | `output` | `CropOutput` | `output` | — | Output destination description. |
 | `interpolation` | `Option<String>` | `interpolation` | — | Interpolation method used when resampling during crop, if any. |
 | `edge_trim` | `Option<i32>` | `edge_trim` | — | Number of voxels/pixels to trim from each edge after cropping. |
+
+| `acceleration` | `AccelerationConfig` | `acceleration` | default auto | Backend, threshold, device budget and fallback policy. |
+| `cpu_max` | `Option<i32>` | `cpu_max` | available cores | Whole-pipeline worker limit; -1 uses available cores. |
 
 ## `deserialize.rs` — flexible-parsing helpers
 
@@ -421,17 +424,17 @@ that path -- `{kind: lognormal, mediann: 12}` would be accepted with `median` si
 
 | Function | Source | Summary |
 |---|---|---|
-| `load_yaml` | `src/config/mod.rs:47` | Reads a file and deserializes it as YAML into a typed config struct. |
-| `parse_box_dimensions` | `src/config/mod.rs:58` | Converts a 3- or 6-element dimensions slice into a `BoundingBox`. |
+| `load_yaml` | `src/config/mod.rs:52` | Reads a file and deserializes it as YAML into a typed config struct. |
+| `parse_box_dimensions` | `src/config/mod.rs:63` | Converts a 3- or 6-element dimensions slice into a `BoundingBox`. |
 | `parse_usize_like` | `src/config/deserialize.rs:4` | Parses a `usize` from a string, stripping underscore separators. |
 | `deserialize_usize_flexible` | `src/config/deserialize.rs:17` | Serde `deserialize_with` helper: accepts a YAML number or numeric string as `usize`. |
 | `deserialize_option_usize_flexible` | `src/config/deserialize.rs:39` | Serde `deserialize_with` helper: accepts a YAML number/string/null as `Option<usize>`. |
 | `parse_i32_like` | `src/config/deserialize.rs:61` | Parses an `i32` from a string, stripping underscore separators. |
 | `deserialize_option_i32_flexible` | `src/config/deserialize.rs:73` | Serde `deserialize_with` helper: accepts a YAML number/string/null as `Option<i32>`. |
-| `default_backend` | `src/config/acceleration.rs:21` | Serde default for `backend`: `"wgpu"`. |
-| `default_true` | `src/config/acceleration.rs:25` | Serde default for `cpu_fallback`: `true`. |
-| `default_gpu_min_voxels` | `src/config/acceleration.rs:29` | Serde default for `gpu_min_voxels`: `250_000`. |
-| `default_gpu_precision` | `src/config/acceleration.rs:33` | Serde default for `gpu_precision`: `"f32"`. |
+| `default_backend` | `src/config/acceleration.rs:23` | Serde default for `backend`: `"wgpu"`. |
+| `default_true` | `src/config/acceleration.rs:27` | Serde default for `cpu_fallback`: `true`. |
+| `default_gpu_min_voxels` | `src/config/acceleration.rs:31` | Serde default for `gpu_min_voxels`: `250_000`. |
+| `default_gpu_precision` | `src/config/acceleration.rs:40` | Serde default for `gpu_precision`: `"f32"`. |
 | `AccelerationConfig::default` | `src/config/acceleration.rs:38` | Rust-level `Default` impl matching the serde defaults. |
 
 ## Functions
@@ -439,7 +442,7 @@ that path -- `{kind: lognormal, mediann: 12}` would be accepted with `median` si
 #### load_yaml
 
 - **Signature:** `pub fn load_yaml<T: for<'de> serde::Deserialize<'de>>(path: &Path) -> Result<T>`
-- **Source:** `src/config/mod.rs:47`
+- **Source:** `src/config/mod.rs:52`
 - **Purpose:** Read a file from disk and deserialize its contents as YAML into any type implementing `Deserialize`.
 - **Parameters:**
   - `path` — filesystem path to the YAML config file.
@@ -450,7 +453,7 @@ that path -- `{kind: lognormal, mediann: 12}` would be accepted with `median` si
 #### parse_box_dimensions
 
 - **Signature:** `pub fn parse_box_dimensions(dimensions: &[f64]) -> Result<crate::types::BoundingBox>`
-- **Source:** `src/config/mod.rs:58`
+- **Source:** `src/config/mod.rs:63`
 - **Purpose:** Convert a flat dimensions array from `BoxConfig` into a `BoundingBox`.
 - **Parameters:**
   - `dimensions` — slice of `f64`; either 3 elements (`[size_x, size_y, size_z]`, box placed at the origin via `BoundingBox::from_size`) or 6 elements (`[min_x, min_y, min_z, max_x, max_y, max_z]`, explicit min/max corners).
@@ -498,3 +501,23 @@ that path -- `{kind: lognormal, mediann: 12}` would be accepted with `median` si
 - **Returns:** `Result<Option<i32>, D::Error>`.
 - **Side effects:** None.
 - **Notes:** Internally deserializes into an untagged `enum Value { Num(i64), Str(String) }`, so unlike the usize variant it accepts negative numbers (used for fields like `slice_start`/`slice_end` in `CropInput`, and `cpu_max` across measurement/optimization/packing, where negative values may carry pipeline-specific meaning such as "use all but N cores").
+
+## Optimize acceleration execution (PERF-01/02)
+
+For `optimize`, `RUSTMSPT_ACCELERATION=cpu|gpu|auto` overrides YAML once. Invalid values error.
+CPU and small-workload auto do not probe a device; small auto remains a valid CPU choice with
+`cpu_fallback: false`. Unsupported voxel GPU methods preserve their CPU definition, or error if
+fallback is forbidden. GPU-eligible mesh MC rejects unsupported backend/precision/power options;
+explicit GPU memory caps use CPU until working-set budgeting exists. The supported options are
+`backend: wgpu`, `gpu_precision: f32`, `gpu_prefer_power: false`. This is optimize-specific; see
+[pipeline-optimize.md](pipeline-optimize.md) for capacity limits and initialization behavior.
+All islands share the `cpu_max` worker budget; surplus islands queue.
+
+
+Split-filter also accepts top-level `cpu_max: <integer>` (including flexible string integers); absent or -1 uses available cores, other values clamp to 1..available. This bounds its complete execution pool.
+
+### Standalone mesh-render execution budget
+
+`MeshRenderConfig` accepts optional top-level `cpu_max` beside `mesh_render`, using flexible signed-integer deserialization. See [mesh-render-and-vtu.md](mesh-render-and-vtu.md#cpu-worker-budget) for clamping and execution scope.
+
+Standalone `mesh_render` also accepts optional `gpu_memory_limit_mb` and `gpu_min_pixels` (default 0), described in mesh-render-and-vtu.md.

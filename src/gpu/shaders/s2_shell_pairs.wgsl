@@ -1,5 +1,5 @@
 // AI-FUNC-SUMMARY: WGSL compute shader for direct shell S2 computation.
-// Each invocation handles one (radius, offset) pair: counts valid and hit pairs
+// Each invocation handles one (radius, offset) pair: rejects out-of-domain displacements before subtraction, derives valid counts from overlap extents and counts hit pairs
 // in the occupancy grid for that displacement.
 
 struct Params {
@@ -23,8 +23,8 @@ struct OffsetEntry {
 @group(0) @binding(4) var<storage, read_write> out_hits: array<u32>;
 
 @compute @workgroup_size(256)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let idx = gid.x;
+fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
+    let idx = gid.x + gid.y * groups.x * 256u;
     if (idx >= params.total_offsets) { return; }
 
     let entry = offsets[idx];
@@ -34,6 +34,15 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let nx = params.nx;
     let ny = params.ny;
     let nz = params.nz;
+
+    let ax = select(u32(dx), 0u - u32(dx), dx < 0);
+    let ay = select(u32(dy), 0u - u32(dy), dy < 0);
+    let az = select(u32(dz), 0u - u32(dz), dz < 0);
+    if (ax >= nx || ay >= ny || az >= nz) {
+        out_valid[idx] = 0u;
+        out_hits[idx] = 0u;
+        return;
+    }
 
     var x_start: u32 = 0u;
     var x_end: u32 = nx;
@@ -55,7 +64,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    var valid: u32 = 0u;
+    // Host validates nx * ny * nz <= u32::MAX; this subvolume product cannot overflow.
+    let valid = (nx - ax) * (ny - ay) * (nz - az);
     var hits: u32 = 0u;
 
     for (var x = x_start; x < x_end; x++) {
@@ -66,7 +76,6 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 let y2 = u32(i32(y) + dy);
                 let z2 = u32(i32(z) + dz);
                 let i2 = x2 * ny * nz + y2 * nz + z2;
-                valid++;
                 if (occupancy[i1] == 1u && occupancy[i2] == 1u) {
                     hits++;
                 }

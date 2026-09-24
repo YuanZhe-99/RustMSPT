@@ -52,9 +52,9 @@ CT 扫描仪生成的体数据的 `(x, y, z)` 轴由扫描仪几何结构决定�
 
 **GPU 路径（`rotate_and_crop_gpu`，特性门控）。**
 
-> **特性门控：** 仅当 crate 以 `gpu` Cargo 特性构建时才会被编译并可达。若未启用该特性，`CropPipeline::run` 始终走上述 CPU 路径。
+> **特性门控：** 仅当 crate 以 `gpu` Cargo 特性构建时才会被编译并可达。若未启用该特性，CPU 请求正常执行；GPU 请求仅在允许回退时使用 CPU，否则明确报错。
 
-当 `gpu` 特性启用时，`CropPipeline::run` 会根据*输出*体素数量在 CPU 和 GPU 路径之间做出选择：它根据旋转后的包围盒计算 `out_total = out_w * out_h * out_d`，仅当 `out_total > 100_000` 体素时才调度到 GPU。对于较小的输出，它会直接使用 CPU 路径（在这种规模下 GPU 调度的开销并不划算）。GPU 路径会将 `i64` 体数据转换为 `i32` 以便上传，初始化/复用一个 `GpuVolumeTransformPipeline`（参见 [gpu.md](../reference/gpu.md)），调度一个执行上述相同逆旋转采样逻辑的 WGSL 计算着色器（最近邻或三线性插值，由传给着色器的 `0`/`1` 插值标志选定），并在下载结果时将其转换回 `i64`。如果 GPU 初始化或调度因任何原因失败，`CropPipeline::run` 会捕获该错误、记录警告，并**回退到 CPU 路径**，而不是中止整个流水线。
+后端由 `acceleration` 和 `RUSTMSPT_ACCELERATION` 共同选择。auto 使用 `gpu_min_voxels`（默认 250,000 个输出体素），显式 GPU 不受该阈值限制。预算包含输入、输出、回读和 128 字节参数。数值不支持、设备不可用、预算不足或运行失败时，只有 `cpu_fallback` 允许才回退。最近邻要求值可无损表示为 i32；三线性还要求输入与背景可精确表示为 f32。宽 U32 标签留在 CPU，禁止回退时明确报错。半整数采用与 CPU 一致的远离零舍入，但不保证任意 f32 变换与 f64 CPU 逐位一致。二维 dispatch 覆盖超出单行上限的输出，并遵循 `RUSTMSPT_GPU_DEVICE`。CPU 在深度不足以利用线程池时采用约 4096 体素的行分块，否则保持切片任务，在配置线程池中执行。
 
 参见参考条目：
 [`rotate_and_crop`](../reference/pipeline-crop-and-splitfilter.md#rotate_and_crop)、
@@ -83,7 +83,7 @@ CT 扫描仪生成的体数据的 `(x, y, z)` 轴由扫描仪几何结构决定�
 1. **加载**输入体数据，可以来自一个 RAW 切片文件夹（`input.type = "raw"`，使用 `input.raw` 指定宽度/高度/位深/是否有符号/字节序），也可以来自 TIFF 文件/文件夹（`input.type = "tiff"`/`"tif"`），并可选地限定切片范围（`input.slice_start`/`input.slice_end`）。
 2. **检测背景**，通过 `detect_background_mode`。
 3. **估计朝向**，通过 `estimate_pca_bbox`，获得旋转矩阵、质心以及旋转后的包围盒；同时记录前景体素数量，以及浮点和稳定化后的整数形式的旋转包围盒，用于诊断。
-4. **旋转与裁剪**：在启用 GPU 的构建中，当旋转后的输出体素数超过 100,000 时调度到 GPU，若 GPU 失败则自动回退到 CPU；否则始终使用 CPU 路径。
+4. **旋转与裁剪**：在启用 GPU 的构建中，根据配置选择 GPU，并仅在允许时回退到 CPU；没有 GPU 特性时仍遵循禁止回退策略。
 5. **解析并应用边缘修剪**，通过 `resolve_trim_pixels`（遵循 `config.edge_trim`）和 `trim_volume_border`。
 6. **保存**最终裁剪、修剪后的轴对齐体数据为 TIFF（单个文件或切片文件夹，取决于 `output.path`/`output.folder_prefix`/`output.folder_extension`）。
 
@@ -102,3 +102,21 @@ CT 扫描仪生成的体数据的 `(x, y, z)` 轴由扫描仪几何结构决定�
   [`CropPipeline::run`](../reference/pipeline-crop-and-splitfilter.md#croppipelinerun)。
 - [gpu.md](../reference/gpu.md) — `GpuVolumeTransformPipeline`（`src/gpu/volume_transform.rs`）的参考文档，
   即 `rotate_and_crop_gpu` 所调度的 WGSL 计算流水线。
+
+
+### Execution and allocation contract (2026-09-18)
+
+`cpu_max` bounds the pool for the entire pipeline, including CPU fallback. `trim_volume_border` consumes its input: zero trim returns the same allocation; positive trim compacts retained rows in place and truncates the buffer. The retained capacity is not a second allocation and is released with the output. PCA uses fixed-block ordered reductions.
+
+
+### Fixed-block statistics and boundary counting (PERF-14)
+
+Background detection visits only the boundary faces, counting each edge/corner once even when a dimension is one. Ties select the smallest integer value; earlier hash-iteration-dependent ties were not reproducible. PCA retains three passes (centroid, centered covariance, projected bounds), using fixed 65,536-voxel blocks independent of worker count. Each block scans in original voxel order; indexed partial results are merged in ascending block order. Floating-point grouping differs from the old whole-volume serial reduction, so arbitrary inputs are not promised byte-identical to it. Tests compare an asymmetric sample against the serial oracle and require identical results across worker counts for symmetric, planar, linear and single-point foregrounds. Eigenvalue sorting and right-handed correction remain unchanged; a canonical basis for nearly repeated eigenspaces and an online centered-covariance experiment remain pending. PCA aligns principal variance axes; it does not generally compute the globally minimum-volume oriented bounding box.
+
+For scheduling, volumes below 1,048,576 voxels and single-worker pools process the same fixed blocks serially; larger volumes use the existing pool. This changes scheduling only, preserving block boundaries and merge order.
+
+PCA parallel scheduling groups fixed blocks with a minimum grain derived from `min(pool_workers, ceil(voxel_count / 1,048,576))`. This limits scheduling overhead without changing any block statistic or its merge order; it does not create another pool.
+
+### 背景稠密计数（2026-09-23）
+
+`for_each_boundary_value` 只访问边界面，棱和角只计数一次。U8/I8 使用 256 个 usize 计数；至少 65,536 体素的 U16/I16 体数据使用 65,536 个计数，在 64 位主机最多 512 KiB。更小的 16 位以及所有 32 位数据保持 HashMap 路径。checked 索引将声明范围外的值放入稀疏 spill 表，不依赖元数据截断或拒绝任意 i64 值。两种计数共同维护当前众数，平票仍选择最小值，无需最后扫描整张稠密表。计数局部持有，PCA 前释放。独立全网格有序表 oracle 覆盖退化维度、整数极值、有符号范围和元数据不一致。真实输入端到端证据见 PLAN.Performance.md §62。

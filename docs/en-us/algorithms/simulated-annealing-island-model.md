@@ -160,9 +160,9 @@ Each of the `max_iterations` iterations:
 5. **S2 scoring.** Only if all constraint checks pass: the particle's mesh
    is committed into `prepared[idx]`, the `SpatialGrid` is rebuilt around the
    new configuration, the whole assembly is re-merged, and S2 is recomputed
-   for the *candidate* configuration — via the GPU pipeline
-   (`gpu.calculate_s2_gpu`) if one was initialized for this island, otherwise
-   the CPU path (`calculate_s2` with `s2_method` from `mc_method`). The
+   for the *candidate* configuration through the run-wide `OptimizeS2` evaluator.
+   It preserves the resolved definition (`voxel_exact`, `voxel_mc` or `mesh_mc`)
+   at every stage; only continuous mesh MC can use the existing GPU MC kernel. The
    Monte Carlo sample count used for this per-iteration evaluation,
    `iter_samples`, is **scaled by the same `scale` factor used for move
    size**: `((mc_samples as f64) * (0.3 + 0.7 * scale)).round()`, clamped to
@@ -256,7 +256,7 @@ returned and saved, independent of where the walk ends up.
 
 When `optimization.islands` (`OptimizationParams::islands`) is greater than
 1, the pipeline runs multiple independent instances of `run_sa_island` in
-parallel using `std::thread::scope`, rather than a single search:
+in bounded batches on the same installed Rayon pool, rather than creating a thread/pool per island:
 
 - Each island gets its own clone of the initial (post-pruning) particle set,
   its own `RotationMode`, and — critically — **its own temperature,
@@ -265,20 +265,20 @@ parallel using `std::thread::scope`, rather than a single search:
   mutable SA state across threads as a pitfall to avoid. Sharing it would
   correlate the islands' search trajectories and defeat the purpose of
   running several independent searches.
-- The thread pool's total worker threads are divided evenly across islands
-  (`threads_per_island = (thread_count / num_islands).max(1)`), each island
-  building its own dedicated `rayon::ThreadPool`.
-- If the GPU feature is enabled, each island also gets its own
-  `GpuS2Pipeline` instance.
-- The only shared state is `global_best: Arc<Mutex<GlobalBest>>`, holding the
-  lowest loss and corresponding particle set seen across *all* islands so
+- `run_island_batches` runs at most the pool's worker count of island contexts at a time.
+  Every island and its nested S2/VF work share that same worker budget. Excess islands queue;
+  contiguous batch boundaries keep nested work stealing from activating every island at once.
+- If compatible GPU MC is selected, all stages/islands share one persistent `GpuS2Pipeline`.
+  Its mutex serializes geometry updates and dispatch/readback, and is released before CPU VF work.
+- The only shared state is `global_best: Arc<Mutex<Arc<GlobalBest>>>`, holding the
+  lowest loss, corresponding S2 and particle set seen across *all* islands so
   far. Inside `run_sa_island`, every `migration_interval` iterations (default
   100, gated by `(iter + 1) % migration_interval == 0`), each island locks
   the mutex and does one of two things:
   - if its own `best_loss` beats the global best, it **publishes** its best
-    solution into `global_best`;
+    geometry/loss/S2 snapshot into `global_best`;
   - otherwise, if the global best beats its own, it **pulls in** the global
-    best solution — replacing its own `best_particles`/`best_loss`, rebuilding
+    best solution — replacing its own `best_particles`/`best_loss`/`best_s2`, rebuilding
     its prepared particles, `SpatialGrid`, merged mesh, and recomputing
     `current_s2`/`current_loss` from the migrated state — so the island's
     *current* walk resumes from the better solution rather than merely
@@ -301,10 +301,10 @@ point.
 
 ## Top-level orchestration: `OptimizePipeline::run`
 
-1. **Backend and thread setup.** Resolves CPU thread count from `cpu_max`
-   (or all available cores) and builds a `rayon::ThreadPool`. Selects the
-   compute backend (`select_backend`) based on `acceleration.mode`,
-   estimated voxel count, and GPU memory/voxel thresholds.
+1. **Thread setup.** Resolves CPU thread count from `cpu_max` (or all available cores),
+   builds one `rayon::ThreadPool`, and installs the entire run, including target preparation,
+   VF and CPU fallback. `OptimizeS2` resolves one method/backend after input geometry is loaded;
+   see the execution contract below.
 
 2. **Load particles.** Loads STL(s) from `input.stl_path` (file or
    directory), splits into individual particle granules
@@ -323,24 +323,45 @@ point.
 5. **Pruning.** Calls `selective_prune_to_target_vf` on the loaded particle
    set (see above).
 
-6. **Single vs. multi-island dispatch.** Prepares acceleration structures
-   for the (pruned) particle set (`prepare_particle`), reads
-   `optimization.islands` (default 1) and `optimization.migration_interval`
-   (default 100). If `islands <= 1`, runs one `run_sa_island` call directly
-   (optionally with a persistent GPU pipeline). If `islands > 1`, spawns one
-   thread per island inside `std::thread::scope`, each running its own
-   `run_sa_island` with a shared `global_best` handle, then joins all
-   threads and picks the island result with the **lowest `best_loss`**
-   (`min_by` over `IslandResult::best_loss`).
+6. **Single vs. multi-island dispatch.** Prepares collision structures and reads `islands`
+   (default 1), `migration_interval` (default 100). A single island consumes the prepared vector.
+   Multiple islands run through `run_island_batches` with the shared evaluator and global best.
+   Preparation clones happen only when a bounded task starts; histories are retained in island order.
+   The lowest historical `best_loss` selects the winner. No island creates a thread, pool or device.
 
-7. **Output.** Merges the winning island's best particles into one mesh,
-   optionally reorients disconnected components to positive signed volume
-   (`orient_to_positive_volume`), writes the result to `output.path` as STL,
+7. **Output.** Merges the winning island's best particles and optionally reorients disconnected
+   components to positive signed volume (`orient_to_positive_volume`). It then re-evaluates that
+   geometry with the same method at the full sample budget (`max(mc_samples, 2000)`), logging
+   `Selected Search Loss` separately from the verified curve/loss (MC noise can make them differ).
+   It writes the result to `output.path` as STL,
    and writes the accumulated `s2_history.txt` log (target/input/post-pruning/
    per-improvement/final S2 series and losses) alongside it. Finally prints a
    timing summary breaking total elapsed time into S2-computation time vs.
    collision/constraint-checking time, accumulated from whichever island (or
    the single run) produced the returned result.
+
+## Fixed S2 execution and configuration (PERF-01/02)
+
+`src/pipeline/optimize_execution.rs` resolves the definition once: `mc_method: exact` means
+`voxel_exact` (nonpositive pitch becomes 1.0); a non-exact method with positive pitch means
+`voxel_mc`, otherwise `mesh_mc`. All target/input/prune/initial/candidate/migration/final evaluations
+use this definition and its VF convention. The GPU MC shader does not implement voxel sampling:
+voxel methods therefore keep their CPU evaluator, with a reason, or error if fallback is forbidden.
+
+For optimize, `RUSTMSPT_ACCELERATION=cpu|gpu|auto` overrides YAML once; invalid values are errors.
+CPU and below-threshold auto never probe or initialize GPU. Small auto workloads select CPU even
+when `cpu_fallback: false`, since this is a normal policy choice. For a GPU attempt, unsupported
+method, unavailable device or failed initialization errors when fallback is disabled. Logs/history
+record the actual method/backend and effective pitch, rather than an unused initial selection.
+
+Continuous GPU MC uses one persistent instance. The currently supported GPU options are wgpu/f32
+with `gpu_prefer_power: false`. Explicit memory caps check a conservative logical MC working-set peak before probing and before each evaluation; unsupported options and radius/dispatch capacity are checked
+before device probing. GPU runtime failures use the configured same-method fallback; full f32 certification remains PERF-05 work. This does not change the other pipelines' GPU dispatch paths.
+
+Migration carries geometry, loss and curve together. All GPU/CPU work runs after releasing the global
+migration lock, and CPU VF runs after releasing the GPU mutex. These lock boundaries matter with
+nested Rayon work stealing: a worker must not run a task that waits for a mutex its suspended caller holds.
+Batched scheduling changes stochastic interleavings; optimize still has no cross-thread bytewise SA promise.
 
 ## Cross-references
 
@@ -354,3 +375,15 @@ point.
 - [s2-two-point-correlation.md](s2-two-point-correlation.md) — how
   `calculate_s2` and the GPU S2 pipeline compute the correlation curve that
   SA's loss function (`l2_norm`) compares against the target.
+
+GPU MC runtime errors now obey `cpu_fallback`: true disables the failed instance and recomputes the same mesh-MC method on CPU; false propagates a stage-labelled error before final outputs are written. See `PLAN.Performance.md` §14.
+
+### Persistent merged geometry (PERF-10)
+
+`merge_prepared_particles` directly assembles prepared meshes and records each particle's vertex range without temporary particle clones. Rigid candidates overwrite only their range; rejection restores its original vertices and prepared collider. Faces and other vertex ranges stay resident. Population migration recreates the merged mesh/ranges. GPU triangle uploads and voxel occupancy remain full updates; geometric VF now uses the island-local cache described below.
+
+### Immutable migration snapshots
+
+Each island stores its evaluated best as `Arc<GlobalBest>` containing geometry, loss and S2 together; `IslandResult` retains that Arc plus timings. Improvements build a new snapshot outside the migration mutex. The shared slot is `Arc<Mutex<Arc<GlobalBest>>>`. `exchange_best_snapshot` compares strict losses and swaps/clones only Arc references under the lock, returning a better incoming snapshot if present. Replaced snapshots are dropped after unlocking, so releasing their geometry cannot lengthen the critical section. Ties preserve the incumbent. Receivers rebuild their mutable prepared geometry/grid and re-evaluate the current walk outside the lock; the saved best curve remains paired with its original evaluated geometry/loss. Final selection borrows the winning shared snapshot rather than cloning it. This removes migration payload copies; creating a new local best and preparing a received mutable walk still copy geometry.
+
+Mesh-MC islands now cache each particle’s connected-component clipped-volume contributions in `IslandVolumes`. Feasible candidates replace only their particle’s entries; rejection restores the saved entries, migration rebuilds the cache, and every 64 evaluated candidates refresh all entries. VF still sums all cached component scalars in merged source order and applies the original denominator/clamp, avoiding running-delta drift. The cache is limited to continuous mesh MC: voxel methods keep voxel VF. CPU fixed-seed sampling and GPU failure fallback can accept the validated VF without recomputing geometry, and GPU mutex boundaries stay unchanged. Fully contained transformed particles are still recomputed to preserve floating-point reference behavior; no rigid-volume shortcut is assumed. Pruning and final verification retain full reference evaluation.

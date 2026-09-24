@@ -117,25 +117,9 @@ Any sampled coordinate that falls outside the source volume's bounds is treated 
 (`sample_voxel_or_background`), so the new axis-aligned box is padded with background wherever the
 tilted original volume doesn't cover it.
 
-**CPU path (`rotate_and_crop`).** The output volume is filled slice-by-slice along z, with the
-slices processed in parallel via `rayon`'s `par_chunks_mut` (one parallel task per z-slice, or
-z-chunk sized to `out_w * out_h`). Within a slice the x/y loop runs sequentially.
+**CPU path.** Resampling uses slice tasks when depth supplies enough work, otherwise row-aligned tiles targeting 4096 voxels in the configured Rayon pool, including single-slice outputs.
 
-**GPU path (`rotate_and_crop_gpu`, feature-gated).**
-
-> **Feature-gated:** only compiled and reachable when the crate is built with the `gpu` Cargo
-> feature. Without it, `CropPipeline::run` always takes the CPU path above.
-
-When the `gpu` feature is enabled, `CropPipeline::run` chooses between the CPU and GPU paths based
-on the *output* voxel count: it computes `out_total = out_w * out_h * out_d` from the rotated
-bounding box and dispatches to the GPU only when `out_total > 100_000` voxels. For smaller outputs
-it uses the CPU path directly (GPU dispatch overhead isn't worth it at that scale). The GPU path
-converts the `i64` volume data to `i32` for upload, initializes/reuses a
-`GpuVolumeTransformPipeline` (see [gpu.md](../reference/gpu.md)), dispatches a WGSL compute shader
-that performs the same inverse-rotation sampling described above (nearest or trilinear, selected by
-a `0`/`1` interpolation flag passed to the shader), and converts the result back to `i64` on
-download. If GPU initialization or dispatch fails for any reason, `CropPipeline::run` catches the
-error, logs a warning, and **falls back to the CPU path** rather than aborting the pipeline.
+**GPU path.** `acceleration` and `RUSTMSPT_ACCELERATION` select CPU, GPU or auto. Auto uses `gpu_min_voxels` (default 250,000 output voxels); explicit GPU bypasses that threshold. The estimated device working set is source bytes + output bytes + readback bytes + 128 parameter bytes. Unsupported values, missing devices, budget limits and runtime errors fall back only when `cpu_fallback` permits it. Nearest sampling requires signed i32 values; trilinear additionally requires input/background integers exactly representable in f32. Wide unsigned labels remain on CPU or produce an explicit error when fallback is forbidden. GPU half-integer rounding follows CPU's away-from-zero rule; arbitrary f32 transforms are not claimed bit-identical to f64 CPU transforms. Checked two-dimensional dispatch covers outputs exceeding one dispatch row. Adapter selection honors `RUSTMSPT_GPU_DEVICE`.
 
 See the reference entries:
 [`rotate_and_crop`](../reference/pipeline-crop-and-splitfilter.md#rotate_and_crop),
@@ -184,9 +168,7 @@ See the reference entries:
 3. **Estimate orientation** via `estimate_pca_bbox`, obtaining the rotation, centroid, and rotated
    bounding box; logs the foreground voxel count and both the floating-point and stabilized integer
    rotated bounding box for diagnostics.
-4. **Rotate and crop**: on GPU-enabled builds, dispatch to GPU when the rotated output would exceed
-   100,000 voxels, falling back to CPU automatically on GPU failure; otherwise always use the CPU
-   path.
+4. **Rotate and crop** according to acceleration, threshold, budget and fallback policy.
 5. **Resolve and apply edge trim** via `resolve_trim_pixels` (respecting `config.edge_trim`) and
    `trim_volume_border`.
 6. **Save** the final cropped, trimmed, axis-aligned volume as a TIFF (single file or folder of
@@ -211,3 +193,21 @@ See the reference entry: [`CropPipeline::run`](../reference/pipeline-crop-and-sp
   [`CropPipeline::run`](../reference/pipeline-crop-and-splitfilter.md#croppipelinerun).
 - [gpu.md](../reference/gpu.md) — reference for `GpuVolumeTransformPipeline` (`src/gpu/volume_transform.rs`),
   the WGSL compute pipeline `rotate_and_crop_gpu` dispatches to.
+
+
+### Execution and allocation contract (2026-09-18)
+
+`cpu_max` bounds the pool for the entire pipeline, including CPU fallback. `trim_volume_border` consumes its input: zero trim returns the same allocation; positive trim compacts retained rows in place and truncates the buffer. The retained capacity is not a second allocation and is released with the output. PCA uses fixed-block ordered reductions.
+
+
+### Fixed-block statistics and boundary counting (PERF-14)
+
+Background detection visits only the boundary faces, counting each edge/corner once even when a dimension is one. Ties select the smallest integer value; earlier hash-iteration-dependent ties were not reproducible. PCA retains three passes (centroid, centered covariance, projected bounds), using fixed 65,536-voxel blocks independent of worker count. Each block scans in original voxel order; indexed partial results are merged in ascending block order. Floating-point grouping differs from the old whole-volume serial reduction, so arbitrary inputs are not promised byte-identical to it. Tests compare an asymmetric sample against the serial oracle and require identical results across worker counts for symmetric, planar, linear and single-point foregrounds. Eigenvalue sorting and right-handed correction remain unchanged; a canonical basis for nearly repeated eigenspaces and an online centered-covariance experiment remain pending. PCA aligns principal variance axes; it does not generally compute the globally minimum-volume oriented bounding box.
+
+For scheduling, volumes below 1,048,576 voxels and single-worker pools process the same fixed blocks serially; larger volumes use the existing pool. This changes scheduling only, preserving block boundaries and merge order.
+
+PCA parallel scheduling groups fixed blocks with a minimum grain derived from `min(pool_workers, ceil(voxel_count / 1,048,576))`. This limits scheduling overhead without changing any block statistic or its merge order; it does not create another pool.
+
+### Dense background counts (2026-09-23)
+
+`for_each_boundary_value` visits only faces, counting corners/edges once. Background mode uses 256 `usize` counters for U8/I8 and 65,536 counters for U16/I16 volumes with at least 65,536 voxels (at most 512 KiB on a 64-bit host). Smaller 16-bit and all 32-bit volumes retain the HashMap path. A checked index sends values outside the declared dense range into a sparse spill map; metadata is not used to truncate/reject arbitrary i64 values. Dense and sparse counts share a running mode with the original smallest-value tie break; no final full histogram scan is needed. Counters are local and released before PCA. Independent full-grid ordered-map oracles cover collapsed dimensions, both integer extrema, signed ranges and metadata mismatches. Real-input end-to-end evidence is tracked in PLAN.Performance.md §62.

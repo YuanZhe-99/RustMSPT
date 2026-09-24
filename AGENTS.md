@@ -88,11 +88,13 @@ One subsection per file in `docs/en-us/algorithms/`. These are high-level summar
 
 ### S2 Two-Point Correlation
 
+GPU correctness invariants: voxel parameter bytes 32/36/40 hold `RAY_DIR_GPU`; subtract bbox origins in f64 before f32 triangle upload. Shell offsets are processed in bounded batches without truncation, reject out-of-domain shifts before unsigned subtraction, and retain equal per-offset weighting across batches. Regression coverage: `tests/gpu_s2_boundaries_tests.rs` and GPU module layout/normalization tests. MC and voxel rays use a 64-hit fast path and recover overflow via constant-storage successive nearest-hit scans, preserving anchored GPU deduplication without dropping samples. Recovery can cost O(triangles × distinct hits). MC upload/evaluation return Result with device-capacity checks and checked readback; optimize either disables the failed GPU and preserves CPU mesh-MC semantics or propagates the error when fallback is forbidden. Voxel/shell also return Result with checked two-dimensional dispatch. Measure resolves methods separately, retains same-method fallback under its worker pool, and reports actual per-method backends. Remaining GPU limits are tracked in `PLAN.Performance.md`.
+
 S2(r) is the probability that two points a distance `r` apart both land in solid particle material; at `r=0` it equals volume fraction, decaying toward VF² as `r` grows for a random medium. Every CPU method reduces to a ray-casting point-in-mesh test (Möller–Trumbore, fixed non-axis-aligned ray direction, hit-distance deduplication within `1e-8`), and `calculate_s2` dispatches between three strategies — direct mesh Monte Carlo, voxelized Monte Carlo, and exact FFT-autocorrelation or direct shell-pair enumeration (chosen by a 24,000,000-cell padded-grid-size threshold). GPU counterparts mirror all three via wgpu compute kernels and fall back to the CPU path on GPU init failure. It powers `measure` (S2 reported as a diagnostic, exact-vs-Monte-Carlo comparison via `l2_norm`) and `optimize` (S2 L2 distance to a target curve as the simulated-annealing loss function). [Full doc](docs/en-us/algorithms/s2-two-point-correlation.md)
 
 ### Simulated Annealing and the Island Model
 
-`OptimizePipeline` rearranges a loaded particle assembly's positions/orientations so its S2 curve matches a target curve, using simulated annealing: random perturbations (60% local translate/rotate, 30% move-toward-neighbor, 10% full random reposition) are accepted via the Metropolis criterion, with adaptive temperature nudging to keep the acceptance rate inside a `[0.20, 0.45]` target band. Before SA starts, `selective_prune_to_target_vf` cheaply thins the particle set toward the target volume fraction so SA doesn't spend its budget removing particles one accept/reject decision at a time. When `optimization.islands > 1`, multiple independent SA searches run in parallel threads, each keeping its own temperature/cooling state, periodically migrating the better of "mine vs. global best" through a shared `Arc<Mutex<GlobalBest>>`. It powers the `optimize` pipeline end to end (`run_sa_island`, `selective_prune_to_target_vf`, `OptimizePipeline::run`). [Full doc](docs/en-us/algorithms/simulated-annealing-island-model.md)
+`OptimizePipeline` rearranges a loaded particle assembly's positions/orientations so its S2 curve matches a target curve, using simulated annealing: random perturbations (60% local translate/rotate, 30% move-toward-neighbor, 10% full random reposition) are accepted via the Metropolis criterion, with adaptive temperature nudging to keep the acceptance rate inside a `[0.20, 0.45]` target band. Before SA starts, `selective_prune_to_target_vf` cheaply thins the particle set toward the target volume fraction so SA doesn't spend its budget removing particles one accept/reject decision at a time. When `optimization.islands > 1`, independent SA searches run in bounded batches within one shared Rayon pool, each keeping its own temperature/cooling state, periodically migrating coherent geometry/loss/S2 snapshots through `Arc<Mutex<GlobalBest>>`. A run-wide `OptimizeS2` preserves the selected S2 definition across all stages. It powers the `optimize` pipeline end to end (`run_sa_island`, `selective_prune_to_target_vf`, `OptimizePipeline::run`). [Full doc](docs/en-us/algorithms/simulated-annealing-island-model.md)
 
 ### FFD Forging
 
@@ -286,7 +288,8 @@ src/
     mesh_render.rs     MeshRenderPipeline: VTU volume-mesh multi-view renderer (mesh-render subcommand)
     mesh_verify.rs     MeshVerifyPipeline: standalone mesh-verify catalog runner (mesh-verify subcommand)
     meshgen.rs         MeshGenPipeline: S0/S1/G2-1..G2-5/G3/G4/G5 orchestration; emits s02+s03+s04+s05+s06, returns NotAvailable for S7+
-    optimize.rs        OptimizePipeline: simulated annealing with island model
+    optimize.rs        OptimizePipeline: simulated annealing with bounded island batches and coherent migration
+    optimize_execution.rs  Fixed S2 method/backend selection, one optional shared GPU MC instance, and bounded Rayon island scheduling
     pack.rs            PackPipeline: sequential particle placement with optional target diameter distribution and mean-sphericity steering
     pack_targets.rs    Packing target CSV parser, diameter-bin debt controller, sphericity scoring, and distribution summaries
     placement.rs       PlacementPipeline: the seeded, recorded, void-aware packing engine (placement: block)
@@ -359,6 +362,12 @@ PLAN_pack_v2.md        Seeded, recorded, void-aware placement design + implement
 All pipelines implement `src/pipeline/mod.rs::Pipeline` with a single `fn run(&self) -> Result<()>`. Each pipeline reads its config, performs computation, and writes output.
 
 ### Parallelism
+
+- **PERF-01/02 optimize:** `OptimizeS2` fixes voxel_exact/voxel_mc/mesh_mc once for every stage. Only mesh_mc can use the current GPU MC shader; forbidden method/init fallback errors. `RUSTMSPT_ACCELERATION` overrides YAML for optimize, and CPU/small auto never probe GPU. Explicit GPU memory caps conservatively select CPU until working-set budgeting exists. `tests/optimize_execution_tests.rs` exercises CLI behavior; `cargo test --offline --lib pipeline::optimize` observes actual evaluator workers and migration, with a shared GPU test under `--features gpu`. Final S2 is re-evaluated after optional orientation; historical selection loss is logged separately.
+
+- **PERF-02 placement:** `run_placement` creates a dedicated configured Rayon pool and installs all stages through `run_placement_in_pool`; reports read the active worker count. Records, STL, CSV and voxel outputs are compared at 1/2/8 workers in `placement_pipeline_tests`.
+- **PERF-13 spatial queries:** preserve first-encounter neighbor order; use linear membership below 256 unique IDs and a query-local hash set thereafter, never set iteration. `cargo test --offline --lib geometry::spatial::tests` checks the original scan oracle; the ignored `query_benchmark` runs in release for five raw timing samples.
+- **PERF-19 scene tests:** GPU fixture literals must initialize both wireframe counters; `SceneSegment` imports are GPU-gated. Image baselines are unchanged.
 See [Algorithm Overview](#3-algorithm-overview) above — particularly [Simulated Annealing and the Island Model](#simulated-annealing-and-the-island-model) and [Spatial Grid Collision Detection](#spatial-grid-collision-detection) — and `docs/en-us/algorithms/simulated-annealing-island-model.md` / `docs/en-us/algorithms/spatial-grid-collision.md` for the full picture. Load-bearing facts not covered there:
 
 
@@ -408,7 +417,7 @@ When inspecting code:
 
 ## 10. Common Pitfalls
 
-- `ThreadPool` is not `Clone`. Use references or create separate pools per island.
+- `ThreadPool` is not `Clone`. Optimize installs one run-wide pool and borrows it; never create per-island pools that exceed `cpu_max`.
 - `parry3d::TriMesh::new()` can return `Err` for degenerate meshes; always handle with `Option`.
 - `rustfft::Fft` is `Send + Sync` but not `Clone`. For parallel FFT, each thread creates its own `FftPlanner`.
 - `Volume3D.data` stores voxel values as `i64`. The `numeric_type` field tracks original bit depth.
@@ -706,7 +715,7 @@ and "this phase is done" unless it is stated.
 
 - **Rayon** is the primary parallelism framework project-wide; thread pools are created per-pipeline via `ThreadPoolBuilder`.
 - **Voxelization**: `build_bbox_occupancy` parallelizes over x-slabs with `par_chunks_mut`, using ray-casting `point_inside_mesh` for correct 3D solid containment (parry3d `TriMesh::contains_local_point()` is unreliable without pseudo normals).
-- **Island model**: when `optimization.islands > 1`, independent SA instances run in parallel via `std::thread::scope`, each with its own dedicated `ThreadPool` (`ThreadPool` is not `Clone` — see [Common Pitfalls](#10-common-pitfalls)).
+- **Island model**: `run_island_batches` limits live island contexts to the shared Rayon worker count; nested S2/VF work uses the same pool. Surplus islands queue, and histories retain island order. GPU MC, when compatible, shares one mutex-protected instance; release its lock before parallel VF work. Migration must publish/adopt geometry, loss and S2 together and release its lock before nested work.
 
 ### Determinism
 
@@ -995,3 +1004,91 @@ and the other reads it — decide which, and say so at the site.
 - **"I can't see X" is a hypothesis about the picture, not about the mesh — check the data first.** a4's cube is 39,132 cells with a meshed volume of 0.013246 against an input 0.013245. The mesh was right and the visualisation was wrong, and confirming that took one query against the VTU.
 - **Split a refusal until it names one line, then build.** "No flip brings the hull closer" — 61.2 % of a6a's stranded interface area — took four cheap splits to become *"the link polygon has no valid triangulation"*, on 162 of a6a's cells and 603 of a3's 647. Each split ruled something out: the direction (both, so neither shave-only nor add-only), the distance (all stall one or two faces, so it is local), the layer (the operation, not the search — every candidate refused), and finally the line. **None of those four cost a build of anything real.**
 - **A move that cannot change the measure you accept it by is not a move.** The 2-3 flip was added to boundary recovery on the reasoning that edge removal only takes edges away. It changed nothing, and could not have: a 2-3 flip on an interior face preserves its own region boundary — the implementation checks exactly that — so the hull is untouched and "keep it if fewer hull faces are wrong" never fires. It is an *enabling* move, not a *progress* move. **Before adding an operation to a search, check that it can move the search's own objective.**
+
+Performance continuation: CPU S2 uses `geometry/mesh_query.rs` prepared bbox/BVH queries and reusable hit scratch. Mesh MC uses seeded radius/sample blocks internally; the seeded diagnostic API preserves worker-count reproducibility. `VoxelS2` owns reusable occupancy for measure exact/voxel MC. Placement labels use spatial candidate tiles with original ownership order. GPU voxel/shell calls are fallible with checked two-dimensional dispatch. See PLAN.Performance.md for measured results and remaining work.
+
+Legacy pack now caches accepted collider and periodic-image TriMesh data and uses an incremental grid above 31 colliders; the former full placed-clone scan description is historical. Optimize updates grid membership only on accepted moves and retains the original prepared particle on rejection. `SpatialQueryScratch` supports allocation reuse in tiled labels.
+
+ForgePipeline uses ownership-consuming `forge_owned`; public borrowed FFD wrappers retain clone semantics. Scale/translate/FFD parallelize only sufficiently large independent vertex maps. Binary STL load is streaming; `load_stl_hashed` parses and hashes one stream for placement shape sources. Binary output uses a 64 KiB writer with explicit flush.
+
+CPU exact FFT reuses per-thread owned FftWorkspace plans and arrays, retaining at most 16 MiB of arrays with padded axes <=4096 (plan storage additional). Small transforms are serial; larger transforms use bounded task grains. Consumers read complex-grid real counts directly. Complete exact-workset planning remains tracked in PLAN.Performance.md.
+
+Crop performance contract: `cpu_max` bounds the whole pipeline; `acceleration` and environment overrides enforce threshold, device budget and forbidden fallback. Wide integers never silently narrow on GPU. GPU transform returns Result and uses checked two-dimensional dispatch. CPU resampling uses slices when depth fills the pool, otherwise row-aligned tiles targeting 4096 voxels; owned edge trimming compacts the existing allocation. See tests/crop_execution_tests.rs.
+
+STL render performance contract: the entire pipeline runs in cpu_max pool and uses configured_mode/resolve_execution. GPU working-set estimates include vertices, textures, padded staging and uniforms. Initialization/render scopes and checked map callbacks return errors; forbidden fallback never silently renders on CPU. See tests/render_execution_tests.rs and tests/render_tests.rs.
+
+CPU scene rendering: PreparedScene borrows immutable RenderScene and retains QBVH/materials across views. Hit scratch is Rayon task-local and coincidence dedup compacts in place, preserving Face-over-Volume and transparency rules. Mesh-render consumes GPU output images instead of cloning; bounded batch streaming remains pending.
+
+Mesh-render GPU streaming: render_views_to uploads once and reuses uniform/color/depth/staging across cameras; the CLI saves each owned frame before the next. Output errors propagate without CPU fallback. Existing render_views remains a collecting wrapper. Auto GPU failure after partial output rewrites all views on CPU; strict GPU failure leaves earlier saved views. Encoding/render overlap remains pending.
+
+Split-filter performance contract: cpu_max covers the entire pipeline. Requested volume/aspect/area metrics are prepared in original component order, parallel above 31 components while preserving per-component reduction order. Cheap aspect/volume rejections skip area. Filtering and seeded rebalance remain serial; at most two STL writers share the pool and propagate errors in output-rank order.
+
+Spatial query deduplication promotes to hash membership at the 256th unique candidate within a bucket, not after finishing it; first-encounter ordering is retained and single dense buckets avoid quadratic scans.
+
+Crop PCA now uses fixed 65536-voxel blocks and ascending-index merges for all three passes, independent of worker count. Background scans faces only, counts edges/corners once and chooses the smallest value on tied mode counts. Centered-covariance formula remains unchanged; global minimum oriented bbox and near-degenerate canonical eigenspace behavior are not claimed.
+
+GPU voxelization and shell-S2 constructors now use request_adapter_device, honoring the same case-sensitive name/index selector as volume transforms and rendering. Invalid selectors return errors rather than using a default device. Device/context caching is still pending; try_init_gpu currently probes and requests a device on every call.
+
+GPU initialization lifetime: one OnceLock backend instance is reused with serialized adapter selection. Selected GL adapters use private instances to avoid shared EGL context races. Each fresh adapter creates one logical device; device/queue/compiled pipeline sharing remains pending. Failed selectors and device requests are not cached. Context concurrency/GL isolation regressions live in gpu/context.rs tests.
+
+GPU MC output/staging allocation is lazy: four 4-byte placeholders grow to actual invocations, persist across evaluations and read back only the live prefix. release_output_capacity drops the retained output/staging peak without discarding geometry or pipeline. Measure MC estimates 16 bytes/invocation plus triangles and 576-byte params; explicit optimizer GPU budget support remains pending.
+
+Voxelization and volume transforms reuse staging with occupancy/output capacity and read only the current valid prefix. release_grid_capacity (voxel) and release_output_capacity (transform) reset output/readback peak without discarding input or pipelines. Tests alternate dimensions, pitch and signed values and exercise growth/release/reuse.
+
+GPU shell S2 retains lazy offset/output/staging capacity and maps only the current batch prefix; release_batch_capacity resets one-offset capacity without dropping occupancy or compiled state. Preserve the 200000-offset bound and equal per-offset weighting.
+
+Standalone mesh-render accepts top-level cpu_max (default/-1 available, otherwise clamp 1..available); its complete run and CPU fallback share one Rayon pool. Explicit GPU remains strict opaque preview; CPU retains transparency.
+
+Mesh-render now honors RUSTMSPT_ACCELERATION before input loading using the common mode parser; effective gpu remains strict, auto permits fallback, and invalid environment values are rejected.
+
+Standalone mesh-render plans its logical GPU working set before initialization, including queue geometry uploads, reused targets and staging. gpu_memory_limit_mb applies to gpu/auto; gpu_min_pixels defaults to zero and applies only to auto. GPU scene device limits are checked before host expansion; constructor errors are scoped. Driver internals/host scene memory are outside the logical GPU budget.
+
+Optimize GPU MC now honors explicit logical memory budgets: pre-probe startup estimate plus per-evaluation checks under the GPU mutex include retained capacity, growth overlap and queued uploads. It initializes with empty geometry to avoid duplicate first-stage upload; stage failures retain same-method fallback/strict behavior. Driver internals are not included.
+
+Legacy volume clipping now moves intermediate meshes and skips planes that do not cut referenced face vertices (including tangency); fully contained particle VF uses original mesh_volume directly. Preserve the 1e-9 plane classification tolerance. These fast paths do not repair all legacy nonconvex cap limitations.
+
+Optimize migration shares immutable Arc<GlobalBest> snapshots (geometry/loss/S2 together). The shared mutex protects only loss comparison and Arc exchange; retired payload destruction and mutable receiving-state preparation happen after unlocking. Preserve strict ties and coherent historical S2.
+
+CPU STL/scene renderers use matched contiguous RGBA/depth pixel tasks with unchanged ray coordinates and compositing. Wide rows can split across workers; task-local scene hit storage is reused. Preserve row-reference image equality and benchmark the grain before performance claims.
+
+GPU MC now reduces 256 samples per radius/workgroup to integer hit/valid partials, then merges in CPU u64. Keep logical RNG ids independent of padded lanes, and update MC_BLOCK_SAMPLES, WGSL workgroup/reduction width and memory planning together. The frozen per-sample test shader verifies exact fixed-seed counts.
+
+GPU MC flattens two-dimensional workgroups into radius/sample blocks. Guard padded groups uniformly before barriers and writes, even with spare retained buffer capacity. Optimize startup checks logical u32 sample capacity rather than the obsolete one-dimensional dispatch ceiling; the device planner checks actual workgroup and buffer limits.
+
+GPU shell valid counts use the product of three overlap lengths after out-of-domain rejection; checked host grid size bounds that product by u32. Keep complete per-offset ratios equally weighted when adding voxel tiling. The raw-count enumeration oracle covers thin grids and extreme signed shifts.
+
+The experimental cooperative shell shader uses one 256-lane workgroup per offset and exact integer reduction. Pair it with offsets_per_workgroup=1; the production direct shader uses 256. Keep padded-group rejection uniform before barriers. Initial software-GPU benchmarks favor larger grids but regress small grids; production switching needs workload-threshold evidence.
+
+Experimental shell voxel tiles emit integer hit/valid partials; sum all tiles for each offset in u64 before averaging ratios. Batch capacity is 200000 partial slots, not 200000 offsets when tiled. Params now occupy 24 bytes; direct shaders read the first 16. Production remains direct pending measured selection.
+
+Optional experimental shell tile reduction merges complete per-offset integer counts on the device before readback. Its u32 sums are bounded by the checked full grid. Keep per-offset equal weighting on CPU; do not average tile ratios. Batch release shrinks reducer outputs while retaining its pipeline.
+
+Production GPU shell filters unsupported offsets in stable bounded batches before upload; unsupported-only calls retain the VF/zero result without uploading occupancy. Use unsigned_abs for extreme signed displacements. Raw shader oracles disable the host filter so device boundary coverage is retained.
+
+GPU exact shell now shares the voxel stage Device/Queue and reads its occupancy buffer directly, eliminating a second device request and occupancy re-upload inside exact evaluation. Stages execute sequentially with non-overlapping error scopes. Voxel VF now uses voxelize_count: device integer reduction with only four-byte readback; the full occupancy remains resident. Resident shell input is borrowed, leaving its host-upload buffer independent.
+
+Voxel count-only execution grows occupancy without allocating a full-grid staging buffer. Full-readback mode must independently grow staging even if occupancy already has capacity. Test both mode transitions and release/recompute; the lazy counter sums binary cells with a checked u32 total.
+
+GPU exact enumerates radius shells lazily and records interpolation support in that same pass; do not restore all-radius offset collection or the second support enumeration. Bounded shell batches may cross radii but preserve offset order. GPU exact now uses shell_offset_iter within each radius, retaining only range cursors plus the bounded batch; the public Vec API remains for random-access consumers. Cube-search complexity is unchanged.
+
+Fresh production GPU exact uses compute::exact_memory::ExactMemoryPlan in both Measure selection and execution. Budget controls partial batch size and minimum infeasibility is rejected before initialization. The logical bound includes queued uploads and old/new batch growth, not driver internals or host memory; experimental tiled/reduced and retained arbitrary pipelines need separate accounting.
+
+Legacy select_backend APIs lack a task estimate and explicitly refuse GPU budget requests before probing. Budgeted pipelines must use resolve_execution or their validated planner, then probe without a budget. Never compare a total memory cap to a device single-binding limit; check actual buffers separately.
+
+Mesh-MC SA islands cache per-particle component volumes, update only the moved particle, restore rejected entries, rebuild on migration and refresh every 64 candidate evaluations. Sum cached scalars in merged component order rather than updating a running total. Never substitute this geometric VF for voxel methods; prune/final still use full reference evaluation.
+
+Mesh-render GPU multi-view output uses a rendezvous PNG writer when workers > 1; at most two delivered host frames coexist. Join/drain before fallback; output errors never trigger CPU fallback. CPU views and single-worker/single-view output remain sequential. See PLAN.Performance.md §56.
+
+CPU PreparedScene uses nearest-distance plus bounded coincidence enumeration for >=192 triangles with all clamped alpha == 1; original sorting/Face priority/overlay depth preserved. Smaller or transparent scenes retain all-hit compositing. Threshold evidence and unresolved runtime observations: PLAN.Performance.md §57.
+
+RAW/TIFF folder loading uses at most two concurrent per-file decoders in the current Rayon pool, ordered Result consumption, and one-file batches with one worker. TIFF folder ranges include every page in each selected file; readers are never shared. Bound is files, not bytes; full output volume remains resident. See PLAN.Performance.md §59.
+
+For RAW folder decoding, files below 512 KiB stay serial; larger slices use the two-file bound. Single-file batches never dispatch Rayon work. The warm-cache benchmark includes one-file TIFF controls and cannot attribute those timings to parallel decoding.
+
+TIFF folder output borrows slices into at most two current-pool writers with fixed z names; batches join and return the first ordered error, leaving possible current-batch partial files but starting no later batch. Both single-file and folder TIFF output explicitly flush and report flush errors; no fsync durability guarantee. See PLAN.Performance.md §60.
+
+Crop emits completed-stage wall timings for load/background/PCA/transform_and_backend/trim/encode_write/total_in_pool. Transform timing includes backend initialization/transfers/fallback and must not be labeled GPU kernel time; total_in_pool excludes CLI/pool creation. Encoding includes flush, not fsync. See PLAN.Performance.md §61.
+
+Crop background counting uses 256 dense counters for 8-bit images and 65,536 counters for >=65,536-voxel 16-bit images, with checked sparse spill for out-of-range values. Smaller 16-bit and all 32-bit inputs retain HashMap counting; every path selects the smallest tied value. Dense allocation is at most 512 KiB on 64-bit and ends before PCA. See PLAN.Performance.md §62.
+
+RAW folder assembly checks plane/byte/volume products and reserves the final voxel count once, after the first valid slice; allocation failure propagates. This prevents Vec growth copies but does not remove per-slice decode buffers or cap RSS. See PLAN.Performance.md §63.

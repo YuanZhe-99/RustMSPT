@@ -1,6 +1,7 @@
 use crate::error::{Result, RustMsptError};
+use rayon::prelude::*;
 use std::fs;
-use std::io::{BufReader, BufWriter};
+use std::io::{BufReader, BufWriter, Seek, Write};
 use std::path::{Path, PathBuf};
 use tiff::decoder::{Decoder, DecodingResult};
 use tiff::encoder::{colortype, TiffEncoder};
@@ -40,6 +41,27 @@ pub struct RawFolderSpec {
     pub byte_order: ByteOrder,
     pub slice_start: isize,
     pub slice_end: isize,
+}
+
+// AI-FUNC-SUMMARY: Decode at most two independent files within the current Rayon pool and consume results in filename order; preserve first ordered decode/validation error and drop all unconsumed buffers before returning. One-worker pools remain sequential; a multi-page decoder is never shared.
+fn consume_file_batches<T: Send>(
+    files: &[PathBuf],
+    batch_limit: usize,
+    load: impl Fn(&Path) -> Result<T> + Sync,
+    mut consume: impl FnMut(&Path, T) -> Result<()>,
+) -> Result<()> {
+    let batch_size = rayon::current_num_threads().min(batch_limit.clamp(1, 2));
+    for batch in files.chunks(batch_size) {
+        let decoded: Vec<Result<T>> = if batch.len() == 1 {
+            batch.iter().map(|path| load(path)).collect()
+        } else {
+            batch.par_iter().map(|path| load(path)).collect()
+        };
+        for (path, result) in batch.iter().zip(decoded) {
+            consume(path, result?)?;
+        }
+    }
+    Ok(())
 }
 
 // AI-FUNC-SUMMARY:
@@ -201,7 +223,7 @@ fn decode_raw_slice(bytes: &[u8], bits: u8, signed: bool, byte_order: ByteOrder)
 // Inputs: RawFolderSpec with folder path, dimensions, bit depth, sign, byte order, and slice range.
 // Returns: Volume3D with decoded data.
 // Side effects: Reads all slice files from disk.
-// Notes: Validates per-slice byte size against expected dimensions. Returns InvalidConfig for size mismatches.
+// Notes: RAW files below 512 KiB remain serial; otherwise at most two files decode in the current pool; ordered validation/assembly preserves range and numeric type; checked output sizing and one fallible reservation after the first valid slice avoid repeated assembly growth. Returns InvalidConfig for size mismatches.
 pub fn load_raw_folder(spec: &RawFolderSpec) -> Result<Volume3D> {
     if spec.width == 0 || spec.height == 0 {
         return Err(RustMsptError::InvalidConfig(
@@ -221,24 +243,35 @@ pub fn load_raw_folder(spec: &RawFolderSpec) -> Result<Volume3D> {
             ))
         }
     };
-    let expected_len = spec.width * spec.height * bytes_per_pixel;
+    let pixels = spec.width.checked_mul(spec.height)
+        .ok_or_else(|| RustMsptError::InvalidConfig("RAW slice dimensions overflow".into()))?;
+    let expected_len = pixels.checked_mul(bytes_per_pixel)
+        .ok_or_else(|| RustMsptError::InvalidConfig("RAW slice byte count overflow".into()))?;
+    let depth = end - start + 1;
+    let output_len = pixels.checked_mul(depth)
+        .ok_or_else(|| RustMsptError::InvalidConfig("RAW volume dimensions overflow".into()))?;
 
     let mut data: Vec<i64> = Vec::new();
-    for path in &files[start..=end] {
+    consume_file_batches(&files[start..=end], if expected_len >= 512 * 1024 { 2 } else { 1 }, |path| {
         let bytes = fs::read(path)?;
         if bytes.len() != expected_len {
             return Err(RustMsptError::InvalidConfig(format!(
                 "RAW slice size mismatch for {}: expected {}, got {}",
-                path.display(),
-                expected_len,
-                bytes.len()
+                path.display(), expected_len, bytes.len()
             )));
         }
-        let mut slice = decode_raw_slice(&bytes, spec.bits, spec.signed, spec.byte_order)?;
+        decode_raw_slice(&bytes, spec.bits, spec.signed, spec.byte_order)
+    }, |_, mut slice| {
+        if data.is_empty() {
+            // Reserve only after a valid first slice, preserving malformed-file errors.
+            data.try_reserve_exact(output_len).map_err(|error| {
+                RustMsptError::InvalidConfig(format!("RAW volume allocation failed: {error}"))
+            })?;
+        }
         data.append(&mut slice);
-    }
+        Ok(())
+    })?;
 
-    let depth = end - start + 1;
     let numeric_type = match (spec.bits, spec.signed) {
         (8, false) => VolumeNumericType::U8,
         (8, true) => VolumeNumericType::I8,
@@ -375,7 +408,7 @@ pub fn load_tiff_or_folder(path: &Path) -> Result<Volume3D> {
 // Inputs: input path and [start,end] range where -1 means begin/end.
 // Returns: Decoded Volume3D.
 // Side effects: Reads files from disk.
-// Notes: For files, loads multi-page TIFF with page range. For folders, loads TIFF sequence with slice range.
+// Notes: Files advance pages serially; folders decode at most two independent complete files in the current pool and assemble in filename order.
 pub fn load_tiff_or_folder_with_range(path: &Path, slice_start: isize, slice_end: isize) -> Result<Volume3D> {
     if path.is_file() {
         return load_tiff_file_with_range(path, slice_start, slice_end);
@@ -403,8 +436,7 @@ pub fn load_tiff_or_folder_with_range(path: &Path, slice_start: isize, slice_end
     let mut data = Vec::new();
     let mut numeric_type: Option<VolumeNumericType> = None;
 
-    for file in &files[start..=end] {
-        let vol = load_tiff_file(&file)?;
+    consume_file_batches(&files[start..=end], 2, load_tiff_file, |file, vol| {
         if width == 0 {
             width = vol.width;
             height = vol.height;
@@ -426,7 +458,8 @@ pub fn load_tiff_or_folder_with_range(path: &Path, slice_start: isize, slice_end
 
         depth += vol.depth;
         data.extend(vol.data);
-    }
+        Ok(())
+    })?;
 
     Ok(Volume3D {
         width,
@@ -443,8 +476,8 @@ pub fn load_tiff_or_folder_with_range(path: &Path, slice_start: isize, slice_end
 // Returns: Ok(()) on success.
 // Side effects: Writes one TIFF page to the encoder stream.
 // Notes: Returns InvalidConfig if values overflow the target numeric type.
-fn write_tiff_slice(
-    encoder: &mut TiffEncoder<BufWriter<fs::File>>,
+fn write_tiff_slice<W: Write + Seek>(
+    encoder: &mut TiffEncoder<W>,
     width: u32,
     height: u32,
     ty: VolumeNumericType,
@@ -515,12 +548,27 @@ fn write_tiff_slice(
     Ok(())
 }
 
+// AI-FUNC-SUMMARY: Encode ordered pages through a borrowed seekable writer and explicitly flush after dropping the TIFF encoder; propagate final buffered-write failures instead of relying on BufWriter::drop.
+fn write_tiff_pages<W: Write + Seek>(
+    writer: &mut W, width: u32, height: u32, ty: VolumeNumericType,
+    data: &[i64], slice_len: usize,
+) -> Result<()> {
+    {
+        let mut encoder = TiffEncoder::new(&mut *writer)?;
+        for slice in data.chunks(slice_len) {
+            write_tiff_slice(&mut encoder, width, height, ty, slice)?;
+        }
+    }
+    writer.flush()?;
+    Ok(())
+}
+
 // AI-FUNC-SUMMARY:
 // Purpose: Save a Volume3D as a multi-page TIFF file or as a folder of per-slice TIFF files.
 // Inputs: volume, output path, optional file prefix for folder mode, optional file extension.
 // Returns: Ok(()) on success.
 // Side effects: Creates parent directories; writes TIFF file(s) to disk.
-// Notes: Uses .tiff extension by default. Detects file vs folder mode by output extension. Returns error for empty volume or data length mismatch.
+// Notes: Folder output uses at most two writers in the current pool and returns the first slice-ordered error after joining a batch; current-batch partial files may remain, later batches are not started. Multi-page output stays serial. Both modes explicitly flush.
 pub fn save_tiff_or_folder_with_ext(
     volume: &Volume3D,
     output: &Path,
@@ -533,7 +581,8 @@ pub fn save_tiff_or_folder_with_ext(
         ));
     }
 
-    let expected = volume.width * volume.height * volume.depth;
+    let expected = volume.width.checked_mul(volume.height).and_then(|n| n.checked_mul(volume.depth))
+        .ok_or_else(|| RustMsptError::InvalidConfig("TIFF volume dimensions overflow".into()))?;
     if volume.data.len() != expected {
         return Err(RustMsptError::InvalidConfig(format!(
             "Volume data length mismatch: expected {}, got {}",
@@ -542,8 +591,8 @@ pub fn save_tiff_or_folder_with_ext(
         )));
     }
 
-    let width = volume.width as u32;
-    let height = volume.height as u32;
+    let width = u32::try_from(volume.width).map_err(|_| RustMsptError::InvalidConfig("TIFF width exceeds u32".into()))?;
+    let height = u32::try_from(volume.height).map_err(|_| RustMsptError::InvalidConfig("TIFF height exceeds u32".into()))?;
     let slice_len = volume.width * volume.height;
 
     if is_tiff_path(output) {
@@ -551,14 +600,8 @@ pub fn save_tiff_or_folder_with_ext(
             fs::create_dir_all(parent)?;
         }
         let file = fs::File::create(output)?;
-        let writer = BufWriter::new(file);
-        let mut encoder = TiffEncoder::new(writer)?;
-        for z in 0..volume.depth {
-            let start = z * slice_len;
-            let end = start + slice_len;
-            write_tiff_slice(&mut encoder, width, height, volume.numeric_type, &volume.data[start..end])?;
-        }
-        return Ok(());
+        let mut writer = BufWriter::new(file);
+        return write_tiff_pages(&mut writer, width, height, volume.numeric_type, &volume.data, slice_len);
     }
 
     fs::create_dir_all(output)?;
@@ -569,14 +612,22 @@ pub fn save_tiff_or_folder_with_ext(
             "TIFF folder output extension must be tif or tiff".to_string(),
         ));
     }
-    for z in 0..volume.depth {
-        let path = output.join(format!("{}_{:04}.{}", prefix, z, extension));
-        let file = fs::File::create(path)?;
-        let writer = BufWriter::new(file);
-        let mut encoder = TiffEncoder::new(writer)?;
-        let start = z * slice_len;
-        let end = start + slice_len;
-        write_tiff_slice(&mut encoder, width, height, volume.numeric_type, &volume.data[start..end])?;
+    let batch_size = rayon::current_num_threads().min(2).min(volume.depth);
+    for first in (0..volume.depth).step_by(batch_size) {
+        let count = batch_size.min(volume.depth - first);
+        let data = &volume.data[first * slice_len..(first + count) * slice_len];
+        let write = |(local, slice): (usize, &[i64])| -> Result<()> {
+            let path = output.join(format!("{}_{:04}.{}", prefix, first + local, extension));
+            let file = fs::File::create(path)?;
+            let mut writer = BufWriter::new(file);
+            write_tiff_pages(&mut writer, width, height, volume.numeric_type, slice, slice_len)
+        };
+        let results: Vec<Result<()>> = if count == 1 {
+            data.chunks(slice_len).enumerate().map(write).collect()
+        } else {
+            data.par_chunks(slice_len).enumerate().map(write).collect()
+        };
+        for result in results { result?; }
     }
 
     Ok(())
@@ -585,4 +636,65 @@ pub fn save_tiff_or_folder_with_ext(
 // AI-FUNC-SUMMARY: Save a Volume3D to TIFF file or folder sequence with default .tiff extension; returns Ok(()); side effects: Creates directories and writes TIFF files to disk.
 pub fn save_tiff_or_folder(volume: &Volume3D, output: &Path, file_prefix: Option<&str>) -> Result<()> {
     save_tiff_or_folder_with_ext(volume, output, file_prefix, Some("tiff"))
+}
+
+#[cfg(test)]
+mod file_batch_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // AI-FUNC-SUMMARY: Inject a final flush failure after a valid TIFF has been encoded and require the error to escape; compare encoded bytes to a successful reference writer.
+    #[test]
+    fn final_tiff_flush_failure_is_reported() {
+        struct FailFlush(std::io::Cursor<Vec<u8>>);
+        impl Write for FailFlush {
+            // AI-FUNC-SUMMARY: Forward test writes into the in-memory TIFF stream.
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> { self.0.write(bytes) }
+            // AI-FUNC-SUMMARY: Inject a deterministic final-output failure for error propagation coverage.
+            fn flush(&mut self) -> std::io::Result<()> { Err(std::io::Error::other("injected final flush failure")) }
+        }
+        impl Seek for FailFlush {
+            // AI-FUNC-SUMMARY: Preserve TIFF directory-offset seeking in the fault-injection writer.
+            fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> { self.0.seek(pos) }
+        }
+        let data=[1,2,3,4,5,6,7,8];
+        let mut expected=std::io::Cursor::new(Vec::new());
+        write_tiff_pages(&mut expected,2,2,VolumeNumericType::U8,&data,4).unwrap();
+        let mut failing=FailFlush(std::io::Cursor::new(Vec::new()));
+        let error=write_tiff_pages(&mut failing,2,2,VolumeNumericType::U8,&data,4).unwrap_err();
+        assert!(error.to_string().contains("injected final flush failure"));
+        assert_eq!(failing.0.into_inner(),expected.into_inner());
+    }
+
+    // AI-FUNC-SUMMARY: Check retained decoded buffers stay within the two-file bound, callbacks remain ordered, and a consumer error prevents loading subsequent batches.
+    #[test]
+    fn decoded_file_buffers_are_bounded_and_errors_stop_batches() {
+        struct Buffer<'a>(&'a AtomicUsize);
+        impl Drop for Buffer<'_> {
+            // AI-FUNC-SUMMARY: Release the test-only retained-buffer counter when a decoded buffer is consumed or discarded.
+            fn drop(&mut self) { self.0.fetch_sub(1, Ordering::SeqCst); }
+        }
+        let files: Vec<_> = (0..9).map(|i|PathBuf::from(i.to_string())).collect();
+        for workers in [1,2,8] {
+            let pool=rayon::ThreadPoolBuilder::new().num_threads(workers).build().unwrap();
+            for fail in [false,true] {
+                let live=AtomicUsize::new(0);let peak=AtomicUsize::new(0);let loaded=AtomicUsize::new(0);
+                let mut seen=Vec::new();
+                let result=pool.install(||consume_file_batches(&files, 2, |_| {
+                    loaded.fetch_add(1,Ordering::SeqCst);
+                    peak.fetch_max(live.fetch_add(1,Ordering::SeqCst)+1,Ordering::SeqCst);
+                    Ok(Buffer(&live))
+                }, |path,_buffer| {
+                    seen.push(path.to_path_buf());
+                    if fail {Err(RustMsptError::InvalidConfig("stop".into()))}else{Ok(())}
+                }));
+                assert_eq!(live.load(Ordering::SeqCst),0);
+                assert!(peak.load(Ordering::SeqCst)<=workers.min(2));
+                if fail {
+                    assert!(result.is_err());assert_eq!(seen,&files[..1]);
+                    assert_eq!(loaded.load(Ordering::SeqCst),workers.min(2));
+                } else {result.unwrap();assert_eq!(seen,files);}
+            }
+        }
+    }
 }

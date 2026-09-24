@@ -373,10 +373,11 @@ fn a_seeded_split_filter_keeps_the_same_set_twice() {
         .collect();
     save_stl(&input, &merge_meshes(&spheres), "many").expect("write library");
 
-    let run = |dir: &Path, seed: Option<u64>| -> Vec<String> {
+    let run = |dir: &Path, seed: Option<u64>, workers: i32| -> Vec<(String, Vec<u8>)> {
         let out = dir.to_path_buf();
         SplitFilterPipeline {
             config: SplitFilterConfig {
+                cpu_max: Some(workers),
                 input: InputPath {
                     path: input.to_string_lossy().to_string(),
                 },
@@ -387,10 +388,10 @@ fn a_seeded_split_filter_keeps_the_same_set_twice() {
                 },
                 filter: Some(SplitFilterRules {
                     enabled: Some(true),
-                    max_aspect_ratio: None,
-                    max_sharpness_ratio: None,
+                    max_aspect_ratio: Some(3.0),
+                    max_sharpness_ratio: Some(4.0),
                     volume: Some(SplitFilterVolume {
-                        mode: Some("lognormal".to_string()),
+                        mode: Some("lognormal_rebalance".to_string()),
                         min: None,
                         max: None,
                         bins: Some(5),
@@ -408,13 +409,16 @@ fn a_seeded_split_filter_keeps_the_same_set_twice() {
             .map(|e| e.file_name().to_string_lossy().to_string())
             .collect();
         names.sort();
-        names
+        names.into_iter().map(|name| {
+            let bytes = fs::read(out.join(&name)).unwrap();
+            (name, bytes)
+        }).collect()
     };
 
     let a = tempfile::tempdir().unwrap();
     let b = tempfile::tempdir().unwrap();
-    let first = run(a.path(), Some(4242));
-    let second = run(b.path(), Some(4242));
-    assert!(!first.is_empty(), "the fixture must produce output");
+    let first = run(a.path(), Some(4242), 1);
+    let second = run(b.path(), Some(4242), 8);
+    assert!(!first.is_empty() && first.len() < 40, "rebalance must retain and remove particles");
     assert_eq!(first, second, "the same seed must keep the same set");
 }

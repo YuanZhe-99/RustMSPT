@@ -15,27 +15,40 @@
 | `GpuContext` | `src/gpu/context.rs:3` | 成功完成 GPU 初始化后，持有适配器名称与缓冲区大小能力信息。 |
 | `GpuContext::caps` | `src/gpu/context.rs:11` | 返回描述此 GPU 上下文的 `BackendCaps`。 |
 | `GpuInitError` | `src/gpu/context.rs:22` | 包装 GPU 初始化失败消息的错误类型。 |
-| `GpuInitError`（`Display` 实现） | `src/gpu/context.rs:24` | 格式化错误消息。 |
+| `GpuInitError`（`Display` 实现） | `src/gpu/context.rs:22` | 格式化错误消息。 |
 | `try_init_gpu` | `src/gpu/context.rs:38` | 探测 wgpu 适配器/设备并返回 `GpuContext`；供 `compute::policy::select_backend` 使用。 |
 | `GpuS2Pipeline` | `src/gpu/s2.rs:10` | 蒙特卡洛 S2 两点相关函数的 GPU 流水线状态。 |
-| `build_triangle_buffer`（s2.rs） | `src/gpu/s2.rs:27` | 为 S2 蒙特卡洛流水线构建归一化的 `f32` 三角形位置缓冲区。 |
-| `pack_params` | `src/gpu/s2.rs:48` | 将蒙特卡洛 S2 着色器参数打包为与 WGSL `Params` 布局匹配的字节缓冲区。 |
-| `GpuS2Pipeline::new` | `src/gpu/s2.rs:95` | 初始化 wgpu 设备与蒙特卡洛 S2 计算流水线。 |
-| `GpuS2Pipeline::update_mesh` | `src/gpu/s2.rs:266` | 无需重建流水线即可为新网格重新上传三角形数据。 |
-| `GpuS2Pipeline::ensure_output_capacity` | `src/gpu/s2.rs:287` | 若调用次数超出当前容量，则扩容输出缓冲区。 |
-| `GpuS2Pipeline::calculate_s2_gpu` | `src/gpu/s2.rs:311` | 针对所有半径分派蒙特卡洛 S2 内核并回读结果。 |
+| `build_triangle_buffer`（s2.rs） | `src/gpu/s2.rs:29` | 为 S2 蒙特卡洛流水线构建归一化的 `f32` 三角形位置缓冲区。 |
+| `pack_params` | `src/gpu/s2.rs:50` | 将蒙特卡洛 S2 着色器参数打包为与 WGSL `Params` 布局匹配的字节缓冲区。 |
+| `dispatch_plan` | `src/gpu/s2.rs:101` | Validate logical MC ids, partial buffers and two-dimensional dispatch. |
+| `check_buffer_size` | `src/gpu/s2.rs:115` | Check single-buffer and storage limits. |
+| `check_mesh_capacity` | `src/gpu/s2.rs:125` | Check triangle count and upload capacity. |
+| `scoped` | `src/gpu/runtime.rs:2` | Capture scoped GPU errors and balance all scopes. |
+| `read_u32` | `src/gpu/runtime.rs:29` | Check mapping completion before copying and unmapping u32 readback. |
+| `GpuS2Pipeline::new` | `src/gpu/s2.rs:141` | 初始化 wgpu 设备与蒙特卡洛 S2 计算流水线。 |
+| `GpuS2Pipeline::update_mesh` | `src/gpu/s2.rs:277` | 无需重建流水线即可为新网格重新上传三角形数据。 |
+| `GpuS2Pipeline::ensure_output_capacity` | `src/gpu/s2.rs:302` | 若调用次数超出当前容量，则扩容输出缓冲区。 |
+| `GpuS2Pipeline::calculate_s2_gpu` | `src/gpu/s2.rs:351` | 针对所有半径分派蒙特卡洛 S2 内核并回读结果。 |
 | `OffsetEntry` | `src/gpu/s2_shell.rs:6` | 与 WGSL 布局匹配的打包 `(radius_idx, dx, dy, dz)` 壳层偏移记录。 |
+| `point_inside` (s2_monte_carlo.wgsl) | `src/gpu/shaders/s2_monte_carlo.wgsl:85` | 计算射线奇偶性并完整恢复溢出命中。 |
+| `point_inside_overflow` (s2_monte_carlo.wgsl) | `src/gpu/shaders/s2_monte_carlo.wgsl:62` | 计算射线奇偶性并完整恢复溢出命中。 |
+| `point_inside` (voxelize.wgsl) | `src/gpu/shaders/voxelize.wgsl:63` | 计算射线奇偶性并完整恢复溢出命中。 |
+| `point_inside_overflow` (voxelize.wgsl) | `src/gpu/shaders/voxelize.wgsl:40` | 计算射线奇偶性并完整恢复溢出命中。 |
 | `GpuShellS2Pipeline` | `src/gpu/s2_shell.rs:13` | 精确壳层对 S2 计算的 GPU 流水线状态。 |
 | `build_offset_buffer` | `src/gpu/s2_shell.rs:30` | 将 `(radius_idx, [dx,dy,dz])` 元组转换为 `OffsetEntry` 记录。 |
 | `GpuShellS2Pipeline::new` | `src/gpu/s2_shell.rs:48` | 初始化 wgpu 设备与壳层 S2 计算流水线。 |
-| `GpuShellS2Pipeline::compute_s2_shell` | `src/gpu/s2_shell.rs:135` | 在占据网格上分派精确壳层对计数并回读 S2(r)。 |
+| `GpuShellS2Pipeline::compute_s2_shell` | `src/gpu/s2_shell.rs:181` | 在占据网格上分派精确壳层对计数并回读 S2(r)。 |
 | `GpuVoxelPipeline` | `src/gpu/voxel.rs:5` | 网格体素化的 GPU 流水线状态。 |
 | `build_triangle_buffer`（voxel.rs） | `src/gpu/voxel.rs:17` | 为体素化流水线构建归一化的 `f32` 三角形位置缓冲区（与 `s2.rs` 中的实现相互独立）。 |
-| `GpuVoxelPipeline::new` | `src/gpu/voxel.rs:37` | 初始化 wgpu 设备与体素化计算流水线。 |
-| `GpuVoxelPipeline::voxelize` | `src/gpu/voxel.rs:116` | 分派光线投射体素化并回读占据网格。 |
+| `pack_params`（voxel.rs） | `src/gpu/voxel.rs:32` | 序列化 48 字节参数，射线方向从字节 32 开始。 |
+| `GpuVoxelPipeline::new` | `src/gpu/voxel.rs:57` | 初始化 wgpu 设备与体素化计算流水线。 |
+| `GpuVoxelPipeline::voxelize` | `src/gpu/voxel.rs:168` | 分派光线投射体素化并回读占据网格。 |
 | `GpuVolumeTransformPipeline` | `src/gpu/volume_transform.rs:5` | 体数据旋转裁剪的 GPU 流水线状态。 |
 | `GpuVolumeTransformPipeline::new` | `src/gpu/volume_transform.rs:23` | 初始化 wgpu 设备与体数据变换计算流水线。 |
-| `GpuVolumeTransformPipeline::rotate_and_crop` | `src/gpu/volume_transform.rs:145` | 分派旋转/裁剪/重采样内核并回读变换后的体数据。 |
+| `GpuVolumeTransformPipeline::rotate_and_crop` | `src/gpu/volume_transform.rs:123` | 分派旋转/裁剪/重采样内核并回读变换后的体数据。 |
+| `GridPlan` | `src/gpu/runtime.rs:60` | Checked two-dimensional grid dispatch. |
+| `grid_plan` | `src/gpu/runtime.rs:67` | Validate product, buffer and dispatch limits. |
+| `GpuVoxelPipeline::voxelize_limited` | `src/gpu/voxel.rs:179` | Fallible voxel execution with bounded dispatch. |
 
 ---
 
@@ -80,7 +93,7 @@ pub struct GpuInitError(String);
 - **源码位置：** `src/gpu/context.rs:22`
 - **用途：** 包装一条人类可读错误消息的新类型（newtype），描述 GPU 初始化失败的原因（未找到适配器、适配器过滤器不匹配、设备请求失败等）。实现了 `std::error::Error`。
 
-**`Display` 实现**（`src/gpu/context.rs:24`）：原样写出被包装的消息，即 `write!(f, "{}", self.0)`。
+**`Display` 实现**（`src/gpu/context.rs:22`）：原样写出被包装的消息，即 `write!(f, "{}", self.0)`。
 
 #### try_init_gpu
 
@@ -94,7 +107,7 @@ pub struct GpuInitError(String);
   - 若未设置，则正常请求默认的 `wgpu::PowerPreference::default()` 适配器（不强制回退适配器）。
   - 若设置且可解析为 `usize`，则视为 `instance.enumerate_adapters(wgpu::Backends::all())` 结果中的**索引**；索引越界会产生 `GpuInitError`，报告所请求的索引及找到的适配器数量。
   - 若设置但不是有效整数，则视为**区分大小写的子串**，与每个已枚举适配器的 `AdapterInfo.name` 进行匹配；使用第一个匹配项。若无匹配则产生 `GpuInitError`。
-- **说明：** 此处获得的设备/队列（`_device`、`_queue`）在读取适配器/设备限制之后就故意不再使用——本函数是一个**能力探测器**，而非流水线构造函数。下文四个流水线构造函数（`GpuS2Pipeline::new`、`GpuShellS2Pipeline::new`、`GpuVoxelPipeline::new`、`GpuVolumeTransformPipeline::new`）各自独立执行自己的适配器/设备请求，**不会**复用 `try_init_gpu` 返回的上下文；目前只有 `GpuS2Pipeline::new` 会遵循 `RUSTMSPT_GPU_DEVICE`（见下文说明）——其余三个流水线构造函数始终使用 `wgpu::PowerPreference::default()`，不做适配器过滤。
+- **说明：** 此处获得的设备/队列（`_device`、`_queue`）在读取适配器/设备限制之后就故意不再使用——本函数是一个**能力探测器**，而非流水线构造函数。下文四个流水线构造函数（`GpuS2Pipeline::new`、`GpuShellS2Pipeline::new`、`GpuVoxelPipeline::new`、`GpuVolumeTransformPipeline::new`）各自独立执行自己的适配器/设备请求，**不会**复用 `try_init_gpu` 返回的上下文；四个构造函数均遵循 `RUSTMSPT_GPU_DEVICE`，其中体素化、shell S2 和体积变换使用公共 `request_adapter_device`。
 
 ---
 
@@ -135,7 +148,7 @@ pub struct GpuS2Pipeline {
 | `num_triangles` | `u32` | 当前三角形数量，用于打包参数时使用。 |
 | `bind_group_layout` | `wgpu::BindGroupLayout` | 描述上述四个存储缓冲区绑定的布局。 |
 
-模块级常量：`WORKGROUP_SIZE: u32 = 256`，`MAX_RADII: usize = 128`（着色器 `Params.radii` 数组固定大小为 128 项；单次调用请求超过 128 个半径会被静默截断——见 `pack_params`）。
+模块级常量：`WORKGROUP_SIZE: u32 = 256`，`MAX_RADII: usize = 128`（着色器 `Params.radii` 数组固定大小为 128 项；执行入口在参数打包前拒绝 r_max >= 128）。
 
 #### build_triangle_buffer (s2.rs)
 
@@ -147,7 +160,7 @@ pub struct GpuS2Pipeline {
   - `bbox: BoundingBox` —— 用于计算坐标原点偏移量（`bbox.min`）的包围盒。
 - **返回值：** `Vec<f32>`，每个三角形 9 个浮点数（3 个顶点 × 3 个分量），每个顶点坐标存储为 `(coord as f32) - bbox.min.<axis> as f32`。
 - **副作用：** 无（纯函数）。
-- **说明：** 归一化到包围盒原点使 GPU 侧的 `f32` 坐标保持较小（大致为 `0..size`，而不是潜在的较大绝对值），从而提升 GPU 上的浮点精度。这是一个私有的、模块局部的辅助函数——`voxel.rs` 定义了一份独立的、文本上近乎相同的副本（见下文）；两者并未共享，以避免在原本自成一体的流水线之间引入跨模块依赖。
+- **说明：** 先在 **f64 中减去包围盒原点，再转为 f32**，使 GPU 侧的 `f32` 坐标保持较小（大致为 `0..size`，而不是潜在的较大绝对值），从而提升 GPU 上的浮点精度。这是一个私有的、模块局部的辅助函数——`voxel.rs` 定义了一份独立的、文本上近乎相同的副本（见下文）；两者并未共享，以避免在原本自成一体的流水线之间引入跨模块依赖。
 
 #### pack_params
 
@@ -169,29 +182,29 @@ pub struct GpuS2Pipeline {
 > **特性门控：** 需要 `gpu` cargo 特性；默认构建中不存在。
 
 - **签名：** `pub fn new(mesh: &Mesh, bbox: BoundingBox) -> Result<Self, String>`
-- **源码位置：** `src/gpu/s2.rs:95`
+- **源码位置：** `src/gpu/s2.rs:139`
 - **用途：** 初始化 wgpu 设备/队列，将 `s2_monte_carlo.wgsl` 着色器编译为计算流水线，并预先上传网格的归一化三角形数据。
 - **参数：**
   - `mesh: &Mesh` —— 立即上传其三角形的网格。
   - `bbox: BoundingBox` —— 用于坐标归一化的包围盒（参见 `build_triangle_buffer`）。
 - **返回值：** 成功时返回 `Ok(GpuS2Pipeline)`；`Err(String)` 描述失败原因（无适配器、适配器过滤器不匹配，或设备请求失败）。
-- **副作用：** 执行一次完整的 wgpu 适配器/设备请求（通过 `pollster::block_on` 阻塞），编译着色器模块，创建绑定组布局/流水线布局/计算流水线，并分配加上传三角形、参数与输出缓冲区。输出缓冲区预先按 `MAX_RADII * 40_000` 次调用（`max_invocations`）分配大小，因此此构造函数会预先执行一次相对较大的 GPU 分配。
+- **副作用：** 执行一次完整的 wgpu 适配器/设备请求（通过 `pollster::block_on` 阻塞），编译着色器模块，创建绑定组布局/流水线布局/计算流水线，并分配加上传三角形、参数与输出缓冲区。两个输出与两个回读缓冲区各以 4 字节开始，按实际调用规模增长并复用。
 - **说明：** 此构造函数复制了 `try_init_gpu` 的适配器选择逻辑（包括 `RUSTMSPT_GPU_DEVICE` 索引/子串过滤），而不是直接调用它——两者是相互独立的适配器探测，理论上如果调用之间环境发生变化，`try_init_gpu` 探测到的适配器与该构造函数使用的适配器可能不同（实践中 `RUSTMSPT_GPU_DEVICE` 使得同一进程内的选择是确定性的）。
 
 #### GpuS2Pipeline::update_mesh
 
-- **签名：** `pub fn update_mesh(&mut self, mesh: &Mesh, bbox: BoundingBox)`
-- **源码位置：** `src/gpu/s2.rs:266`
+- **签名：** `pub fn update_mesh(&mut self, mesh: &Mesh, bbox: BoundingBox) -> Result<(), String>`
+- **源码位置：** `src/gpu/s2.rs:313`
 - **用途：** 用新网格替换流水线已上传的三角形数据，而无需拆除并重建设备/流水线——用于同一个 `GpuS2Pipeline` 在一批次内跨多个颗粒/网格复用的场景。
 - **参数：** `mesh: &Mesh`、`bbox: BoundingBox` —— 与 `new` 语义相同。
-- **返回值：** `()`。
+- **返回值：** `Ok(())` 或三角形容量/上传错误。
 - **副作用：** 通过 `queue.write_buffer` 重新上传归一化三角形数据。若新网格的字节大小超过当前 `triangle_buffer` 的容量，则分配一个更大的新缓冲区并替换 `triangle_buffer`；否则原地复用现有缓冲区。更新 `self.num_triangles`。
 - **说明：** 由于缓冲区在重新分配时只会增长（从不缩小），用大小不同的网格反复调用此函数是安全的，但会使流水线在其整个生命周期内保留峰值大小的 GPU 内存。
 
 #### GpuS2Pipeline::ensure_output_capacity
 
 - **签名：** `fn ensure_output_capacity(&mut self, invocations: u32)`
-- **源码位置：** `src/gpu/s2.rs:287`
+- **源码位置：** `src/gpu/s2.rs:338`
 - **用途：** 私有辅助函数，若某次请求的分派所需的调用槽位数超过当前已分配数量，则扩容 `out_hits_buffer`/`out_valids_buffer`。
 - **参数：** `invocations: u32` —— 即将分派的着色器调用总数（`num_radii * samples_per_radius`）。
 - **返回值：** `()`。
@@ -200,16 +213,40 @@ pub struct GpuS2Pipeline {
 
 #### GpuS2Pipeline::calculate_s2_gpu
 
-- **签名：** `pub fn calculate_s2_gpu(&mut self, bbox: BoundingBox, r_max: usize, samples: usize) -> Vec<f64>`
-- **源码位置：** `src/gpu/s2.rs:311`
+- **签名：** `pub fn calculate_s2_gpu(&mut self, bbox: BoundingBox, r_max: usize, samples: usize) -> Result<Vec<f64>, String>`
+- **源码位置：** `src/gpu/s2.rs:362`
 - **用途：** 在 GPU 上，通过单次涵盖所有半径的分派，计算从 0 到 `r_max` 的每个整数半径上的蒙特卡洛两点相关函数 S2(r)。
 - **参数：**
   - `bbox: BoundingBox` —— 用于打包着色器参数的包围盒（仅使用尺寸；原点已经归一化）。
   - `r_max: usize` —— 需要评估的最大半径（包含），半径为整数 `0..=r_max`。
   - `samples: usize` —— 请求的每半径蒙特卡洛样本数；被限制在最小值 200（`samples.max(200)`）。
-- **返回值：** 长度为 `r_max + 1` 的 `Vec<f64>`，以半径 `r` 为索引，包含该半径所有样本上 `hits/valid` 的平均值（若该半径没有记录到有效样本，则为 0.0）。
+- **返回值：** 成功返回 `Ok(Vec<f64>)`，容量、作用域执行或映射失败返回 `Err(String)`；成功向量长度为 `r_max + 1` 的 `Vec<f64>`，以半径 `r` 为索引，包含该半径所有样本上 `hits/valid` 的平均值（若该半径没有记录到有效样本，则为 0.0）。
 - **副作用：** 生成一个随机 `u32` 种子（`rand::random`），打包并上传参数，调用 `ensure_output_capacity`，构建绑定组，记录并提交一次计算通道（`dispatch_workgroups`，`WORKGROUP_SIZE = 256`），随后将两个输出缓冲区都复制到暂存缓冲区，映射以供 CPU 读取（`device.poll(wgpu::Maintain::Wait)`——一次阻塞等待），并将映射得到的 `u32` 切片归约为返回的 `f64` 向量。
 - **说明：** 元素 `r=0`（零半径）在本函数的内部累加逻辑中始终保留为 `0.0`——按照源码注释的说明，调用方应当用已知的体积分数覆盖索引 0 的值，而不要信任 GPU 在零半径处的退化样本。位置计算在 GPU 上以 `f32` 进行，但返回的平均值以 `f64` 存储/返回。
+
+### MC 执行错误与容量检查
+
+`GpuS2Pipeline::new`、`update_mesh` 和 `calculate_s2_gpu` 使用配对的 wgpu validation、out-of-memory、internal 错误作用域。后两个接口改为返回 `Result`。映射回调成功后才访问映射内存；不捕获 Rust panic。
+
+- `dispatch_plan(r_max, samples, limits) -> Result<(u32,u32,[u32;2]), String>`：在输出分配及半径数组构造前检查 `r_max < 128`、采样数转换、调用数乘法、工作组数量、存储绑定和单缓冲区限制；仍至少 200 个样本。
+- `check_buffer_size(bytes, limits) -> Result<(), String>`：检查存储绑定和单缓冲区字节限制。
+- `check_mesh_capacity(mesh, limits) -> Result<(), String>`：展开三角形前检查数量及字节运算；空几何使用四字节占位缓冲区。
+- `runtime::scoped<T>(device, work) -> Result<T,String>`：收集三个错误类别，即使操作返回错误也弹出全部作用域。调用者须串行访问设备；这里不捕获 panic。
+- `runtime::read_u32(device, buffer) -> Result<Vec<u32>,String>`：检查回调/通道错误，复制 u32 数据，成功后解除映射。
+
+MC bbox 尺寸转为 f32 后必须有限且为正。这里检查设备限制，不是配置的总显存预算；完整峰值规划和缓冲区高水位保留仍待办。目前仅 MC 接入此辅助模块，voxel/shell/crop/render API 不变。旧 `calculate_s2_with_gpu` 包装函数记录错误并以连续 CPU mesh MC 重算，保持 GPU 尝试的方法；该接口没有禁止回退参数。Optimize 单独执行显式回退策略。
+
+### 射线包含判定与溢出恢复（WGSL）
+
+`s2_monte_carlo.wgsl` 和 `voxelize.wgsl` 分别实现以下私有函数：
+
+- `point_inside(point: vec3<f32>) -> bool`：保留排序 64 次命中的快速路径。在**第 65 次正向三角形命中**时，对原射线调用 `point_inside_overflow`。容量计数包含重复三角形命中。
+- `point_inside_overflow(point: vec3<f32>, dir: vec3<f32>) -> bool`：逐轮扫描全部三角形，寻找比上一个保留交点远超过 `1e-6` 的最近正向交点（首轮接受任意正向交点），统计保留交点的奇偶性。辅助空间为常数，无写入或 CPU 读回；扫描轮数最多为三角形数量，找不到下一个交点时提前结束。
+
+去重规则与 GPU 快速路径相同：比较的是上一个**保留**距离，而非上一个原始距离。CPU 的 `1e-8` 容差和 f64 判定仍有区别。
+恢复不丢弃、不重抽 MC 样本，MC 的 bbox 预筛仍保留。T 个三角形、U 个不同正向命中的恢复成本为 O(T×U)，最坏 O(T²)；复杂场景可能明显变慢。这是正确性恢复，不代表通用 GPU 提速，也未解决设备或 map 错误。
+
+源码：MC 函数位于 `src/gpu/shaders/s2_monte_carlo.wgsl:62` 和 `:85`；voxel 函数位于 `src/gpu/shaders/voxelize.wgsl:40` 和 `:63`。
 
 ---
 
@@ -266,7 +303,7 @@ pub struct GpuShellS2Pipeline {
 | `out_hits_buffer` | `wgpu::Buffer` | 逐偏移命中对计数（`u32`）的存储缓冲区，绑定 4。 |
 | `bind_group_layout` | `wgpu::BindGroupLayout` | 上述五个绑定的布局。 |
 
-模块级常量：`WORKGROUP_SIZE: u32 = 256`，`MAX_OFFSETS: usize = 200_000`（偏移/输出缓冲区的预分配容量；`compute_s2_shell` 通过 `.min(MAX_OFFSETS)` 截断到此上限）。
+模块级常量：`WORKGROUP_SIZE: u32 = 256`，`MAX_OFFSETS: usize = 200_000`（偏移/输出缓冲区的单批容量；全部批次共同参与按半径归约，不再截断）。
 
 #### build_offset_buffer
 
@@ -276,7 +313,7 @@ pub struct GpuShellS2Pipeline {
 - **参数：** `shell_offsets: &[(u32, [isize; 3])]` —— 半径索引与 `isize` 位移三元组的配对。
 - **返回值：** `Vec<OffsetEntry>`，每个输入元组对应一项，`dx`/`dy`/`dz` 从 `isize` 收窄为 `i32`。
 - **副作用：** 无（纯函数）。
-- **说明：** 将 `isize` 收窄为 `i32` 时未做边界/溢出检查；位移值预期较小（受体素网格最大半径限制），因此实践中是安全的，但没有做防御性保护。
+- **说明：** 检查 `isize` 到 `i32` 的转换；无法表示的位移使用 `i32::MAX` 哨兵，超出存储缓冲区限制允许的网格范围。shader 在无符号减法前拒绝绝对位移不小于对应轴尺寸的项，也正确处理 `i32::MIN`。
 
 #### GpuShellS2Pipeline::new
 
@@ -287,24 +324,26 @@ pub struct GpuShellS2Pipeline {
 - **用途：** 初始化 wgpu 并编译 `s2_shell_pairs.wgsl` 计算流水线。
 - **参数：** 无。
 - **返回值：** `Ok(GpuShellS2Pipeline)` 或描述适配器/设备失败的 `Err(String)`。
-- **副作用：** 执行一次阻塞的 wgpu 适配器/设备请求（不使用 `RUSTMSPT_GPU_DEVICE` 过滤——与 `GpuS2Pipeline::new` 不同，始终使用 `wgpu::PowerPreference::default()`，不做回退强制），编译着色器，构建绑定组/流水线布局，并预分配占据（4 字节——首次使用时增长）、偏移（`MAX_OFFSETS * 16` 字节）、参数（16 字节）以及输出（各 `MAX_OFFSETS * 4` 字节）缓冲区。
+- **副作用：** 执行一次阻塞的 wgpu 适配器/设备请求（通过公共选择函数遵循 `RUSTMSPT_GPU_DEVICE`），编译着色器，构建绑定组/流水线布局，并预分配占据（4 字节——首次使用时增长）、偏移（`MAX_OFFSETS * 16` 字节）、参数（16 字节）以及输出（各 `MAX_OFFSETS * 4` 字节）缓冲区。
 - **说明：** 与 `GpuS2Pipeline::new` 和 `GpuVoxelPipeline::new` 不同，此构造函数不接受网格/包围盒参数——占据网格数据在每次调用 `compute_s2_shell` 时提供，而不是在构造时提供。
 
 #### GpuShellS2Pipeline::compute_s2_shell
 
-- **签名：** `pub fn compute_s2_shell(&mut self, occ: &[u32], nx: u32, ny: u32, nz: u32, shell_offsets: &[(u32, [isize; 3])], r_max: usize, _voxel_pitch: f64, vf: f64) -> Vec<f64>`
-- **源码位置：** `src/gpu/s2_shell.rs:135`
+- **签名：** `pub fn compute_s2_shell(&mut self, occ: &[u32], nx: u32, ny: u32, nz: u32, shell_offsets: &[(u32, [isize; 3])], r_max: usize, _voxel_pitch: f64, vf: f64) -> Result<Vec<f64>, String>`
+- **源码位置：** `src/gpu/s2_shell.rs:208`
 - **用途：** 通过对每个预先计算的壳层偏移在每个半径上统计有多少体素对在该精确位移下同时被占据（“命中”），以及同时处于边界内/有效（相对于整个占据网格），计算精确（非随机）的 S2(r) 相关函数。
 - **参数：**
   - `occ: &[u32]` —— 展平后的体素占据网格（行主序，`nx*ny*nz` 项，1 = 已占据）。
   - `nx, ny, nz: u32` —— 网格维度。
-  - `shell_offsets: &[(u32, [isize; 3])]` —— 预先计算的 `(radius_idx, displacement)` 配对（通常来自 CPU 侧壳层枚举）；若超出则截断到 `MAX_OFFSETS`。
+  - `shell_offsets: &[(u32, [isize; 3])]` —— 预计算的半径索引和位移，每批最多 `MAX_OFFSETS` 项，无截断。
   - `r_max: usize` —— `shell_offsets` 中出现的最大半径索引；决定返回向量的长度。
   - `_voxel_pitch: f64` —— 接受但未使用（以 `_` 前缀标记）；体素间距的转换在调用方一侧完成。
   - `vf: f64` —— 已知的体积分数，直接写入 `out[0]` 作为 r=0 的值。
 - **返回值：** 长度为 `r_max + 1` 的 `Vec<f64>`：`out[0] = vf`；对于 `r >= 1`，为属于该半径桶的所有偏移上 `hits/valid` 的均值（若该半径没有任何偏移/有效对贡献，则为 0.0）。
 - **副作用：** 重新上传占据缓冲区（若大于当前容量则重新分配），上传偏移缓冲区与参数，若 `total_offsets` 超过之前的容量则重新分配两个输出缓冲区，构建绑定组，分派 `total_offsets.div_ceil(WORKGROUP_SIZE)` 个工作组，将输出复制到暂存缓冲区，并执行一次阻塞的 `device.poll(wgpu::Maintain::Wait)` 以便映射供 CPU 回读。
 - **说明：** 按半径进行的归约（对每个偏移求和 `hits/valid` 比值并按数量求平均，`shell_sums`/`shell_counts`）在回读之后于 CPU 上完成，而不是在 GPU 上完成——着色器本身只产生原始的逐偏移命中/有效计数。
+
+Shell 归约补充：占据网格只上传一次；每批偏移上传、执行、读回后再复用缓冲区。CPU 跨批次累加每个有效偏移的 `hits/valid`，最后等权平均，不能改为总 hits 除以总 valid。空偏移列表不 dispatch、不读回，返回 `[vf, 0, ...]`。
 
 ---
 
@@ -353,12 +392,18 @@ pub struct GpuVoxelPipeline {
 - **参数/返回值/副作用：** 与 `s2.rs` 版本完全相同。
 - **说明：** 这是该函数**独立的一份副本**，而非共享/复用的实现——`voxel.rs` 与 `s2.rs` 各自定义了自己私有的 `build_triangle_buffer`。修改三角形归一化逻辑时需注意这一点：在一个文件中的修复不会传播到另一个文件。
 
+#### pack_params（voxel.rs）
+
+- **签名：** `fn pack_params(num_triangles: u32, nx: u32, ny: u32, nz: u32, pitch: f32) -> Vec<u8>`
+- **用途：** 序列化 48 字节 WGSL 存储布局：三角形数量位于字节 0，尺寸位于 4/8/12，pitch 位于 16，20/24/28 为零填充，射线方向位于 32/36/40，44 为尾部填充。
+- **返回值及副作用：** 参数字节，无副作用。完整写入 `RAY_DIR_GPU` 的三个分量，符合 WGSL `vec3` 的 16 字节对齐。
+
 #### GpuVoxelPipeline::new
 
 > **特性门控：** 需要 `gpu` cargo 特性；默认构建中不存在。
 
 - **签名：** `pub fn new(mesh: &Mesh, bbox: BoundingBox) -> Result<Self, String>`
-- **源码位置：** `src/gpu/voxel.rs:37`
+- **源码位置：** `src/gpu/voxel.rs:57`
 - **用途：** 初始化 wgpu，编译 `voxelize.wgsl` 计算流水线，并为给定网格上传归一化三角形数据。
 - **参数：** `mesh: &Mesh`、`bbox: BoundingBox` —— 待体素化的网格及其包围盒（用于归一化）。
 - **返回值：** `Ok(GpuVoxelPipeline)` 或适配器/设备失败时的 `Err(String)`。
@@ -367,8 +412,8 @@ pub struct GpuVoxelPipeline {
 
 #### GpuVoxelPipeline::voxelize
 
-- **签名：** `pub fn voxelize(&mut self, nx: u32, ny: u32, nz: u32, pitch: f32) -> Vec<u32>`
-- **源码位置：** `src/gpu/voxel.rs:116`
+- **签名：** `pub fn voxelize(&mut self, nx: u32, ny: u32, nz: u32, pitch: f32) -> Result<Vec<u32>, String>`
+- **源码位置：** `src/gpu/voxel.rs:195`
 - **用途：** 使用 GPU 光线投射，将（在构造时或先前调用中上传的）网格光栅化为给定维度与体素间距的三维占据网格。
 - **参数：**
   - `nx, ny, nz: u32` —— 网格维度（各轴的体素数量）。
@@ -446,7 +491,7 @@ pub struct GpuVolumeTransformPipeline {
       origin: &Vector3<f64>,
       out_w: u32, out_h: u32, out_d: u32,
       interp_mode: u32,
-  ) -> Vec<i32>
+  ) -> Result<Vec<i32>, String>
   ```
 - **源码位置：** `src/gpu/volume_transform.rs:145`
 - **用途：** 使用给定旋转矩阵，围绕一个质心旋转带标签/数值的源体数据，将其重采样为一个从 `origin` 开始、维度为 `out_w × out_h × out_d` 的新轴对齐输出体数据，并以 `background` 填充越界采样。
@@ -467,7 +512,139 @@ pub struct GpuVolumeTransformPipeline {
 
 ## 四条流水线的共享约定小结
 
-- **不复用共享 `GpuContext`：** `GpuS2Pipeline::new`、`GpuShellS2Pipeline::new`、`GpuVoxelPipeline::new` 与 `GpuVolumeTransformPipeline::new` 各自独立创建自己的 `wgpu::Instance`/适配器/设备，而不是接受来自 `try_init_gpu` 的预初始化 `GpuContext`。目前只有 `GpuS2Pipeline::new` 会读取 `RUSTMSPT_GPU_DEVICE`。
+- **实例复用、设备独立：** 枚举复用进程内实例并串行执行；选中的 GL 适配器改用独立实例以隔离 EGL 上下文。构造器仍使用新的适配器、设备和队列。逻辑设备与编译管线共享仍待实现。
 - **阻塞式 GPU 回读：** 每个“分派并读取”方法（`calculate_s2_gpu`、`compute_s2_shell`、`voxelize`、`rotate_and_crop`）都使用 `map_async` 加上随后的 `device.poll(wgpu::Maintain::Wait)`，这会阻塞调用线程直到 GPU 工作与缓冲区映射完成。这些流水线均未提供异步或非阻塞 API。
 - **只增长、从不缩小的缓冲区：** 用于复用缓冲区的字段（`triangle_buffer`、`out_hits_buffer`、`occupancy_buffer`、`src_buffer`/`out_buffer` 等）仅在新调用的数据超过当前容量时才会重新分配；它们从不缩容，因此一个流水线实例在其生命周期内的峰值 GPU 内存占用，等于该实例所收到的所有调用中的最大占用。
 - **GPU 上用 `f32`，CPU 上用 `f64`：** 全部四条流水线都会将 `f64`/`isize` 的 CPU 侧几何数据收窄为 `f32`/`i32` 以供 GPU 上传，并在回读时将结果放宽回 `f64`/`i32`，这与每个 WGSL 着色器中全程使用 32 位类型的做法相匹配。
+
+### Voxel/shell 执行检查（PERF-04/05）
+
+构造器与求值均接入配对错误作用域及检查后的读回。`voxelize`、`compute_s2_shell` 返回 `Result`；零/溢出的网格尺寸、存储/dispatch 超限及 occupancy 长度不符会报错。Voxel pitch 必须有限且为正。`runtime::grid_plan([nx,ny,nz], width, limits)` 返回检查后的体素数、字节数和二维 dispatch，shader 展平 x/y 调用坐标并保护填充索引。`voxelize_limited` 用额外工作组限制测试实际 shader 的二维路径。`try_calculate_s2_gpu_exact` 将非正 pitch 规范为 1.0，拒绝非有限输入并传播构造/执行错误；旧 Vec 包装函数仍记录错误并回退 CPU exact。
+
+
+### Volume transform validation (2026-09-18)
+
+The constructor honors `RUSTMSPT_GPU_DEVICE` through the common adapter selector. `rotate_and_crop` returns `Result`, validates dimension products, buffer/device limits, source length, finite transform parameters and interpolation mode before dispatch. Trilinear input integers must be exactly representable in f32. Checked two-dimensional dispatch and scoped GPU/readback errors replace unchecked execution. Nearest sampling preserves i32 bit patterns; ties round away from zero. Device and staging reuse across separate pipeline instances is still pending.
+
+
+### Render error contract
+
+`GpuRenderPipeline::new` and `render` use balanced validation, allocation and internal error scopes. `render` rejects zero/oversize textures, vertex-count overflow, and oversize vertex/staging buffers before allocation. Readback checks the mapping callback before accessing mapped memory. An initialized device returning a render error is a test failure, not an unavailable-adapter skip.
+
+
+GPU selection regression: direct voxel and shell constructors are tested in child processes with nonexistent adapter names and out-of-range indices. Both must report the requested selector; default-device substitution is forbidden. Common selection does not yet imply shared device or compiled-pipeline caching.
+
+
+`context::request_adapter` is the single adapter-selection implementation for capability probing and all GPU pipeline constructors. `request_adapter_device` requests a fresh logical device using that adapter. MC, voxel, shell, transforms and renderers therefore share name/index/default semantics. This refactor does not cache devices.
+
+
+### Backend instance lifetime (PERF-03)
+
+`shared_instance` retains one instance in OnceLock. Adapter selection and disposal of unselected adapters are serialized because wgpu 24's EGL enumeration can otherwise race its context access. Selected GL adapters are recreated from private instances, keeping device operations isolated. Every adapter is used for only one device request, as required by wgpu's API contract. No failed selector/device result is memoized. This avoids repeated backend-instance initialization for non-GL paths; it does not yet share devices, queues or compiled pipelines. Initial unsynchronized shared-instance tests exposed EGL BadAccess and are retained alongside the corrected regression logs.
+
+
+### MC output and staging capacity (PERF-03)
+
+MC initializes two output and two readback buffers at four bytes each, replacing the former fixed 39.1 MiB output reservation. `ensure_output_capacity` grows all four only when necessary. `read_u32_prefix` maps and copies only the live invocation prefix, checking nonzero aligned size and capacity first; successful reads unmap before reuse. Smaller/repeated calls preserve buffer identity. `release_output_capacity() -> Result<(), String>` resets those four buffers to four bytes while retaining geometry, parameters and the compiled pipeline. Capacities otherwise retain their high-water mark. `measure` estimates a fresh MC call as `16 * invocations + triangle_bytes + 576`; optimizer's explicit-budget support remains a separate open item.
+
+
+### Voxel and volume-transform staging reuse
+
+Voxel occupancy and transform output buffers now retain matching readback buffers, initially four bytes each. Growth occurs only when a call exceeds capacity; checked prefix mapping returns exactly the current grid, even after a larger call. `GpuVoxelPipeline::release_grid_capacity` resets occupancy/readback storage; `GpuVolumeTransformPipeline::release_output_capacity` resets output/readback storage. Both preserve compiled pipelines and input geometry/source capacity. These release methods return allocation errors and permit subsequent evaluation. Per-call values, dimensions and pitch remain uploaded normally, so retained capacity does not imply retained results. Full device-budget/high-water policy and resident voxel-to-shell chaining remain separate work.
+
+### Shell 批次容量
+
+GpuShellS2Pipeline 按需增长并复用 offset/output/staging，初始一个偏移，读回仅有效前缀。release_batch_capacity() 返回 Result<(), String>，重置 offset 为 16 字节、每个 output/staging 为 4 字节，保留 occupancy 和编译状态。私有 resize_batch_buffers(count) 在调用方错误作用域内执行；200000 批次上限及逐偏移等权归约不变。
+
+| `GpuShellS2Pipeline::resize_batch_buffers` | `src/gpu/s2_shell.rs:193` | Shell batch buffer capacity management; occupancy retained. |
+
+| `GpuShellS2Pipeline::release_batch_capacity` | `src/gpu/s2_shell.rs:230` | Shell batch buffer capacity management; occupancy retained. |
+
+`runtime::read_u32` 仅供测试整缓冲映射；生产调用使用 `read_u32_prefix` 指定有效字节数。
+
+### Scene 预览工作集策略
+
+mesh_render.gpu_memory_limit_mb 可选限制逻辑 GPU 工作集；gpu_min_pixels 仅用于 auto，缺省 0 保留既有预览选择。低于阈值的 auto 不初始化 GPU；显式 GPU 绕过阈值但遵守预算。预算/执行失败时 auto 回退，gpu 报错，CPU 跳过 GPU 专属资源选项。
+
+checked planner 按可见三角形每面 120、启用 segment 每条 64、marker 每个 192 字节计数；目标 color/depth 为 8×pixels，readback 为按 256 字节对齐的 RGBA 行，uniform 128 字节。保守计入待完成 queue 上传，逻辑峰值 = 2×geometry_bytes+256+8×pixels+staging_bytes。多个视图共用目标。驱动/pipeline 内部及主存场景/PNG 不计入，所以这不是物理 VRAM/RSS 上限。独立 device 限制检查先于 host 顶点展开，上传后即释放临时 host 顶点。构造器返回受作用域保护的 GPU 验证/分配错误；图像分块仍待实现。
+
+| `SceneRenderMemory::plan` | `src/compute/render_memory.rs:20` | Checked scene preview workset, budget and buffer planning without allocation. |
+
+| `SceneRenderMemory::check_budget` | `src/compute/render_memory.rs:77` | Checked scene preview workset, budget and buffer planning without allocation. |
+
+| `SceneRenderMemory::check_buffers` | `src/compute/render_memory.rs:93` | Checked scene preview workset, budget and buffer planning without allocation. |
+
+### Optimize MC 显存预算
+
+优化器的共享 GPU MC 管线以空几何启动，各阶段上传实际求值网格。mc_evaluation_peak 保守计算 triangle、四个 output/readback、576 字节参数缓冲、待执行队列上传以及本次几何/参数上传；增长时计入旧容量加新容量。启动按输入面数和最大配置阶段样本数检查，每次求值在同一 GPU mutex 内重新检查实际保留容量后才上传。因此更大的参考网格或保留峰值也可能触发原有同方法 CPU 回退或严格阶段错误。待上传字节仅在成功回读后清零。驱动内部及 CPU 网格/读回向量不属于逻辑 GPU 预算；分批和自动缩容仍待完成，release_output_capacity 提供显式释放。本节取代早先“显式预算始终回退”的说明。
+
+| `mc_evaluation_peak` | `src/compute/mc_memory.rs:4` | Check logical MC peak including retained capacity and pending uploads. |
+
+| `check_mc_budget` | `src/compute/mc_memory.rs:44` | Check logical MC peak including retained capacity and pending uploads. |
+
+| `GpuS2Pipeline::check_evaluation_budget` | `src/gpu/s2.rs:275` | Check logical MC peak including retained capacity and pending uploads. |
+
+Measure 连续 MC 同步改用共享冷启动增长 peak planner，计入几何/参数待上传数据，取代早先 16×invocations+triangle_bytes+576 估计；本批 exact 预算不变。
+
+### GPU MC 工作组整数归约
+
+生产 MC shader 每个 256-lane 工作组对应一个（半径，样本块）。有效 lane 仍用 radius×samples_per_radius+sample 作为 RNG 逻辑编号；尾部填充 lane 贡献零。工作组以整数归约输出一对 hit/valid 部分和，CPU 用 u64 合并并沿用原比值；回读字节变为 8×(r_max+1)×ceil(max(samples,200)/256)。半径填充不会混合计数或重抽样本。dispatch_plan 分别检查逻辑编号溢出、补齐后的组数和部分和缓冲容量；mc_evaluation_peak 同步采用部分和容量，仍计入保留/上传/增长峰值。
+
+私有 calculate_s2_gpu_counts 固定 seed 返回整数总数；公开 API 仍抽取一个新随机 seed 并返回曲线。tests/fixtures/s2_monte_carlo_samples.wgsl 冻结归约前 shader，仅供相同 seed 的逐项计数对照，覆盖尾块、128 半径、几何更新。BVH、GPU 半径最终归约和按预算拆样本仍待独立实施；这里未证明 CPU/GPU f64 等价或真实硬件加速。
+
+| `GpuS2Pipeline::new_with_shader` | `src/gpu/s2.rs:154` | GPU MC partial-count execution and fixed-seed reference validation. |
+
+| `GpuS2Pipeline::calculate_s2_gpu_counts` | `src/gpu/s2.rs:420` | GPU MC partial-count execution and fixed-seed reference validation. |
+
+MC 工作组现沿两个 dispatch 维度展开，以 group.x + group.y × num_workgroups.x 得到块编号。统一分支在 barrier 和写出前排除填充组，即使保留缓冲容量大于本次有效结果也不写入尾部。planner 返回样本数、部分和数量及 [x,y] 调度形状；逻辑样本编号仍受 u32 限制。Optimize 启动检查已移除旧单维调用上限。强制 3×3/4×2 的实测整数计数与冻结逐样本 shader 一致，额外容量哨兵验证尾部未被写入。65,536 组的大任务仅验证规划结果，不代表大任务 GPU 实测。
+
+GPU shell 在排除超出任意轴的位移后，以 (nx−|dx|)×(ny−|dy|)×(nz−|dz|) 直接计算合法配对数。主机已检查完整网格乘积不超过 u32，因此重叠子体积乘积不会溢出。命中数仍遍历占据对，CPU 仍对完整偏移比值等权平均；体素分块和设备常驻 occupancy 仍待完成。独立原始计数 oracle 用有符号坐标穷举小网格全部偏移，覆盖薄网格、空/满/混合占据及 i32 极端位移。此算术修改本身不构成已测得的提速结论。
+
+| Function | Source | Contract |
+|---|---|---|
+| `GpuShellS2Pipeline::new_with_shader` | `src/gpu/s2_shell.rs:55` | Private constructor taking shader source; returns initialized resources or a GPU error. Production uses the analytic shader; tests can use the frozen enumerated-count fixture. |
+
+实验 shader s2_shell_cooperative.wgsl 每个偏移分配一个 256-lane 工作组，lane 跨步遍历重叠体积并在共享内存归约整数 hit，valid 保持解析计算。二维工作组展平后在 barrier 前统一拒绝填充组。每个偏移仍输出一对计数，因此尚不是独立调度的多个体素 tile，也未实现 voxel→shell 设备常驻数据流。生产仍选择 direct shader，等待工作量基准决定。new_with_shader(source, offsets_per_workgroup) 将 shader 索引与调度宽度配对：direct 为 256，cooperative 为 1。
+
+实验 tiled shader 按（offset，voxel tile）分派工作组，支持正整数块大小。块内整数归约 hit 并输出该块解析 valid 数；空块输出零。主机用 u64 合并同一 offset 全部块的计数，再形成完整偏移比值。每批至多 200000 个部分结果槽，因此块数增加时减少每批 offset 数；单偏移超过 200000 块时明确报容量错误。此固定上限尚不是完整用户预算规划。参数缓冲为 24 字节（offset 数、三轴维度、每偏移块数、块大小），旧 direct shader 读取前 16 字节。生产继续使用 direct，tiled 路径仍在验证和测量。
+
+实验 tiled 路径可启用第二次设备端计算 s2_shell_reduce.wgsl，将每个 offset 的 tile hit/valid 合并为一对整数。每个偏移的总计数不超过已检查的完整网格大小，因此 u32 合并不溢出；CPU 仍按原定义平均完整偏移比值。归约 pipeline 和最终缓冲延迟构造并复用，显式 batch release 缩小最终缓冲但保留已编译归约器。回读恢复为每偏移 8 字节，与 tile 数无关；中间 tile 缓冲及额外 dispatch 仍存在。此选项仍为实验路径，不代表生产选择或已证明提速。
+
+| Function | Source | Contract |
+|---|---|---|
+| `GpuShellS2Pipeline::ensure_reduction` | `src/gpu/s2_shell.rs:211` | Lazily compile the device tile reducer and grow its final buffers under the caller error scope. |
+
+生产 shell 求值在上传前过滤位移绝对值达到任意轴维度的 offset，以 unsigned_abs 安全处理 isize::MIN。过滤保持输入顺序，复用有界主机批次，不额外保存完整 offset 列表。全部 offset 无支持时直接返回原 VF/零曲线，不上传 occupancy 或分配结果缓冲。测试参考构造器可关闭过滤，继续验证 shader 对无效位移的保护。完整偏移比值及等权平均不变；此过滤尚未移除有效偏移内部的空 tile。
+
+| Function | Source | Contract |
+|---|---|---|
+| `offset_has_overlap` | `src/gpu/s2_shell.rs:57` | Check all unsigned displacement magnitudes against grid dimensions without signed overflow. |
+
+| Function | Source | Contract |
+|---|---|---|
+| `GpuShellS2Pipeline::with_device` | `src/gpu/s2_shell.rs:84` | Build production shell resources on supplied device/queue; no new device. |
+| `GpuShellS2Pipeline::build_on_device` | `src/gpu/s2_shell.rs:96` | Compile shell resources on supplied handles with balanced GPU error scopes. |
+| `GpuShellS2Pipeline::compute_s2_shell_resident` | `src/gpu/s2_shell.rs:385` | Read a same-device occupancy buffer directly; caller serializes producer and consumer. |
+| `GpuShellS2Pipeline::compute_shell_input` | `src/gpu/s2_shell.rs:410` | Shared execution for host-uploaded or resident occupancy with identical offset semantics. |
+| `GpuVoxelPipeline::device_queue` | `src/gpu/voxel.rs:59` | Clone device/queue handles for sequential stages; no device creation. |
+| `GpuVoxelPipeline::occupancy_buffer` | `src/gpu/voxel.rs:54` | Clone completed occupancy storage handle; producer must not overwrite while consumed. |
+
+GPU exact 现将 shell 构造在 voxel 的同一 Device/Queue 上，直接绑定其 occupancy 缓冲。shell 不再选择适配器或申请第二个设备，也不再为占据场分配和上传副本。两阶段顺序运行，各自配对错误作用域。Voxel 现于设备端计数，仅为 VF 回读 4 字节；上层 backend 能力探测仍独立计数。独立主机占据场 API 保留上传行为，之后的主机求值不会覆盖借用的 voxel 缓冲。
+
+voxelize_count 在 voxelization 后执行延迟编译的整数占据归约，完整占据场留在设备，仅回读一个 u32。归约器使用一个 256-lane 工作组跨步扫描；二值占据与已检查的网格大小保证各级计数不超过 u32。总工作量仍为 O(网格体素数)，减少传输不等于必然降低时延。occupancy 和 staging 分别按需增长：count-only 只需 4 字节 staging，之后完整回读再按需增长；模式切换和释放后重算已有对照。GPU exact 用该计数计算 VF 并将驻留占据场传给 shell，独立 voxelize 保留 Vec 返回契约。
+
+| Function | Source | Contract |
+|---|---|---|
+| `GpuVoxelPipeline::voxelize_count` | `src/gpu/voxel.rs:199` | Voxelize and return only the occupied-cell count; retain the device field. |
+| `GpuVoxelPipeline::ensure_counter` | `src/gpu/voxel.rs:218` | Lazily construct the integer counter and four-byte output under caller error scope. |
+| `GpuVoxelPipeline::voxelize_impl` | `src/gpu/voxel.rs:267` | Checked common voxel execution with full-grid or count-only readback. |
+
+GPU exact 现逐半径延迟生成一个 shell Vec，经 compute_s2_shell_resident_stream 按批消费。批次仍受已有部分结果槽上限约束，可跨半径但保持原偏移顺序。插值支持标志在生成该半径时记录，取消原来的第二遍枚举；成功求值会消费全部偏移，包括末尾无支持偏移。内存范围为一个半径 shell 加一个批次，并非与半径无关的常量；单个大半径 shell 仍会物化。累计生成数量采用 u128，日志不静默饱和截断。
+
+| Function | Source | Contract |
+|---|---|---|
+| `GpuShellS2Pipeline::compute_s2_shell_resident_stream` | `src/gpu/s2_shell.rs:410` | Consume ordered offsets lazily in bounded batches on a resident grid; preserve per-offset ratios. |
+
+GPU exact 现使用 shell_offset_iter，单个半径内部也只保留嵌套范围游标；保持原 x/y/z 顺序、原点特殊情况和半开平方距离判定。需要随机访问的公共 Vec API 保持不变。用 peekable 判定该半径是否有支持，生成数量在消费时累计。普通范围沿用原整数范数，更大范数用 u128 避免有符号乘法溢出。仍扫描包围立方体，降低分配并未改变 O(半径³) 搜索复杂度。
+
+新建的驻留 GPU exact 求值在后端选择和执行中共用 ExactMemoryPlan。设 T=max(36×faces,4)、M=4×cells、B 为批次部分结果槽数，保守逻辑峰值为 2T+M+128+80B，计入待完成三角/offset 上传和批次增长时同时存在的新旧缓冲；128 字节覆盖固定参数/计数/占位资源。B 从 200000 按 MiB 预算缩小，至少 1；最小批次仍超限则在设备初始化前拒绝，由调用方执行配置的回退策略。该模型不含驱动/编译器内部资源和 CPU 内存，仅适用于新建生产 direct-shell exact 求值，不声称覆盖实验 tiled/reduced 或任意已有高水位管线。旧 exact 网格硬限制仍独立存在。

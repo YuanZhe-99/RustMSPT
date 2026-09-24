@@ -2,10 +2,10 @@ use crate::config::{parse_box_dimensions, PackingConfig};
 use crate::error::{Result, RustMsptError};
 use crate::geometry::{
     bbox_distance, check_boundary_constraints_mode, generate_periodic_ghosts, merge_meshes,
-    mesh_bbox, mesh_collision_exact, mesh_distance_exact, mesh_metrics, mesh_surface_area,
-    mesh_volume, move_mesh_to_target_center, orient_components_to_positive_volume,
-    particle_volume_in_bbox, rotate_mesh_around_center, scale_mesh_to_equivalent_diameter,
-    split_mesh_into_granules, MeshMetrics,
+    mesh_bbox, mesh_collision_exact_prepared, mesh_distance_exact_prepared, mesh_metrics,
+    mesh_surface_area, mesh_volume, move_mesh_to_target_center,
+    orient_components_to_positive_volume, particle_volume_in_bbox, rotate_mesh_around_center,
+    scale_mesh_to_equivalent_diameter, split_mesh_into_granules, to_parry_trimesh, MeshMetrics,
 };
 use crate::io::{load_stl, save_stl};
 use crate::pipeline::pack_targets::{
@@ -23,6 +23,72 @@ use std::collections::BTreeSet;
 use std::f64::consts::PI;
 use std::fs;
 use std::path::Path;
+
+struct PackCollider {
+    bbox: Option<crate::types::BoundingBox>,
+    shape: Option<parry3d_f64::shape::TriMesh>,
+}
+
+impl PackCollider {
+    // AI-FUNC-SUMMARY: Prepare immutable bbox and collision acceleration once for a candidate or accepted periodic image, without retaining a second mesh copy.
+    fn new(mesh: &Mesh) -> Self {
+        Self {
+            bbox: mesh_bbox(mesh),
+            shape: to_parry_trimesh(mesh),
+        }
+    }
+
+    // AI-FUNC-SUMMARY: Apply the legacy bbox rejection and solid-overlap/clearance predicate using cached shapes; missing geometry retains conservative behavior.
+    fn blocks(&self, other: &Self, gap: f64) -> bool {
+        if let (Some(a), Some(b)) = (self.bbox, other.bbox) {
+            let distance = bbox_distance(a, b);
+            if (gap > 0.0 && distance >= gap) || (gap <= 0.0 && distance > 0.0) {
+                return false;
+            }
+        }
+        if gap > 0.0 {
+            mesh_distance_exact_prepared(
+                self.bbox,
+                self.shape.as_ref(),
+                other.bbox,
+                other.shape.as_ref(),
+            ) < gap
+        } else {
+            mesh_collision_exact_prepared(
+                self.bbox,
+                self.shape.as_ref(),
+                other.bbox,
+                other.shape.as_ref(),
+            )
+        }
+    }
+}
+
+// AI-FUNC-SUMMARY: Test a prepared candidate against incremental spatial neighbors and bbox-less colliders; small populations scan directly and all exact predicates share cached shapes.
+fn pack_blocked(
+    candidate: &PackCollider,
+    colliders: &[PackCollider],
+    grid: &crate::geometry::spatial::SpatialGrid,
+    gap: f64,
+) -> bool {
+    if colliders.len() < 32 || candidate.bbox.is_none() {
+        return colliders
+            .iter()
+            .any(|other| candidate.blocks(other, gap));
+    }
+    let mut neighbors = grid.query_neighbors_with_margin(candidate.bbox.unwrap(), gap, usize::MAX);
+    neighbors.extend(
+        colliders
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| c.bbox.is_none().then_some(i)),
+    );
+    if neighbors.len() < 32 {
+        neighbors.iter().any(|&i| candidate.blocks(&colliders[i], gap))
+    } else {
+        neighbors.par_iter().any(|&i| candidate.blocks(&colliders[i], gap))
+    }
+}
 
 const TARGET_BIN_PROBES: usize = 4;
 
@@ -122,6 +188,37 @@ impl Pipeline for PackPipeline {
     // Side effects: Reads STL/CSV from disk; writes packed STL and optional diameter comparison CSV; prints progress and target statistics to stdout.
     // Notes: Supports lazy directory loading for large datasets. Target-bin failures fall back to placeable bins so volume fraction has priority. Mode 3 adds periodic boundary ghost collision checks. Uses rayon thread pool for parallel collision detection.
     fn run(&self) -> Result<()> {
+        let available_cores = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        let cpu_max = self.config.packing.cpu_max.unwrap_or(-1);
+        let thread_count = if cpu_max == -1 {
+            available_cores
+        } else {
+            (cpu_max.max(1) as usize).min(available_cores)
+        };
+        let thread_pool = ThreadPoolBuilder::new()
+            .num_threads(thread_count)
+            .build()
+            .map_err(|e| {
+                RustMsptError::InvalidConfig(format!("Failed to build thread pool: {e}"))
+            })?;
+        let effective_pool_threads = thread_pool.install(rayon::current_num_threads);
+        println!(
+            "[Info] CPU setting: cpu_max={} -> using {} worker threads (available {}).",
+            cpu_max, thread_count, available_cores
+        );
+        println!(
+            "[Info] Rayon pool threads (effective): {}",
+            effective_pool_threads
+        );
+        thread_pool.install(|| self.run_in_pool())
+    }
+}
+
+impl PackPipeline {
+    // AI-FUNC-SUMMARY: Execute loading, sequential proposal RNG, cached parallel feasibility and output under the configured Rayon worker budget.
+    fn run_in_pool(&self) -> Result<()> {
         let box_bounds = parse_box_dimensions(&self.config.r#box.dimensions)?;
         let box_volume = box_bounds.volume();
         if box_volume <= 0.0 {
@@ -208,30 +305,6 @@ impl Pipeline for PackPipeline {
             self.config.packing.rotation_axis_vector.as_ref(),
         )?;
 
-        let available_cores = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1);
-        let cpu_max = self.config.packing.cpu_max.unwrap_or(-1);
-        let thread_count = if cpu_max == -1 {
-            available_cores
-        } else {
-            (cpu_max.max(1) as usize).min(available_cores)
-        };
-        let thread_pool = ThreadPoolBuilder::new()
-            .num_threads(thread_count)
-            .build()
-            .map_err(|e| {
-                RustMsptError::InvalidConfig(format!("Failed to build thread pool: {e}"))
-            })?;
-        let effective_pool_threads = thread_pool.install(rayon::current_num_threads);
-        println!(
-            "[Info] CPU setting: cpu_max={} -> using {} worker threads (available {}).",
-            cpu_max, thread_count, available_cores
-        );
-        println!(
-            "[Info] Rayon pool threads (effective): {}",
-            effective_pool_threads
-        );
         println!(
             "[Info] Rotation mode: {}",
             self.config
@@ -243,6 +316,12 @@ impl Pipeline for PackPipeline {
 
         let mut rng = rand::thread_rng();
         let mut placed: Vec<Mesh> = Vec::new();
+        let mut colliders: Vec<PackCollider> = Vec::new();
+        let extent = box_bounds.size();
+        let mut collision_grid = crate::geometry::spatial::SpatialGrid::new(
+            box_bounds,
+            extent.x.max(extent.y).max(extent.z) / 8.0,
+        );
         let mut current_volume = 0.0;
         let mut attempts = 0usize;
         let mut distribution_state = target_distribution
@@ -467,107 +546,28 @@ impl Pipeline for PackPipeline {
                     reject_candidate!();
                 }
 
-                let mut collision_set = placed.clone();
-                if self.config.packing.mode == 3 {
-                    for p in &placed {
-                        collision_set.extend(generate_periodic_ghosts(p, box_bounds));
-                    }
-                }
-                let collision_bboxes: Vec<Option<crate::types::BoundingBox>> =
-                    collision_set.iter().map(mesh_bbox).collect();
-                let candidate_bbox = mesh_bbox(&candidate);
-
-                let candidate_collision = thread_pool.install(|| {
-                    collision_set
-                        .par_iter()
-                        .zip(collision_bboxes.par_iter())
-                        .any(|(existing, other_bbox)| {
-                            if let (Some(cb), Some(ob)) = (candidate_bbox, *other_bbox) {
-                                let bd = bbox_distance(cb, ob);
-                                if min_neighbor > 0.0 {
-                                    if bd >= min_neighbor {
-                                        return false;
-                                    }
-                                } else if bd > 0.0 {
-                                    return false;
-                                }
-                            }
-                            mesh_collision_exact(&candidate, existing)
-                        })
-                });
-                if candidate_collision {
+                let candidate_collider = PackCollider::new(&candidate);
+                if pack_blocked(
+                    &candidate_collider,
+                    &colliders,
+                    &collision_grid,
+                    min_neighbor,
+                ) {
                     reject_candidate!();
                 }
-
-                if min_neighbor > 0.0 && !collision_set.is_empty() {
-                    let distance = thread_pool.install(|| {
-                        collision_set
-                            .par_iter()
-                            .zip(collision_bboxes.par_iter())
-                            .map(|(existing, other_bbox)| {
-                                if let (Some(cb), Some(ob)) = (candidate_bbox, *other_bbox) {
-                                    let bd = bbox_distance(cb, ob);
-                                    if bd >= min_neighbor {
-                                        return f64::INFINITY;
-                                    }
-                                }
-                                mesh_distance_exact(&candidate, existing)
-                            })
-                            .reduce(|| f64::INFINITY, f64::min)
-                    });
-                    if distance < min_neighbor {
-                        reject_candidate!();
-                    }
-                }
-
-                if self.config.packing.mode == 3 {
-                    let candidate_ghosts = generate_periodic_ghosts(&candidate, box_bounds);
-                    let ghost_collision = thread_pool.install(|| {
-                        candidate_ghosts.par_iter().any(|ghost| {
-                            let ghost_bbox = mesh_bbox(ghost);
-                            if collision_set
-                                .par_iter()
-                                .zip(collision_bboxes.par_iter())
-                                .any(|(existing, other_bbox)| {
-                                    if let (Some(gb), Some(ob)) = (ghost_bbox, *other_bbox) {
-                                        let bd = bbox_distance(gb, ob);
-                                        if min_neighbor > 0.0 {
-                                            if bd >= min_neighbor {
-                                                return false;
-                                            }
-                                        } else if bd > 0.0 {
-                                            return false;
-                                        }
-                                    }
-                                    mesh_collision_exact(ghost, existing)
-                                })
-                            {
-                                return true;
-                            }
-
-                            if min_neighbor > 0.0 && !collision_set.is_empty() {
-                                let d = collision_set
-                                    .par_iter()
-                                    .zip(collision_bboxes.par_iter())
-                                    .map(|(existing, other_bbox)| {
-                                        if let (Some(gb), Some(ob)) = (ghost_bbox, *other_bbox) {
-                                            let bd = bbox_distance(gb, ob);
-                                            if bd >= min_neighbor {
-                                                return f64::INFINITY;
-                                            }
-                                        }
-                                        mesh_distance_exact(ghost, existing)
-                                    })
-                                    .reduce(|| f64::INFINITY, f64::min);
-                                return d < min_neighbor;
-                            }
-
-                            false
-                        })
-                    });
-                    if ghost_collision {
-                        reject_candidate!();
-                    }
+                let candidate_ghosts: Vec<PackCollider> = if self.config.packing.mode == 3 {
+                    generate_periodic_ghosts(&candidate, box_bounds)
+                        .iter()
+                        .map(PackCollider::new)
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                if candidate_ghosts
+                    .iter()
+                    .any(|ghost| pack_blocked(ghost, &colliders, &collision_grid, min_neighbor))
+                {
+                    reject_candidate!();
                 }
 
                 let in_box_volume = particle_volume_in_bbox(&candidate, box_bounds);
@@ -591,6 +591,12 @@ impl Pipeline for PackPipeline {
                     }
                 }
                 current_volume += in_box_volume;
+                for collider in std::iter::once(candidate_collider).chain(candidate_ghosts) {
+                    if let Some(bbox) = collider.bbox {
+                        collision_grid.insert(colliders.len(), bbox);
+                    }
+                    colliders.push(collider);
+                }
                 placed.push(candidate);
                 attempts = 0;
                 placement_complete = true;
@@ -740,5 +746,81 @@ impl Pipeline for PackPipeline {
             );
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod collider_tests {
+    use super::*;
+    use crate::geometry::spatial::SpatialGrid;
+    use crate::geometry::{box_mesh, mesh_collision_exact, mesh_distance_exact};
+    use crate::types::BoundingBox;
+
+    // AI-FUNC-SUMMARY: Reproduce the old bbox-pruned collision plus minimum-distance scan as an independent cache/broad-phase oracle.
+    fn original_blocked(candidate: &Mesh, existing: &[Mesh], gap: f64) -> bool {
+        existing.iter().any(|other| {
+            if let (Some(a), Some(b)) = (mesh_bbox(candidate), mesh_bbox(other)) {
+                let d = bbox_distance(a, b);
+                if (gap > 0.0 && d >= gap) || (gap <= 0.0 && d > 0.0) {
+                    return false;
+                }
+            }
+            mesh_collision_exact(candidate, other)
+                || (gap > 0.0 && mesh_distance_exact(candidate, other) < gap)
+        })
+    }
+
+    // AI-FUNC-SUMMARY: Compare cached incremental packing feasibility with the former full scan over boundary ghosts, nested solids, contact and exact clearance.
+    #[test]
+    fn cached_pack_candidates_match_original() {
+        let domain = BoundingBox::from_size(Vec3::new(10.0, 10.0, 10.0));
+        let cube = |x, y, z, edge| {
+            box_mesh(BoundingBox {
+                min: Vec3::new(x, y, z),
+                max: Vec3::new(x + edge, y + edge, z + edge),
+            })
+        };
+        let mut sources = vec![cube(-0.3, 1.0, 1.0, 0.8), cube(8.0, 8.0, 8.0, 3.0)];
+        sources.extend(
+            (0..40).map(|i| cube((i % 6) as f64 * 1.5, 3.0 + ((i / 6) % 6) as f64, 4.0, 0.4)),
+        );
+        for periodic in [false, true] {
+            let mut meshes = sources.clone();
+            if periodic {
+                meshes.extend(
+                    sources
+                        .iter()
+                        .flat_map(|m| generate_periodic_ghosts(m, domain)),
+                );
+            }
+            let prepared: Vec<_> = meshes.iter().map(PackCollider::new).collect();
+            let boxes: Vec<_> = prepared
+                .iter()
+                .enumerate()
+                .filter_map(|(i, c)| c.bbox.map(|b| (i, b)))
+                .collect();
+            let grid = SpatialGrid::build(&boxes, domain, 1.25);
+            let mut candidates: Vec<_> = (0..80)
+                .map(|i| cube(i as f64 / 8.0 - 0.2, 1.0, 1.0, 0.3))
+                .collect();
+            candidates.extend([
+                cube(8.5, 8.5, 8.5, 0.2),
+                cube(7.0, 7.0, 7.0, 5.0),
+                cube(0.75, 1.0, 1.0, 0.25),
+            ]);
+            for gap in [0.0, 0.25, 0.5] {
+                for candidate in &candidates {
+                    let mut queries = vec![candidate.clone()];
+                    if periodic {
+                        queries.extend(generate_periodic_ghosts(candidate, domain));
+                    }
+                    let expected = queries.iter().any(|q| original_blocked(q, &meshes, gap));
+                    let actual = queries
+                        .iter()
+                        .any(|q| pack_blocked(&PackCollider::new(q), &prepared, &grid, gap));
+                    assert_eq!(actual, expected, "periodic={periodic} gap={gap}");
+                }
+            }
+        }
     }
 }

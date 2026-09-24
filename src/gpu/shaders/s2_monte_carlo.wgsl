@@ -58,6 +58,30 @@ fn ray_triangle(origin: vec3<f32>, dir: vec3<f32>, a: vec3<f32>, b: vec3<f32>, c
 
 const MAX_HITS: u32 = 64u;
 
+// AI-FUNC-SUMMARY: Recover overflow parity by repeatedly selecting the next distinct positive hit; uses constant storage and the fast path's anchored 1e-6 deduplication tolerance.
+fn point_inside_overflow(point: vec3<f32>, dir: vec3<f32>) -> bool {
+    var last_t: f32 = -1.0;
+    var unique: u32 = 0u;
+    for (var step: u32 = 0u; step < params.num_triangles; step++) {
+        var nearest: f32 = -1.0;
+        for (var i: u32 = 0u; i < params.num_triangles; i++) {
+            let base = i * 9u;
+            let a = vec3<f32>(triangles[base], triangles[base + 1u], triangles[base + 2u]);
+            let b = vec3<f32>(triangles[base + 3u], triangles[base + 4u], triangles[base + 5u]);
+            let c = vec3<f32>(triangles[base + 6u], triangles[base + 7u], triangles[base + 8u]);
+            let t = ray_triangle(point, dir, a, b, c);
+            if (t > 0.0 && (unique == 0u || t - last_t > 1e-6)) {
+                if (nearest < 0.0 || t < nearest) { nearest = t; }
+            }
+        }
+        if (nearest < 0.0) { break; }
+        unique++;
+        last_t = nearest;
+    }
+    return (unique & 1u) == 1u;
+}
+
+// AI-FUNC-SUMMARY: Classify containment with a 64-hit sorted fast path; recover the full ray on its 65th positive triangle hit.
 fn point_inside(point: vec3<f32>) -> bool {
     let eps = 1e-6;
     if (point.x < params.bbox_min.x - eps || point.y < params.bbox_min.y - eps || point.z < params.bbox_min.z - eps ||
@@ -76,7 +100,8 @@ fn point_inside(point: vec3<f32>) -> bool {
         let b = vec3<f32>(triangles[base + 3u], triangles[base + 4u], triangles[base + 5u]);
         let c = vec3<f32>(triangles[base + 6u], triangles[base + 7u], triangles[base + 8u]);
         let t = ray_triangle(point, dir, a, b, c);
-        if (t > 0.0 && hit_count < MAX_HITS) {
+        if (t > 0.0) {
+            if (hit_count == MAX_HITS) { return point_inside_overflow(point, dir); }
             ts[hit_count] = t;
             hit_count++;
         }
@@ -97,7 +122,6 @@ fn point_inside(point: vec3<f32>) -> bool {
         ts[j] = key;
     }
 
-    // Deduplicate near-equal hits (matches CPU tolerance 1e-8)
     var unique: u32 = 1u;
     var last_t = ts[0];
     for (var i: u32 = 1u; i < hit_count; i++) {
@@ -110,14 +134,8 @@ fn point_inside(point: vec3<f32>) -> bool {
     return (unique & 1u) == 1u;
 }
 
-@compute @workgroup_size(256)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let total = params.num_radii * params.samples_per_radius;
-    let idx = gid.x;
-    if (idx >= total) {
-        return;
-    }
-
+// AI-FUNC-SUMMARY: Evaluate one original logical sample id, returning hit/valid flags without output writes or workgroup synchronization.
+fn sample_counts(idx: u32) -> vec2<u32> {
     let r_idx = idx / params.samples_per_radius;
     let s_idx = idx % params.samples_per_radius;
 
@@ -137,9 +155,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let dz = rand_f32(&rng) * 2.0 - 1.0;
     let n2 = dx * dx + dy * dy + dz * dz;
     if (n2 < 1e-12 || n2 > 1.0) {
-        out_hits[idx] = 0u;
-        out_valids[idx] = 0u;
-        return;
+        return vec2<u32>(0u, 0u);
     }
     let inv_n = inverseSqrt(n2);
     let dir = vec3<f32>(dx * inv_n, dy * inv_n, dz * inv_n);
@@ -149,14 +165,45 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     if (q.x < bb_min.x || q.y < bb_min.y || q.z < bb_min.z ||
         q.x > bb_max.x || q.y > bb_max.y || q.z > bb_max.z) {
-        out_hits[idx] = 0u;
-        out_valids[idx] = 0u;
-        return;
+        return vec2<u32>(0u, 0u);
     }
 
     let p_in = point_inside(p);
     let q_in = point_inside(q);
 
-    out_hits[idx] = select(0u, 1u, p_in && q_in);
-    out_valids[idx] = 1u;
+    return vec2<u32>(select(0u, 1u, p_in && q_in), 1u);
+}
+
+// AI-FUNC-SUMMARY: Reduce one radius/sample block to bounded u32 hit/valid partials using uniform barriers; padded lanes contribute zero.
+// Each workgroup owns one radius/sample block. Padded lanes contribute zero;
+// logical sample ids retain the original RNG stream independently of padding.
+var<workgroup> block_hits: array<u32, 256>;
+var<workgroup> block_valids: array<u32, 256>;
+
+@compute @workgroup_size(256)
+fn main(@builtin(local_invocation_index) lane: u32, @builtin(workgroup_id) group: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
+    let blocks = (params.samples_per_radius - 1u) / 256u + 1u;
+    let block = group.x + group.y * groups.x;
+    // Uniform for every lane: padded workgroups return before any barrier.
+    if (block >= params.num_radii * blocks) { return; }
+    let radius = block / blocks;
+    let sample = (block % blocks) * 256u + lane;
+    var counts = vec2<u32>(0u, 0u);
+    if (sample < params.samples_per_radius) {
+        counts = sample_counts(radius * params.samples_per_radius + sample);
+    }
+    block_hits[lane] = counts.x;
+    block_valids[lane] = counts.y;
+    workgroupBarrier();
+    for (var stride = 128u; stride > 0u; stride = stride / 2u) {
+        if (lane < stride) {
+            block_hits[lane] += block_hits[lane + stride];
+            block_valids[lane] += block_valids[lane + stride];
+        }
+        workgroupBarrier();
+    }
+    if (lane == 0u) {
+        out_hits[block] = block_hits[0];
+        out_valids[block] = block_valids[0];
+    }
 }

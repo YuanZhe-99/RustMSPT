@@ -142,3 +142,9 @@ From `ForgingParams` in `src/config/forging.rs`, under the top-level `forging:` 
   parameter tables, source locations).
 - [pipeline-core.md#ForgePipeline::run](../reference/pipeline-core.md#forgepipelinerun) — full
   reference entry for the pipeline that drives this algorithm end to end.
+
+### Owned CPU transforms (PERF-16)
+
+`forge_owned(mesh, lattice_bbox, track_bbox, compression_ratio, compression_axis, bulge_factor, mesh_type, void_densification)` consumes the mesh and applies the existing tracked FFD mapping. The public borrowed wrapper clones once and delegates. ForgePipeline moves its input into this entry, retains the already computed input bbox, removes unused whole-mesh volume scans, and moves the output when orientation is disabled. ScalePipeline likewise moves its transformed mesh when orientation is disabled. Both log transform-only seconds separately from I/O.
+
+`map_vertices` keeps small slices serial and maps disjoint 8192-vertex blocks on the current Rayon pool only with multiple workers and at least max(131072, workers * 65536) vertices. Scale, translate and both FFD variants use it. Each vertex retains its arithmetic order; void centroid is still accumulated serially after the affine pass. ROI remains unaffected by void closure. Clipped ROI VF and output bbox are still measured from actual geometry; no determinant approximation is substituted.

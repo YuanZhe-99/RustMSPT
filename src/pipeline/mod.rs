@@ -5,6 +5,8 @@ pub mod mesh_render;
 pub mod mesh_verify;
 pub mod meshgen;
 pub mod optimize;
+mod optimize_execution;
+mod optimize_volume;
 pub mod pack;
 pub mod pack_targets;
 pub mod placement;

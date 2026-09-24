@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use super::deserialize::{deserialize_option_usize_flexible};
+use super::deserialize::{deserialize_option_i32_flexible, deserialize_option_usize_flexible};
 use super::InputPath;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -29,6 +29,8 @@ pub struct SplitFilterRules {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SplitFilterConfig {
+    #[serde(default, deserialize_with = "deserialize_option_i32_flexible")]
+    pub cpu_max: Option<i32>,
     pub input: InputPath,
     pub output: SplitFilterOutput,
     pub filter: Option<SplitFilterRules>,

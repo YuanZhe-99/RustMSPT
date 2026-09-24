@@ -101,3 +101,7 @@ turning floating-point geometry into consistent topology.
 - [geometry-volume-collision.md](../reference/geometry-volume-collision.md)
 - [pipeline-packing.md](../reference/pipeline-packing.md)
 - [pipeline-optimize.md](../reference/pipeline-optimize.md)
+
+### No-cut volume fast paths
+
+The private plane clipper consumes its mesh. Classification uses referenced face vertices with the existing `distance >= -1e-9` predicate: when all are inside (including a touching plane), it returns the same mesh allocation without generating a cap; when all are outside, it returns empty. Mixed cases retain the existing polygon/cap algorithm. This fixes spurious caps on an entirely contained mesh touching a domain face. Unreferenced outside vertices cannot create a cut. `clip_mesh_by_bbox` moves each intermediate mesh into the next pass. `particle_volume_in_bbox` directly sums the original mesh when all stored vertices are inclusively inside the box, avoiding a clone and all six clipping passes. Tests cover both windings, translated boxes, coincident faces, partial outward box intersections, and unused outside vertices. This does not replace the legacy partial-cut cap algorithm with placement’s exact signed-volume routine or establish correctness for arbitrary nonconvex/nested cap loops.

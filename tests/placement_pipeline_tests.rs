@@ -203,6 +203,42 @@ fn the_same_seed_gives_byte_identical_output_on_one_thread_and_on_eight() {
     assert_eq!(ra, rb, "the report differs beyond its runtime and path fields");
 }
 
+// AI-FUNC-SUMMARY: Execute placement and voxel labeling at 1/2/8 workers, checking the active pool count and byte-identical geometry, records and label outputs; writes temporary files.
+#[test]
+fn voxel_outputs_and_active_pool_match_thread_contract() {
+    let tmp = tempfile::tempdir().unwrap();
+    shape_library(tmp.path(), &[1.0]);
+    for threads in [1, 2, 8] {
+        let config_path = tmp.path().join(format!("labels-{threads}.yaml"));
+        fs::write(
+            &config_path,
+            roomy(20260910, &format!("  threads: {threads}")).replace(
+                "dir: \"out\"",
+                &format!("dir: \"labels-{threads}\"\n    voxel_labels: {{ voxel_size: 2.0 }}"),
+            ),
+        )
+        .unwrap();
+        run_placement(&resolve(&config_path)).unwrap();
+        let dir = tmp.path().join(format!("labels-{threads}"));
+        let report = read_report(&dir.join("run_report.json")).unwrap();
+        assert_eq!(report.runtime.threads, threads);
+        for name in [
+            "particles.json",
+            "particles.stl",
+            "size_distribution.csv",
+            "voxel_labels/phase.tiff",
+            "voxel_labels/particle_id.tiff",
+            "voxel_labels/voxel_labels.json",
+        ] {
+            assert_eq!(
+                fs::read(tmp.path().join("labels-1").join(name)).unwrap(),
+                fs::read(dir.join(name)).unwrap(),
+                "{name} differs at {threads} workers"
+            );
+        }
+    }
+}
+
 #[test]
 fn a_different_seed_places_differently() {
     let a = tempfile::tempdir().unwrap();

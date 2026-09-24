@@ -29,10 +29,16 @@ fn idx3d(x: u32, y: u32, z: u32) -> u32 {
     return z * params.src_width * params.src_height + y * params.src_width + x;
 }
 
+// AI-FUNC-SUMMARY: Round ties away from zero like Rust f64::round without perturbing exactly represented large integers.
+fn round_away(value: f32) -> f32 {
+    let whole = trunc(value);
+    return select(whole, whole + sign(value), abs(value - whole) >= 0.5);
+}
+
 fn sample_nearest(sx: f32, sy: f32, sz: f32) -> i32 {
-    let x = i32(round(sx));
-    let y = i32(round(sy));
-    let z = i32(round(sz));
+    let x = i32(round_away(sx));
+    let y = i32(round_away(sy));
+    let z = i32(round_away(sz));
     if (x < 0 || y < 0 || z < 0 ||
         x >= i32(params.src_width) || y >= i32(params.src_height) || z >= i32(params.src_depth)) {
         return params.background;
@@ -98,17 +104,17 @@ fn sample_trilinear(sx: f32, sy: f32, sz: f32) -> i32 {
     let c1 = c01 * (1.0 - ty) + c11 * ty;
     let value = c0 * (1.0 - tz) + c1 * tz;
 
-    return i32(round(value));
+    return i32(round_away(value));
 }
 
 @compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let x = gid.x;
-    let y = gid.y;
-    let z = gid.z;
-    if (x >= params.out_width || y >= params.out_height || z >= params.out_depth) {
-        return;
-    }
+fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
+    let index = gid.x + gid.y * groups.x * 64u;
+    let total = params.out_width * params.out_height * params.out_depth;
+    if (index >= total) { return; }
+    let x = index % params.out_width;
+    let y = (index / params.out_width) % params.out_height;
+    let z = index / (params.out_width * params.out_height);
 
     let local = vec3<f32>(
         params.origin.x + f32(x),

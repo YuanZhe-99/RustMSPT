@@ -36,9 +36,9 @@ GA-2）：精确谓词与单元质量原语（`src/meshgen/predicates.rs`）、�
 | `report_to_log` | `src/meshgen/verify.rs:1619` | 分节的人读日志，每项检查一行 `[PASS]/[WARN]/[FAIL]/[SKIP]`，末尾附汇总。 |
 | `annotate` | `src/meshgen/verify.rs:1681` | 附带质量数组与 `verify_flags` 位掩码的网格副本（第 *k* 位对应 `[V(k+1)]`）。 |
 | `VerifyGateParams`/`MeshVerifyParams`/`MeshVerifyConfig` | `src/config/mesh_verify.rs:8` | `mesh_verify:` YAML 块：输入、report/json/annotate 输出路径、门限覆盖。 |
-| `gates_from_config` | `src/pipeline/mesh_verify.rs:18` | 将 YAML 覆盖项叠加到契约默认门限上。 |
-| `verify_file` | `src/pipeline/mesh_verify.rs:42` | 加载 → 校验 → 验证 → 写出日志/JSON/带注解 VTU；返回报告。 |
-| `MeshVerifyPipeline` | `src/pipeline/mesh_verify.rs:9` | `mesh-verify` 子命令；门限不通过时返回错误（非零退出码）。 |
+| `gates_from_config` | `src/pipeline/mesh_verify.rs:21` | 将 YAML 覆盖项叠加到契约默认门限上。 |
+| `verify_file` | `src/pipeline/mesh_verify.rs:53` | 加载 → 校验 → 验证 → 写出日志/JSON/带注解 VTU；返回报告。 |
+| `MeshVerifyPipeline` | `src/pipeline/mesh_verify.rs:12` | `mesh-verify` 子命令；门限不通过时返回错误（非零退出码）。 |
 
 ## 当前实现范围
 

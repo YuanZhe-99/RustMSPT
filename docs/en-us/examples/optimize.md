@@ -196,3 +196,13 @@ repositioned/reoriented to their best-found configuration.
 - See `../algorithms/simulated-annealing-island-model.md` for the full annealing algorithm
   (adaptive temperature control, island-model parallelism, and the S2 loss function), and
   `../reference/pipeline-optimize.md` for the `OptimizePipeline::run` implementation reference.
+
+## Execution diagnostics added by PERF-01/02
+
+The current run prints and stores `S2 execution: requested=..., effective=..., method=...,
+voxel_pitch=..., reason=...`. History also records `Execution: workers=..., islands=...,
+active_island_limit=...`. A positive-pitch exact/MC configuration keeps voxel semantics on CPU;
+requesting GPU does not silently select continuous MC. `Selected Search Loss` records the historical
+winning score, while `Final Best S2/Loss` comes from a full-budget re-evaluation with the same method.
+Unlike placement, SA is stochastic and does not promise identical output across thread counts.
+Earlier captured output above predates these additional diagnostics.

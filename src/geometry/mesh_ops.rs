@@ -22,7 +22,10 @@ pub fn vec_norm(v: Vec3) -> f64 {
 
 // AI-FUNC-SUMMARY: Merge multiple meshes into one by combining vertices and remapping face indices; returns merged Mesh; side effects: None.
 pub fn merge_meshes(meshes: &[Mesh]) -> Mesh {
-    let mut out = Mesh::empty();
+    let mut out = Mesh {
+        vertices: Vec::with_capacity(meshes.iter().map(|m| m.vertices.len()).sum()),
+        faces: Vec::with_capacity(meshes.iter().map(|m| m.faces.len()).sum()),
+    };
     for m in meshes {
         let offset = out.vertices.len();
         out.vertices.extend(m.vertices.iter().copied());
@@ -115,9 +118,7 @@ pub fn split_mesh_into_granules(mesh: &Mesh) -> Vec<Mesh> {
 
 // AI-FUNC-SUMMARY: Translate all mesh vertices by a delta vector; mutates mesh in place; side effects: None.
 pub fn translate_mesh(mesh: &mut Mesh, delta: Vec3) {
-    for v in &mut mesh.vertices {
-        *v = v.add(delta);
-    }
+    map_vertices(&mut mesh.vertices, |v| v.add(delta));
 }
 
 // AI-FUNC-SUMMARY: Move a mesh so its centroid aligns with the target position; mutates mesh in place; side effects: None.
@@ -154,8 +155,20 @@ pub fn wrap_mesh_centroid_to_box(mesh: &mut Mesh, box_bounds: BoundingBox) {
 
 // AI-FUNC-SUMMARY: Scale all mesh vertices by a uniform factor (centered at origin); mutates mesh in place; side effects: None.
 pub fn scale_mesh(mesh: &mut Mesh, factor: f64) {
-    for v in &mut mesh.vertices {
-        *v = v.scale(factor);
+    map_vertices(&mut mesh.vertices, |v| v.scale(factor));
+}
+
+// AI-FUNC-SUMMARY: Apply an independent vertex map in place, using Rayon chunks only above 65536 vertices per worker (at least 131072 total) and a serial loop for small/single-worker inputs; face topology is unchanged.
+pub(crate) fn map_vertices(vertices: &mut [Vec3], transform: impl Fn(Vec3) -> Vec3 + Sync + Send) {
+    use rayon::prelude::*;
+    let workers = rayon::current_num_threads();
+    let parallel_min = workers.saturating_mul(65536).max(131072);
+    if workers == 1 || vertices.len() < parallel_min {
+        for v in vertices { *v = transform(*v); }
+    } else {
+        vertices.par_chunks_mut(8192).for_each(|chunk| {
+            for v in chunk { *v = transform(*v); }
+        });
     }
 }
 

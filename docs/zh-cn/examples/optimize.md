@@ -149,3 +149,10 @@ Final Best Loss: 0.040908
 - S2 历史日志只记录退火移动被接受*且*改进了已知最优损失的迭代，而非每一次尝试的移动——这就是为什么日志中的迭代编号是跳跃的（`0, 8, 13, 17, 19, ...`），而不是逐行递增 1。
 - 在本配置中，`optimization.rotation_mode: 'none'` 会在扰动过程中禁用颗粒旋转；将其设置为 `'x'`/`'y'`/`'z'`/`'vector'`/`'any'` 则分别允许绕固定轴、任意向量或不受约束地进行旋转移动——当需要改变颗粒取向（而不仅仅是位置）以达到目标 S2 时非常有用。
 - 完整的退火算法（自适应温度控制、岛屿模型并行以及 S2 损失函数）见 `../algorithms/simulated-annealing-island-model.md`，`OptimizePipeline::run` 的实现参考见 `../reference/pipeline-optimize.md`。
+
+## Execution diagnostics added by PERF-01/02
+
+当前运行输出并保存 `S2 execution: requested=..., effective=..., method=..., voxel_pitch=..., reason=...`，
+历史另含 `Execution: workers=..., islands=..., active_island_limit=...`。正 pitch 的 exact/MC 配置保留 CPU 体素语义，
+请求 GPU 不会静默切换为连续 MC。`Selected Search Loss` 是历史最佳分数，`Final Best S2/Loss` 使用相同方法和完整预算复核。
+SA 是随机搜索，不同于 placement，不承诺跨线程输出一致。上面的旧捕获输出早于这些新增诊断字段。

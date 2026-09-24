@@ -63,20 +63,20 @@ the shape. `s08_cut` is the first snapshot that fits the input.
 | `DeterminismMode` | `src/config/meshgen.rs:50` | Run-to-run reproducibility contract: `strict` (default, bitwise) / `fast` (best-effort). |
 | `UnmappedPolicy` | `src/config/meshgen.rs:59` | INP export behaviour for regions lacking a material mapping: `error` (default) / `elset-only`; kebab-cased. |
 | `SnapshotMode` | `src/config/meshgen.rs:68` | Contract snapshot emission level: `none` / `key` (default, s02/s05/s08/s11) / `all`. |
-| `MeshGenInput` | `src/config/meshgen.rs:80` | One STL input: `stl` path, optional `priority` (**defaults to 0 for every input**), `kind` (default `auto`). |
-| `MeshGenDomain` | `src/config/meshgen.rs:90` | Axis-aligned generation domain; `min`/`max` must each be 3-component, with `min < max` per axis. |
-| `MeshGenSizing` | `src/config/meshgen.rs:99` | Sizing-field limits as fractions of the domain-box diagonal, plus `grading` (default 2.0, the 2:1 gradation) and `gap_cells` (default 2.0). |
-| `MeshGenGaps` | `src/config/meshgen.rs:114` | Gap-field thickness factors (x local h(x)) and the separation confidence floor. |
-| `MeshGenEnvelope` | `src/config/meshgen.rs:125` | Numerical envelope thickness as a fraction of the domain-box diagonal. |
-| `MeshGenRepair` | `src/config/meshgen.rs:132` | S0 repair configuration (`level`). |
-| `MeshGenMaterials` | `src/config/meshgen.rs:143` | Material assignments for the Abaqus INP export; `by_component` survives duplicate keys to `validate()`. |
-| `MeshGenOutput` | `src/config/meshgen.rs:154` | Output destinations: required `vtu`, optional `abaqus`/`report`. |
-| `MeshGenParams` | `src/config/meshgen.rs:168` | The `meshgen:` YAML block; call `validate()` after loading. |
-| `MeshGenConfig` | `src/config/meshgen.rs:198` | Top-level YAML wrapper (`meshgen:`). |
-| `MeshGenInput::resolved_priority` | `src/config/meshgen.rs:204` | Effective priority: the explicit value, else 0. Takes no file index - deriving a default from file order is the defect it replaced. |
-| `MeshGenParams::validate` | `src/config/meshgen.rs:218` | Enforce the PLAN §6.3 parse-time rejects; returns `Ok(())` or `InvalidConfig`. |
-| `deserialize_component_map` | `src/config/meshgen.rs:352` | Deserialize `by_component` as an ordered pair list preserving duplicate keys. |
-| `MeshGenPipeline` | `src/pipeline/meshgen.rs:23` | Runs normalized S0/S1/G2-1..G2-5/S3/S4, emits s02, s03 and s04, then returns `NotAvailable` for S5..S11. |
+| `MeshGenInput` | `src/config/meshgen.rs:84` | One STL input: `stl` path, optional `priority` (**defaults to 0 for every input**), `kind` (default `auto`). |
+| `MeshGenDomain` | `src/config/meshgen.rs:94` | Axis-aligned generation domain; `min`/`max` must each be 3-component, with `min < max` per axis. |
+| `MeshGenSizing` | `src/config/meshgen.rs:107` | Sizing-field limits as fractions of the domain-box diagonal, plus `grading` (default 2.0, the 2:1 gradation) and `gap_cells` (default 2.0). |
+| `MeshGenGaps` | `src/config/meshgen.rs:128` | Gap-field thickness factors (x local h(x)) and the separation confidence floor. |
+| `MeshGenEnvelope` | `src/config/meshgen.rs:176` | Numerical envelope thickness as a fraction of the domain-box diagonal. |
+| `MeshGenRepair` | `src/config/meshgen.rs:183` | S0 repair configuration (`level`). |
+| `MeshGenMaterials` | `src/config/meshgen.rs:194` | Material assignments for the Abaqus INP export; `by_component` survives duplicate keys to `validate()`. |
+| `MeshGenOutput` | `src/config/meshgen.rs:211` | Output destinations: required `vtu`, optional `abaqus`/`report`. |
+| `MeshGenParams` | `src/config/meshgen.rs:225` | The `meshgen:` YAML block; call `validate()` after loading. |
+| `MeshGenConfig` | `src/config/meshgen.rs:257` | Top-level YAML wrapper (`meshgen:`). |
+| `MeshGenInput::resolved_priority` | `src/config/meshgen.rs:265` | Effective priority: the explicit value, else 0. Takes no file index - deriving a default from file order is the defect it replaced. |
+| `MeshGenParams::validate` | `src/config/meshgen.rs:279` | Enforce the PLAN §6.3 parse-time rejects; returns `Ok(())` or `InvalidConfig`. |
+| `deserialize_component_map` | `src/config/meshgen.rs:509` | Deserialize `by_component` as an ordered pair list preserving duplicate keys. |
+| `MeshGenPipeline` | `src/pipeline/meshgen.rs:57` | Runs normalized S0/S1/G2-1..G2-5/S3/S4, emits s02, s03 and s04, then returns `NotAvailable` for S5..S11. |
 | `ConditionedSurface` / `ConditionStats` | `src/meshgen/surface.rs:88/116` | S0 geometry, persistent source-component ids, repair log, and aggregate counts. |
 | `SurfaceComponent` (`ArrangeComponent`) | `src/meshgen/surface.rs:99` | Contract component row `{X, priority Y, solid/sheet kind, closed}` shared by surface stages. |
 | `condition_surface` | `src/meshgen/surface.rs:135` | Weld on `q=0.1*eps`, drop exact degenerates, dedupe per source identity, orient/repair, and derive provisional components. |

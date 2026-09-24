@@ -66,14 +66,28 @@ pub struct PlacementOutcome {
 }
 
 // AI-FUNC-SUMMARY:
-// Purpose: Run the placement engine end to end and write every output file.
+// Purpose: Run the placement engine end to end in a dedicated Rayon pool and write every output file.
 // Inputs: the resolved config.
 // Returns: a summary of what was placed and why the run stopped.
-// Side effects: Reads inputs, creates the output directory, writes the STL, record, report and CSV.
+// Side effects: Creates the configured worker pool, reads inputs, creates the output directory, writes all outputs.
 // Notes: The testable core: the pipeline's run() is a thin wrapper so tests need not go through
 // stdout. The report is written twice - once as `running` before placement starts, once as
 // `finished` at the end - so a run that is killed still leaves evidence of what it was.
 pub fn run_placement(config: &ResolvedPlacement) -> Result<PlacementOutcome> {
+    with_placement_pool(config.threads, || run_placement_in_pool(config))
+}
+
+// AI-FUNC-SUMMARY: Create and install the placement worker budget for a complete operation; returns its result or InvalidConfig on pool creation failure; side effects: starts and joins Rayon workers.
+fn with_placement_pool<T: Send>(threads: i32, work: impl FnOnce() -> Result<T> + Send) -> Result<T> {
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(resolve_threads(threads))
+        .build()
+        .map_err(|e| RustMsptError::InvalidConfig(format!("Cannot create placement thread pool: {e}")))?;
+    pool.install(work)
+}
+
+// AI-FUNC-SUMMARY: Execute the complete placement run inside the caller's Rayon pool; returns the outcome; side effects: reads inputs and writes all outputs; records the active pool's worker count.
+fn run_placement_in_pool(config: &ResolvedPlacement) -> Result<PlacementOutcome> {
     let started = Instant::now();
     let identity = build_identity();
     let tool = ToolRecord::from(&identity);
@@ -148,7 +162,7 @@ pub fn run_placement(config: &ResolvedPlacement) -> Result<PlacementOutcome> {
         config.placement_order == PlacementOrder::Descending,
     );
 
-    let threads = resolve_threads(config.threads);
+    let threads = rayon::current_num_threads();
     let frame = FrameRecord {
         unit: config.unit.clone(),
         origin: [config.domain.min.x, config.domain.min.y, config.domain.min.z],
@@ -1347,3 +1361,22 @@ pub fn read_report(path: &Path) -> Result<ReportFile> {
     })
 }
 
+#[cfg(test)]
+mod performance_tests {
+    use super::*;
+    use rayon::prelude::*;
+
+    // AI-FUNC-SUMMARY: Observe worker counts and indices inside nested parallel work under the actual placement execution wrapper; no file output.
+    #[test]
+    fn placement_pool_bounds_nested_parallel_work() {
+        for threads in [1, 2, 8] {
+            with_placement_pool(threads, || {
+                (0..1024usize).into_par_iter().for_each(|_| {
+                    assert_eq!(rayon::current_num_threads(), threads as usize);
+                    assert!(rayon::current_thread_index().unwrap() < threads as usize);
+                });
+                Ok(())
+            }).unwrap();
+        }
+    }
+}

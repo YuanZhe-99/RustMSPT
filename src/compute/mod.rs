@@ -1,5 +1,8 @@
+pub(crate) mod exact_memory;
 pub mod backend;
 pub mod policy;
+pub(crate) mod mc_memory;
+pub(crate) mod render_memory;
 
 pub use backend::{AccelerationMode, BackendCaps, ComputeBackend};
 pub use policy::{select_backend, select_backend_for_workload};

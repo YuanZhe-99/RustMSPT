@@ -38,34 +38,36 @@ selects the original loop instead, which is documented in
 | `VoidIndex::overlap_volume` | `src/geometry/void_index.rs:330` | Volume of a particle inside the void, by domain-anchored voxel count. |
 | `point_inside_mesh_local` | `src/geometry/void_index.rs:375` | Ray-parity point-in-mesh test for a small mesh with no hierarchy. |
 | `PlacementPipeline` | `src/pipeline/placement.rs:38` | Pipeline struct holding a validated `ResolvedPlacement`. |
-| `PHASE_MATRIX` | `src/pipeline/placement_labels.rs:12` | Phase code 0 in the written label field. |
-| `VoxelLabelsHeader` | `src/pipeline/placement_labels.rs:21` | What the label stacks are: spacing, origin, layout, phase table. |
-| `PhaseLabel` | `src/pipeline/placement_labels.rs:38` | One phase code and its name. |
-| `write_voxel_labels` | `src/pipeline/placement_labels.rs:56` | Writes the three-phase label field and the per-voxel particle id field. |
-| `particle_at` | `src/pipeline/placement_labels.rs:178` | Finds which placed particle, if any, contains a point. |
-| `point_in_particle` | `src/pipeline/placement_labels.rs:189` | Ray-parity containment for one particle mesh. |
+| `PHASE_MATRIX` | `src/pipeline/placement_labels.rs:13` | Phase code 0 in the written label field. |
+| `VoxelLabelsHeader` | `src/pipeline/placement_labels.rs:22` | What the label stacks are: spacing, origin, layout, phase table. |
+| `PhaseLabel` | `src/pipeline/placement_labels.rs:39` | One phase code and its name. |
+| `write_voxel_labels` | `src/pipeline/placement_labels.rs:57` | Writes the three-phase label field and the per-voxel particle id field. |
+| `particle_at` | `src/pipeline/placement_labels.rs:233` | Finds which placed particle, if any, contains a point. |
+| `point_in_particle` | `src/pipeline/placement_labels.rs:245` | Ray-parity containment for one particle mesh. |
 | `VoidReport` | `src/pipeline/placement_outputs.rs:278` | What the run did with the frozen void, and how it measured it. |
-| `build_void_report` | `src/pipeline/placement.rs:1156` | Describes the frozen void for the report, including its volume method. |
+| `build_void_report` | `src/pipeline/placement.rs:1170` | Describes the frozen void for the report, including its volume method. |
 | `PlacementPipeline` | `src/pipeline/placement.rs:38` | Pipeline struct holding a validated `ResolvedPlacement`. |
 | `PlacementOutcome` | `src/pipeline/placement.rs:61` | What a completed run produced, for in-process callers. |
-| `run_placement` | `src/pipeline/placement.rs:76` | Runs the engine end to end and writes every output file. |
-| `resolve_threads` | `src/pipeline/placement.rs:253` | Turns a thread setting into a worker count, at least 1. |
-| `EngineState` | `src/pipeline/placement.rs:265` | Everything the placement loop accumulates. |
-| `place_all` | `src/pipeline/placement.rs:347` | Attempts every planned size in order, accepting what fits. |
-| `try_place_one` | `src/pipeline/placement.rs:386` | Tries one size within its per-particle attempt budget. |
-| `accept` | `src/pipeline/placement.rs:544` | Commits an accepted candidate into the geometry and the record. |
-| `run_top_up` | `src/pipeline/placement.rs:605` | Draws further batches when clipping alone left the target short. |
-| `decide_stop` | `src/pipeline/placement.rs:788` | Decides which of the four stop reasons a run ended with. |
-| `write_outputs` | `src/pipeline/placement.rs:788` | Writes the geometry, the per-particle record and the size CSV. |
-| `entity_id` | `src/pipeline/placement.rs:933` | The stable id of a placed particle. |
-| `particle_record` | `src/pipeline/placement.rs:938` | Turns one placed particle into its record entry. |
-| `size_class_rows` | `src/pipeline/placement.rs:986` | Builds the per-class target-against-actual rows. |
-| `blank_report` | `src/pipeline/placement.rs:1012` | The report as it stands before placement starts. |
-| `describe_input` | `src/pipeline/placement.rs:1191` | Describes an input file with its digest for the report. |
-| `finish_report` | `src/pipeline/placement.rs:1210` | Fills in everything the finished run knows. |
-| `summary` (placement.rs) | `src/pipeline/placement.rs:1274` | Builds the human-readable stdout summary. |
-| `read_record` | `src/pipeline/placement.rs:1335` | Reads a written per-particle record back. |
-| `read_report` | `src/pipeline/placement.rs:1343` | Reads a written run report back. |
+| `run_placement` | `src/pipeline/placement.rs:76` | Runs the engine in a dedicated configured Rayon pool and writes every output file. |
+| `with_placement_pool` | `src/pipeline/placement.rs:81` | Creates and installs a dedicated Rayon pool for one operation, propagating creation/work errors. |
+| `run_placement_in_pool` | `src/pipeline/placement.rs:90` | Runs all placement stages in the active pool and records its actual worker count. |
+| `resolve_threads` | `src/pipeline/placement.rs:267` | Turns a thread setting into a worker count, at least 1. |
+| `EngineState` | `src/pipeline/placement.rs:279` | Everything the placement loop accumulates. |
+| `place_all` | `src/pipeline/placement.rs:361` | Attempts every planned size in order, accepting what fits. |
+| `try_place_one` | `src/pipeline/placement.rs:400` | Tries one size within its per-particle attempt budget. |
+| `accept` | `src/pipeline/placement.rs:558` | Commits an accepted candidate into the geometry and the record. |
+| `run_top_up` | `src/pipeline/placement.rs:619` | Draws further batches when clipping alone left the target short. |
+| `decide_stop` | `src/pipeline/placement.rs:802` | Decides which of the four stop reasons a run ended with. |
+| `write_outputs` | `src/pipeline/placement.rs:802` | Writes the geometry, the per-particle record and the size CSV. |
+| `entity_id` | `src/pipeline/placement.rs:947` | The stable id of a placed particle. |
+| `particle_record` | `src/pipeline/placement.rs:952` | Turns one placed particle into its record entry. |
+| `size_class_rows` | `src/pipeline/placement.rs:1000` | Builds the per-class target-against-actual rows. |
+| `blank_report` | `src/pipeline/placement.rs:1026` | The report as it stands before placement starts. |
+| `describe_input` | `src/pipeline/placement.rs:1205` | Describes an input file with its digest for the report. |
+| `finish_report` | `src/pipeline/placement.rs:1224` | Fills in everything the finished run knows. |
+| `summary` (placement.rs) | `src/pipeline/placement.rs:1288` | Builds the human-readable stdout summary. |
+| `read_record` | `src/pipeline/placement.rs:1349` | Reads a written per-particle record back. |
+| `read_report` | `src/pipeline/placement.rs:1357` | Reads a written run report back. |
 | `RejectReason` | `src/pipeline/placement_feasibility.rs:17` | Why a proposed placement was not accepted; the report's keys. Ten variants. |
 | `RejectReason::as_str` | `src/pipeline/placement_feasibility.rs:44` | The stable report key for a rejection reason. |
 | `PlacedParticle` | `src/pipeline/placement_feasibility.rs:76` | A particle that cleared every check, with its cached shape. |
@@ -107,8 +109,9 @@ selects the original loop instead, which is documented in
 | `RejectedShell` | `src/pipeline/placement_library.rs:53` | A shell read but not kept, and why. |
 | `ShapeLibrary` | `src/pipeline/placement_library.rs:61` | Every shape a run may draw from, plus what was read and not kept. |
 | `load_shape_library` | `src/pipeline/placement_library.rs:85` | Loads, splits, measures and filters the shape files. |
-| `filter_reason` | `src/pipeline/placement_library.rs:236` | Says which library filter a shell failed, if any. |
-| `shell_geometry_sha256` | `src/pipeline/placement_library.rs:276` | Digests a shell's geometry so a re-ordered file is detectable. |
+| `filter_reason` | `src/pipeline/placement_library.rs:234` | Says which library filter a shell failed, if any. |
+| `shell_geometry_sha256` | `src/pipeline/placement_library.rs:274` | Digests a shell's geometry so a re-ordered file is detectable. |
+| `particle_at_prepared` | `src/pipeline/placement_labels.rs:253` | First particle in ordered cached candidates. |
 
 ## Reading order
 
@@ -199,3 +202,25 @@ list, so nothing may emit a fifth value.
 - The report lists itself in `outputs` with a null digest. A file cannot contain its own hash, and an
   adapter that verifies every listed digest would otherwise choke on the one entry that cannot have
   one.
+
+### run_placement / run_placement_in_pool — PERF-02
+
+`run_placement(config: &ResolvedPlacement) -> Result<PlacementOutcome>` creates a dedicated
+Rayon pool using `resolve_threads`, then installs the private
+`run_placement_in_pool(config: &ResolvedPlacement) -> Result<PlacementOutcome>` for the whole run,
+including source preparation, geometry, void queries and label output. Pool creation errors return
+`InvalidConfig` before any input/output work. The private runner retains the sequential RNG and
+volume accumulation and records `rayon::current_num_threads()` from the executing pool.
+`runtime.threads` therefore measures the active pool rather than echoing a requested setting.
+Explicit positive counts are honored; nonpositive values use available parallelism. This fixes the
+resource contract; parallelizing the acceptance loop is separate work.
+
+`with_placement_pool<T: Send>(threads: i32, work: impl FnOnce() -> Result<T> + Send) -> Result<T>`
+is the private execution wrapper. It starts/joins the workers and returns the operation result;
+its unit test observes pool size and worker indices inside nested `par_iter` work at 1/2/8 workers.
+
+### Label preparation (PERF-12)
+
+`voxel_labels` prepares immutable per-particle mesh queries and a bounded spatial grid once. Parallel 1024-voxel tiles query their enclosing box once, sort candidate slice indices, and preserve original particle ownership order and void-first classification. Worker scratch retains ray hits. `particle_at_prepared` returns the first acceptance id and bbox-test count, reduced without shared atomics. The test-only original particle scan is the differential oracle. Output phase/id arrays and file schema are unchanged; full-array allocation and streaming I/O remain pending.
+
+Shape library input now uses `load_stl_hashed` so geometry and source digest come from one byte stream. Binary raw-file buffering is bounded; ASCII retains the legacy text parser. Source/shell order and digests are unchanged.

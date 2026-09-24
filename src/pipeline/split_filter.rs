@@ -1,3 +1,4 @@
+use rayon::prelude::*;
 use crate::config::{SplitFilterConfig, SplitFilterVolume};
 use crate::error::{Result, RustMsptError};
 use crate::geometry::{mesh_bbox, mesh_surface_area, mesh_volume, split_mesh_into_granules};
@@ -300,6 +301,32 @@ fn apply_lognormal_rebalance(
     }
 }
 
+// AI-FUNC-SUMMARY: Cache each component's original-order geometry reductions without changing component order.
+struct ParticleMetrics {
+    volume: f64,
+    aspect: Option<f64>,
+    area: Option<f64>,
+}
+
+// AI-FUNC-SUMMARY: Compute requested metrics per component; omit area for components rejected by the cheaper aspect/volume gates.
+fn prepare_particle_metrics(particles: &[Mesh], max_aspect: Option<f64>, need_area: bool) -> Vec<ParticleMetrics> {
+    let compute = |mesh: &Mesh| {
+        let volume = mesh_volume(mesh);
+        let aspect = max_aspect.and_then(|_| mesh_bbox(mesh)).map(|bbox| {
+            let s = bbox.size();
+            s.x.max(s.y).max(s.z) / s.x.min(s.y).min(s.z).max(1e-12)
+        });
+        let rejected = aspect.zip(max_aspect).is_some_and(|(value, limit)| value > limit);
+        let area = (need_area && !rejected && !(volume <= 1e-12)).then(|| mesh_surface_area(mesh));
+        ParticleMetrics { volume, aspect, area }
+    };
+    if particles.len() < 32 {
+        particles.iter().map(compute).collect()
+    } else {
+        particles.par_iter().map(compute).collect()
+    }
+}
+
 impl Pipeline for SplitFilterPipeline {
     // AI-FUNC-SUMMARY:
     // Purpose: Run the split-filter pipeline: load STL, split into connected components, apply geometric filters, save kept particles, and write report.
@@ -308,6 +335,18 @@ impl Pipeline for SplitFilterPipeline {
     // Side effects: Reads STL from disk; writes filtered STL files and report to disk; prints summary to stdout.
     // Notes: Applies filters in order: max_aspect_ratio, max_sharpness_ratio, then volume filter (range or lognormal_rebalance).
     fn run(&self) -> Result<()> {
+        let available = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        let requested = self.config.cpu_max.unwrap_or(-1);
+        let workers = if requested == -1 { available } else { (requested.max(1) as usize).min(available) };
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(workers).build()
+            .map_err(|e| RustMsptError::InvalidConfig(format!("split-filter worker pool: {e}")))?;
+        pool.install(|| self.run_in_pool())
+    }
+}
+
+impl SplitFilterPipeline {
+    // AI-FUNC-SUMMARY: Run split, ordered metric preparation, serial filtering/RNG and output inside one configured pool.
+    fn run_in_pool(&self) -> Result<()> {
         let input = Path::new(&self.config.input.path);
         let output_folder = Path::new(&self.config.output.folder);
         let prefix = self.config.output.prefix.trim();
@@ -349,8 +388,10 @@ impl Pipeline for SplitFilterPipeline {
         }
 
         let mut keep = vec![true; particles.len()];
-        let volumes: Vec<f64> = particles.iter().map(mesh_volume).collect();
-        let before_volumes = volumes.clone();
+        let active_filter = self.config.filter.as_ref().filter(|filter| filter.enabled.unwrap_or(true));
+        let metrics = prepare_particle_metrics(&particles, active_filter.and_then(|f| f.max_aspect_ratio), active_filter.is_some_and(|f| f.max_sharpness_ratio.is_some()));
+        let volumes: Vec<f64> = metrics.iter().map(|m| m.volume).collect();
+        let before_volumes = &volumes;
         let mut report_lines: Vec<String> = Vec::new();
         report_lines.push("Method: split_filter".to_string());
         report_lines.push(format!("Input path: {}", input.display()));
@@ -366,18 +407,9 @@ impl Pipeline for SplitFilterPipeline {
         if let Some(filter) = &self.config.filter {
             if filter.enabled.unwrap_or(true) {
                 if let Some(max_ar) = filter.max_aspect_ratio {
-                    for (i, mesh) in particles.iter().enumerate() {
-                        if !keep[i] {
-                            continue;
-                        }
-                        if let Some(bbox) = mesh_bbox(mesh) {
-                            let s = bbox.size();
-                            let min_extent = s.x.min(s.y).min(s.z).max(1e-12);
-                            let max_extent = s.x.max(s.y).max(s.z);
-                            let aspect_ratio = max_extent / min_extent;
-                            if aspect_ratio > max_ar {
-                                keep[i] = false;
-                            }
+                    for (i, metric) in metrics.iter().enumerate() {
+                        if keep[i] && metric.aspect.is_some_and(|aspect| aspect > max_ar) {
+                            keep[i] = false;
                         }
                     }
                     let after = count_kept(&keep);
@@ -393,7 +425,7 @@ impl Pipeline for SplitFilterPipeline {
                 }
 
                 if let Some(max_sharp) = filter.max_sharpness_ratio {
-                    for (i, mesh) in particles.iter().enumerate() {
+                    for (i, metric) in metrics.iter().enumerate() {
                         if !keep[i] {
                             continue;
                         }
@@ -402,7 +434,7 @@ impl Pipeline for SplitFilterPipeline {
                             keep[i] = false;
                             continue;
                         }
-                        let area = mesh_surface_area(mesh);
+                        let area = metric.area.expect("area prepared for surviving sharpness candidate");
                         let sharpness = (area.powi(3)) / (36.0 * PI * volume.powi(2));
                         if sharpness > max_sharp {
                             keep[i] = false;
@@ -488,10 +520,14 @@ impl Pipeline for SplitFilterPipeline {
 
         fs::create_dir_all(output_folder)?;
 
-        for (rank, &idx) in kept_indices.iter().enumerate() {
-            let file_name = format!("{}{num}.stl", prefix, num = rank + 1);
-            let out_path = output_folder.join(file_name);
-            save_stl(&out_path, &particles[idx], "split_filter_particle")?;
+        // Keep at most two STL writers active; consume errors in stable output-rank order.
+        for (batch, indices) in kept_indices.chunks(2).enumerate() {
+            let results: Vec<Result<()>> = indices.par_iter().enumerate().map(|(offset, &idx)| {
+                let rank = batch * 2 + offset;
+                let out_path = output_folder.join(format!("{}{num}.stl", prefix, num = rank + 1));
+                save_stl(&out_path, &particles[idx], "split_filter_particle")
+            }).collect();
+            for result in results { result?; }
         }
 
         report_lines.push("".to_string());
@@ -521,7 +557,7 @@ impl Pipeline for SplitFilterPipeline {
         append_volume_histogram_comparison(
             &mut report_lines,
             "Volume histogram comparison (before vs after, 10 bins):",
-            &before_volumes,
+            before_volumes,
             &kept_volumes,
             10,
         );
@@ -543,4 +579,76 @@ impl Pipeline for SplitFilterPipeline {
 
         Ok(())
     }
+}
+
+
+#[cfg(test)]
+mod metric_tests {
+    use super::*;
+    use crate::geometry::box_mesh;
+    use crate::types::{BoundingBox, Vec3};
+
+    // AI-FUNC-SUMMARY: Check ordered cached metrics against serial geometry reductions across task counts and cheap rejections.
+    #[test]
+    fn cached_metrics_preserve_serial_values_and_order() {
+        let particles: Vec<_> = (0..67).map(|i| box_mesh(BoundingBox {
+            min: Vec3::new(i as f64 * 20.0, 0.0, 0.0),
+            max: Vec3::new(i as f64 * 20.0 + 1.0 + (i%5) as f64, 2.0, 3.0),
+        })).collect();
+        for count in [1, 31, 32, 67] {
+            for workers in [1, 2, 8] {
+                let pool = rayon::ThreadPoolBuilder::new().num_threads(workers).build().unwrap();
+                for max_aspect in [None, Some(2.0), Some(100.0)] {
+                    for need_area in [false, true] {
+                        let metrics = pool.install(|| prepare_particle_metrics(&particles[..count], max_aspect, need_area));
+                        for (mesh, metric) in particles.iter().zip(metrics) {
+                            assert_eq!(metric.volume.to_bits(), mesh_volume(mesh).to_bits());
+                            let bbox = mesh_bbox(mesh).unwrap().size();
+                            let aspect = bbox.x.max(bbox.y).max(bbox.z) / bbox.x.min(bbox.y).min(bbox.z).max(1e-12);
+                            assert_eq!(metric.aspect, max_aspect.map(|_| aspect));
+                            let expected = (need_area && !max_aspect.is_some_and(|limit| aspect > limit)).then(|| mesh_surface_area(mesh));
+                            assert_eq!(metric.area, expected);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // AI-FUNC-SUMMARY: Record serial-versus-prepared metric timings for tiny components and one large component, checking exact values.
+    #[test]
+    #[ignore = "release performance measurement"]
+    fn component_metrics_benchmark() {
+        use std::time::Instant;
+        for (label, particles) in [
+            ("many_small", (0..8192).map(|i| box_mesh(BoundingBox {
+                min: Vec3::new(i as f64 * 10.0, 0.0, 0.0),
+                max: Vec3::new(i as f64 * 10.0 + 1.0, 2.0, 3.0),
+            })).collect::<Vec<_>>()),
+            ("one_large", vec![crate::geometry::icosphere_mesh(Vec3::new(0.0, 0.0, 0.0), 1.0, 6)]),
+        ] {
+            for workers in [1, 2, 8] {
+                let pool = rayon::ThreadPoolBuilder::new().num_threads(workers).build().unwrap();
+                for repeat in 0..6 {
+                    pool.install(|| {
+                        let start = Instant::now();
+                        let expected: Vec<_> = particles.iter().map(|mesh| {
+                            let volume = mesh_volume(mesh);
+                            let size = mesh_bbox(mesh).unwrap().size();
+                            let aspect = size.x.max(size.y).max(size.z) / size.x.min(size.y).min(size.z).max(1e-12);
+                            (volume, aspect, mesh_surface_area(mesh))
+                        }).collect();
+                        let serial = start.elapsed().as_secs_f64();
+                        let start = Instant::now();
+                        let actual = prepare_particle_metrics(&particles, Some(100.0), true);
+                        let prepared = start.elapsed().as_secs_f64();
+                        for (a, b) in actual.iter().zip(expected) {
+                            assert_eq!((a.volume, a.aspect.unwrap(), a.area.unwrap()), b);
+                        }
+                        println!("split_metrics case={label} workers={workers} repeat={repeat} serial_seconds={serial:.9} prepared_seconds={prepared:.9}");
+                    });
+                }
+            }
+        }
+    }
+
 }

@@ -8,21 +8,23 @@
 
 | 条目 | 位置 | 摘要 |
 |---|---|---|
+| `RenderPipeline::run_in_pool` | `src/pipeline/render.rs:59` | Execute render stages and fallback within the configured pool. |
 | `Pipeline::run`（trait） | `src/pipeline/mod.rs:17` | 每个流水线结构体实现的 trait 方法，用于端到端执行。 |
-| `create_progress_bar` | `src/pipeline/mod.rs:25` | 使用给定模板和填充字符构建一个能感知 tty 的 indicatif 进度条。 |
+| `create_progress_bar` | `src/pipeline/mod.rs:37` | 使用给定模板和填充字符构建一个能感知 tty 的 indicatif 进度条。 |
 | `RotationMode`（枚举） | `src/pipeline/rotation.rs:6` | 表示不旋转、固定轴旋转或随机轴旋转。 |
 | `parse_rotation_mode` | `src/pipeline/rotation.rs:18` | 将 `none/x/y/z/vector/any` 配置字符串解析为 `RotationMode`。 |
 | `sample_rotation_axis` | `src/pipeline/rotation.rs:57` | 为给定的 `RotationMode` 抽取一个具体的旋转轴向量。 |
 | `ScalePipeline`（结构体） | `src/pipeline/scale.rs:8` | 持有缩放流水线所需的 `ScaleConfig`。 |
 | `ScalePipeline::run` | `src/pipeline/scale.rs:19` | 加载 STL，应用单位换算/系数缩放，可选修正朝向，保存输出。 |
-| `ForgePipeline`（结构体） | `src/pipeline/forge.rs:13` | 持有 FFD 锻造流水线所需的 `ForgingConfig`。 |
-| `ForgePipeline::parse_roi_bbox` | `src/pipeline/forge.rs:19` | 从配置中解析可选的 6 元素 ROI 包围盒。 |
-| `ForgePipeline::parse_compression_axis` | `src/pipeline/forge.rs:38` | 将压缩轴字符串（`x`/`y`/`z`）解析为索引和标签。 |
+| `ForgePipeline`（结构体） | `src/pipeline/forge.rs:12` | 持有 FFD 锻造流水线所需的 `ForgingConfig`。 |
+| `ForgePipeline::parse_roi_bbox` | `src/pipeline/forge.rs:18` | 从配置中解析可选的 6 元素 ROI 包围盒。 |
+| `ForgePipeline::parse_compression_axis` | `src/pipeline/forge.rs:37` | 将压缩轴字符串（`x`/`y`/`z`）解析为索引和标签。 |
 | `ForgePipeline::run` | `src/pipeline/forge.rs:58` | 执行基于 FFD 的压缩/锻造，跟踪 ROI，写出锻造后的 STL 及文本报告。 |
-| `MeasurePipeline`（结构体） | `src/pipeline/measure.rs:16` | 持有 S2/体积分数测量流水线所需的 `MeasurementConfig`。 |
-| `MeasurePipeline::parse_optional_bbox` | `src/pipeline/measure.rs:22` | 从配置中解析可选的包围盒（3 元素尺寸或 6 元素最小/最大值）。 |
-| `MeasurePipeline::l2_error` | `src/pipeline/measure.rs:31` | 计算两个 S2 值向量在其公共前缀长度上的 L2 距离。 |
+| `MeasurePipeline`（结构体） | `src/pipeline/measure.rs:12` | 持有 S2/体积分数测量流水线所需的 `MeasurementConfig`。 |
+| `MeasurePipeline::parse_optional_bbox` | `src/pipeline/measure.rs:18` | 从配置中解析可选的包围盒（3 元素尺寸或 6 元素最小/最大值）。 |
+| `MeasurePipeline::l2_error` | `src/pipeline/measure.rs:27` | 计算两个 S2 值向量在其公共前缀长度上的 L2 距离。 |
 | `MeasurePipeline::run` | `src/pipeline/measure.rs:53` | 加载 STL，计算体积分数与 S2 相关性（精确/MC/两者兼有，CPU 或 GPU），写出报告。 |
+| `MeasurePipeline::run_in_pool` | `src/pipeline/measure.rs:83` | Method-specific measurement in configured pool. |
 
 ---
 
@@ -42,7 +44,7 @@
 #### create_progress_bar
 
 - **签名：** `pub fn create_progress_bar(length: u64, template: &str, chars: &str) -> ProgressBar`
-- **源码位置：** `src/pipeline/mod.rs:25`
+- **源码位置：** `src/pipeline/mod.rs:37`
 - **用途：** 构建一个标准化的 `indicatif` 进度条，当输出不是交互式终端时自动隐藏。
 - **参数：**
   - `length` —— 进度条代表的总步数/单位数。
@@ -116,13 +118,13 @@
 
 #### ForgePipeline (struct)
 
-- **源码位置：** `src/pipeline/forge.rs:13`
+- **源码位置：** `src/pipeline/forge.rs:12`
 - **字段：** `config: ForgingConfig` —— 锻造参数（输入/输出路径、压缩比/压缩轴、膨胀系数、ROI 包围盒、网格类型、孔隙致密化、朝向标志）。
 
 #### ForgePipeline::parse_roi_bbox
 
 - **签名：** `fn parse_roi_bbox(values: &Option<Vec<f64>>) -> Option<BoundingBox>`
-- **源码位置：** `src/pipeline/forge.rs:19`
+- **源码位置：** `src/pipeline/forge.rs:18`
 - **用途：** 从配置中解析可选的 6 元素 `[min_x, min_y, min_z, max_x, max_y, max_z]` 感兴趣区域（ROI）包围盒。
 - **参数：** `values` —— 来自 `config.forging.roi_bounding_box` 的 `Option<Vec<f64>>`。
 - **返回值：** 若向量恰好包含 6 个元素则返回 `Some(BoundingBox)`；否则返回 `None`（配置缺失或长度不对——长度不对的情形被静默视为"无 ROI"而非报错）。
@@ -131,7 +133,7 @@
 #### ForgePipeline::parse_compression_axis
 
 - **签名：** `fn parse_compression_axis(axis: Option<&str>) -> Result<(usize, &'static str)>`
-- **源码位置：** `src/pipeline/forge.rs:38`
+- **源码位置：** `src/pipeline/forge.rs:37`
 - **用途：** 将配置中的压缩轴字符串解析为数值型网格轴索引及显示标签。
 - **参数：** `axis` —— 可选字符串，为 `None` 时默认 `"z"`；匹配时先去除首尾空白再不区分大小写比较。
 - **返回值：** `Ok((0, "x"))`、`Ok((1, "y"))` 或 `Ok((2, "z"))`。
@@ -163,13 +165,13 @@
 
 #### MeasurePipeline (struct)
 
-- **源码位置：** `src/pipeline/measure.rs:16`
+- **源码位置：** `src/pipeline/measure.rs:12`
 - **字段：** `config: MeasurementConfig` —— 测量参数（STL 路径、包围盒、S2 方法/采样数/间距、加速策略、输出路径、CPU 上限）。
 
 #### MeasurePipeline::parse_optional_bbox
 
 - **签名：** `fn parse_optional_bbox(values: &Option<Vec<f64>>) -> Result<Option<BoundingBox>>`
-- **源码位置：** `src/pipeline/measure.rs:22`
+- **源码位置：** `src/pipeline/measure.rs:18`
 - **用途：** 从配置中解析可选的包围盒，接受 3 元素尺寸向量或 6 元素最小/最大值向量（具体形状相关的解析工作委托给 `config::parse_box_dimensions`）。
 - **参数：** `values` —— `Option<Vec<f64>>`。
 - **返回值：** 若 `values` 为 `None` 或空向量，则为 `Ok(None)`；否则为来自 `parse_box_dimensions` 的 `Ok(Some(BoundingBox))`，若该解析失败则为传播的 `Err`。
@@ -178,31 +180,25 @@
 #### MeasurePipeline::l2_error
 
 - **签名：** `fn l2_error(a: &[f64], b: &[f64]) -> f64`
-- **源码位置：** `src/pipeline/measure.rs:31`
+- **源码位置：** `src/pipeline/measure.rs:27`
 - **用途：** 计算两个 S2 相关性数值向量之间的 L2（欧几里得）距离，用于在 `method = "both"` 时比较 "exact" 与 "monte_carlo" 结果。
 - **参数：** `a`、`b` —— S2 数值切片，长度可能不同。
 - **返回值：** 在 `i` 取遍 `0..min(a.len(), b.len())` 时，`sqrt(sum((a[i]-b[i])^2))`；若任一切片为空则为 `0.0`。
 - **副作用：** 无。
 - **说明：** 该函数重复了 `geometry::l2_norm` 的核心逻辑（在共享长度前缀上求平方差之和再开方）。它被保留为一个私有的、流水线本地的辅助函数，而不是复用 geometry 模块中的函数——目前二者之间不存在共享代码路径，若任一方发生改动，需要手动保持二者同步。
 
-#### MeasurePipeline::run
+#### MeasurePipeline::run / run_in_pool
 
-- **签名：** `fn run(&self) -> Result<()>`
-- **源码位置：** `src/pipeline/measure.rs:53`
-- **用途：** 执行 S2 两点相关函数与体积分数测量流水线：加载网格，确定包围盒，选择计算后端（CPU/GPU），按所请求的方法计算 S2，并写出报告。
-- **参数：** `&self` —— 读取 `self.config.measurement.*`：`cpu_max`、`stl_path`、`bounding_box`、`stl_bounding_box`、`mc_method`（`"exact"` / `"both"` / 其他任意值均视为 `"monte_carlo"`）、`r_max`、`mc_samples`（默认 `10_000`）、`voxel_pitch`、`acceleration`（模式、`gpu_min_voxels`、`gpu_memory_limit_mb`）、`output_path`。
-- **返回值：** 成功时为 `Ok(())`，或传播的错误（例如线程池构建失败被包装为 `InvalidConfig`、I/O 错误）。
-- **副作用：**
-  - 根据 `cpu_max`（若 `cpu_max == -1` 则使用全部可用核心）构建一个专用的 Rayon 线程池。
-  - 读取输入 STL（或合并后的文件夹）。
-  - 在确定的包围盒范围内计算颗粒数量（`split_mesh_into_granules`）与体积分数（`volume_fraction_in_bbox`）。
-  - 通过 `select_backend(accel.mode, Some(accel.gpu_min_voxels), accel.gpu_memory_limit_mb, voxel_count)` 确定计算后端，其中 `voxel_count` 由包围盒尺寸除以 `voxel_pitch` 得出（`voxel_pitch` 若 `<= 0.0` 则钳制为 `1.0`）。
-  - 当启用 `gpu` 特性且选定后端为 GPU 时，初始化 `crate::gpu::s2::GpuS2Pipeline`；若初始化失败，则记录警告并静默回退到 CPU。
-  - 根据方法与后端的组合，运行 `calculate_s2`（CPU，在自定义线程池内）或 `calculate_s2_with_gpu`/`calculate_s2_gpu_exact`（GPU，特性门控）。
-  - 向 `params.output_path` 写出文本报告（按需创建父目录），内容包括体积分数、计算后端、方法、S2(0) 与体积分数之差，以及完整的 S2 数值序列（对于 `"both"`，还包括精确解与蒙特卡洛序列之间的 L2 误差）。
-  - 在整个过程中向 stdout 打印大量 `[Info]`/`[Warning]` 诊断信息（线程池大小、包围盒、S2 配置、后端选择/回退、各方法摘要、最终输出路径）。
-- **说明：**
-  - 包围盒确定的优先级顺序：显式的 `bounding_box` > `stl_bounding_box` > 从网格推导的包围盒（`mesh_bbox`） > 单位立方体兜底值（`BoundingBox::from_size(Vec3::new(1,1,1))`）。
-  - 当体素网格超过 `exact_voxel_limit = 1_500_000` 个体素时，`method = "exact"`（无论是单独使用还是作为 `"both"` 的一部分）会自动降级为 `"monte_carlo"`，并打印一条 `[Warning]`；对于 `"both"`，这意味着只运行蒙特卡洛分支，报告中会注明"(exact skipped by voxel limit)"。
-  - 当 crate 编译时未启用 `gpu` 特性时，GPU 相关代码路径完全不存在（`#[cfg(not(feature = "gpu"))]` 分支无条件使用 CPU 线程池）；若请求了 GPU 加速但该特性未被编译进来，则会打印运行时警告。
-- **另请参阅：** [../algorithms/s2-two-point-correlation.md](../algorithms/s2-two-point-correlation.md)、[gpu.md](gpu.md)
+`run() -> Result<()>` 将整次测量安装在配置的 Rayon 池内，包括读取、准备和 GPU 失败后的 CPU 回退。`run_in_pool() -> Result<()>` 一次解析 `RUSTMSPT_ACCELERATION`，检查有限 pitch/尺寸，并对 exact/MC/both 分别选择后端。正 pitch MC 保持 voxel MC，不调用连续 GPU 内核；只为请求的方法分配管线。GPU 错误遵守 `cpu_fallback`，报告记录各方法回退后的实际后端，全部方法成功才写输出。当前 1,500,000 体素的 exact 保护上限改为明确报错，不再替换为 MC；成本/内存模型替代此上限属于 PERF-07。worker 数和索引在运行池内观察。
+
+
+### Owned CPU transforms (PERF-16)
+
+`forge_owned(mesh, lattice_bbox, track_bbox, compression_ratio, compression_axis, bulge_factor, mesh_type, void_densification)` consumes the mesh and applies the existing tracked FFD mapping. The public borrowed wrapper clones once and delegates. ForgePipeline moves its input into this entry, retains the already computed input bbox, removes unused whole-mesh volume scans, and moves the output when orientation is disabled. ScalePipeline likewise moves its transformed mesh when orientation is disabled. Both log transform-only seconds separately from I/O.
+
+`map_vertices` keeps small slices serial and maps disjoint 8192-vertex blocks on the current Rayon pool only with multiple workers and at least max(131072, workers * 65536) vertices. Scale, translate and both FFD variants use it. Each vertex retains its arithmetic order; void centroid is still accumulated serially after the affine pass. ROI remains unaffected by void closure. Clipped ROI VF and output bbox are still measured from actual geometry; no determinant approximation is substituted.
+
+
+### Render execution policy
+
+`RenderPipeline::run` installs the whole pipeline in the configured worker pool. `run_in_pool` loads geometry, resolves the environment override and method budget, renders and writes only after success. Both selection and runtime failures honor `cpu_fallback`. GPU work estimates include vertices, color/depth, aligned staging and uniforms. Actual CPU fallback executes in the same pool.

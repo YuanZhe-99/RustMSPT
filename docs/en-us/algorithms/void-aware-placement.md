@@ -352,3 +352,13 @@ only through the plan's own rounding.
   star-shaped-cap limitation and its nested-ring behaviour.
 - [packing-target-diameter-distribution.md](packing-target-diameter-distribution.md) — the original
   engine's histogram steering, which is a different design for a different problem.
+
+### CPU worker budget (PERF-02)
+
+Each `run_placement` call installs the entire run in a dedicated Rayon pool. This includes
+voxel label generation and any nested parallel geometry calls. The report reads the active worker
+count inside that pool. RNG consumption, acceptance order and floating-point accumulation remain
+sequential. Regression tests compare records, STL, CSV, phase/particle-id TIFFs and voxel headers
+byte for byte at 1, 2 and 8 workers.
+
+Label generation now uses 1024-voxel tiles, sorted spatial candidates and cached per-particle parity queries. It preserves void precedence and first-particle ownership; full phase/id arrays are still resident.

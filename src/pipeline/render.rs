@@ -1,4 +1,4 @@
-use crate::compute::policy::select_backend_for_workload;
+use crate::compute::policy::{configured_mode, resolve_execution};
 use crate::config::RenderConfig;
 use crate::error::Result;
 use crate::geometry::{
@@ -50,6 +50,15 @@ impl Pipeline for RenderPipeline {
             cpu_max, thread_count, available_cores
         );
 
+        thread_pool.install(|| self.run_in_pool())
+    }
+}
+
+impl RenderPipeline {
+    // AI-FUNC-SUMMARY: Load, select, render and save inside the configured pool, enforcing fallback policy.
+    fn run_in_pool(&self) -> Result<()> {
+        let params = &self.config.render;
+        let requested = configured_mode(&params.acceleration)?;
         let mesh = load_stl_or_merge_folder(Path::new(&params.stl_path))?;
         println!(
             "[Info] STL file(s) loaded from: {} ({} vertices, {} faces)",
@@ -87,18 +96,37 @@ impl Pipeline for RenderPipeline {
             params.width, params.height
         );
 
-        let pixel_count = params.width.saturating_mul(params.height);
+        let pixel_count = params.width.checked_mul(params.height).ok_or_else(|| {
+            crate::error::RustMsptError::InvalidConfig("render pixel count overflows".into())
+        })?;
         let accel = &params.acceleration;
-        let selection = select_backend_for_workload(
-            accel.mode,
-            Some(accel.gpu_min_pixels),
-            accel.gpu_memory_limit_mb,
+        // Three 24-byte vertices per face, two 4-byte textures, padded readback and uniforms.
+        let estimated_bytes = (|| {
+            let vertices = u64::try_from(mesh.faces.len()).ok()?.checked_mul(72)?;
+            let pixels = u64::try_from(pixel_count).ok()?.checked_mul(8)?;
+            let row = u64::try_from(params.width)
+                .ok()?
+                .checked_mul(4)?
+                .checked_add(255)?
+                / 256
+                * 256;
+            let staging = row.checked_mul(u64::try_from(params.height).ok()?)?;
+            vertices
+                .checked_add(pixels)?
+                .checked_add(staging)?
+                .checked_add(128)
+        })();
+        let selection = resolve_execution(
+            accel,
+            requested,
             pixel_count,
-            "pixels",
-        );
+            accel.gpu_min_pixels,
+            true,
+            estimated_bytes,
+        )?;
         println!(
             "[Info] Acceleration: requested={}, effective={}",
-            accel.mode, selection.backend
+            requested, selection.backend
         );
         if let Some(ref fb) = selection.fallback {
             println!("[Info] Acceleration fallback: {}", fb.reason);
@@ -117,6 +145,9 @@ impl Pipeline for RenderPipeline {
                     println!("[Info] Rendered with GPU backend (wgpu offscreen rasterization)");
                     gpu_image = Some(image);
                 }
+                Err(e) if !accel.cpu_fallback => {
+                    return Err(crate::error::RustMsptError::Gpu(format!("render: {e}")))
+                }
                 Err(e) => {
                     println!("[Warning] GPU render failed: {e}, falling back to CPU");
                 }
@@ -127,12 +158,15 @@ impl Pipeline for RenderPipeline {
             Some(image) => image,
             None => {
                 println!("[Info] Rendering with CPU backend (ray casting)");
-                thread_pool.install(|| {
-                    render_mesh_cpu(&mesh, &camera, params.width, params.height, &settings)
-                })
+                render_mesh_cpu(&mesh, &camera, params.width, params.height, &settings)
             }
         };
 
+        println!(
+            "[Info] Render execution: workers={}, worker_index={:?}",
+            rayon::current_num_threads(),
+            rayon::current_thread_index()
+        );
         save_image(Path::new(&params.output_path), &image)?;
         println!(
             "[Info] Rendered image ({}x{}) saved to: {}",

@@ -187,3 +187,65 @@ Metropolis 准则接受或拒绝扰动。
   `measure` 流水线中计算并报告 S2 诊断量的位置。
 - [pipeline-optimize.md#run_sa_island](../reference/pipeline-optimize.md#run_sa_island) ——
   S2 的 L2 损失驱动模拟退火接受准则的位置。
+
+## Optimize execution (PERF-01/02)
+
+optimizer 通过 `OptimizeS2` 一次解析 S2 定义。正 pitch 的 MC 始终是体素 MC，exact 始终是体素 exact，
+只有非正 pitch 的非 exact 请求才可使用连续 GPU MC。目标、剪枝、初始/候选/迁移状态和最终复核共享同一方法。
+连续方法使用几何 VF，体素方法使用占据率 VF。选中 GPU 时整次运行共享一个 MC 实例。
+此处未改变 measure 或上述共享 GPU 封装，其独立的正确性和资源工作仍待处理。
+
+### GPU 参数布局与 shell 边界（2026-09-13）
+
+Voxel 参数共 48 字节，射线方向从字节 32 开始。MC 和 voxel 三角形上传均先在 f64
+中减去 bbox 原点，再转为 f32，保留大平移下的局部几何。Shell 计数在无符号运算前
+排除域外偏移，每批最多处理 200,000 项；跨批次按有效偏移的 hits/valid 等权平均。
+空列表只保留传入的 VF。这些修复尚未解决 64-hit 射线限制、MC 半径限制、通用工作集
+规划和运行时错误回退，见 `PLAN.Performance.md` §12。
+
+### 射线溢出恢复（2026-09-13）
+
+MC 和 voxel shader 在正向三角形原始命中超过 64 次时，不再静默截断，而是逐轮完整扫描，
+选择下一个不同交点，按原 GPU 的锚定 `1e-6` 容差去重并统计奇偶性。普通射线仍走原排序数组
+路径，MC 样本不丢弃、不重抽。恢复仅需常数额外空间，但成本可达 O(三角形数×不同命中数)，
+复杂场景可能较慢。CPU/GPU 数值一致性和设备/读回错误仍待解决，验证见 `PLAN.Performance.md` §13。
+
+MC 执行现返回容量/读回/设备错误；旧 GPU 包装函数回退到连续 CPU mesh MC，optimize 则遵守显式回退策略。Voxel/shell 的运行时传播仍待办，见 GPU 函数文档及 `PLAN.Performance.md` §14。
+
+Measure 现区分正 pitch voxel MC 与连续 mesh MC，CPU 回退在配置池内执行并记录各方法实际后端。可失败的 GPU exact 入口将非正 pitch 规范为 1.0，传播 voxel/shell 执行错误，不静默改用近似方法。
+
+### CPU preparation and sample blocks
+
+CPU mesh MC and voxelization now cache geometry queries through `PreparedMeshQuery`, preserving the full-scan parity predicate and hit tolerance. MC distributes fixed 2048-sample blocks across workers; a supplied base seed gives identical integer hit/valid reductions across worker counts. The ordinary entry draws a new base seed per evaluation. Measure reuses one lazy CPU `VoxelS2` occupancy for exact and positive-pitch MC, including GPU fallback, avoiding repeated splitting and containment. GPU occupancy sharing remains separate pending work.
+
+### Reusable exact FFT storage
+
+CPU exact FFT now reuses forward/inverse axis plans, complex grid and transpose storage for repeated same-dimension evaluations on a calling thread. It fills and normalizes under the current pool, reads shell counts directly from the complex correlation grid, and releases oversized workspaces after use. Retention is capped at 16 MiB of arrays per thread and padded axes <=4096; opaque FFT plan memory is additional. Nested evaluations take separate owned workspaces without holding a thread-local borrow. This does not replace the pending complete memory/cost planner or change 2N-1 padding.
+
+### GPU MC 工作组整数归约
+
+生产 MC shader 每个 256-lane 工作组对应一个（半径，样本块）。有效 lane 仍用 radius×samples_per_radius+sample 作为 RNG 逻辑编号；尾部填充 lane 贡献零。工作组以整数归约输出一对 hit/valid 部分和，CPU 用 u64 合并并沿用原比值；回读字节变为 8×(r_max+1)×ceil(max(samples,200)/256)。半径填充不会混合计数或重抽样本。dispatch_plan 分别检查逻辑编号溢出、补齐后的组数和部分和缓冲容量；mc_evaluation_peak 同步采用部分和容量，仍计入保留/上传/增长峰值。
+
+私有 calculate_s2_gpu_counts 固定 seed 返回整数总数；公开 API 仍抽取一个新随机 seed 并返回曲线。tests/fixtures/s2_monte_carlo_samples.wgsl 冻结归约前 shader，仅供相同 seed 的逐项计数对照，覆盖尾块、128 半径、几何更新。BVH、GPU 半径最终归约和按预算拆样本仍待独立实施；这里未证明 CPU/GPU f64 等价或真实硬件加速。
+
+MC 工作组现沿两个 dispatch 维度展开，以 group.x + group.y × num_workgroups.x 得到块编号。统一分支在 barrier 和写出前排除填充组，即使保留缓冲容量大于本次有效结果也不写入尾部。planner 返回样本数、部分和数量及 [x,y] 调度形状；逻辑样本编号仍受 u32 限制。Optimize 启动检查已移除旧单维调用上限。强制 3×3/4×2 的实测整数计数与冻结逐样本 shader 一致，额外容量哨兵验证尾部未被写入。65,536 组的大任务仅验证规划结果，不代表大任务 GPU 实测。
+
+GPU shell 在排除超出任意轴的位移后，以 (nx−|dx|)×(ny−|dy|)×(nz−|dz|) 直接计算合法配对数。主机已检查完整网格乘积不超过 u32，因此重叠子体积乘积不会溢出。命中数仍遍历占据对，CPU 仍对完整偏移比值等权平均；体素分块和设备常驻 occupancy 仍待完成。独立原始计数 oracle 用有符号坐标穷举小网格全部偏移，覆盖薄网格、空/满/混合占据及 i32 极端位移。此算术修改本身不构成已测得的提速结论。
+
+实验 shader s2_shell_cooperative.wgsl 每个偏移分配一个 256-lane 工作组，lane 跨步遍历重叠体积并在共享内存归约整数 hit，valid 保持解析计算。二维工作组展平后在 barrier 前统一拒绝填充组。每个偏移仍输出一对计数，因此尚不是独立调度的多个体素 tile，也未实现 voxel→shell 设备常驻数据流。生产仍选择 direct shader，等待工作量基准决定。new_with_shader(source, offsets_per_workgroup) 将 shader 索引与调度宽度配对：direct 为 256，cooperative 为 1。
+
+实验 tiled shader 按（offset，voxel tile）分派工作组，支持正整数块大小。块内整数归约 hit 并输出该块解析 valid 数；空块输出零。主机用 u64 合并同一 offset 全部块的计数，再形成完整偏移比值。每批至多 200000 个部分结果槽，因此块数增加时减少每批 offset 数；单偏移超过 200000 块时明确报容量错误。此固定上限尚不是完整用户预算规划。参数缓冲为 24 字节（offset 数、三轴维度、每偏移块数、块大小），旧 direct shader 读取前 16 字节。生产继续使用 direct，tiled 路径仍在验证和测量。
+
+实验 tiled 路径可启用第二次设备端计算 s2_shell_reduce.wgsl，将每个 offset 的 tile hit/valid 合并为一对整数。每个偏移的总计数不超过已检查的完整网格大小，因此 u32 合并不溢出；CPU 仍按原定义平均完整偏移比值。归约 pipeline 和最终缓冲延迟构造并复用，显式 batch release 缩小最终缓冲但保留已编译归约器。回读恢复为每偏移 8 字节，与 tile 数无关；中间 tile 缓冲及额外 dispatch 仍存在。此选项仍为实验路径，不代表生产选择或已证明提速。
+
+生产 shell 求值在上传前过滤位移绝对值达到任意轴维度的 offset，以 unsigned_abs 安全处理 isize::MIN。过滤保持输入顺序，复用有界主机批次，不额外保存完整 offset 列表。全部 offset 无支持时直接返回原 VF/零曲线，不上传 occupancy 或分配结果缓冲。测试参考构造器可关闭过滤，继续验证 shader 对无效位移的保护。完整偏移比值及等权平均不变；此过滤尚未移除有效偏移内部的空 tile。
+
+GPU exact 现将 shell 构造在 voxel 的同一 Device/Queue 上，直接绑定其 occupancy 缓冲。shell 不再选择适配器或申请第二个设备，也不再为占据场分配和上传副本。两阶段顺序运行，各自配对错误作用域。Voxel 现于设备端计数，仅为 VF 回读 4 字节；上层 backend 能力探测仍独立计数。独立主机占据场 API 保留上传行为，之后的主机求值不会覆盖借用的 voxel 缓冲。
+
+voxelize_count 在 voxelization 后执行延迟编译的整数占据归约，完整占据场留在设备，仅回读一个 u32。归约器使用一个 256-lane 工作组跨步扫描；二值占据与已检查的网格大小保证各级计数不超过 u32。总工作量仍为 O(网格体素数)，减少传输不等于必然降低时延。occupancy 和 staging 分别按需增长：count-only 只需 4 字节 staging，之后完整回读再按需增长；模式切换和释放后重算已有对照。GPU exact 用该计数计算 VF 并将驻留占据场传给 shell，独立 voxelize 保留 Vec 返回契约。
+
+GPU exact 现逐半径延迟生成一个 shell Vec，经 compute_s2_shell_resident_stream 按批消费。批次仍受已有部分结果槽上限约束，可跨半径但保持原偏移顺序。插值支持标志在生成该半径时记录，取消原来的第二遍枚举；成功求值会消费全部偏移，包括末尾无支持偏移。内存范围为一个半径 shell 加一个批次，并非与半径无关的常量；单个大半径 shell 仍会物化。累计生成数量采用 u128，日志不静默饱和截断。
+
+GPU exact 现使用 shell_offset_iter，单个半径内部也只保留嵌套范围游标；保持原 x/y/z 顺序、原点特殊情况和半开平方距离判定。需要随机访问的公共 Vec API 保持不变。用 peekable 判定该半径是否有支持，生成数量在消费时累计。普通范围沿用原整数范数，更大范数用 u128 避免有符号乘法溢出。仍扫描包围立方体，降低分配并未改变 O(半径³) 搜索复杂度。
+
+新建的驻留 GPU exact 求值在后端选择和执行中共用 ExactMemoryPlan。设 T=max(36×faces,4)、M=4×cells、B 为批次部分结果槽数，保守逻辑峰值为 2T+M+128+80B，计入待完成三角/offset 上传和批次增长时同时存在的新旧缓冲；128 字节覆盖固定参数/计数/占位资源。B 从 200000 按 MiB 预算缩小，至少 1；最小批次仍超限则在设备初始化前拒绝，由调用方执行配置的回退策略。该模型不含驱动/编译器内部资源和 CPU 内存，仅适用于新建生产 direct-shell exact 求值，不声称覆盖实验 tiled/reduced 或任意已有高水位管线。旧 exact 网格硬限制仍独立存在。

@@ -34,6 +34,11 @@ BVH 加速三角网格查询——因此在数百到数千个颗粒的堆积密�
   所触及的晶格，收集其中找到的索引并去重——这是一个 `O(k)` 操作，其中 `k` 是实际靠近查询点的
   颗粒数量，与 `N` 无关。
 
+查询去重保持原 x/y/z 晶格及桶内的首次遇见顺序。小结果使用线性查找；达到 256 个不同 ID 后，
+改用查询私有的哈希集合判断成员资格。绝不遍历集合，支持稀疏 `usize` ID，并发查询不共享集合。
+大结果的预期去重工作量与访问的桶引用数（含重复项）成正比，不再乘以不同邻居数。
+网格增量更新与查询缓冲复用仍属于后续工作。
+
 ### 选择晶格尺寸
 
 晶格尺寸决定了网格的有效性：太小则单个颗粒会跨越多个晶格（增加 `insert` 开销和桶重复）；
@@ -131,3 +136,14 @@ box内部的颗粒不会产生任何镜像，因为所有 26 个偏移副本都�
 - [geometry-volume-collision.md](../reference/geometry-volume-collision.md)
 - [pipeline-optimize.md#run_sa_island](../reference/pipeline-optimize.md#run_sa_island)
 - [pipeline-packing.md](../reference/pipeline-packing.md)
+
+### Incremental grid acceptance (PERF-10/13)
+
+`SpatialGrid` retains reverse item-to-cell membership. `remove(idx)` removes all insertions of that id and preserves remaining bucket order; `update(idx, Option<BoundingBox>)` replaces membership or removes the item. Query order remains first encounter, but moving an item appends it in its new buckets, so consumers must not assume rebuild order. Candidate sets match a full rebuild. Optimize queries the current grid before evaluating a proposal, updates one membership only after acceptance, and restores the original prepared particle directly on rejection. Whole-population migration still rebuilds the grid. Repeated inserts retain their old semantics and removal clears every copy. Reverse membership consumes additional memory proportional to inserted cell references.
+
+### Legacy pack cache update
+
+The earlier full-scan description above records the original implementation. Pack now caches accepted particle/periodic-image bbox and TriMesh data and incrementally indexes them. Small populations use a cached direct scan; larger populations use spatial candidates. Positive clearance uses one cached solid-distance predicate instead of separate collision/minimum-distance scans. No accepted geometry or ghosts are cloned per proposal. Candidate order, steering and clipped-volume acceptance remain unchanged.
+
+
+PERF-13 dense-bucket correction: membership switches within a bucket at 256 unique candidates, bounding the initial linear phase even for a single extremely dense bucket. Order and exclusions are unchanged.

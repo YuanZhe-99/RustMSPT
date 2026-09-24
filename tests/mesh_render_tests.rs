@@ -11,6 +11,8 @@ use rustmspt::meshgen::render_scene::{
 use rustmspt::pipeline::mesh_render::MeshRenderPipeline;
 use rustmspt::pipeline::Pipeline;
 use rustmspt::types::{Mesh, Vec3};
+#[cfg(feature = "gpu")]
+use rustmspt::meshgen::render_scene::SceneSegment;
 
 fn contract_doc() -> VtuDoc {
     let points = vec![
@@ -337,6 +339,8 @@ fn opaque_scene() -> RenderScene {
         tris,
         segments: Vec::new(),
         markers: Vec::new(),
+        wireframe_edges_emitted: 0,
+        wireframe_edges_total: 0,
         bbox: Some(rustmspt::types::BoundingBox {
             min: Vec3::new(0.0, -5.0, -5.0),
             max: Vec3::new(2.0, 5.0, 5.0),
@@ -381,6 +385,8 @@ fn box_scene() -> RenderScene {
         tris,
         segments: Vec::new(),
         markers: Vec::new(),
+        wireframe_edges_emitted: 0,
+        wireframe_edges_total: 0,
         bbox: Some(rustmspt::types::BoundingBox { min: lo, max: hi }),
     }
 }
@@ -709,4 +715,208 @@ mesh_render:
         msg.contains("quantum") && msg.contains("cpu"),
         "unhelpful error: {msg}"
     );
+}
+
+// AI-FUNC-SUMMARY: Reuse a prepared transparent/coincident scene across resolutions and worker pools, checking fresh-render equality and analytic pixels.
+#[test]
+fn prepared_scene_reuses_geometry_across_views_and_workers() {
+    use rustmspt::geometry::scene_render::PreparedScene;
+    let mut scene = RenderScene::default();
+    scene.tris.extend(quad(1.0, [5, 5, 5], 0.5, SetKind::Volume));
+    scene.tris.extend(quad(1.0, [200, 0, 0], 0.5, SetKind::Face));
+    scene.tris.extend(quad(2.0, [0, 100, 0], 1.0, SetKind::Volume));
+    let prepared = PreparedScene::new(&scene);
+    let settings = SceneRenderSettings { background: [0, 0, 255, 0], ambient: 0.25 };
+    for workers in [1, 2, 8] {
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(workers).build().unwrap();
+        for (w, h) in [(32, 32), (65, 17), (32, 32)] {
+            let camera = ortho_camera_along_x(w, h);
+            let actual = pool.install(|| prepared.render(&camera, w, h, &settings));
+            let expected = render_scene_cpu(&scene, &camera, w, h, &settings);
+            assert_eq!(actual.rgba, expected.rgba);
+            let center = ((h/2)*w+w/2)*4;
+            assert_eq!(&actual.rgba[center..center+4], &[100, 50, 0, 255]);
+        }
+    }
+}
+
+// AI-FUNC-SUMMARY: Compare ordered streamed GPU frames with batch output and verify consumer failure stops further views.
+#[test]
+#[cfg(feature = "gpu")]
+fn gpu_streamed_views_match_batch_and_stop_on_consumer_error() {
+    let mut pipeline = match rustmspt::gpu::GpuScenePipeline::new() {
+        Ok(p) => p,
+        Err(e) => { println!("Skipping unavailable GPU: {e}"); return; }
+    };
+    let scene = box_scene();
+    let camera = ortho_camera_along_x(65, 33);
+    let cameras = [camera, camera, camera];
+    let settings = SceneRenderSettings::default();
+    let options = rustmspt::gpu::GpuSceneOptions::with_overlays();
+    for (width, height) in [(0, 33), (usize::MAX, 33), (65, usize::MAX)] {
+        assert!(pipeline.render_views_to(&scene, &cameras, width, height, &settings, &options, |_, _| panic!("invalid dimensions must not deliver images")).is_err());
+    }
+    let expected = pipeline.render_views(&scene, &cameras, 65, 33, &settings, &options).unwrap();
+    let mut seen = 0;
+    pipeline.render_views_to(&scene, &cameras, 65, 33, &settings, &options, |index, image| {
+        assert_eq!(index, seen);
+        assert_eq!(image.rgba, expected[index].rgba);
+        seen += 1;
+        Ok(())
+    }).unwrap();
+    assert_eq!(seen, 3);
+    let mut delivered = 0;
+    let failure = pipeline.render_views_to(&scene, &cameras, 65, 33, &settings, &options, |_, _| {
+        delivered += 1;
+        Err("consumer stopped".into())
+    }).unwrap_err();
+    assert_eq!(failure, "consumer stopped");
+    assert_eq!(delivered, 1);
+    // Unmapped staging and pipeline remain reusable after consumer failure.
+    assert_eq!(pipeline.render_views(&scene, &cameras[..1], 65, 33, &settings, &options).unwrap()[0].rgba, expected[0].rgba);
+}
+
+// AI-FUNC-SUMMARY: Run actual transparent multi-view CLI rendering at 1/2/8 requested workers and auto fallback; require identical PNGs, installed-pool observations and strict-GPU failure.
+#[test]
+fn mesh_render_cli_worker_budget_and_fallback() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("fixture.vtu");
+    save_vtu(&input, &contract_doc(), VtuEncoding::AppendedRaw).unwrap();
+    let available = std::thread::available_parallelism().unwrap().get();
+    let mut reference: Option<Vec<Vec<u8>>> = None;
+    for backend in ["cpu", "auto", "gpu"] {
+        for workers in [1, 2, 8] {
+            let out = dir.path().join(format!("{backend}-{workers}"));
+            let config = dir.path().join("config.yaml");
+            let value = serde_json::json!({
+                "cpu_max": workers.to_string(),
+                "mesh_render": { "input": input, "output_dir": out,
+                    "views": ["front", "iso_ne"], "width": 37, "height": 29,
+                    "backend": backend, "volume_opacity": 0.4, "face_opacity": 0.6 }
+            });
+            std::fs::write(&config, value.to_string()).unwrap();
+            let result = std::process::Command::new(env!("CARGO_BIN_EXE_rustmspt"))
+                .args(["mesh-render", "--config"]).arg(&config)
+                .env_remove("RUSTMSPT_ACCELERATION")
+                .env("RUSTMSPT_GPU_DEVICE", "definitely-no-mesh-render-adapter")
+                .output().unwrap();
+            let stdout = String::from_utf8_lossy(&result.stdout);
+            assert_eq!(result.status.success(), backend != "gpu", "{stdout} {}", String::from_utf8_lossy(&result.stderr));
+            if backend == "gpu" {
+                assert!(!out.join("fixture_front.png").exists());
+                continue;
+            }
+            assert!(stdout.contains(&format!("CPU transparency renderer: workers={}, worker_index=Some(", workers.min(available))), "{stdout}");
+            if backend == "auto" { assert!(stdout.contains("GPU preview unavailable"), "{stdout}"); }
+            let images: Vec<_> = ["front", "iso_ne"].iter().map(|view| {
+                let path = out.join(format!("fixture_{view}.png"));
+                let decoded = image::open(&path).unwrap().to_rgba8();
+                assert_eq!(decoded.dimensions(), (37, 29));
+                std::fs::read(path).unwrap()
+            }).collect();
+            if let Some(expected) = &reference { assert_eq!(&images, expected); }
+            else { reference = Some(images); }
+        }
+    }
+}
+
+// AI-FUNC-SUMMARY: Verify environment precedence and invalid-value rejection in isolated CLI processes while preserving strict GPU versus auto fallback.
+#[test]
+fn mesh_render_environment_precedence() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("fixture.vtu");
+    save_vtu(&input, &contract_doc(), VtuEncoding::AppendedRaw).unwrap();
+    for (configured, override_mode, success, fallback) in [
+        ("gpu", "cpu", true, false), ("cpu", "gpu", false, false),
+        ("gpu", "auto", true, true), ("cpu", "invalid", false, false),
+    ] {
+        let output = dir.path().join(override_mode);
+        let config = dir.path().join("config.json");
+        std::fs::write(&config, serde_json::json!({"cpu_max": 1, "mesh_render": {
+            "input": input, "output_dir": output, "views": ["front"],
+            "width": 16, "height": 16, "backend": configured
+        }}).to_string()).unwrap();
+        let result = std::process::Command::new(env!("CARGO_BIN_EXE_rustmspt"))
+            .args(["mesh-render", "--config"]).arg(&config)
+            .env("RUSTMSPT_ACCELERATION", override_mode)
+            .env("RUSTMSPT_GPU_DEVICE", "definitely-no-mesh-render-adapter")
+            .output().unwrap();
+        let stdout = String::from_utf8_lossy(&result.stdout);
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert_eq!(result.status.success(), success, "{stdout} {stderr}");
+        assert_eq!(output.join("fixture_front.png").exists(), success);
+        assert_eq!(stdout.contains("GPU preview unavailable"), fallback);
+        if override_mode == "invalid" { assert!(stderr.contains("invalid RUSTMSPT_ACCELERATION"), "{stderr}"); }
+        else { assert!(stdout.contains(&format!("requested backend: {override_mode}")), "{stdout}"); }
+    }
+}
+
+// AI-FUNC-SUMMARY: Exercise budget and auto threshold before GPU initialization via CLI with an impossible adapter; distinguish budget errors from unavailable-device errors and retain CPU output equality.
+#[test]
+fn mesh_render_gpu_budget_and_threshold() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("fixture.vtu");
+    save_vtu(&input, &contract_doc(), VtuEncoding::AppendedRaw).unwrap();
+    let mut baseline = None;
+    for (name, backend, budget, threshold, success, message) in [
+        ("cpu", "cpu", 0u64, 0usize, true, "CPU transparency renderer"),
+        ("auto_budget", "auto", 0, 0, true, "exceeds budget"),
+        ("gpu_budget", "gpu", 0, 0, false, "exceeds budget"),
+        ("small_auto", "auto", 0, 1000, true, "below gpu_min_pixels"),
+        ("explicit_gpu", "gpu", 1, 1000, false, ""),
+        ("budget_overflow", "gpu", u64::MAX, 0, false, "budget overflows bytes"),
+    ] {
+        let output = dir.path().join(name);
+        let config = dir.path().join("config.json");
+        std::fs::write(&config, serde_json::json!({"cpu_max": 1, "mesh_render": {
+            "input": input, "output_dir": output, "views": ["front"], "width": 17, "height": 19,
+            "backend": backend, "gpu_memory_limit_mb": budget, "gpu_min_pixels": threshold
+        }}).to_string()).unwrap();
+        let result = std::process::Command::new(env!("CARGO_BIN_EXE_rustmspt"))
+            .args(["mesh-render", "--config"]).arg(&config)
+            .env_remove("RUSTMSPT_ACCELERATION")
+            .env("RUSTMSPT_GPU_DEVICE", "definitely-no-budget-adapter")
+            .output().unwrap();
+        let stdout = String::from_utf8_lossy(&result.stdout);
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        let combined = format!("{stdout} {stderr}");
+        assert_eq!(result.status.success(), success, "{name}: {combined}");
+        assert!(combined.contains(message), "{name}: {combined}");
+        if name == "explicit_gpu" {
+            assert!(!combined.contains("below gpu_min_pixels"));
+            assert!(combined.contains("GPU planned peak"));
+            assert!(!combined.contains("exceeds budget"));
+        }
+        if success {
+            let bytes = std::fs::read(output.join("fixture_front.png")).unwrap();
+            if let Some(expected) = &baseline { assert_eq!(&bytes, expected); }
+            else { baseline = Some(bytes); }
+        } else { assert!(!output.join("fixture_front.png").exists()); }
+    }
+}
+
+// AI-FUNC-SUMMARY: Confirm a real GPU scene preview fits a one-MiB logical budget with no CPU fallback, including a multi-view reused target set.
+#[cfg(feature = "gpu")]
+#[test]
+fn mesh_render_gpu_small_budget_executes() {
+    if let Err(error) = rustmspt::gpu::GpuScenePipeline::new() {
+        eprintln!("SKIP: GPU scene unavailable: {error}"); return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("fixture.vtu");
+    save_vtu(&input, &contract_doc(), VtuEncoding::AppendedRaw).unwrap();
+    let output = dir.path().join("images");
+    let config = dir.path().join("config.json");
+    std::fs::write(&config, serde_json::json!({"cpu_max": 8, "mesh_render": {
+        "input": input, "output_dir": output, "views": ["front", "iso_ne"], "width": 32, "height": 32,
+        "backend": "gpu", "gpu_memory_limit_mb": 1
+    }}).to_string()).unwrap();
+    let result = std::process::Command::new(env!("CARGO_BIN_EXE_rustmspt"))
+        .args(["mesh-render", "--config"]).arg(&config).env_remove("RUSTMSPT_ACCELERATION").output().unwrap();
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    assert!(result.status.success(), "{stdout} {}", String::from_utf8_lossy(&result.stderr));
+    assert!(stdout.contains("GPU opaque preview"));
+    assert!(!stdout.contains("CPU transparency renderer"));
+    assert!(output.join("fixture_front.png").exists());
+    assert!(output.join("fixture_iso_ne.png").exists());
 }

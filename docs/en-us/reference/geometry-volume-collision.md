@@ -15,12 +15,12 @@ This page documents three `src/geometry/` submodules: `volume.rs` (mesh volume c
 | `quantize_point_key` | `src/geometry/volume.rs:125` | Rounds a point to a fixed-precision integer key for dedup/hashing. |
 | `collect_triangle_plane_segment` | `src/geometry/volume.rs:139` | Extracts the segment where a triangle crosses a clip plane. |
 | `plane_basis` | `src/geometry/volume.rs:175` | Builds an orthonormal (u, v) basis in the plane perpendicular to a normal. |
-| `triangulate_cap_from_segments` | `src/geometry/volume.rs:204` | Triangulates a planar cap from cross-plane edge segments (ring-finding + fan). |
-| `clip_mesh_by_plane_with_cap` | `src/geometry/volume.rs:345` | Clips a mesh against one plane and caps the resulting opening. |
-| `clip_mesh_by_bbox` | `src/geometry/volume.rs:383` | Clips a mesh to an axis-aligned box via six successive plane clips. |
-| `particle_volume_in_bbox` | `src/geometry/volume.rs:404` | Volume of a mesh after clipping it to a bounding box. |
-| `volume_fraction_in_bbox` | `src/geometry/volume.rs:410` | Volume fraction of a single mesh within a bounding box. |
-| `volume_fraction_of_meshes_in_bbox` | `src/geometry/volume.rs:420` | Total volume fraction of multiple meshes within a bounding box (parallel). |
+| `triangulate_cap_from_segments` | `src/geometry/volume.rs:211` | Triangulates a planar cap from cross-plane edge segments (ring-finding + fan). |
+| `clip_mesh_by_plane_with_cap` | `src/geometry/volume.rs:352` | Clips a mesh against one plane and caps the resulting opening. |
+| `clip_mesh_by_bbox` | `src/geometry/volume.rs:403` | Clips a mesh to an axis-aligned box via six successive plane clips. |
+| `particle_volume_in_bbox` | `src/geometry/volume.rs:424` | Volume of a mesh after clipping it to a bounding box. |
+| `volume_fraction_in_bbox` | `src/geometry/volume.rs:434` | Volume fraction of a single mesh within a bounding box. |
+| `volume_fraction_of_meshes_in_bbox` | `src/geometry/volume.rs:444` | Total volume fraction of multiple meshes within a bounding box (parallel). |
 | `to_parry_trimesh` | `src/geometry/collision.rs:29` | Converts a `Mesh` into a parry3d `TriMesh`. |
 | `trimesh_contains_point` | `src/geometry/collision.rs:61` | Ray-parity point-in-solid test over a shape's bounding-volume hierarchy. |
 | `mesh_surfaces_intersect_prepared` | `src/geometry/collision.rs:99` | Bbox-filtered exact test for whether two mesh *surfaces* cross. |
@@ -32,6 +32,7 @@ This page documents three `src/geometry/` submodules: `volume.rs` (mesh volume c
 | `generate_periodic_ghosts` | `src/geometry/collision.rs:282` | Generates translated ghost copies of a mesh for periodic boundary collision. |
 | `simulate_forging_ffd` | `src/geometry/forging.rs:10` | Simple Z-axis FFD compression with lateral bulge. |
 | `simulate_forging_ffd_with_tracking` | `src/geometry/forging.rs:43` | Axis-configurable FFD forging with void densification and ROI bbox tracking. |
+| `forge_owned` | `src/geometry/forging.rs:66` | Ownership-consuming FFD and ROI transform. |
 
 ## volume.rs
 
@@ -112,7 +113,7 @@ The remaining functions in this file form a single pipeline for clipping a trian
 #### triangulate_cap_from_segments
 
 - **Signature:** `fn triangulate_cap_from_segments(segments: &[(Vec3, Vec3)], normal: Vec3) -> Mesh`
-- **Source:** `src/geometry/volume.rs:204`
+- **Source:** `src/geometry/volume.rs:211`
 - **Purpose:** Given the set of edge segments where a mesh's triangles crossed a clip plane, reconstructs the closed boundary loop(s) on that plane and triangulates each as a fan around its centroid, producing a watertight cap mesh.
 - **Parameters:**
   - `segments` — unordered `(point_a, point_b)` edge pairs, one per triangle that crossed the plane (from `collect_triangle_plane_segment`).
@@ -127,8 +128,8 @@ The remaining functions in this file form a single pipeline for clipping a trian
 
 #### clip_mesh_by_plane_with_cap
 
-- **Signature:** `fn clip_mesh_by_plane_with_cap(mesh: &Mesh, origin: Vec3, normal: Vec3) -> Mesh`
-- **Source:** `src/geometry/volume.rs:345`
+- **Signature:** `fn clip_mesh_by_plane_with_cap(mesh: Mesh, origin: Vec3, normal: Vec3) -> Mesh`
+- **Source:** `src/geometry/volume.rs:352`
 - **Purpose:** Clips an entire mesh against a single plane and caps the resulting open boundary so the output remains a closed (watertight) solid.
 - **Parameters:**
   - `mesh` — the mesh to clip.
@@ -141,7 +142,7 @@ The remaining functions in this file form a single pipeline for clipping a trian
 #### clip_mesh_by_bbox
 
 - **Signature:** `pub fn clip_mesh_by_bbox(mesh: &Mesh, bbox: BoundingBox) -> Mesh`
-- **Source:** `src/geometry/volume.rs:383`
+- **Source:** `src/geometry/volume.rs:390`
 - **Purpose:** Clips a mesh so that it fits entirely within an axis-aligned bounding box, by successively clipping against each of the box's six face planes.
 - **Parameters:**
   - `mesh` — the mesh to clip.
@@ -155,7 +156,7 @@ The remaining functions in this file form a single pipeline for clipping a trian
 #### particle_volume_in_bbox
 
 - **Signature:** `pub fn particle_volume_in_bbox(mesh: &Mesh, bbox: BoundingBox) -> f64`
-- **Source:** `src/geometry/volume.rs:404`
+- **Source:** `src/geometry/volume.rs:411`
 - **Purpose:** Computes the volume of the portion of a mesh that lies inside a bounding box.
 - **Parameters:**
   - `mesh` — the mesh (typically a single particle/granule).
@@ -166,7 +167,7 @@ The remaining functions in this file form a single pipeline for clipping a trian
 #### volume_fraction_in_bbox
 
 - **Signature:** `pub fn volume_fraction_in_bbox(mesh: &Mesh, bbox: BoundingBox) -> f64`
-- **Source:** `src/geometry/volume.rs:410`
+- **Source:** `src/geometry/volume.rs:417`
 - **Purpose:** Computes the fraction of a bounding box's volume occupied by a single mesh.
 - **Parameters:**
   - `mesh` — the mesh to measure.
@@ -177,7 +178,7 @@ The remaining functions in this file form a single pipeline for clipping a trian
 #### volume_fraction_of_meshes_in_bbox
 
 - **Signature:** `pub fn volume_fraction_of_meshes_in_bbox(meshes: &[Mesh], bbox: BoundingBox) -> f64`
-- **Source:** `src/geometry/volume.rs:420`
+- **Source:** `src/geometry/volume.rs:427`
 - **Purpose:** Computes the combined volume fraction that a collection of meshes occupies within a bounding box — the core metric for reporting packing density.
 - **Parameters:**
   - `meshes` — the meshes to sum volume over (e.g. all particles in a pack).
@@ -348,3 +349,13 @@ Both functions implement free-form deformation (FFD) style forging simulation: v
 - **See also:** [`simulate_forging_ffd`](#simulate_forging_ffd) for the simpler, Z-only variant.
 
   > **Algorithm:** See `../algorithms/ffd-forging.md` for the full design rationale behind the FFD forging model, axis selection, and void-densification heuristic.
+
+### Owned CPU transforms (PERF-16)
+
+`forge_owned(mesh, lattice_bbox, track_bbox, compression_ratio, compression_axis, bulge_factor, mesh_type, void_densification)` consumes the mesh and applies the existing tracked FFD mapping. The public borrowed wrapper clones once and delegates. ForgePipeline moves its input into this entry, retains the already computed input bbox, removes unused whole-mesh volume scans, and moves the output when orientation is disabled. ScalePipeline likewise moves its transformed mesh when orientation is disabled. Both log transform-only seconds separately from I/O.
+
+`map_vertices` keeps small slices serial and maps disjoint 8192-vertex blocks on the current Rayon pool only with multiple workers and at least max(131072, workers * 65536) vertices. Scale, translate and both FFD variants use it. Each vertex retains its arithmetic order; void centroid is still accumulated serially after the affine pass. ROI remains unaffected by void closure. Clipped ROI VF and output bbox are still measured from actual geometry; no determinant approximation is substituted.
+
+### No-cut volume fast paths
+
+The private plane clipper consumes its mesh. Classification uses referenced face vertices with the existing `distance >= -1e-9` predicate: when all are inside (including a touching plane), it returns the same mesh allocation without generating a cap; when all are outside, it returns empty. Mixed cases retain the existing polygon/cap algorithm. This fixes spurious caps on an entirely contained mesh touching a domain face. Unreferenced outside vertices cannot create a cut. `clip_mesh_by_bbox` moves each intermediate mesh into the next pass. `particle_volume_in_bbox` directly sums the original mesh when all stored vertices are inclusively inside the box, avoiding a clone and all six clipping passes. Tests cover both windings, translated boxes, coincident faces, partial outward box intersections, and unused outside vertices. This does not replace the legacy partial-cut cap algorithm with placement’s exact signed-volume routine or establish correctness for arbitrary nonconvex/nested cap loops.

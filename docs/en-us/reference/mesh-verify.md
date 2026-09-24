@@ -37,9 +37,9 @@ shape are frozen: tests assert on them.
 | `report_to_log` | `src/meshgen/verify.rs:1619` | Sectioned human log with a `[PASS]/[WARN]/[FAIL]/[SKIP]` line per check and a summary. |
 | `annotate` | `src/meshgen/verify.rs:1681` | Copy of the document carrying the quality arrays plus the `verify_flags` bitmask (bit *k* = `[V(k+1)]`). |
 | `VerifyGateParams`/`MeshVerifyParams`/`MeshVerifyConfig` | `src/config/mesh_verify.rs:8` | The `mesh_verify:` YAML block: input, report/json/annotate destinations, gate overrides. |
-| `gates_from_config` | `src/pipeline/mesh_verify.rs:18` | Overlay YAML overrides onto the contract defaults. |
-| `verify_file` | `src/pipeline/mesh_verify.rs:42` | Load → validate → verify → write log/JSON/annotated VTU; returns the report. |
-| `MeshVerifyPipeline` | `src/pipeline/mesh_verify.rs:9` | The `mesh-verify` subcommand; returns an error (nonzero exit) when a gate fails. |
+| `gates_from_config` | `src/pipeline/mesh_verify.rs:21` | Overlay YAML overrides onto the contract defaults. |
+| `verify_file` | `src/pipeline/mesh_verify.rs:53` | Load → validate → verify → write log/JSON/annotated VTU; returns the report. |
+| `MeshVerifyPipeline` | `src/pipeline/mesh_verify.rs:12` | The `mesh-verify` subcommand; returns an error (nonzero exit) when a gate fails. |
 
 ## What runs today
 

@@ -55,6 +55,12 @@ pub struct MeshRenderParams {
     /// "auto" (GPU when available, silently falling back to CPU).
     #[serde(default = "default_backend")]
     pub backend: String,
+    /// Total logical GPU working-set budget, including queued geometry uploads.
+    #[serde(default)]
+    pub gpu_memory_limit_mb: Option<u64>,
+    /// Auto-only pixel threshold; zero preserves legacy preview selection.
+    #[serde(default)]
+    pub gpu_min_pixels: usize,
     #[serde(default)]
     pub uniform_color: Option<Vec<u8>>,
     #[serde(default)]
@@ -90,6 +96,11 @@ pub struct MeshRenderParams {
 // AI-FUNC-SUMMARY: Top-level YAML document for mesh-render (`mesh_render:` block); side effects: none.
 #[derive(Debug, Clone, Deserialize)]
 pub struct MeshRenderConfig {
+    #[serde(
+        default,
+        deserialize_with = "super::deserialize::deserialize_option_i32_flexible"
+    )]
+    pub cpu_max: Option<i32>,
     pub mesh_render: MeshRenderParams,
 }
 

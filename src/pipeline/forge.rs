@@ -1,8 +1,7 @@
 use crate::config::ForgingConfig;
 use crate::error::{Result, RustMsptError};
 use crate::geometry::{
-    mesh_bbox, mesh_volume, orient_components_to_positive_volume,
-    simulate_forging_ffd_with_tracking, translate_mesh, volume_fraction_in_bbox,
+    mesh_bbox, orient_components_to_positive_volume, translate_mesh, volume_fraction_in_bbox,
 };
 use crate::io::{load_stl_or_merge_folder, save_stl};
 use crate::pipeline::Pipeline;
@@ -46,7 +45,6 @@ impl ForgePipeline {
             ))),
         }
     }
-
 }
 
 impl Pipeline for ForgePipeline {
@@ -67,10 +65,10 @@ impl Pipeline for ForgePipeline {
         let report_path = output.with_extension("txt");
 
         let mesh = load_stl_or_merge_folder(input)?;
-        let lattice_bbox = mesh_bbox(&mesh).unwrap_or(BoundingBox::from_size(Vec3::new(1.0, 1.0, 1.0)));
+        let lattice_bbox =
+            mesh_bbox(&mesh).unwrap_or(BoundingBox::from_size(Vec3::new(1.0, 1.0, 1.0)));
         let roi_bbox = Self::parse_roi_bbox(&params.roi_bounding_box);
 
-        let _before = mesh_volume(&mesh);
         let before_roi_vf = roi_bbox
             .map(|roi| volume_fraction_in_bbox(&mesh, roi))
             .unwrap_or_else(|| volume_fraction_in_bbox(&mesh, lattice_bbox));
@@ -83,8 +81,9 @@ impl Pipeline for ForgePipeline {
         let mesh_type = params.mesh_type.as_deref().unwrap_or("particle");
         let void_densification = params.void_densification.unwrap_or(1.0);
 
-        let (compressed, tracked_roi) = simulate_forging_ffd_with_tracking(
-            &mesh,
+        let transform_started = std::time::Instant::now();
+        let (compressed, tracked_roi) = crate::geometry::forging::forge_owned(
+            mesh,
             lattice_bbox,
             roi_bbox,
             compression,
@@ -94,7 +93,10 @@ impl Pipeline for ForgePipeline {
             void_densification,
         );
 
-        let _after = mesh_volume(&compressed);
+        println!(
+            "[Info] Forge transform seconds: {:.6}",
+            transform_started.elapsed().as_secs_f64()
+        );
         let after_roi_vf = tracked_roi
             .map(|roi| volume_fraction_in_bbox(&compressed, roi))
             .unwrap_or_else(|| volume_fraction_in_bbox(&compressed, lattice_bbox));
@@ -103,7 +105,7 @@ impl Pipeline for ForgePipeline {
             let (mesh_fixed, flipped, total) = orient_components_to_positive_volume(&compressed);
             (mesh_fixed, flipped, total)
         } else {
-            (compressed.clone(), 0usize, 0usize)
+            (compressed, 0usize, 0usize)
         };
 
         let mut output_shift = Vec3::new(0.0, 0.0, 0.0);
@@ -119,7 +121,7 @@ impl Pipeline for ForgePipeline {
 
         save_stl(output, &compressed_oriented, "forged_mesh")?;
 
-        let input_bbox = mesh_bbox(&mesh).unwrap_or(lattice_bbox);
+        let input_bbox = lattice_bbox;
         let output_bbox = mesh_bbox(&compressed_oriented).unwrap_or(lattice_bbox);
         let roi_bbox_before = roi_bbox.unwrap_or(lattice_bbox);
         let roi_bbox_after_raw = tracked_roi.unwrap_or(lattice_bbox);

@@ -10,12 +10,12 @@
 |---|---|---|
 | `RustMsptError` | `src/error.rs:4` | 覆盖 I/O、YAML、TIFF、配置、网格及 GPU 失败的 crate 级错误枚举。 |
 | `Result` | `src/error.rs:27` | 类型别名 `Result<T> = std::result::Result<T, RustMsptError>`，在整个 crate 中使用。 |
-| `Cli` | `src/main.rs:26` | 顶层 clap CLI 结构体，包装一个 `Commands` 子命令。 |
-| `Commands` | `src/main.rs:32` | 7 个 CLI 子命令（Forge/Measure/Optimize/Pack/Scale/Crop/SplitFilter）的枚举。 |
-| `default_config_path` | `src/main.rs:151` | 在 `data/input/` 下构建默认配置路径。 |
-| `pick_config_path` | `src/main.rs:156` | 选择用户提供的配置路径，或回退到默认路径。 |
-| `main`（main.rs） | `src/main.rs:166` | CLI 入口点：解析参数、加载配置、应用覆盖项、运行所选流水线。 |
-| `main`（precision_test.rs） | `src/bin/precision_test.rs:5` | 独立诊断二进制文件，比较 CPU 精确法、CPU 蒙特卡洛法与 GPU 蒙特卡洛法之间 S2 计算的精度/性能。 |
+| `Cli` | `src/main.rs:27` | 顶层 clap CLI 结构体，包装一个 `Commands` 子命令。 |
+| `Commands` | `src/main.rs:33` | 7 个 CLI 子命令（Forge/Measure/Optimize/Pack/Scale/Crop/SplitFilter）的枚举。 |
+| `default_config_path` | `src/main.rs:179` | 在 `data/input/` 下构建默认配置路径。 |
+| `pick_config_path` | `src/main.rs:184` | 选择用户提供的配置路径，或回退到默认路径。 |
+| `main`（main.rs） | `src/main.rs:194` | CLI 入口点：解析参数、加载配置、应用覆盖项、运行所选流水线。 |
+| `main`（precision_test.rs） | `src/bin/precision_test.rs:6` | 独立诊断二进制文件，比较 CPU 精确法、CPU 蒙特卡洛法与 GPU 蒙特卡洛法之间 S2 计算的精度/性能。 |
 | `Vec3` | `src/types.rs:2` | 由 `f64` 分量组成的三维向量，带基本向量代数方法。 |
 | `Vec3::new` | `src/types.rs:10` | 由 x/y/z 分量构造一个向量。 |
 | `Vec3::add` | `src/types.rs:15` | 向量加法。 |
@@ -28,10 +28,10 @@
 | `BoundingBox::size` | `src/types.rs:60` | 返回包围盒的边长。 |
 | `BoundingBox::volume` | `src/types.rs:65` | 返回包围盒的（非负）体积。 |
 | `BoundingBox::contains_point` | `src/types.rs:71` | 判断某点是否位于包围盒内部或边界上。 |
-| `Triangle` | `src/types.rs:82` | 引用网格顶点数组的索引三元组 `(a, b, c)`。 |
-| `Mesh` | `src/types.rs:89` | 顶点/面容器：`vertices: Vec<Vec3>`、`faces: Vec<Triangle>`。 |
-| `Mesh::empty` | `src/types.rs:96` | 构造一个空网格。 |
-| `Mesh::is_empty` | `src/types.rs:104` | 若网格没有顶点或没有面，则为真。 |
+| `Triangle` | `src/types.rs:114` | 引用网格顶点数组的索引三元组 `(a, b, c)`。 |
+| `Mesh` | `src/types.rs:121` | 顶点/面容器：`vertices: Vec<Vec3>`、`faces: Vec<Triangle>`。 |
+| `Mesh::empty` | `src/types.rs:128` | 构造一个空网格。 |
+| `Mesh::is_empty` | `src/types.rs:136` | 若网格没有顶点或没有面，则为真。 |
 | `AccelerationMode` | `src/compute/backend.rs:5` | 请求的计算模式枚举：`Auto`（默认）、`Cpu`、`Gpu`。 |
 | `AccelerationMode::fmt`（Display） | `src/compute/backend.rs:12` | 将模式格式化为 `"auto"`/`"cpu"`/`"gpu"`。 |
 | `BackendCaps` | `src/compute/backend.rs:23` | 所选后端上报的能力（名称、GPU 支持情况、缓冲区大小限制）。 |
@@ -42,7 +42,9 @@
 | `ComputeBackend::fmt`（Display） | `src/compute/backend.rs:87` | 格式化为 `"cpu"` 或 `"gpu/wgpu/{adapter_name}"`。 |
 | `FallbackReason` | `src/compute/policy.rs:4` | 记录所请求的后端为何无法满足，以及实际改用了什么。 |
 | `BackendSelection` | `src/compute/policy.rs:10` | 后端选择结果：所选 `ComputeBackend` 加上可选的 `FallbackReason`。 |
-| `select_backend` | `src/compute/policy.rs:21` | 计算密集型流水线所使用的中心化 CPU/GPU/Auto 分发策略。 |
+| `select_backend` | `src/compute/policy.rs:22` | 计算密集型流水线所使用的中心化 CPU/GPU/Auto 分发策略。 |
+| `configured_mode` | `src/compute/policy.rs:142` | Resolve strict environment override. |
+| `resolve_execution` | `src/compute/policy.rs:162` | Resolve method support, workload budget and fallback. |
 
 ## 模块职责：`lib.rs`
 
@@ -63,7 +65,7 @@
 
 ### CLI 结构
 
-`Cli`（`src/main.rs:26`）是顶层 `#[derive(Parser)]` 结构体；它持有单个 `command: Commands` 字段。`Commands`（`src/main.rs:32`）是一个 `#[derive(Subcommand)]` 枚举，包含七个变体，每个都携带相同的三个可选参数：
+`Cli`（`src/main.rs:27`）是顶层 `#[derive(Parser)]` 结构体；它持有单个 `command: Commands` 字段。`Commands`（`src/main.rs:33`）是一个 `#[derive(Subcommand)]` 枚举，包含七个变体，每个都携带相同的三个可选参数：
 
 | 子命令 | 加载的配置结构体 | 默认配置文件 |
 |---|---|---|
@@ -80,7 +82,7 @@
 #### default_config_path
 
 - **签名：** `fn default_config_path(file_name: &str) -> PathBuf`
-- **源码位置：** `src/main.rs:151`
+- **源码位置：** `src/main.rs:179`
 - **用途：** 在 `data/input/` 下构建默认配置文件路径。
 - **参数：**
   - `file_name` — 配置文件的基础名（例如 `"pack_config.yaml"`）。
@@ -90,7 +92,7 @@
 #### pick_config_path
 
 - **签名：** `fn pick_config_path(config: Option<PathBuf>, file_name: &str) -> PathBuf`
-- **源码位置：** `src/main.rs:156`
+- **源码位置：** `src/main.rs:184`
 - **用途：** 解析某个子命令要使用的配置路径：若给出了用户提供的 `--config` 值则使用它，否则使用 `data/input/` 下的默认路径。
 - **参数：**
   - `config` — 可选的 `--config` CLI 参数。
@@ -101,7 +103,7 @@
 #### main
 
 - **签名：** `fn main() -> anyhow::Result<()>`
-- **源码位置：** `src/main.rs:166`
+- **源码位置：** `src/main.rs:194`
 - **用途：** 解析 CLI 参数，为所选子命令加载 YAML 配置，应用 `--input`/`--output` 覆盖项，并运行相应的流水线。
 - **参数：** 无（通过 `Cli::parse()` 读取 `std::env::args`）。
 - **返回值：** 成功时为 `Ok(())`；若配置加载、路径解析或流水线执行（`Pipeline::run`）失败，则为 `anyhow::Error`。
@@ -235,7 +237,7 @@
 #### main
 
 - **签名：** `fn main()`
-- **源码位置：** `src/bin/precision_test.rs:5`
+- **源码位置：** `src/bin/precision_test.rs:6`
 - **用途：** 加载一个固定的样本网格，计算其体积分数与包围盒，随后在若干体素间距下、以 `"exact"` 和 `"monte_carlo"` 两种 CPU 方法运行 `calculate_s2`（并在启用 `gpu` 特性时通过 `GpuS2Pipeline::calculate_s2_gpu` 运行），打印 S2 曲线采样值、相对参考值的 L2 偏差，以及（对于 GPU）耗时。
 - **参数：** 无。
 - **返回值：** `()`。若 `data/input/particles.stl` 无法加载或没有包围盒，会通过 `.expect(...)` 触发 panic。
@@ -337,11 +339,11 @@
 
 #### empty
 
-`pub fn empty() -> Self` — `src/types.rs:96`。构造一个 `vertices` 和 `faces` 均为空向量的 `Mesh`。无副作用。
+`pub fn empty() -> Self` — `src/types.rs:128`。构造一个 `vertices` 和 `faces` 均为空向量的 `Mesh`。无副作用。
 
 #### is_empty
 
-`pub fn is_empty(&self) -> bool` — `src/types.rs:104`。若该网格没有顶点**或**没有面（即 `vertices.is_empty() || faces.is_empty()`，而非严格的“两者皆空”检查），则返回 `true`。无副作用。
+`pub fn is_empty(&self) -> bool` — `src/types.rs:136`。若该网格没有顶点**或**没有面（即 `vertices.is_empty() || faces.is_empty()`，而非严格的“两者皆空”检查），则返回 `true`。无副作用。
 
 ## compute/mod.rs
 
@@ -370,7 +372,7 @@
 | `name` | `String` | 后端或 GPU 适配器名称（CPU 后端为 `"cpu"`）。 |
 | `supports_gpu` | `bool` | 该后端是否为 GPU 支持。 |
 | `max_buffer_size` | `u64` | 适配器的最大缓冲区大小（字节）（CPU 为 `0`）。 |
-| `max_storage_buffer_binding_size` | `u64` | 适配器的最大存储缓冲区绑定大小（字节）（CPU 为 `0`）；`select_backend` 用它来强制执行所配置的 GPU 内存限制。 |
+| `max_storage_buffer_binding_size` | `u64` | 单个 binding 的字节上限（CPU 为 0），与总任务预算独立。 |
 
 ### ComputeBackend
 
@@ -427,16 +429,28 @@
 #### select_backend
 
 - **签名：** `pub fn select_backend(requested: AccelerationMode, gpu_min_voxels: Option<usize>, gpu_memory_limit_mb: Option<u64>, workload_voxels: usize) -> BackendSelection`
-- **源码位置：** `src/compute/policy.rs:21`
+- **源码位置：** `src/compute/policy.rs:22`
 - **用途：** 将所请求的 `AccelerationMode`（`Cpu`/`Gpu`/`Auto`）连同工作负载/配置参数，解析为一个具体的 `BackendSelection`，其中应用了 GPU 可用性、内存限制及工作负载规模检查。
 - **参数：**
   - `requested` — 调用方/配置所请求的模式。
   - `gpu_min_voxels` — 仅用于 `Auto` 模式：低于该体素数的工作负载不会尝试使用 GPU；若为 `None` 则默认为 `250_000`。
-  - `gpu_memory_limit_mb` — 对 GPU 内存的可选上限（单位 MB）；若适配器的 `max_storage_buffer_binding_size` 小于该限制，则选择结果回退到 CPU。当 `gpu` 特性被禁用时不使用（在该配置下标记为 `#[allow(unused_variables)]`）。
+  - `gpu_memory_limit_mb` — 旧预算参数。该接口没有工作集估计，带预算的 GPU 请求在探测前返回 CPU 及明确原因；MiB 转换溢出单独报告。应使用 resolve_execution 与已验证工作集估计来执行预算。
   - `workload_voxels` — 当前工作负载的体素数，在 `Auto` 模式下与 `gpu_min_voxels` 比较。
 - **返回值：** 一个 `BackendSelection`：
   - `requested == Cpu`：始终为 `{ backend: Cpu, fallback: None }`。
-  - `requested == Gpu`：在启用 `gpu` 特性的情况下，尝试 `crate::gpu::try_init_gpu()`；成功后，将 `gpu_memory_limit_mb` 与适配器的 `max_storage_buffer_binding_size` 比较（若超出限制则回退到 CPU 并附带一个 `FallbackReason`），否则返回 `{ backend: Gpu { .. }, fallback: None }`。若 GPU 初始化失败，或 `gpu` 特性被禁用，则返回 `{ backend: Cpu, fallback: Some(FallbackReason { requested: Gpu, reason: "GPU init failed: ..." | "cargo feature 'gpu' is not enabled" }) }`。
+  - `requested == Gpu`：先按上述规则拒绝无工作集估计的预算请求；否则探测 GPU，成功返回 GPU，初始化失败或未启用特性时返回 CPU 及原因。
   - `requested == Auto`：首先将 `workload_voxels` 与 `gpu_min_voxels.unwrap_or(250_000)` 比较；若低于阈值，立即返回 CPU，并附带一个引用体素数的回退原因，完全不尝试 GPU 初始化。否则，遵循与 `Gpu` 分支相同的 GPU 初始化/内存限制逻辑（生成的任何 `FallbackReason` 中 `requested: Auto`）。
 - **副作用：** 当启用 `gpu` 特性、且 `requested` 为 `Gpu`，或为 `Auto` 且工作负载达到或超过体素阈值时，会调用 `crate::gpu::try_init_gpu()`，该调用可能会初始化一个 wgpu 适配器——在别处已记录为一个可能较为昂贵的首次调用（适配器/设备枚举与创建）。
-- **说明：** `Auto` 模式的阈值检查发生在任何 GPU 探测*之前*，因此即使有 GPU 可用，小型工作负载也永远不会承担 GPU 初始化的开销。当未编译 `gpu` 特性时，`Gpu` 与 `Auto` 分支始终解析为 `Cpu`，回退原因为 `"cargo feature 'gpu' is not enabled"`，无论 `workload_voxels`（对于 `Gpu`）如何，或在阈值检查之后（对于 `Auto`）。`gpu_memory_limit_mb` 检查仅在 `max_storage_buffer_binding_size > 0` 时才会触发，以避免在报告该字段为 `0` 的适配器上产生误报式回退。
+- **说明：** CPU 与低于阈值的 Auto 请求在预算检查和设备探测前返回。总任务预算与单 buffer/binding 上限是独立约束；执行 planner 检查具体缓冲大小，resolve_execution 检查任务字节数与禁止回退策略。
+
+### configured_mode / resolve_execution
+
+`configured_mode(&AccelerationConfig) -> Result<AccelerationMode>` 一次读取严格的 cpu/gpu/auto 环境覆盖，不探测 GPU。`resolve_execution(config, requested, workload, threshold, supports_gpu, estimated_gpu_bytes) -> Result<BackendSelection>` 先处理 CPU/小 auto，再检查方法支持、实现的选项和任务估算字节/MB 预算，最后探测 GPU。未支持选项明确报错；禁止回退时 GPU 失败返回错误。估算不等于驱动实际显存。Measure 已采用此方法感知策略，其余管线继续迁移。
+
+新建的驻留 GPU exact 求值在后端选择和执行中共用 ExactMemoryPlan。设 T=max(36×faces,4)、M=4×cells、B 为批次部分结果槽数，保守逻辑峰值为 2T+M+128+80B，计入待完成三角/offset 上传和批次增长时同时存在的新旧缓冲；128 字节覆盖固定参数/计数/占位资源。B 从 200000 按 MiB 预算缩小，至少 1；最小批次仍超限则在设备初始化前拒绝，由调用方执行配置的回退策略。该模型不含驱动/编译器内部资源和 CPU 内存，仅适用于新建生产 direct-shell exact 求值，不声称覆盖实验 tiled/reduced 或任意已有高水位管线。旧 exact 网格硬限制仍独立存在。
+
+| Symbol | Source | Contract |
+|---|---|---|
+| `ExactMemoryPlan` | `src/compute/exact_memory.rs:5` | Fresh resident exact logical GPU peak and budget-selected partial batch. |
+| `ExactMemoryPlan::new` | `src/compute/exact_memory.rs:12` | Checked resource arithmetic and batch selection; may still require check_budget for infeasible minima. |
+| `ExactMemoryPlan::check_budget` | `src/compute/exact_memory.rs:52` | Enforce configured MiB cap before initialization. |

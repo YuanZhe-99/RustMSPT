@@ -23,22 +23,27 @@ This page documents the core geometry primitives in `src/geometry/`: axis-aligne
 | `mesh_centroid` | `src/geometry/mesh_ops.rs:5` | Arithmetic centroid of mesh vertices. |
 | `vec_norm` | `src/geometry/mesh_ops.rs:19` | Euclidean length of a vector. |
 | `merge_meshes` | `src/geometry/mesh_ops.rs:24` | Combines multiple meshes into one, remapping face indices. |
-| `split_mesh_into_granules` | `src/geometry/mesh_ops.rs:44` | Splits a mesh into connected components (BFS over shared vertices). |
-| `translate_mesh` | `src/geometry/mesh_ops.rs:117` | Translates all mesh vertices by a delta vector, in place. |
-| `move_mesh_to_target_center` | `src/geometry/mesh_ops.rs:124` | Moves a mesh so its centroid matches a target position. |
-| `wrap_mesh_centroid_to_box` | `src/geometry/mesh_ops.rs:135` | Wraps a mesh's centroid into a box under periodic boundary conditions. |
-| `scale_mesh` | `src/geometry/mesh_ops.rs:156` | Uniformly scales mesh vertices about the origin, in place. |
-| `mesh_surface_area` | `src/geometry/mesh_ops.rs:163` | Total surface area of a mesh (sum of triangle areas). |
-| `rotate_mesh_around_center` | `src/geometry/mesh_ops.rs:182` | Rotates a mesh about its centroid using Rodrigues' rotation formula. |
-| `box_mesh` | `src/geometry/mesh_ops.rs:203` | Builds a triangulated box mesh from a `BoundingBox`. |
-| `SpatialGrid::new` | `src/geometry/spatial.rs:14` | Constructs an empty uniform grid over a box with given cell size. |
-| `SpatialGrid::insert` | `src/geometry/spatial.rs:31` | Inserts an item index into every cell its bbox overlaps. |
-| `SpatialGrid::build` | `src/geometry/spatial.rs:49` | Constructs and populates a grid from a batch of (index, bbox) pairs. |
-| `SpatialGrid::query_neighbors` | `src/geometry/spatial.rs:58` | Finds candidate neighbor indices overlapping a query bbox. |
-| `SpatialGrid::query_neighbors_with_margin` | `src/geometry/spatial.rs:68` | Same as `query_neighbors`, expanded by a margin distance. |
-| `SpatialGrid::point_to_cell_clamped` | `src/geometry/spatial.rs:93` | Maps a point to grid cell coordinates, clamped to grid bounds. |
-| `SpatialGrid::point_to_cell` | `src/geometry/spatial.rs:99` | Maps a point to grid cell coordinates, unclamped. |
-| `estimate_cell_size` | `src/geometry/spatial.rs:108` | Heuristically picks a `SpatialGrid` cell size from a set of bboxes. |
+| `split_mesh_into_granules` | `src/geometry/mesh_ops.rs:47` | Splits a mesh into connected components (BFS over shared vertices). |
+| `translate_mesh` | `src/geometry/mesh_ops.rs:120` | Translates all mesh vertices by a delta vector, in place. |
+| `move_mesh_to_target_center` | `src/geometry/mesh_ops.rs:125` | Moves a mesh so its centroid matches a target position. |
+| `wrap_mesh_centroid_to_box` | `src/geometry/mesh_ops.rs:136` | Wraps a mesh's centroid into a box under periodic boundary conditions. |
+| `scale_mesh` | `src/geometry/mesh_ops.rs:157` | Uniformly scales mesh vertices about the origin, in place. |
+| `mesh_surface_area` | `src/geometry/mesh_ops.rs:176` | Total surface area of a mesh (sum of triangle areas). |
+| `rotate_mesh_around_center` | `src/geometry/mesh_ops.rs:195` | Rotates a mesh about its centroid using Rodrigues' rotation formula. |
+| `box_mesh` | `src/geometry/mesh_ops.rs:216` | Builds a triangulated box mesh from a `BoundingBox`. |
+| `SpatialGrid::new` | `src/geometry/spatial.rs:22` | Constructs an empty uniform grid over a box with given cell size. |
+| `SpatialGrid::insert` | `src/geometry/spatial.rs:40` | Inserts an item index into every cell its bbox overlaps. |
+| `SpatialGrid::build` | `src/geometry/spatial.rs:80` | Constructs and populates a grid from a batch of (index, bbox) pairs. |
+| `SpatialGrid::query_neighbors` | `src/geometry/spatial.rs:89` | Finds candidate neighbor indices overlapping a query bbox. |
+| `SpatialGrid::query_neighbors_with_margin` | `src/geometry/spatial.rs:99` | Margin query with first-encounter ordering and adaptive linear/hash deduplication. |
+| `SpatialGrid::point_to_cell_clamped` | `src/geometry/spatial.rs:157` | Maps a point to grid cell coordinates, clamped to grid bounds. |
+| `SpatialGrid::point_to_cell` | `src/geometry/spatial.rs:167` | Maps a point to grid cell coordinates, unclamped. |
+| `estimate_cell_size` | `src/geometry/spatial.rs:176` | Heuristically picks a `SpatialGrid` cell size from a set of bboxes. |
+| `SpatialGrid::remove` | `src/geometry/spatial.rs:59` | Remove all item cell references. |
+| `SpatialGrid::update` | `src/geometry/spatial.rs:72` | Replace one item membership. |
+| `SpatialQueryScratch` | `src/geometry/spatial.rs:5` | Retained neighbors and membership storage. |
+| `SpatialGrid::query_into` | `src/geometry/spatial.rs:111` | Fill reusable query scratch. |
+| `map_vertices` | `src/geometry/mesh_ops.rs:162` | Serial or parallel independent vertex mapping. |
 
 ## Module role: `geometry/mod.rs`
 
@@ -48,7 +53,7 @@ This page documents the core geometry primitives in `src/geometry/`: axis-aligne
 
 `RenderProjection` selects orthographic or perspective projection. `RenderCameraSpec` carries focus/view/up, projection/FOV/distance, padding, and resolution; `build_render_camera(mesh, spec)` validates it, derives an orthonormal basis, auto-frames the mesh bbox, and returns `RenderCamera`. `parse_render_vec3` and `parse_render_projection` convert YAML values with `InvalidConfig` errors.
 
-`RenderCamera::ray_for_pixel` samples top-row-first pixel centers. `view_proj_matrix` returns a row-major right-handed matrix with wgpu's `[0,1]` depth convention. `render_mesh_cpu` converts the mesh to parry3d `TriMesh`, casts the nearest QBVH ray per pixel in rayon row tasks, applies two-sided headlight shading, and returns `RenderedImage`. Private helpers normalize vectors, choose fallback up axes, enumerate bbox corners, multiply matrices, and shade channels without side effects.
+`RenderCamera::ray_for_pixel` samples top-row-first pixel centers. `view_proj_matrix` returns a row-major right-handed matrix with wgpu's `[0,1]` depth convention. `render_mesh_cpu` converts the mesh to parry3d `TriMesh`, casts the nearest QBVH ray per pixel in bounded Rayon pixel tasks, applies two-sided headlight shading, and returns `RenderedImage`. Private helpers normalize vectors, choose fallback up axes, enumerate bbox corners, multiply matrices, and shade channels without side effects.
 
 See [STL Rendering](../algorithms/stl-rendering.md).
 
@@ -146,7 +151,7 @@ Utilities for constructing, transforming, and measuring `Mesh` values. These are
 #### split_mesh_into_granules
 
 - **Signature:** `pub fn split_mesh_into_granules(mesh: &Mesh) -> Vec<Mesh>`
-- **Source:** `src/geometry/mesh_ops.rs:44`
+- **Source:** `src/geometry/mesh_ops.rs:47`
 - **Purpose:** Splits a single mesh into its connected components ("granules"), where connectivity is defined by shared vertices between triangles.
 - **Parameters:**
   - `mesh` — the mesh to decompose.
@@ -163,7 +168,7 @@ Utilities for constructing, transforming, and measuring `Mesh` values. These are
 #### translate_mesh
 
 - **Signature:** `pub fn translate_mesh(mesh: &mut Mesh, delta: Vec3)`
-- **Source:** `src/geometry/mesh_ops.rs:117`
+- **Source:** `src/geometry/mesh_ops.rs:120`
 - **Purpose:** Translates every vertex of a mesh by a fixed offset.
 - **Parameters:**
   - `mesh` — mesh to translate, mutated in place.
@@ -174,7 +179,7 @@ Utilities for constructing, transforming, and measuring `Mesh` values. These are
 #### move_mesh_to_target_center
 
 - **Signature:** `pub fn move_mesh_to_target_center(mesh: &mut Mesh, target: Vec3)`
-- **Source:** `src/geometry/mesh_ops.rs:124`
+- **Source:** `src/geometry/mesh_ops.rs:125`
 - **Purpose:** Repositions a mesh so that its centroid lands exactly on `target`.
 - **Parameters:**
   - `mesh` — mesh to move, mutated in place.
@@ -185,7 +190,7 @@ Utilities for constructing, transforming, and measuring `Mesh` values. These are
 #### wrap_mesh_centroid_to_box
 
 - **Signature:** `pub fn wrap_mesh_centroid_to_box(mesh: &mut Mesh, box_bounds: BoundingBox)`
-- **Source:** `src/geometry/mesh_ops.rs:135`
+- **Source:** `src/geometry/mesh_ops.rs:136`
 - **Purpose:** Wraps a mesh's centroid back into the packing box under periodic boundary conditions, then moves the mesh to that wrapped position.
 - **Parameters:**
   - `mesh` — mesh to wrap, mutated in place.
@@ -197,7 +202,7 @@ Utilities for constructing, transforming, and measuring `Mesh` values. These are
 #### scale_mesh
 
 - **Signature:** `pub fn scale_mesh(mesh: &mut Mesh, factor: f64)`
-- **Source:** `src/geometry/mesh_ops.rs:156`
+- **Source:** `src/geometry/mesh_ops.rs:157`
 - **Purpose:** Uniformly scales every vertex of a mesh by `factor`, about the coordinate origin.
 - **Parameters:**
   - `mesh` — mesh to scale, mutated in place.
@@ -209,7 +214,7 @@ Utilities for constructing, transforming, and measuring `Mesh` values. These are
 #### mesh_surface_area
 
 - **Signature:** `pub fn mesh_surface_area(mesh: &Mesh) -> f64`
-- **Source:** `src/geometry/mesh_ops.rs:163`
+- **Source:** `src/geometry/mesh_ops.rs:176`
 - **Purpose:** Computes the total surface area of a triangulated mesh.
 - **Parameters:**
   - `mesh` — the mesh to measure.
@@ -220,7 +225,7 @@ Utilities for constructing, transforming, and measuring `Mesh` values. These are
 #### rotate_mesh_around_center
 
 - **Signature:** `pub fn rotate_mesh_around_center(mesh: &mut Mesh, axis: Vec3, angle: f64)`
-- **Source:** `src/geometry/mesh_ops.rs:182`
+- **Source:** `src/geometry/mesh_ops.rs:195`
 - **Purpose:** Rotates a mesh about its own centroid by `angle` radians around an arbitrary axis, using Rodrigues' rotation formula.
 - **Parameters:**
   - `mesh` — mesh to rotate, mutated in place.
@@ -233,7 +238,7 @@ Utilities for constructing, transforming, and measuring `Mesh` values. These are
 #### box_mesh
 
 - **Signature:** `pub fn box_mesh(bbox: BoundingBox) -> Mesh`
-- **Source:** `src/geometry/mesh_ops.rs:203`
+- **Source:** `src/geometry/mesh_ops.rs:216`
 - **Purpose:** Constructs a closed, triangulated rectangular box mesh matching the given bounding box.
 - **Parameters:**
   - `bbox` — the box's min/max corners.
@@ -258,7 +263,7 @@ Utilities for constructing, transforming, and measuring `Mesh` values. These are
 #### SpatialGrid::new
 
 - **Signature:** `pub fn new(box_bounds: BoundingBox, cell_size: f64) -> Self`
-- **Source:** `src/geometry/spatial.rs:14`
+- **Source:** `src/geometry/spatial.rs:22`
 - **Purpose:** Constructs an empty `SpatialGrid` spanning `box_bounds`, partitioned into cubic cells of (approximately) `cell_size`.
 - **Parameters:**
   - `box_bounds` — the world-space region the grid covers.
@@ -269,7 +274,7 @@ Utilities for constructing, transforming, and measuring `Mesh` values. These are
 #### SpatialGrid::insert
 
 - **Signature:** `pub fn insert(&mut self, idx: usize, bbox: BoundingBox)`
-- **Source:** `src/geometry/spatial.rs:31`
+- **Source:** `src/geometry/spatial.rs:40`
 - **Purpose:** Registers an item (identified by `idx`) into every grid cell its bounding box overlaps.
 - **Parameters:**
   - `idx` — item index to insert (typically a particle/mesh index).
@@ -281,7 +286,7 @@ Utilities for constructing, transforming, and measuring `Mesh` values. These are
 #### SpatialGrid::build
 
 - **Signature:** `pub fn build(bboxes: &[(usize, BoundingBox)], box_bounds: BoundingBox, cell_size: f64) -> Self`
-- **Source:** `src/geometry/spatial.rs:49`
+- **Source:** `src/geometry/spatial.rs:80`
 - **Purpose:** Convenience constructor that creates a grid and inserts a full batch of (index, bbox) pairs in one call.
 - **Parameters:**
   - `bboxes` — slice of `(index, bbox)` pairs to insert.
@@ -293,7 +298,7 @@ Utilities for constructing, transforming, and measuring `Mesh` values. These are
 #### SpatialGrid::query_neighbors
 
 - **Signature:** `pub fn query_neighbors(&self, bbox: BoundingBox, exclude: usize) -> Vec<usize>`
-- **Source:** `src/geometry/spatial.rs:58`
+- **Source:** `src/geometry/spatial.rs:89`
 - **Purpose:** Finds all item indices in cells overlapping `bbox`, excluding a given index.
 - **Parameters:**
   - `bbox` — query region.
@@ -306,13 +311,13 @@ Utilities for constructing, transforming, and measuring `Mesh` values. These are
 #### SpatialGrid::query_neighbors_with_margin
 
 - **Signature:** `pub fn query_neighbors_with_margin(&self, bbox: BoundingBox, margin: f64, exclude: usize) -> Vec<usize>`
-- **Source:** `src/geometry/spatial.rs:68`
+- **Source:** `src/geometry/spatial.rs:99`
 - **Purpose:** Finds all item indices in cells overlapping `bbox`, expanded outward by `margin`, excluding a given index.
 - **Parameters:**
   - `bbox` — query region.
   - `margin` — extra world-space distance to pad the search region by (converted to an integer cell padding via `ceil(margin * inv_cell) + 1`).
   - `exclude` — index to omit from results.
-- **Returns:** `Vec<usize>` of deduplicated candidate neighbor indices (dedup via linear `contains` check while building the result).
+- **Returns:** `Vec<usize>` of deduplicated candidate neighbor indices (first-encounter order; linear deduplication below 256 IDs, then hash membership without iterating the set).
 - **Side effects:** None.
 - **Notes:** Used wherever a `min_neighbor_distance` (or similar clearance) constraint must be checked, since a neighbor separated by up to `margin` still needs to be considered even if its bbox doesn't directly overlap the query bbox. The result is a superset of true neighbors within the margin — candidates still require an exact geometric check downstream (this is a broad-phase filter only).
 - **See also:** `../algorithms/spatial-grid-collision.md`.
@@ -320,7 +325,7 @@ Utilities for constructing, transforming, and measuring `Mesh` values. These are
 #### SpatialGrid::point_to_cell_clamped
 
 - **Signature:** `fn point_to_cell_clamped(&self, p: Vec3) -> (usize, usize, usize)`
-- **Source:** `src/geometry/spatial.rs:93`
+- **Source:** `src/geometry/spatial.rs:157`
 - **Purpose:** Maps a world-space point to grid cell coordinates, clamped so the result always indexes a valid cell.
 - **Parameters:**
   - `p` — world-space point.
@@ -331,7 +336,7 @@ Utilities for constructing, transforming, and measuring `Mesh` values. These are
 #### SpatialGrid::point_to_cell
 
 - **Signature:** `fn point_to_cell(&self, p: Vec3) -> (usize, usize, usize)`
-- **Source:** `src/geometry/spatial.rs:99`
+- **Source:** `src/geometry/spatial.rs:167`
 - **Purpose:** Converts a world-space point into raw (unclamped) grid cell coordinates.
 - **Parameters:**
   - `p` — world-space point.
@@ -342,7 +347,7 @@ Utilities for constructing, transforming, and measuring `Mesh` values. These are
 #### estimate_cell_size
 
 - **Signature:** `pub fn estimate_cell_size(bboxes: &[BoundingBox]) -> f64`
-- **Source:** `src/geometry/spatial.rs:108`
+- **Source:** `src/geometry/spatial.rs:176`
 - **Purpose:** Heuristically picks a cell size for constructing a `SpatialGrid`, based on the largest bounding-box extent among a set of items.
 - **Parameters:**
   - `bboxes` — bounding boxes of the items that will populate the grid (e.g., all particle meshes in a packing run).
@@ -350,3 +355,24 @@ Utilities for constructing, transforming, and measuring `Mesh` values. These are
 - **Side effects:** None.
 - **Notes:** Sizing cells to the largest item's extent ensures that any single item spans at most a small, bounded number of cells, which keeps `insert`/`query_neighbors` calls cheap. Callers typically compute `mesh_bbox` for every particle, pass the resulting boxes here to pick `cell_size`, then build the grid via `SpatialGrid::build`.
 - **See also:** `../algorithms/spatial-grid-collision.md`.
+
+### Incremental grid acceptance (PERF-10/13)
+
+`SpatialGrid` retains reverse item-to-cell membership. `remove(idx)` removes all insertions of that id and preserves remaining bucket order; `update(idx, Option<BoundingBox>)` replaces membership or removes the item. Query order remains first encounter, but moving an item appends it in its new buckets, so consumers must not assume rebuild order. Candidate sets match a full rebuild. Optimize queries the current grid before evaluating a proposal, updates one membership only after acceptance, and restores the original prepared particle directly on rejection. Whole-population migration still rebuilds the grid. Repeated inserts retain their old semantics and removal clears every copy. Reverse membership consumes additional memory proportional to inserted cell references.
+
+`SpatialQueryScratch` owns reusable neighbors and hash membership storage. `SpatialGrid::query_into(bbox, margin, exclude, scratch)` clears logical contents and retains capacity, preserving first-encounter deduplication. Placement label tiles reuse it alongside their mesh-query scratch. Extremely large margins saturate cell padding rather than overflowing.
+
+`map_vertices(&mut [Vec3], transform)` applies independent vertex maps with a serial small-input path and disjoint Rayon chunks above the cutoff. Scale and translation preserve their arithmetic and topology. The current pool controls parallel execution.
+
+`merge_meshes` reserves final vertex and face capacities before concatenation, preserving the existing input/index order.
+
+
+Dense-bucket query contract: hash promotion occurs immediately on the 256th distinct candidate, even inside the first bucket. No bucket is scanned completely with unbounded linear deduplication. The set is never iterated, preserving first-encounter ordering and sparse-ID/exclusion semantics. Both buffers remain query-local reusable scratch.
+
+### CPU pixel task scheduling
+
+Both nearest-hit STL rendering and prepared transparent scene rendering use disjoint contiguous pixel tasks. Images with at least one row per worker and at most 1024 pixels per worker retain row tasks, avoiding loss of parallelism from the minimum tile grain. Other images in a one-worker pool use one task; otherwise the initial grain targets four tasks per worker, clamped to 256..4096 pixels, aligning to complete rows when a row fits. Wide rows can span several tasks and short rows can share one. Each task derives its starting `(x,y)` once and advances the original integer pixel coordinates; ray arithmetic, hit ordering/compositing and serial overlays are unchanged. Scene depth and RGBA use identical task boundaries and reuse task-local hit scratch. Row-grain reference tests compare complete images under 1/2/8 workers for both projections, ragged tasks and extreme aspect ratios. Grain performance acceptance is tracked in PLAN.Performance.md §40.
+
+| `cpu_render_tile_pixels` | `src/geometry/render.rs:381` | Bounded CPU pixel-task scheduling with an explicit row reference. |
+
+| `render_mesh_cpu_with_tiles` | `src/geometry/render.rs:390` | Bounded CPU pixel-task scheduling with an explicit row reference. |

@@ -2,6 +2,7 @@ use rustmspt::geometry::{calculate_s2, l2_norm, mesh_bbox, volume_fraction_in_bb
 use rustmspt::io::load_stl;
 use std::path::Path;
 
+// AI-FUNC-SUMMARY: Compare CPU/GPU S2 on the configured fixture and report GPU initialization or execution failures.
 fn main() {
     let mesh = load_stl(Path::new("data/input/particles.stl")).expect("load mesh");
     let bbox = mesh_bbox(&mesh).expect("mesh bbox");
@@ -43,7 +44,10 @@ fn main() {
         };
         println!("=== GPU MC (N={}, no voxelization) ===", n);
         let t0 = std::time::Instant::now();
-        let mut s2g = gpu.calculate_s2_gpu(bbox, r_max, n);
+        let mut s2g = match gpu.calculate_s2_gpu(bbox, r_max, n) {
+            Ok(result) => result,
+            Err(error) => { eprintln!("[GPU] Execution failed: {error}"); return; }
+        };
         let dt = t0.elapsed().as_secs_f64();
         s2g[0] = vf;
         let l2 = l2_norm(&s2g, &ref_exact);

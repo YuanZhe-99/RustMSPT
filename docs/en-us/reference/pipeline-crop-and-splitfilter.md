@@ -6,26 +6,28 @@ Covers the `crop` pipeline (`src/pipeline/crop.rs`) — background detection, PC
 
 | Item | Location | Summary |
 |---|---|---|
+| `gpu_crop_values_supported` | `src/pipeline/crop.rs:25` | Check exact integer representation for GPU interpolation. |
+| `CropPipeline::run_in_pool` | `src/pipeline/crop.rs:621` | Execute crop stages within the configured pool and report completed-stage wall times. |
 | `CropPipeline` (struct) | `src/pipeline/crop.rs:14` | Holds `CropConfig` for the crop pipeline. |
 | `InterpolationMode` (enum) | `src/pipeline/crop.rs:19` | Nearest vs. trilinear resampling mode used during rotate+crop. |
-| `parse_byte_order` | `src/pipeline/crop.rs:25` | Parses `little`/`big` (or `le`/`be`) into a `ByteOrder`. |
-| `parse_interpolation_mode` | `src/pipeline/crop.rs:36` | Parses `nearest`/`trilinear` into an `InterpolationMode`, defaulting to trilinear. |
-| `load_input_volume` | `src/pipeline/crop.rs:52` | Loads the input CT volume from a raw folder or TIFF/TIFF-folder per config. |
-| `voxel_index` | `src/pipeline/crop.rs:86` | Computes the flat data index for `(x, y, z)` voxel coordinates. |
-| `sample_voxel_or_background` | `src/pipeline/crop.rs:91` | Reads a voxel at integer coordinates, returning the background value if out of bounds. |
-| `sample_nearest` | `src/pipeline/crop.rs:106` | Nearest-neighbor sample at fractional source coordinates. |
-| `sample_trilinear` | `src/pipeline/crop.rs:114` | Trilinear-interpolated sample at fractional source coordinates. |
-| `stabilize_bound` | `src/pipeline/crop.rs:147` | Snaps a near-integer float to its exact integer within an epsilon. |
-| `float_bounds_to_inclusive_i64` | `src/pipeline/crop.rs:157` | Converts float min/max bounds to an inclusive integer `[start, end]` range. |
-| `boundary_non_bg_ratio` | `src/pipeline/crop.rs:170` | Fraction of non-background voxels within a boundary shell of given thickness. |
-| `infer_trim_pixels` | `src/pipeline/crop.rs:211` | Heuristically infers 0/1/2 pixels of edge trim from boundary artifact intensity. |
-| `resolve_trim_pixels` | `src/pipeline/crop.rs:229` | Resolves the effective edge-trim pixel count from config, supporting `-1` for auto. |
-| `trim_volume_border` | `src/pipeline/crop.rs:252` | Trims a fixed number of border voxels from the XY faces of a volume. |
-| `detect_background_mode` | `src/pipeline/crop.rs:296` | Detects the background value as the modal voxel value on the volume boundary. |
-| `estimate_pca_bbox` | `src/pipeline/crop.rs:330` | Computes PCA rotation, centroid, and rotated-frame foreground bounding box. |
-| `rotate_and_crop` | `src/pipeline/crop.rs:432` | CPU, rayon-parallel rotate-and-crop of the volume into an axis-aligned output. |
-| `rotate_and_crop_gpu` | `src/pipeline/crop.rs:494` | GPU-accelerated rotate-and-crop via `GpuVolumeTransformPipeline` (feature `gpu`). |
-| `CropPipeline::run` | `src/pipeline/crop.rs:559` | Orchestrates load → background detect → PCA bbox → rotate+crop (GPU or CPU) → edge trim → save TIFF. |
+| `parse_byte_order` | `src/pipeline/crop.rs:34` | Parses `little`/`big` (or `le`/`be`) into a `ByteOrder`. |
+| `parse_interpolation_mode` | `src/pipeline/crop.rs:50` | Parses `nearest`/`trilinear` into an `InterpolationMode`, defaulting to trilinear. |
+| `load_input_volume` | `src/pipeline/crop.rs:71` | Loads the input CT volume from a raw folder or TIFF/TIFF-folder per config. |
+| `voxel_index` | `src/pipeline/crop.rs:105` | Computes the flat data index for `(x, y, z)` voxel coordinates. |
+| `sample_voxel_or_background` | `src/pipeline/crop.rs:110` | Reads a voxel at integer coordinates, returning the background value if out of bounds. |
+| `sample_nearest` | `src/pipeline/crop.rs:137` | Nearest-neighbor sample at fractional source coordinates. |
+| `sample_trilinear` | `src/pipeline/crop.rs:145` | Trilinear-interpolated sample at fractional source coordinates. |
+| `stabilize_bound` | `src/pipeline/crop.rs:178` | Snaps a near-integer float to its exact integer within an epsilon. |
+| `float_bounds_to_inclusive_i64` | `src/pipeline/crop.rs:188` | Converts float min/max bounds to an inclusive integer `[start, end]` range. |
+| `boundary_non_bg_ratio` | `src/pipeline/crop.rs:201` | Fraction of non-background voxels within a boundary shell of given thickness. |
+| `infer_trim_pixels` | `src/pipeline/crop.rs:242` | Heuristically infers 0/1/2 pixels of edge trim from boundary artifact intensity. |
+| `resolve_trim_pixels` | `src/pipeline/crop.rs:260` | Resolves the effective edge-trim pixel count from config, supporting `-1` for auto. |
+| `trim_volume_border` | `src/pipeline/crop.rs:287` | Trims a fixed number of border voxels from the XY faces of a volume. |
+| `detect_background_mode` | `src/pipeline/crop.rs:317` | Detects the background value as the modal voxel value on the volume boundary. |
+| `estimate_pca_bbox` | `src/pipeline/crop.rs:351` | Computes PCA rotation, centroid, and rotated-frame foreground bounding box. |
+| `rotate_and_crop` | `src/pipeline/crop.rs:459` | CPU, rayon-parallel rotate-and-crop of the volume into an axis-aligned output. |
+| `rotate_and_crop_gpu` | `src/pipeline/crop.rs:520` | GPU-accelerated rotate-and-crop via `GpuVolumeTransformPipeline` (feature `gpu`). |
+| `CropPipeline::run` | `src/pipeline/crop.rs:598` | Orchestrates load → background detect → PCA bbox → rotate+crop (GPU or CPU) → edge trim → save TIFF. |
 | `SplitFilterPipeline` (struct) | `src/pipeline/split_filter.rs:13` | Holds `SplitFilterConfig` for the split-filter pipeline. |
 | `VolumeStats` (struct) | `src/pipeline/split_filter.rs:18` | Min/max/mean/median summary of kept-particle volumes. |
 | `volume_stats_for_kept` | `src/pipeline/split_filter.rs:26` | Computes `VolumeStats` over particles whose `keep` flag is true. |
@@ -62,7 +64,7 @@ CT-volume crop pipeline. Loads a volume, detects the background intensity, compu
 #### CropPipeline::run
 
 - **Signature:** `fn run(&self) -> Result<()>`
-- **Source:** `src/pipeline/crop.rs:559`
+- **Source:** `src/pipeline/crop.rs:598`
 - **Purpose:** Execute the full crop pipeline end to end: load the CT volume, detect its background value, PCA-align the foreground, rotate and crop to an axis-aligned bounding box, optionally trim edge artifacts, and save the result.
 - **Parameters:** Reads `self.config: CropConfig` — input type/path (raw or TIFF, with optional slice range and raw layout spec), `interpolation` mode string, `edge_trim` (-1/0/1/2), and output path/folder-prefix/folder-extension.
 - **Returns:** `Ok(())` on success; `RustMsptError::InvalidConfig` for bad config values or a too-large edge trim; propagates I/O and mesh/volume errors.
@@ -72,7 +74,7 @@ CT-volume crop pipeline. Loads a volume, detects the background intensity, compu
   2. `detect_background_mode` — find the modal boundary voxel value.
   3. `parse_interpolation_mode` — resolve nearest vs. trilinear from config.
   4. `estimate_pca_bbox` — compute PCA rotation, centroid, and rotated-frame foreground bounds.
-  5. Rotate+crop: when built with `--features gpu` **and** the output voxel count (`(x1-x0+1)*(y1-y0+1)*(z1-z0+1)`) exceeds 100,000, calls `rotate_and_crop_gpu`; on GPU failure, prints a `[Warning]` and falls back to the CPU path (`rotate_and_crop`). Below the 100k-voxel threshold, or when the `gpu` feature is disabled, always uses the CPU path.
+  5. Rotate+crop using the configured execution policy; failures fall back only when permitted.
   6. `resolve_trim_pixels` + `trim_volume_border` — optional edge-artifact trim (auto-detected when `edge_trim == -1`).
   7. `save_tiff_or_folder_with_ext` — write output.
 - **See also:** `estimate_pca_bbox`, `rotate_and_crop`, `rotate_and_crop_gpu`; algorithm details in [../algorithms/pca-volume-alignment-crop.md](../algorithms/pca-volume-alignment-crop.md); GPU dispatch details in [gpu.md](gpu.md).
@@ -84,7 +86,7 @@ CT-volume crop pipeline. Loads a volume, detects the background intensity, compu
 #### parse_byte_order
 
 - **Signature:** `fn parse_byte_order(value: Option<&str>) -> Result<ByteOrder>`
-- **Source:** `src/pipeline/crop.rs:25`
+- **Source:** `src/pipeline/crop.rs:34`
 - **Purpose:** Parse a raw-volume byte-order config string into `io::ByteOrder`.
 - **Parameters:** `value` — `"little"`/`"le"` or `"big"`/`"be"` (case-insensitive, trimmed); defaults to `"little"` when `None`.
 - **Returns:** `Ok(ByteOrder::LittleEndian)`, `Ok(ByteOrder::BigEndian)`, or `Err(InvalidConfig)` for any other string.
@@ -93,7 +95,7 @@ CT-volume crop pipeline. Loads a volume, detects the background intensity, compu
 #### parse_interpolation_mode
 
 - **Signature:** `fn parse_interpolation_mode(value: Option<&str>) -> Result<InterpolationMode>`
-- **Source:** `src/pipeline/crop.rs:36`
+- **Source:** `src/pipeline/crop.rs:50`
 - **Purpose:** Parse the crop config's interpolation-mode string.
 - **Parameters:** `value` — `"nearest"` or `"trilinear"` (case-insensitive, trimmed); defaults to `"trilinear"` when `None`.
 - **Returns:** `Ok(InterpolationMode)` or `Err(InvalidConfig)` for unrecognized strings.
@@ -102,7 +104,7 @@ CT-volume crop pipeline. Loads a volume, detects the background intensity, compu
 #### load_input_volume
 
 - **Signature:** `fn load_input_volume(config: &CropConfig) -> Result<Volume3D>`
-- **Source:** `src/pipeline/crop.rs:52`
+- **Source:** `src/pipeline/crop.rs:71`
 - **Purpose:** Load the crop pipeline's input volume according to `config.input.type`.
 - **Parameters:** `config` — the full `CropConfig`; reads `input.type` (`"raw"` or `"tiff"`/`"tif"`), `input.path`, `input.slice_start`/`slice_end` (defaulting to -1, meaning "no clamp"), and, for raw input, `input.raw` (width/height/bits/signed/byte_order).
 - **Returns:** A loaded `Volume3D`.
@@ -116,7 +118,7 @@ CT-volume crop pipeline. Loads a volume, detects the background intensity, compu
 #### sample_voxel_or_background
 
 - **Signature:** `fn sample_voxel_or_background(volume: &Volume3D, background: i64, x: isize, y: isize, z: isize) -> i64`
-- **Source:** `src/pipeline/crop.rs:91`
+- **Source:** `src/pipeline/crop.rs:110`
 - **Purpose:** Read a single voxel at integer coordinates, treating any out-of-bounds coordinate as background.
 - **Parameters:** `volume`, `background` (fill value), `x`/`y`/`z` (signed, may be negative or beyond volume extent).
 - **Returns:** The voxel value, or `background` if any coordinate is negative or `>=` the corresponding dimension.
@@ -125,7 +127,7 @@ CT-volume crop pipeline. Loads a volume, detects the background intensity, compu
 #### sample_nearest
 
 - **Signature:** `fn sample_nearest(volume: &Volume3D, background: i64, src_x: f64, src_y: f64, src_z: f64) -> i64`
-- **Source:** `src/pipeline/crop.rs:106`
+- **Source:** `src/pipeline/crop.rs:137`
 - **Purpose:** Nearest-neighbor resampling at fractional source coordinates.
 - **Parameters:** fractional `src_x/src_y/src_z` in source-volume space.
 - **Returns:** Rounds each coordinate to the nearest integer and delegates to `sample_voxel_or_background`.
@@ -134,7 +136,7 @@ CT-volume crop pipeline. Loads a volume, detects the background intensity, compu
 #### sample_trilinear
 
 - **Signature:** `fn sample_trilinear(volume: &Volume3D, background: i64, src_x: f64, src_y: f64, src_z: f64) -> i64`
-- **Source:** `src/pipeline/crop.rs:114`
+- **Source:** `src/pipeline/crop.rs:145`
 - **Purpose:** Trilinear-interpolated resampling at fractional source coordinates.
 - **Parameters:** fractional `src_x/src_y/src_z`.
 - **Returns:** The trilinear blend of the 8 surrounding voxels (each individually falling back to `background` if out of bounds via `sample_voxel_or_background`), rounded to the nearest `i64`.
@@ -148,7 +150,7 @@ CT-volume crop pipeline. Loads a volume, detects the background intensity, compu
 #### float_bounds_to_inclusive_i64
 
 - **Signature:** `fn float_bounds_to_inclusive_i64(min_v: f64, max_v: f64, eps: f64) -> (isize, isize)`
-- **Source:** `src/pipeline/crop.rs:157`
+- **Source:** `src/pipeline/crop.rs:188`
 - **Purpose:** Convert a floating-point `[min_v, max_v]` bound into an inclusive integer voxel range.
 - **Parameters:** `min_v`/`max_v` — float bounds (e.g. from `estimate_pca_bbox`); `eps` — stabilization tolerance passed to `stabilize_bound`.
 - **Returns:** `(start, end)` where `start = floor(stabilize(min_v))` and `end = ceil(stabilize(max_v))`.
@@ -158,7 +160,7 @@ CT-volume crop pipeline. Loads a volume, detects the background intensity, compu
 #### boundary_non_bg_ratio
 
 - **Signature:** `fn boundary_non_bg_ratio(volume: &Volume3D, background: i64, thickness: usize) -> f64`
-- **Source:** `src/pipeline/crop.rs:170`
+- **Source:** `src/pipeline/crop.rs:201`
 - **Purpose:** Measure how much of a volume's outer shell (of a given thickness) is non-background — a proxy for leftover rotation/resampling edge artifacts.
 - **Parameters:** `volume`, `background`, `thickness` — shell thickness in voxels from each face.
 - **Returns:** Ratio in `[0, 1]`; `0.0` if `thickness == 0` or the volume has no shell voxels.
@@ -168,7 +170,7 @@ CT-volume crop pipeline. Loads a volume, detects the background intensity, compu
 #### infer_trim_pixels
 
 - **Signature:** `fn infer_trim_pixels(volume: &Volume3D, background: i64) -> usize`
-- **Source:** `src/pipeline/crop.rs:211`
+- **Source:** `src/pipeline/crop.rs:242`
 - **Purpose:** Heuristically decide how many pixels of XY border to trim, based on boundary-shell artifact intensity.
 - **Parameters:** `volume` (typically the rotated+cropped output), `background`.
 - **Returns:** `2` if `r1 > 0.08 && r2 > 0.04`; else `1` if `r1 > 0.03`; else `0`, where `r1`/`r2` are `boundary_non_bg_ratio` at thickness 1 and 2 respectively.
@@ -178,7 +180,7 @@ CT-volume crop pipeline. Loads a volume, detects the background intensity, compu
 #### resolve_trim_pixels
 
 - **Signature:** `fn resolve_trim_pixels(config_value: Option<i32>, volume: &Volume3D, background: i64) -> Result<usize>`
-- **Source:** `src/pipeline/crop.rs:229`
+- **Source:** `src/pipeline/crop.rs:260`
 - **Purpose:** Resolve the effective edge-trim pixel count from the `edge_trim` config value, supporting auto-detection.
 - **Parameters:** `config_value` — `-1` (auto via `infer_trim_pixels`), `0`, `1`, or `2`; defaults to `0` when `None`. `volume`/`background` — used both for auto-inference and for clamping.
 - **Returns:** `Ok(usize)` clamped to `min(requested, min(width-1, height-1)/2, 2)`; `Err(InvalidConfig)` for any value outside `{-1, 0, 1, 2}`.
@@ -187,28 +189,28 @@ CT-volume crop pipeline. Loads a volume, detects the background intensity, compu
 
 #### trim_volume_border
 
-- **Signature:** `fn trim_volume_border(volume: &Volume3D, trim: usize) -> Result<Volume3D>`
-- **Source:** `src/pipeline/crop.rs:252`
+- **Signature:** `fn trim_volume_border(volume: Volume3D, trim: usize) -> Result<Volume3D>`
+- **Source:** `src/pipeline/crop.rs:287`
 - **Purpose:** Strip `trim` voxels from all four XY-face edges (not the Z/depth faces) of a volume.
 - **Parameters:** `volume`, `trim` — pixels to remove from each of the four X/Y sides.
-- **Returns:** `Ok(volume.clone())` unchanged when `trim == 0`; otherwise a new, smaller `Volume3D` with `width -= 2*trim`, `height -= 2*trim`, same `depth`; `Err(InvalidConfig)` if `width <= 2*trim || height <= 2*trim`.
+- **Returns:** `Ok(volume)` unchanged when `trim == 0`; otherwise the same allocation compacted into a smaller `Volume3D` with `width -= 2*trim`, `height -= 2*trim`, same `depth`; `Err(InvalidConfig)` if `width <= 2*trim || height <= 2*trim`.
 - **Side effects:** None (allocates a new data buffer).
 - **Notes:** Depth (Z) is never trimmed — only the X/Y (in-plane) border, matching the fact that edge artifacts in this pipeline arise from XY rotation/resampling, not from slice truncation.
 
 #### detect_background_mode
 
 - **Signature:** `fn detect_background_mode(volume: &Volume3D) -> i64`
-- **Source:** `src/pipeline/crop.rs:296`
+- **Source:** `src/pipeline/crop.rs:317`
 - **Purpose:** Detect the CT volume's background intensity as the most frequent voxel value on the volume's boundary faces.
 - **Parameters:** `volume`.
 - **Returns:** The modal boundary-voxel value; `0` if the volume has no boundary voxels (degenerate/empty volume).
-- **Side effects:** None. Builds a `HashMap<i64, usize>` of value → count over all boundary voxels (`x==0 || y==0 || z==0` or at the opposite face), then takes the max by count.
-- **Notes:** Assumes the background dominates the boundary — a reasonable assumption for CT scans where the specimen doesn't touch the volume edges. Ties are broken arbitrarily by `HashMap` iteration order via `max_by_key`.
+- **Side effects:** None. Counts each boundary voxel once using bounded dense counters for eligible 8/16-bit images and a sparse map otherwise; see the dense background contract below.
+- **Notes:** Assumes the background dominates the boundary — a reasonable assumption for CT scans where the specimen doesn't touch the volume edges. Ties deterministically choose the smallest voxel value.
 
 #### estimate_pca_bbox
 
 - **Signature:** `fn estimate_pca_bbox(volume: &Volume3D, background: i64) -> Result<(Matrix3<f64>, Vector3<f64>, Vector3<f64>, Vector3<f64>, usize)>`
-- **Source:** `src/pipeline/crop.rs:330`
+- **Source:** `src/pipeline/crop.rs:351`
 - **Purpose:** Compute a principal-component rotation that aligns the foreground's dominant axes to the coordinate axes, and the foreground's bounding box in that rotated frame.
 - **Parameters:** `volume`, `background` — the value to exclude as background.
 - **Returns:** `Ok((rot, centroid, min_v, max_v, count))`:
@@ -218,7 +220,7 @@ CT-volume crop pipeline. Loads a volume, detects the background intensity, compu
   - `count: usize` — number of foreground voxels.
   - `Err(InvalidConfig)` if no foreground voxels are found (all voxels equal `background`).
 - **Side effects:** None. Three full passes over the volume: (1) accumulate centroid, (2) accumulate covariance about the centroid, (3) project every foreground voxel into the rotated frame to find `min_v`/`max_v`.
-- **Notes:** Covariance is eigendecomposed with `nalgebra::SymmetricEigen`; eigenvalues are sorted descending and the corresponding eigenvector columns reassembled into `rot`. If `det(rot) < 0` (a reflection rather than a rotation), the third column is negated to force a right-handed frame. Not parallelized; O(volume size) with 3 full passes, no rayon use here (contrast with `rotate_and_crop`, which is parallel).
+- **Notes:** Covariance is eigendecomposed with `nalgebra::SymmetricEigen`; eigenvalues are sorted descending and the corresponding eigenvector columns reassembled into `rot`. If `det(rot) < 0` (a reflection rather than a rotation), the third column is negated to force a right-handed frame. Three fixed-block parallel passes with block-index-ordered merges; partitioning and results are independent of worker count.
 - **See also:** [../algorithms/pca-volume-alignment-crop.md](../algorithms/pca-volume-alignment-crop.md) for the algorithm write-up.
 
 > **Algorithm:** See [../algorithms/pca-volume-alignment-crop.md](../algorithms/pca-volume-alignment-crop.md).
@@ -226,12 +228,12 @@ CT-volume crop pipeline. Loads a volume, detects the background intensity, compu
 #### rotate_and_crop
 
 - **Signature:** `fn rotate_and_crop(volume: &Volume3D, background: i64, rot: &Matrix3<f64>, centroid: &Vector3<f64>, min_v: &Vector3<f64>, max_v: &Vector3<f64>, interpolation_mode: InterpolationMode) -> Volume3D`
-- **Source:** `src/pipeline/crop.rs:432`
+- **Source:** `src/pipeline/crop.rs:459`
 - **Purpose:** CPU rotate-and-crop: resample the source volume into a new axis-aligned volume covering exactly the rotated-frame foreground bounding box.
 - **Parameters:** `volume`, `background`; `rot`/`centroid` from `estimate_pca_bbox`; `min_v`/`max_v` rotated-frame bounds; `interpolation_mode` (`Nearest` or `Trilinear`).
 - **Returns:** A new `Volume3D` of size `(x1-x0+1, y1-y0+1, z1-z0+1)` (each dimension floored to at least 1), initialized to `background` and filled by inverse-mapping each output voxel back into source space.
 - **Side effects:** None (pure compute). Uses `float_bounds_to_inclusive_i64` (`eps = 1e-3`) to fix the integer output extent.
-- **Notes:** Parallelized over Z-slices via `rayon`'s `par_chunks_mut` on the flat output buffer (one chunk per output slice). For each output voxel `(x, y, z)` in the rotated local frame, the corresponding source-space coordinate is `rot * local + centroid`, sampled with `sample_nearest` or `sample_trilinear` depending on `interpolation_mode`.
+- **Notes:** Parallelized over slice tasks when depth supplies enough work, otherwise row-aligned tiles targeting 4096 voxels in the configured Rayon pool. For each output voxel `(x, y, z)` in the rotated local frame, the corresponding source-space coordinate is `rot * local + centroid`, sampled with `sample_nearest` or `sample_trilinear` depending on `interpolation_mode`.
 - **See also:** `rotate_and_crop_gpu` (GPU counterpart, feature `gpu`); [../algorithms/pca-volume-alignment-crop.md](../algorithms/pca-volume-alignment-crop.md).
 
 > **Algorithm:** See [../algorithms/pca-volume-alignment-crop.md](../algorithms/pca-volume-alignment-crop.md).
@@ -241,12 +243,12 @@ CT-volume crop pipeline. Loads a volume, detects the background intensity, compu
 > **Feature-gated:** compiled only with `--features gpu` (`#[cfg(feature = "gpu")]`).
 
 - **Signature:** `fn rotate_and_crop_gpu(volume: &Volume3D, background: i64, rot: &Matrix3<f64>, centroid: &Vector3<f64>, min_v: &Vector3<f64>, max_v: &Vector3<f64>, interpolation_mode: InterpolationMode) -> std::result::Result<Volume3D, String>`
-- **Source:** `src/pipeline/crop.rs:494`
+- **Source:** `src/pipeline/crop.rs:520`
 - **Purpose:** GPU-accelerated equivalent of `rotate_and_crop`, dispatching a WGSL compute shader via `GpuVolumeTransformPipeline`.
 - **Parameters:** Same as `rotate_and_crop`.
 - **Returns:** `Ok(Volume3D)` with the same shape/semantics as the CPU path, or `Err(String)` describing a GPU initialization/dispatch failure.
 - **Side effects:** Initializes a `crate::gpu::volume_transform::GpuVolumeTransformPipeline` (creates a `wgpu` device/queue on first use), uploads the volume as `i32` (converted from `i64`), dispatches the compute shader, downloads the `i32` result and converts back to `i64`. Prints an `[Info]` timing line to stdout (`"[Info] GPU volume transform: {elapsed}s, {w}x{h}x{d} -> {w}x{h}x{d}"`).
-- **Notes:** Data is round-tripped through `i32`, not `i64` — a narrowing conversion that assumes CT intensity values fit within `i32` range (true for all supported bit depths, but a latent precision boundary worth knowing about). The interpolation mode is passed to the shader as a `u32` flag (`0` = nearest, `1` = trilinear). Origin passed to the shader is `(x0, y0, z0)` from the float-to-inclusive-integer bounds conversion, i.e. the shader receives the same coordinate frame as the CPU path.
+- **Notes:** Data is round-tripped through `i32`, not `i64` — a checked narrowing conversion; unsupported values return an error before upload. The interpolation mode is passed to the shader as a `u32` flag (`0` = nearest, `1` = trilinear). Origin passed to the shader is `(x0, y0, z0)` from the float-to-inclusive-integer bounds conversion, i.e. the shader receives the same coordinate frame as the CPU path.
 - **See also:** [gpu.md](gpu.md) for `GpuVolumeTransformPipeline` and the underlying WGSL compute shader; `rotate_and_crop` for the CPU fallback path; `CropPipeline::run` for the GPU/CPU selection logic and fallback-on-error behavior.
 
 ---
@@ -366,3 +368,26 @@ Connected-component split and geometric/statistical filtering pipeline. Splits o
   5. For each bin, compute the *expected* fraction of the total population that a normal distribution with `(mu, sigma)` would place in that bin's log-volume range (`normal_cdf(hi) - normal_cdf(lo)`), scaled by the candidate count to get an expected count, then `allowed = ceil(expected * over_factor)`.
   6. If a bin holds more candidates than `allowed`, shuffle that bin's indices and mark all but the first `allowed` as `keep[idx] = false`.
 - **Notes (config semantics):** `over_factor` acts as slack above the theoretical lognormal-implied count before pruning kicks in — `over_factor = 1.0` prunes down to exactly the fitted-model expectation per bin; larger values tolerate more over-representation before dropping particles. This is a heuristic rebalancing tool, not a true resampling/rejection-sampling algorithm — it never *adds* particles to under-represented bins, only removes from over-represented ones.
+
+
+### Crop execution updates (2026-09-18)
+
+`CropPipeline::run` installs a pool bounded by `cpu_max`; `run_in_pool` performs all stages. `gpu_crop_values_supported` rejects lossy integer narrowing before adapter initialization. `acceleration` and the environment override determine the backend, budget and permission to fall back. GPU runtime errors propagate when fallback is forbidden. Resampling uses adaptive slice/row tasks. `trim_volume_border` consumes and compacts the original allocation, preserving depth, numeric type and row order, including zero-copy zero trim.
+
+
+### Split-filter metric preparation (PERF-15)
+
+`SplitFilterConfig.cpu_max` bounds one pool for loading, splitting, metric preparation, filtering and saving (`-1`/absent: available workers). `prepare_particle_metrics` computes immutable volume/aspect/area records in component order. At least 32 components use indexed parallel collection; smaller sets remain serial. Each component uses the original geometry functions and reduction order. Bbox is only requested by the aspect filter; area is only computed for sharpness candidates that survive the aspect and positive-volume gates. Filtering reads those records in its original order, and lognormal RNG/deletions remain serial. Before/after reporting shares the immutable volume array instead of cloning it. STL writes run in batches of at most two in the same pool, with names and errors consumed in rank order; an error may leave another file in its current batch written.
+
+
+`foreground_blocks` maps foreground voxels in fixed 65,536-voxel chunks, collecting partials in block order. `estimate_pca_bbox` uses it for count/sum, centered covariance and projected min/max. `detect_background_mode` scans boundary faces only and resolves tied counts by smallest value. The original serial PCA is retained only under tests for numerical comparison.
+
+PCA task grain: for the parallel branch, `foreground_blocks` sets a minimum number of blocks per Rayon job using a workload-derived task budget, `min(workers, ceil(N/1,048,576))`; fixed block boundaries and ordered collection remain unchanged.
+
+### Crop stage timings (2026-09-23)
+
+Successful stages emit `[Timing] crop stage=<name> seconds=<wall_seconds>` for `load`, `background`, `pca`, `transform_and_backend`, `trim`, `encode_write`, and `total_in_pool`. `transform_and_backend` includes bounding-box sizing, policy/adapter/device setup, GPU transfers/readback or CPU resampling and any permitted fallback; it is not GPU kernel time. `encode_write` includes the explicit output flush, not fsync. `total_in_pool` excludes CLI/config/thread-pool creation and includes reporting overhead; process-level benchmarks measure those separately. Failed stages do not emit fabricated zero/completion measurements. The real-input CPU 1/2/4/8-worker process/RSS matrix and cache limitations are tracked in PLAN.Performance.md §61.
+
+### Dense background counts (2026-09-23)
+
+`for_each_boundary_value` visits only faces, counting corners/edges once. Background mode uses 256 `usize` counters for U8/I8 and 65,536 counters for U16/I16 volumes with at least 65,536 voxels (at most 512 KiB on a 64-bit host). Smaller 16-bit and all 32-bit volumes retain the HashMap path. A checked index sends values outside the declared dense range into a sparse spill map; metadata is not used to truncate/reject arbitrary i64 values. Dense and sparse counts share a running mode with the original smallest-value tie break; no final full histogram scan is needed. Counters are local and released before PCA. Independent full-grid ordered-map oracles cover collapsed dimensions, both integer extrema, signed ranges and metadata mismatches. Real-input end-to-end evidence is tracked in PLAN.Performance.md §62.

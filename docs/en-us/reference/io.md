@@ -13,18 +13,18 @@ This page documents `src/io/mod.rs`, content hashing in `hash.rs`, PNG output in
 | `parse_ascii_vertex` | `src/io/stl.rs:9` | Parses one ASCII STL `vertex x y z` line into a `Vec3`. |
 | `quantize_key` | `src/io/stl.rs:21` | Quantizes a vertex to a fixed-precision integer key for tolerant deduplication. |
 | `dedup_vertex` | `src/io/stl.rs:31` | Deduplicates a vertex against an existing list via quantized key lookup. |
-| `parse_ascii_stl` | `src/io/stl.rs:48` | Parses ASCII STL text into a `Mesh` with deduplicated vertices. |
+| `parse_ascii_stl` | `src/io/stl.rs:52` | Parses ASCII STL text into a `Mesh` with deduplicated vertices. |
 | `parse_f32_le` | `src/io/stl.rs:93` | Parses little-endian `f32` bytes and upcasts to `f64`. |
 | `parse_binary_stl` | `src/io/stl.rs:104` | Parses binary STL bytes into a `Mesh` with deduplicated vertices. |
-| `looks_ascii_stl` | `src/io/stl.rs:166` | Heuristically detects whether bytes represent ASCII STL. |
-| `load_stl` | `src/io/stl.rs:185` | Loads an STL file with automatic ASCII/binary detection. |
-| `load_folder_stls` | `src/io/stl.rs:203` | Loads all STL files in a folder. |
-| `load_stl_or_merge_folder` | `src/io/stl.rs:226` | Loads a single STL file, or merges all STLs in a directory into one mesh. |
-| `save_stl` | `src/io/stl.rs:258` | Saves a mesh as a binary STL file. |
+| `looks_ascii_stl` | `src/io/stl.rs:151` | Heuristically detects whether bytes represent ASCII STL. |
+| `load_stl` | `src/io/stl.rs:170` | Loads an STL file with automatic ASCII/binary detection. |
+| `load_folder_stls` | `src/io/stl.rs:206` | Loads all STL files in a folder. |
+| `load_stl_or_merge_folder` | `src/io/stl.rs:233` | Loads a single STL file, or merges all STLs in a directory into one mesh. |
+| `save_stl` | `src/io/stl.rs:262` | Saves a mesh as a binary STL file. |
 | `collect_sorted_files` | `src/io/volume.rs:50` | Collects regular files in a folder, sorted by name, optionally filtered by extension. |
 | `resolve_slice_range` | `src/io/volume.rs:78` | Resolves an inclusive slice range from start/end indices, treating `-1` as "from beginning"/"to end". |
 | `decode_raw_slice` | `src/io/volume.rs:107` | Decodes one raw image slice into `i64` values per bit depth, sign, and byte order. |
-| `load_raw_folder` | `src/io/volume.rs:205` | Loads a `Volume3D` from a folder of raw binary slice files. |
+| `load_raw_folder` | `src/io/volume.rs:227` | Loads ordered RAW slices with checked sizing, bounded decoding and one final-output reservation. |
 | `tiff_decoding_to_i64` | `src/io/volume.rs:266` | Converts a TIFF `DecodingResult` into a `Vec<i64>` buffer plus its numeric type. |
 | `load_tiff_file_with_range` | `src/io/volume.rs:286` | Loads a multi-page TIFF file into a `Volume3D` over an inclusive page range. |
 | `load_tiff_file` | `src/io/volume.rs:354` | Loads a TIFF file (all pages) into a `Volume3D`. |
@@ -34,6 +34,14 @@ This page documents `src/io/mod.rs`, content hashing in `hash.rs`, PNG output in
 | `write_tiff_slice` | `src/io/volume.rs:446` | Writes one z-slice of volume data into a TIFF encoder page. |
 | `save_tiff_or_folder_with_ext` | `src/io/volume.rs:524` | Saves a `Volume3D` as a multi-page TIFF file or a folder of per-slice TIFF files, with configurable extension. |
 | `save_tiff_or_folder` | `src/io/volume.rs:586` | Saves a `Volume3D` to TIFF file or folder sequence with the default `.tiff` extension. |
+| `load_stl_from_reader` | `src/io/stl.rs:178` | Forward-reader STL with bounded binary records. |
+| `load_stl_hashed` | `src/io/stl.rs:193` | Single-pass STL parsing and raw digest. |
+| `parse_binary_reader` | `src/io/stl.rs:109` | Read binary triangle records with incremental deduplication. |
+| `read_stl_record` | `src/io/stl.rs:140` | Read complete record or report truncation. |
+| `HashingReader` | `src/io/hash.rs:50` | Incremental digest over delivered bytes. |
+| `HashingReader::new` | `src/io/hash.rs:58` | Wrap forward reader for hashing. |
+| `HashingReader::finish` | `src/io/hash.rs:67` | Return digest and consumed byte count. |
+| `stl_paths` | `src/io/stl.rs:218` | List STL paths in existing directory order. |
 
 ## Module role: `io/mod.rs`
 
@@ -91,18 +99,18 @@ This file implements STL (stereolithography) mesh I/O with automatic ASCII/binar
 #### load_stl
 
 - **Signature:** `pub fn load_stl(path: &Path) -> Result<Mesh>`
-- **Source:** `src/io/stl.rs:185`
+- **Source:** `src/io/stl.rs:170`
 - **Purpose:** Loads an STL file, auto-detecting ASCII vs. binary format.
 - **Parameters:**
   - `path` — path to the `.stl` file.
 - **Returns:** The parsed `Mesh`.
-- **Side effects:** Reads the whole file into memory.
+- **Side effects:** Reads the file with bounded binary record buffering; ASCII retains its full-text buffer.
 - **Notes:** Uses `looks_ascii_stl` to sniff the format. If the sniff says ASCII, it attempts `parse_ascii_stl`; if that parse fails (e.g. malformed content after a valid-looking header), it silently falls back to `parse_binary_stl` rather than propagating the ASCII error. Binary parsing is otherwise the terminal path.
 
 #### load_folder_stls
 
 - **Signature:** `pub fn load_folder_stls(folder: &Path) -> Result<Vec<(PathBuf, Mesh)>>`
-- **Source:** `src/io/stl.rs:203`
+- **Source:** `src/io/stl.rs:206`
 - **Purpose:** Loads every `.stl` file (case-insensitive extension match) directly inside a folder.
 - **Parameters:**
   - `folder` — directory to scan (non-recursive).
@@ -113,7 +121,7 @@ This file implements STL (stereolithography) mesh I/O with automatic ASCII/binar
 #### load_stl_or_merge_folder
 
 - **Signature:** `pub fn load_stl_or_merge_folder(path: &Path) -> Result<Mesh>`
-- **Source:** `src/io/stl.rs:226`
+- **Source:** `src/io/stl.rs:233`
 - **Purpose:** Loads a single mesh from either one STL file, or by merging every STL file in a directory into one combined mesh.
 - **Parameters:**
   - `path` — a file path (single STL) or directory path (folder of STLs to merge).
@@ -124,7 +132,7 @@ This file implements STL (stereolithography) mesh I/O with automatic ASCII/binar
 #### save_stl
 
 - **Signature:** `pub fn save_stl(path: &Path, mesh: &Mesh, solid_name: &str) -> Result<()>`
-- **Source:** `src/io/stl.rs:258`
+- **Source:** `src/io/stl.rs:262`
 - **Purpose:** Writes a mesh to disk as a binary STL file.
 - **Parameters:**
   - `path` — destination file path.
@@ -172,7 +180,7 @@ This file implements STL (stereolithography) mesh I/O with automatic ASCII/binar
 #### parse_ascii_stl
 
 - **Signature:** `fn parse_ascii_stl(content: &str, path: &Path) -> Result<Mesh>`
-- **Source:** `src/io/stl.rs:48`
+- **Source:** `src/io/stl.rs:52`
 - **Purpose:** Parses a full ASCII STL document into a deduplicated `Mesh`.
 - **Parameters:**
   - `content` — the full STL text.
@@ -206,7 +214,7 @@ This file implements STL (stereolithography) mesh I/O with automatic ASCII/binar
 #### looks_ascii_stl
 
 - **Signature:** `fn looks_ascii_stl(bytes: &[u8]) -> bool`
-- **Source:** `src/io/stl.rs:166`
+- **Source:** `src/io/stl.rs:151`
 - **Purpose:** Heuristically sniffs whether a byte buffer is ASCII STL rather than binary STL.
 - **Parameters:**
   - `bytes` — the file contents (or a prefix of them).
@@ -295,7 +303,7 @@ This file implements two independent 3D image formats used as inputs/outputs for
 #### load_raw_folder
 
 - **Signature:** `pub fn load_raw_folder(spec: &RawFolderSpec) -> Result<Volume3D>`
-- **Source:** `src/io/volume.rs:205`
+- **Source:** `src/io/volume.rs:227`
 - **Purpose:** Loads a `Volume3D` by reading and decoding every file in a folder (within the requested slice range) as a fixed-size raw binary slice.
 - **Parameters:**
   - `spec` — folder path, per-slice dimensions, sample format, and slice range.
@@ -433,7 +441,7 @@ This file implements two independent 3D image formats used as inputs/outputs for
 
 #### write_tiff_slice
 
-- **Signature:** `fn write_tiff_slice(encoder: &mut TiffEncoder<BufWriter<fs::File>>, width: u32, height: u32, ty: VolumeNumericType, slice: &[i64]) -> Result<()>`
+- **Signature:** `fn write_tiff_slice<W: Write + Seek>(encoder: &mut TiffEncoder<W>, width: u32, height: u32, ty: VolumeNumericType, slice: &[i64]) -> Result<()>`
 - **Source:** `src/io/volume.rs:446`
 - **Purpose:** Narrows one slice's `i64` voxel values back to their native bit width and writes them as one grayscale page via the TIFF encoder.
 - **Parameters:**
@@ -450,3 +458,27 @@ This file implements two independent 3D image formats used as inputs/outputs for
 - **Vertex dedup vs. voxel widening are unrelated mechanisms that both exist for numerical robustness:** `stl.rs`'s `quantize_key`/`dedup_vertex` collapse near-duplicate floating-point vertex positions using a fixed 1e6 quantization scale; `volume.rs`'s widen-to-`i64` (`decode_raw_slice`, `tiff_decoding_to_i64`) instead exists so `Volume3D` can hold any of six integer sample types in one uniformly-typed buffer without lossy conversion, with `VolumeNumericType` tracking the original type for exact narrowing back out on save.
 - **Two-pass TIFF range loading:** `load_tiff_file_with_range` fully re-opens and re-decodes the file's page count before doing the real (potentially range-restricted) decode pass, because the underlying `tiff` crate's `Decoder` only exposes forward iteration (`more_images`/`next_image`) with no random-access page count query.
 - All `AI-FUNC-SUMMARY` comments in both files were checked against the code they annotate; none were found to be stale enough to warrant a `Doc note` callout.
+
+Binary STL output now uses a 64 KiB BufWriter and explicitly flushes before success, propagating late I/O failures. Header, zero normals, f32 coordinates and attribute bytes are unchanged. This reduces tiny write system calls without buffering the full file.
+
+### Shared STL stream and digest (PERF-18)
+
+`load_stl_from_reader(reader, path)` accepts a forward-only reader. It sniffs at most 512 bytes, chains that prefix back for binary parsing, and preserves ASCII-first/fallback behavior. `parse_binary_reader` reads one 50-byte triangle record at a time, deduplicates in first-encounter order, grows geometry storage as records arrive, and drains permitted trailing data. Truncated header/records return InvalidMesh; other read errors propagate. A corrupt count does not cause a count-sized initial allocation. ASCII still buffers the existing full document.
+
+`load_stl_hashed(path)` returns `(Mesh, sha256, bytes)` from one file pass through `HashingReader`, including ignored binary trailers in the digest/count. Placement shape loading uses this entry, preserving input list and first-face shell order. `HashingReader::finish` describes consumed bytes only; successful STL parsing drains its input before finishing. Independent `sha256_file` remains bounded and unchanged.
+
+`stl_paths` retains directory iteration order. Folder STL loading uses batches of at most two independent readers under the current Rayon pool; results/errors are consumed in path order. Folder merging consumes each completed batch into the output, so it retains at most two unmerged input meshes rather than the entire folder plus the output. The API returning all individual meshes still retains those results by contract.
+
+### Bounded folder decoding (2026-09-23)
+
+`consume_file_batches` loads at most two independent RAW/TIFF files within the current Rayon pool (one in a one-worker pool), then validates/assembles in original filename order. It retains ordered Results so an earlier shape/type error wins over a later decode error; no subsequent batch starts after failure. A TIFF reader advances its pages serially; folder ranges still select complete files. The bound is two decoded files, not a byte budget: individual multi-page files and the assembled Volume3D remain resident. No thread pool is created by I/O. Single-file TIFF loading remains sequential; output follows the bounded-writer contract below. See PLAN.Performance.md §59 for worker/type/order and retained-buffer tests and performance limits.
+
+RAW files below 512 KiB use serial decoding even with multiple workers; the cutoff comes from the small-file regression and larger-slice comparisons in §59. A batch containing only one file always decodes directly.
+
+### Bounded TIFF folder writers and explicit flush (2026-09-23)
+
+`save_tiff_or_folder_with_ext` borrows slice data without cloning the volume, assigns names from original z indices and uses at most two encoders/writers in the current Rayon pool. Each batch joins before ordered error inspection; the first slice-ordered error is returned and later batches are not started. A peer in the failed batch may already have created/overwritten its file, and partial files are retained rather than deleting existing user output. Single-worker and single-slice batches execute directly; one multi-page TIFF remains sequential. `write_tiff_pages<W: Write + Seek>` borrows a writer, emits ordered pages, drops the encoder and explicitly flushes, propagating flush failure in both output modes. This is buffered-write completion, not fsync durability. Checked dimension products and u32 dimensions reject overflow before output creation. Test/benchmark evidence and limitations are in PLAN.Performance.md §60.
+
+### RAW assembly reservation (2026-09-23)
+
+RAW plane size, byte length and selected output voxel count use checked arithmetic. After the first selected slice has decoded successfully, assembly makes one fallible `try_reserve_exact` request for the final voxel count; subsequent ordered appends cannot trigger geometric growth. Invalid first-slice errors still precede reservation, and allocation errors propagate. Two-file decode buffering and the 512-KiB parallel threshold are unchanged. Requested vector capacity is not a process RSS cap; individual slice buffers still coexist with the output. See PLAN.Performance.md §63.

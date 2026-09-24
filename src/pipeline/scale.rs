@@ -20,7 +20,11 @@ impl Pipeline for ScalePipeline {
         let mut mesh = load_stl_or_merge_folder(Path::new(&self.config.input.stl_path))?;
         let mode = self.config.scaling.r#type.as_str();
         let value = self.config.scaling.value;
-        let enable_orient = self.config.scaling.orient_to_positive_volume.unwrap_or(false);
+        let enable_orient = self
+            .config
+            .scaling
+            .orient_to_positive_volume
+            .unwrap_or(false);
 
         let original_volume = mesh_volume(&mesh);
         let original_bbox = mesh_bbox(&mesh);
@@ -60,17 +64,26 @@ impl Pipeline for ScalePipeline {
             }
         };
 
+        let transform_started = std::time::Instant::now();
         scale_mesh(&mut mesh, factor);
+        println!(
+            "[Info] Scale transform seconds: {:.6}",
+            transform_started.elapsed().as_secs_f64()
+        );
 
         let (mesh_oriented, flipped_components, component_count) = if enable_orient {
             orient_components_to_positive_volume(&mesh)
         } else {
-            (mesh.clone(), 0usize, 0usize)
+            (mesh, 0usize, 0usize)
         };
         let scaled_volume = mesh_volume(&mesh_oriented);
         let scaled_bbox = mesh_bbox(&mesh_oriented);
 
-        save_stl(Path::new(&self.config.output.stl_path), &mesh_oriented, "scaled_mesh")?;
+        save_stl(
+            Path::new(&self.config.output.stl_path),
+            &mesh_oriented,
+            "scaled_mesh",
+        )?;
         println!("[Info] Scaling completed with factor {factor:.6}.");
         println!("[Info] Orientation fix enabled: {}", enable_orient);
         if let Some(bb) = scaled_bbox {

@@ -31,7 +31,7 @@ VTU 读写器（`src/io/vtu.rs`）、场景抽取层（`src/meshgen/render_scene
 | `named_view` | `src/geometry/scene_render.rs:287` | 将 front/back/left/right/top/bottom/iso_ne/iso_nw/iso_se/iso_sw 解析为 (view_direction, up)。 |
 | `ViewSpec`/`FilterSpec` | `src/config/mesh_render.rs:7` | 视角（命名预设或自定义相机块）与按类型标记的过滤器的 YAML 形式。 |
 | `MeshRenderParams`/`MeshRenderConfig` | `src/config/mesh_render.rs:38` | `mesh_render:` YAML 配置块（输入 VTU、output_dir、views、图像、着色、不透明度、过滤器、叠加、相机）。 |
-| `MeshRenderPipeline` | `src/pipeline/mesh_render.rs:16` | `mesh-render` 子命令：加载 VTU → 构建场景 → 每个视角输出一张 PNG（`<stem>_<view>.png`）。 |
+| `MeshRenderPipeline` | `src/pipeline/mesh_render.rs:18` | `mesh-render` 子命令：加载 VTU → 构建场景 → 每个视角输出一张 PNG（`<stem>_<view>.png`）。 |
 
 ## GPU 预览路径（GA-3c）
 
@@ -111,3 +111,47 @@ appended-raw；`load_vtu` 二者皆可读取，并兼容常见的外部变体（
 - GPU 回归将三个不透明变体与同一组 CPU 基线比较。完整夹具场景包含光栅化线框
   叠加，因此 GA-5 GPU 预算是最多 5% 的像素超过 2 LSB；更简单的 GA-3c 不透明
   一致性测试仍保持 2%。透明 GPU 输出不参与比较，因为 GPU 合成有意保持不透明。
+
+### PERF-19 regression entry
+
+GPU 场景测试样例显式初始化两个线框计数字段，并在 GPU 特性下导入 `SceneSegment`。
+运行 `cargo test --offline --features gpu --test mesh_render_tests` 可验证现有不透明预览路径，
+图像基线和渲染语义未改变。无适配器时跳过测试不等于完成硬件验证。
+
+
+### Prepared CPU scenes (PERF-17)
+
+`geometry::scene_render::PreparedScene::new(&RenderScene)` builds immutable QBVH and material arrays once, borrowing the scene to prevent mutation during reuse. `render(&self, camera, width, height, settings)` retains the all-hits, sorted transparency and Face-over-Volume coincidence rules. Rayon task-local hit vectors retain capacity between pixels; deduplication compacts the same vector without a second allocation. `render_scene_cpu` remains the compatible one-shot wrapper. MeshRenderPipeline prepares once only on the CPU path and reuses across views. The command uses `render_views_to` to deliver owned GPU images to the bounded writer described below, retaining at most two delivered images during overlap. The compatibility `render_views` API explicitly collects images for callers requiring a batch.
+
+
+### Streamed GPU views
+
+`GpuScenePipeline::render_views_to(..., consume)` uploads scene geometry once and invokes a fallible consumer with `(view_index, owned_image)` in camera order. It reuses one uniform buffer, color/depth pair and unmapped staging buffer, clearing targets for each view. Consumer errors stop immediately; mapping errors and device errors propagate. Dimensions and staging/vertex limits are checked. `render_views` collects this stream for compatibility. The mesh-render command consumes owned frames in order; output errors never trigger CPU fallback. An auto-mode GPU failure may occur after earlier views were saved: CPU fallback rewrites all requested views in order. A strict GPU error preserves already-saved views. GPU PNG overlap now follows the bounded writer contract below.
+
+### CPU 线程预算
+
+与 mesh_render 同级的可选 cpu_max 接受整数或整数字符串。缺省/-1 使用可用 CPU，其余夹取 1..available。场景准备、所有 CPU 视图及 GPU 失败回退均进入同一个 Rayon 池，日志记录请求与实际线程数及 CPU 渲染入口的线程索引。backend: gpu 仍为严格不透明预览；auto 可回退透明 CPU 参考路径，回退不再建池。
+
+| `MeshRenderPipeline::with_worker_pool` | `src/pipeline/mesh_render.rs:122` | Execute scene preparation, rendering and fallback within the worker budget. |
+
+| `MeshRenderPipeline::run_in_pool` | `src/pipeline/mesh_render.rs:147` | Execute scene preparation, rendering and fallback within the worker budget. |
+
+RUSTMSPT_ACCELERATION=cpu|gpu|auto 在加载输入前覆盖已验证的 YAML backend；非法环境值报错。生效的 gpu 仍严格拒绝失败，auto 允许回退，cpu 不初始化 GPU。此处未把 STL 渲染的像素阈值套用于既有 mesh 预览。
+
+### Scene 预览工作集策略
+
+mesh_render.gpu_memory_limit_mb 可选限制逻辑 GPU 工作集；gpu_min_pixels 仅用于 auto，缺省 0 保留既有预览选择。低于阈值的 auto 不初始化 GPU；显式 GPU 绕过阈值但遵守预算。预算/执行失败时 auto 回退，gpu 报错，CPU 跳过 GPU 专属资源选项。
+
+checked planner 按可见三角形每面 120、启用 segment 每条 64、marker 每个 192 字节计数；目标 color/depth 为 8×pixels，readback 为按 256 字节对齐的 RGBA 行，uniform 128 字节。保守计入待完成 queue 上传，逻辑峰值 = 2×geometry_bytes+256+8×pixels+staging_bytes。多个视图共用目标。驱动/pipeline 内部及主存场景/PNG 不计入，所以这不是物理 VRAM/RSS 上限。独立 device 限制检查先于 host 顶点展开，上传后即释放临时 host 顶点。构造器返回受作用域保护的 GPU 验证/分配错误；图像分块仍待实现。
+
+### CPU 像素任务划分
+
+STL 最近命中和 prepared 透明 scene 渲染均使用不重叠连续像素任务。当行数不少于 worker 且每 worker 不超过 1024 像素时保留按行，避免最小块粒度减少并行任务；其他图单 worker 为单任务，否则目标为每 worker 四个任务，粒度夹取 256..4096 像素，整行能放下时按行对齐。宽行可跨任务，短行可合并。任务仅在起点计算 (x,y)，随后递增原整数像素坐标，射线运算、命中排序/合成与串行叠加不变。scene depth/RGBA 共用边界并复用任务内 hits scratch。两种投影、非整除尺寸、极端纵横比在 1/2/8 worker 下逐字节对照按行参考。粒度性能验收见 PLAN.Performance.md §40。
+
+### GPU PNG 有界写出（2026-09-23）
+
+GPU 多视图且配置 worker 数大于 1 时，`consume_frames` 通过零容量通道按顺序将图像所有权移交给单个 PNG writer。最多一张图像正在编码、一张由渲染生产端持有；GPU 渲染目标继续复用。返回或 CPU 回退前，必须等待 writer 退出并排空已接收帧。输出错误优先于 GPU 错误，不触发回退；即使 producer 成功，末帧写出错误也不会丢失。单 worker 或单视图保持顺序执行；CPU 多视图仍顺序编码，保留完整 Rayon 渲染预算。这证明有界重叠机制，不代表端到端提速；软件 GPU 冷进程 CLI 对照（含 PNG 身份与 RSS）见 PLAN.Performance.md §56；完整负载和硬件验收仍开放。
+
+### 不透明场景最近命中组（2026-09-23）
+
+准备后的场景至少有 192 个三角形、且每个 clamp 后的 alpha 都恰为 1 时，先用 QBVH 求最近距离，再以向外取整的 `nearest + 2 * dedup_tol` 为界枚举附近命中。保留原距离/triangle ID 排序及移动锚点的 Face-over-Volume 去重，只取首组；所选法线、颜色和深度交给原合成器与覆盖线逻辑。更小场景或包含零/部分/NaN alpha 时维持全命中枚举。三角形阈值避开了实测 24 三角形场景的双遍历退化，只是保守启发式，不能保证所有空间布局提速。分层场景 release 对照和限制见 PLAN.Performance.md §57。

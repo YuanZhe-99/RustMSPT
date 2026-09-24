@@ -2,7 +2,7 @@ use crate::error::{Result, RustMsptError};
 use crate::types::{Mesh, Triangle, Vec3};
 use std::collections::HashMap;
 use std::fs;
-use std::io::Write;
+use std::io::{BufReader, BufWriter, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 
 // AI-FUNC-SUMMARY: Parse one ASCII STL "vertex x y z" line into a Vec3; returns Some(Vec3) on valid format, None otherwise; side effects: None.
@@ -28,7 +28,11 @@ fn quantize_key(v: Vec3) -> (i64, i64, i64) {
 }
 
 // AI-FUNC-SUMMARY: Deduplicate a vertex against existing list using quantized key matching; returns index of existing or newly inserted vertex; side effects: Mutates vertices vec and map.
-fn dedup_vertex(vertices: &mut Vec<Vec3>, map: &mut HashMap<(i64, i64, i64), usize>, v: Vec3) -> usize {
+fn dedup_vertex(
+    vertices: &mut Vec<Vec3>,
+    map: &mut HashMap<(i64, i64, i64), usize>,
+    v: Vec3,
+) -> usize {
     let key = quantize_key(v);
     if let Some(&idx) = map.get(&key) {
         return idx;
@@ -70,11 +74,7 @@ fn parse_ascii_stl(content: &str, path: &Path) -> Result<Mesh> {
                 let a = dedup_vertex(&mut vertices, &mut vertex_map, a_v);
                 let b = dedup_vertex(&mut vertices, &mut vertex_map, b_v);
                 let c = dedup_vertex(&mut vertices, &mut vertex_map, c_v);
-                faces.push(Triangle {
-                    a,
-                    b,
-                    c,
-                });
+                faces.push(Triangle { a, b, c });
             }
         }
     }
@@ -102,64 +102,49 @@ fn parse_f32_le(bytes: &[u8]) -> f64 {
 // Side effects: None.
 // Notes: Returns InvalidMesh error if file too small, size mismatch, or vertex index overflow.
 fn parse_binary_stl(bytes: &[u8], path: &Path) -> Result<Mesh> {
-    if bytes.len() < 84 {
-        return Err(RustMsptError::InvalidMesh(format!(
-            "Binary STL too small: {}",
-            path.display()
-        )));
-    }
+    parse_binary_reader(Cursor::new(bytes), path)
+}
 
-    let tri_count = u32::from_le_bytes([bytes[80], bytes[81], bytes[82], bytes[83]]) as usize;
-    let expected = 84usize + tri_count.saturating_mul(50usize);
-    if bytes.len() < expected {
-        return Err(RustMsptError::InvalidMesh(format!(
-            "Binary STL size mismatch in {}",
-            path.display()
-        )));
-    }
-
-    let mut vertices = Vec::with_capacity(tri_count * 3);
-    let mut faces = Vec::with_capacity(tri_count);
-    let mut vertex_map: HashMap<(i64, i64, i64), usize> = HashMap::new();
-
-    let mut offset = 84usize;
-    for _ in 0..tri_count {
-        offset += 12;
-
-        let v1 = Vec3::new(
-            parse_f32_le(&bytes[offset..offset + 4]),
-            parse_f32_le(&bytes[offset + 4..offset + 8]),
-            parse_f32_le(&bytes[offset + 8..offset + 12]),
-        );
-        offset += 12;
-
-        let v2 = Vec3::new(
-            parse_f32_le(&bytes[offset..offset + 4]),
-            parse_f32_le(&bytes[offset + 4..offset + 8]),
-            parse_f32_le(&bytes[offset + 8..offset + 12]),
-        );
-        offset += 12;
-
-        let v3 = Vec3::new(
-            parse_f32_le(&bytes[offset..offset + 4]),
-            parse_f32_le(&bytes[offset + 4..offset + 8]),
-            parse_f32_le(&bytes[offset + 8..offset + 12]),
-        );
-        offset += 12;
-
-        let a = dedup_vertex(&mut vertices, &mut vertex_map, v1);
-        let b = dedup_vertex(&mut vertices, &mut vertex_map, v2);
-        let c = dedup_vertex(&mut vertices, &mut vertex_map, v3);
+// AI-FUNC-SUMMARY: Parse binary STL from a reader using one 50-byte triangle record and incremental deduplication; drains trailing bytes, preserving raw-file hashing and old trailing-data acceptance.
+fn parse_binary_reader(mut reader: impl Read, path: &Path) -> Result<Mesh> {
+    let mut header = [0u8; 84];
+    read_stl_record(&mut reader, &mut header, path)?;
+    let count = u32::from_le_bytes(header[80..84].try_into().unwrap());
+    let mut vertices = Vec::new();
+    let mut faces = Vec::new();
+    let mut map = HashMap::new();
+    let mut record = [0u8; 50];
+    for _ in 0..count {
+        read_stl_record(&mut reader, &mut record, path)?;
+        let mut indices = [0usize; 3];
+        for (i, index) in indices.iter_mut().enumerate() {
+            let offset = 12 + i * 12;
+            let v = Vec3::new(
+                parse_f32_le(&record[offset..offset + 4]),
+                parse_f32_le(&record[offset + 4..offset + 8]),
+                parse_f32_le(&record[offset + 8..offset + 12]),
+            );
+            *index = dedup_vertex(&mut vertices, &mut map, v);
+        }
         faces.push(Triangle {
-            a,
-            b,
-            c,
+            a: indices[0],
+            b: indices[1],
+            c: indices[2],
         });
-
-        offset += 2;
     }
-
+    std::io::copy(&mut reader, &mut std::io::sink())?;
     Ok(Mesh { vertices, faces })
+}
+
+// AI-FUNC-SUMMARY: Read a complete STL header/triangle, reporting truncated files as InvalidMesh and propagating other read failures.
+fn read_stl_record(reader: &mut impl Read, buffer: &mut [u8], path: &Path) -> Result<()> {
+    reader.read_exact(buffer).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::UnexpectedEof {
+            RustMsptError::InvalidMesh(format!("Binary STL size mismatch in {}", path.display()))
+        } else {
+            error.into()
+        }
+    })
 }
 
 // AI-FUNC-SUMMARY: Heuristically detect whether bytes represent ASCII STL (checks "solid" header + "facet"/"vertex" keywords); returns bool; side effects: None.
@@ -183,16 +168,34 @@ fn looks_ascii_stl(bytes: &[u8]) -> bool {
 // Side effects: Reads from disk.
 // Notes: Tries ASCII first if header matches; falls back to binary. ASCII parse failure silently falls back to binary.
 pub fn load_stl(path: &Path) -> Result<Mesh> {
-    let bytes = fs::read(path)?;
+    load_stl_from_reader(
+        BufReader::with_capacity(64 * 1024, fs::File::open(path)?),
+        path,
+    )
+}
 
-    if looks_ascii_stl(&bytes) {
-        let text = String::from_utf8_lossy(&bytes);
+// AI-FUNC-SUMMARY: Load an STL from a forward reader, retaining legacy ASCII sniff/fallback and streaming binary triangle records; ASCII retains its existing full-text buffer.
+pub fn load_stl_from_reader(mut reader: impl Read, path: &Path) -> Result<Mesh> {
+    let mut prefix = Vec::with_capacity(512);
+    reader.by_ref().take(512).read_to_end(&mut prefix)?;
+    if looks_ascii_stl(&prefix) {
+        reader.read_to_end(&mut prefix)?;
+        let text = String::from_utf8_lossy(&prefix);
         if let Ok(mesh) = parse_ascii_stl(&text, path) {
             return Ok(mesh);
         }
+        return parse_binary_stl(&prefix, path);
     }
+    parse_binary_reader(Cursor::new(prefix).chain(reader), path)
+}
 
-    parse_binary_stl(&bytes, path)
+// AI-FUNC-SUMMARY: Parse and SHA-256 the exact same raw STL byte stream in one file pass; returns mesh, digest and byte count, including ignored binary trailers.
+pub fn load_stl_hashed(path: &Path) -> Result<(Mesh, String, u64)> {
+    let file = BufReader::with_capacity(64 * 1024, fs::File::open(path)?);
+    let mut reader = super::hash::HashingReader::new(file);
+    let mesh = load_stl_from_reader(&mut reader, path)?;
+    let (digest, bytes) = reader.finish();
+    Ok((mesh, digest, bytes))
 }
 
 // AI-FUNC-SUMMARY:
@@ -201,20 +204,24 @@ pub fn load_stl(path: &Path) -> Result<Mesh> {
 // Returns: Vec of (file path, parsed mesh) pairs.
 // Side effects: Reads from disk.
 pub fn load_folder_stls(folder: &Path) -> Result<Vec<(PathBuf, Mesh)>> {
-    let mut out = Vec::new();
-    for entry in fs::read_dir(folder)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path
-            .extension()
-            .map(|e| e.to_string_lossy().to_ascii_lowercase() == "stl")
-            .unwrap_or(false)
-        {
-            let mesh = load_stl(&path)?;
-            out.push((path, mesh));
-        }
+    use rayon::prelude::*;
+    let paths = stl_paths(folder)?;
+    let mut out = Vec::with_capacity(paths.len());
+    for batch in paths.chunks(2) {
+        let loaded: Vec<_> = batch.par_iter().map(|path| load_stl(path)).collect();
+        for (path, mesh) in batch.iter().zip(loaded) { out.push((path.clone(), mesh?)); }
     }
     Ok(out)
+}
+
+// AI-FUNC-SUMMARY: Collect STL paths in the existing directory iteration order, retaining case-insensitive extension matching and error propagation.
+fn stl_paths(folder: &Path) -> Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    for entry in fs::read_dir(folder)? {
+        let path = entry?.path();
+        if path.extension().is_some_and(|ext| ext.to_string_lossy().eq_ignore_ascii_case("stl")) { paths.push(path); }
+    }
+    Ok(paths)
 }
 
 // AI-FUNC-SUMMARY:
@@ -225,23 +232,20 @@ pub fn load_folder_stls(folder: &Path) -> Result<Vec<(PathBuf, Mesh)>> {
 // Notes: Returns InvalidConfig if directory contains no STL files.
 pub fn load_stl_or_merge_folder(path: &Path) -> Result<Mesh> {
     if path.is_dir() {
-        let meshes = load_folder_stls(path)?;
-        if meshes.is_empty() {
-            return Err(RustMsptError::InvalidConfig(format!(
-                "No STL files found in directory: {}",
-                path.display()
-            )));
+        use rayon::prelude::*;
+        let paths = stl_paths(path)?;
+        if paths.is_empty() {
+            return Err(RustMsptError::InvalidConfig(format!("No STL files found in directory: {}", path.display())));
         }
-
         let mut out = Mesh::empty();
-        for (_, m) in meshes {
-            let offset = out.vertices.len();
-            out.vertices.extend(m.vertices.iter().copied());
-            out.faces.extend(m.faces.iter().map(|f| Triangle {
-                a: f.a + offset,
-                b: f.b + offset,
-                c: f.c + offset,
-            }));
+        for batch in paths.chunks(2) {
+            let loaded: Vec<_> = batch.par_iter().map(|path| load_stl(path)).collect();
+            for mesh in loaded {
+                let mesh = mesh?;
+                let offset = out.vertices.len();
+                out.vertices.extend(mesh.vertices);
+                out.faces.extend(mesh.faces.into_iter().map(|f| Triangle { a: f.a + offset, b: f.b + offset, c: f.c + offset }));
+            }
         }
         Ok(out)
     } else {
@@ -266,7 +270,7 @@ pub fn save_stl(path: &Path, mesh: &Mesh, solid_name: &str) -> Result<()> {
         fs::create_dir_all(parent)?;
     }
 
-    let mut file = fs::File::create(path)?;
+    let mut file = BufWriter::with_capacity(64 * 1024, fs::File::create(path)?);
 
     let mut header = [0u8; 80];
     let name_bytes = solid_name.as_bytes();
@@ -295,5 +299,6 @@ pub fn save_stl(path: &Path, mesh: &Mesh, solid_name: &str) -> Result<()> {
         file.write_all(&0u16.to_le_bytes())?;
     }
 
+    file.flush()?;
     Ok(())
 }

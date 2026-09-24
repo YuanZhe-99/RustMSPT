@@ -8,19 +8,19 @@ This page documents the crate root and entry points (`src/lib.rs`, `src/main.rs`
 |---|---|---|
 | `RustMsptError` | `src/error.rs:4` | Crate-wide error enum covering I/O, YAML, TIFF, config, mesh, and GPU failures. |
 | `Result` | `src/error.rs:27` | Type alias `Result<T> = std::result::Result<T, RustMsptError>` used throughout the crate. |
-| `Cli` | `src/main.rs:26` | Top-level clap CLI struct wrapping a `Commands` subcommand, carrying the build identity as its `--version` string. |
-| `Commands` | `src/main.rs:32` | Enum of the 12 CLI subcommands, including `version`. |
-| `default_config_path` | `src/main.rs:151` | Builds the default config path under `data/input/`. |
-| `pick_config_path` | `src/main.rs:156` | Chooses a user-supplied config path or falls back to the default. |
-| `main` (main.rs) | `src/main.rs:166` | CLI entry point: parses args, loads config, applies overrides, runs the selected pipeline. |
-| `main` (precision_test.rs) | `src/bin/precision_test.rs:5` | Standalone diagnostic binary comparing S2 computation precision/performance across CPU exact, CPU Monte Carlo, and GPU Monte Carlo methods. |
+| `Cli` | `src/main.rs:27` | Top-level clap CLI struct wrapping a `Commands` subcommand, carrying the build identity as its `--version` string. |
+| `Commands` | `src/main.rs:33` | Enum of the 12 CLI subcommands, including `version`. |
+| `default_config_path` | `src/main.rs:179` | Builds the default config path under `data/input/`. |
+| `pick_config_path` | `src/main.rs:184` | Chooses a user-supplied config path or falls back to the default. |
+| `main` (main.rs) | `src/main.rs:194` | CLI entry point: parses args, loads config, applies overrides, runs the selected pipeline. |
+| `main` (precision_test.rs) | `src/bin/precision_test.rs:6` | Standalone diagnostic binary comparing S2 computation precision/performance across CPU exact, CPU Monte Carlo, and GPU Monte Carlo methods. |
 | `BuildIdentity` | `src/version.rs:18` | What this binary is: version, git commit, worktree dirtiness, features, build platform. |
 | `build_identity` | `src/version.rs:36` | Returns the compiled-in build identity; the single source of truth for R1. |
 | `BuildIdentity::version_detail` | `src/version.rs:64` | Identity as one line without the program name, for clap's `--version`. |
 | `BuildIdentity::version_line` | `src/version.rs:92` | Identity as one line including the program name. |
 | `identity_json` | `src/version.rs:103` | Serializes the identity as pretty-printed JSON. |
 | `non_empty` (version.rs) | `src/version.rs:4` | Maps an empty build-script env string to `None`. |
-| `build_identity_version_line` | `src/main.rs:146` | Leaks the version detail as a `&'static str` for clap. |
+| `build_identity_version_line` | `src/main.rs:174` | Leaks the version detail as a `&'static str` for clap. |
 | `git_output` | `build.rs:11` | Runs a git command, returning `None` on any failure. |
 | `rerun_if_exists` | `build.rs:25` | Emits a `rerun-if-changed` line only for paths that exist. |
 | `emit_rerun_triggers` | `build.rs:37` | Emits every rerun trigger that can change the recorded identity. |
@@ -38,10 +38,10 @@ This page documents the crate root and entry points (`src/lib.rs`, `src/main.rs`
 | `BoundingBox::size` | `src/types.rs:60` | Returns the box's side lengths. |
 | `BoundingBox::volume` | `src/types.rs:65` | Returns the box's (non-negative) volume. |
 | `BoundingBox::contains_point` | `src/types.rs:71` | Tests whether a point lies inside or on the box boundary. |
-| `Triangle` | `src/types.rs:82` | Index triple `(a, b, c)` referencing a mesh's vertex array. |
-| `Mesh` | `src/types.rs:89` | Vertex/face container: `vertices: Vec<Vec3>`, `faces: Vec<Triangle>`. |
-| `Mesh::empty` | `src/types.rs:96` | Constructs an empty mesh. |
-| `Mesh::is_empty` | `src/types.rs:104` | True if the mesh has no vertices or no faces. |
+| `Triangle` | `src/types.rs:114` | Index triple `(a, b, c)` referencing a mesh's vertex array. |
+| `Mesh` | `src/types.rs:121` | Vertex/face container: `vertices: Vec<Vec3>`, `faces: Vec<Triangle>`. |
+| `Mesh::empty` | `src/types.rs:128` | Constructs an empty mesh. |
+| `Mesh::is_empty` | `src/types.rs:136` | True if the mesh has no vertices or no faces. |
 | `RenderedImage` | `src/types.rs` | Top-row-first RGBA8 image buffer. |
 | `RenderedImage::new` | `src/types.rs` | Constructs an RGBA8 image from bytes. |
 | `RenderedImage::filled` | `src/types.rs` | Allocates a solid-color RGBA8 image. |
@@ -55,8 +55,10 @@ This page documents the crate root and entry points (`src/lib.rs`, `src/main.rs`
 | `ComputeBackend::fmt` (Display) | `src/compute/backend.rs:87` | Formats as `"cpu"` or `"gpu/wgpu/{adapter_name}"`. |
 | `FallbackReason` | `src/compute/policy.rs:4` | Records why a requested backend could not be honored and what was requested instead. |
 | `BackendSelection` | `src/compute/policy.rs:10` | Result of backend selection: chosen `ComputeBackend` plus optional `FallbackReason`. |
-| `select_backend` | `src/compute/policy.rs:21` | Central CPU/GPU/Auto dispatch policy used by compute-heavy pipelines. |
+| `select_backend` | `src/compute/policy.rs:22` | Central CPU/GPU/Auto dispatch policy used by compute-heavy pipelines. |
 | `select_backend_for_workload` | `src/compute/policy.rs` | Unit-aware backend selection for pixels or other work items. |
+| `configured_mode` | `src/compute/policy.rs:142` | Resolve strict environment override. |
+| `resolve_execution` | `src/compute/policy.rs:162` | Resolve method support, workload budget and fallback. |
 
 ## Module role: `lib.rs`
 
@@ -97,7 +99,7 @@ Each pipeline variant accepts `--config <PathBuf>`, `--input <PathBuf>`, and `--
 #### default_config_path
 
 - **Signature:** `fn default_config_path(file_name: &str) -> PathBuf`
-- **Source:** `src/main.rs:151`
+- **Source:** `src/main.rs:179`
 - **Purpose:** Builds the default configuration file path under `data/input/`.
 - **Parameters:**
   - `file_name` — the config file's base name (e.g. `"pack_config.yaml"`).
@@ -107,7 +109,7 @@ Each pipeline variant accepts `--config <PathBuf>`, `--input <PathBuf>`, and `--
 #### pick_config_path
 
 - **Signature:** `fn pick_config_path(config: Option<PathBuf>, file_name: &str) -> PathBuf`
-- **Source:** `src/main.rs:156`
+- **Source:** `src/main.rs:184`
 - **Purpose:** Resolves the config path to use for a subcommand: the user-supplied `--config` value if given, otherwise the default under `data/input/`.
 - **Parameters:**
   - `config` — the optional `--config` CLI argument.
@@ -118,7 +120,7 @@ Each pipeline variant accepts `--config <PathBuf>`, `--input <PathBuf>`, and `--
 #### main
 
 - **Signature:** `fn main() -> anyhow::Result<()>`
-- **Source:** `src/main.rs:166`
+- **Source:** `src/main.rs:194`
 - **Purpose:** Parses CLI arguments, loads the YAML config for the selected subcommand, applies `--input`/`--output` overrides, and runs the corresponding pipeline.
 - **Parameters:** None (reads `std::env::args` via `Cli::parse()`).
 - **Returns:** `Ok(())` on success; an `anyhow::Error` if config loading, path resolution, or pipeline execution (`Pipeline::run`) fails.
@@ -252,7 +254,7 @@ The honesty limit is worth stating: `git_dirty` describes the worktree at the mo
 #### main
 
 - **Signature:** `fn main()`
-- **Source:** `src/bin/precision_test.rs:5`
+- **Source:** `src/bin/precision_test.rs:6`
 - **Purpose:** Loads a fixed sample mesh, computes its volume fraction and bounding box, then runs `calculate_s2` at several voxel pitches under both `"exact"` and `"monte_carlo"` CPU methods (and, with the `gpu` feature, via `GpuS2Pipeline::calculate_s2_gpu`), printing S2 curve samples, L2 deviation from a reference, and (for GPU) elapsed time.
 - **Parameters:** None.
 - **Returns:** `()`. Panics (via `.expect(...)`) if `data/input/particles.stl` cannot be loaded or has no bounding box.
@@ -354,11 +356,11 @@ The honesty limit is worth stating: `git_dirty` describes the worktree at the mo
 
 #### empty
 
-`pub fn empty() -> Self` — `src/types.rs:96`. Constructs a `Mesh` with empty `vertices` and `faces` vectors. No side effects.
+`pub fn empty() -> Self` — `src/types.rs:128`. Constructs a `Mesh` with empty `vertices` and `faces` vectors. No side effects.
 
 #### is_empty
 
-`pub fn is_empty(&self) -> bool` — `src/types.rs:104`. Returns `true` if the mesh has no vertices **or** no faces (i.e. `vertices.is_empty() || faces.is_empty()`, not a strict "both empty" check). No side effects.
+`pub fn is_empty(&self) -> bool` — `src/types.rs:136`. Returns `true` if the mesh has no vertices **or** no faces (i.e. `vertices.is_empty() || faces.is_empty()`, not a strict "both empty" check). No side effects.
 
 ## compute/mod.rs
 
@@ -387,7 +389,7 @@ This file defines the backend *type* hierarchy: `AccelerationMode` (what the cal
 | `name` | `String` | Backend or GPU adapter name (`"cpu"` for the CPU backend). |
 | `supports_gpu` | `bool` | Whether this backend is GPU-backed. |
 | `max_buffer_size` | `u64` | Adapter's max buffer size in bytes (`0` for CPU). |
-| `max_storage_buffer_binding_size` | `u64` | Adapter's max storage-buffer binding size in bytes (`0` for CPU); used by `select_backend` to enforce a configured GPU memory limit. |
+| `max_storage_buffer_binding_size` | `u64` | Per-binding byte limit (0 for CPU); independent of the total task budget. |
 
 ### ComputeBackend
 
@@ -444,19 +446,19 @@ This is the central CPU/GPU/Auto dispatch policy for the crate. Any pipeline sta
 #### select_backend
 
 - **Signature:** `pub fn select_backend(requested: AccelerationMode, gpu_min_voxels: Option<usize>, gpu_memory_limit_mb: Option<u64>, workload_voxels: usize) -> BackendSelection`
-- **Source:** `src/compute/policy.rs:21`
+- **Source:** `src/compute/policy.rs:22`
 - **Purpose:** Resolves a requested `AccelerationMode` (`Cpu`/`Gpu`/`Auto`) plus workload/config parameters into a concrete `BackendSelection`, applying GPU availability, memory-limit, and workload-size checks.
 - **Parameters:**
   - `requested` — the mode the caller/config asked for.
   - `gpu_min_voxels` — for `Auto` mode only: minimum workload size (in voxels) below which GPU is not attempted; defaults to `250_000` if `None`.
-  - `gpu_memory_limit_mb` — optional cap (in MB) on GPU memory; if the adapter's `max_storage_buffer_binding_size` is smaller than this limit, the selection falls back to CPU. Unused when the `gpu` feature is disabled (marked `#[allow(unused_variables)]` in that configuration).
+  - `gpu_memory_limit_mb` — legacy budget argument. Without a working-set estimate, a GPU request with any budget returns CPU with an explicit reason before probing; overflowing MiB conversion gets its own reason. Use `resolve_execution` with a validated estimate to enforce budgets.
   - `workload_voxels` — the current workload's voxel count, compared against `gpu_min_voxels` in `Auto` mode.
 - **Returns:** A `BackendSelection`:
   - `requested == Cpu`: always `{ backend: Cpu, fallback: None }`.
-  - `requested == Gpu`: with the `gpu` feature enabled, attempts `crate::gpu::try_init_gpu()`; on success, checks `gpu_memory_limit_mb` against the adapter's `max_storage_buffer_binding_size` (falls back to CPU with a `FallbackReason` if the limit is exceeded), otherwise returns `{ backend: Gpu { .. }, fallback: None }`. On GPU init failure, or when the `gpu` feature is disabled, returns `{ backend: Cpu, fallback: Some(FallbackReason { requested: Gpu, reason: "GPU init failed: ..." | "cargo feature 'gpu' is not enabled" }) }`.
+  - `requested == Gpu`: reject an unvalidated budget as above; otherwise probe GPU availability and return GPU on success, or CPU with the initialization/disabled-feature reason.
   - `requested == Auto`: first compares `workload_voxels` against `gpu_min_voxels.unwrap_or(250_000)`; if below threshold, immediately returns CPU with a fallback reason citing the voxel counts, without attempting GPU init at all. Otherwise, follows the same GPU-init/memory-limit logic as the `Gpu` arm (with `requested: Auto` in any resulting `FallbackReason`).
 - **Side effects:** When the `gpu` feature is enabled and `requested` is `Gpu` or `Auto` with a workload at or above the voxel threshold, calls `crate::gpu::try_init_gpu()`, which may initialize a wgpu adapter — documented elsewhere as a potentially heavy first call (adapter/device enumeration and creation).
-- **Notes:** `Auto` mode's threshold check happens *before* any GPU probing, so small workloads never pay the GPU-init cost even if a GPU is available. When the `gpu` feature is not compiled in, both the `Gpu` and `Auto` arms always resolve to `Cpu` with a fallback reason of `"cargo feature 'gpu' is not enabled"`, regardless of `workload_voxels` (for `Gpu`) or after the threshold check (for `Auto`). The `gpu_memory_limit_mb` check only triggers when `max_storage_buffer_binding_size > 0`, avoiding a false-positive fallback on adapters that report `0` for this field.
+- **Notes:** CPU and small Auto workloads return before budget checks or probing. Total task budgets and individual device buffer/binding limits are separate constraints. Runtime planners validate concrete buffer sizes; `resolve_execution` validates task bytes and strict fallback.
 
 #### select_backend_for_workload
 
@@ -464,3 +466,15 @@ This is the central CPU/GPU/Auto dispatch policy for the crate. Any pipeline sta
 - **Purpose:** Generalizes backend selection beyond voxels. `Auto` checks the supplied threshold before probing; fallback text uses `workload_unit` (render passes `pixels`). `select_backend` remains the voxel wrapper.
 
 `RenderedImage` stores `width`, `height`, and top-row-first RGBA8 bytes. `new` constructs from bytes and `filled` allocates a solid image. `RustMsptError::Image` wraps image-encoder failures. `Commands` now includes `Render`, whose CLI arm loads `render_config.yaml` and applies input/output overrides.
+
+### configured_mode / resolve_execution
+
+`configured_mode(&AccelerationConfig) -> Result<AccelerationMode>` reads the strict cpu/gpu/auto environment override once without GPU probing. `resolve_execution(config, requested, workload, threshold, supports_gpu, estimated_gpu_bytes) -> Result<BackendSelection>` first accepts CPU/small auto, then checks method support, implemented GPU options and the estimated task bytes against a checked MB budget before probing. Unsupported options are explicit config errors; forbidden GPU fallback returns an error. The estimate concerns allocated resources, not measured driver VRAM. Measure uses this method-aware policy; legacy selectors remain until other pipelines migrate.
+
+Fresh resident GPU exact evaluations use `ExactMemoryPlan` for both backend selection and execution. With triangle storage T=max(36*faces,4), occupancy M=4*cells, and B partial slots, the conservative logical peak is 2T+M+128+80B. This includes pending triangle/offset uploads and simultaneous old/new batch buffers; the 128-byte allowance covers fixed parameter/count/placeholder resources. B is reduced from 200,000 to fit an optional MiB budget, with a minimum of one. If even that does not fit, execution rejects before GPU initialization and the caller applies its fallback policy. The model excludes driver/compiler internals and CPU memory, applies to a fresh production direct-shell evaluation, and does not claim to budget experimental tiled/reduced or arbitrary retained pipelines. Existing hard exact-grid limits remain independent.
+
+| Symbol | Source | Contract |
+|---|---|---|
+| `ExactMemoryPlan` | `src/compute/exact_memory.rs:5` | Fresh resident exact logical GPU peak and budget-selected partial batch. |
+| `ExactMemoryPlan::new` | `src/compute/exact_memory.rs:12` | Checked resource arithmetic and batch selection; may still require check_budget for infeasible minima. |
+| `ExactMemoryPlan::check_budget` | `src/compute/exact_memory.rs:52` | Enforce configured MiB cap before initialization. |

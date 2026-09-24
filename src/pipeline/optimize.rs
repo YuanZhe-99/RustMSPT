@@ -1,8 +1,9 @@
-use crate::compute::policy::select_backend;
+use super::optimize_execution::{OptimizeS2, S2Method, run_island_batches};
+use super::optimize_volume::IslandVolumes;
 use crate::config::{parse_box_dimensions, OptimizationConfig};
 use crate::error::{Result, RustMsptError};
 use crate::geometry::{
-    bbox_distance, bbox_overlaps, calculate_s2, check_boundary_constraints_mode,
+    bbox_distance, bbox_overlaps, check_boundary_constraints_mode,
     generate_periodic_ghosts, l2_norm, merge_meshes, mesh_bbox, mesh_centroid, mesh_volume,
     mesh_collision_exact_prepared, mesh_distance_exact_prepared, move_mesh_to_target_center,
     orient_components_to_positive_volume, rotate_mesh_around_center, split_mesh_into_granules,
@@ -37,9 +38,7 @@ struct ParticlePrepared {
 
 #[allow(dead_code)]
 struct IslandResult {
-    best_particles: Vec<crate::types::Mesh>,
-    best_loss: f64,
-    best_s2: Vec<f64>,
+    best: Arc<GlobalBest>,
     s2_time: Duration,
     collision_time: Duration,
 }
@@ -47,6 +46,23 @@ struct IslandResult {
 struct GlobalBest {
     loss: f64,
     particles: Vec<crate::types::Mesh>,
+    s2: Vec<f64>,
+}
+
+// AI-FUNC-SUMMARY: Exchange immutable coherent best snapshots using only loss comparison and Arc operations under the mutex; return a better incoming snapshot, and destroy retired geometry after unlocking.
+fn exchange_best_snapshot(global: &Mutex<Arc<GlobalBest>>, local: &Arc<GlobalBest>) -> Option<Arc<GlobalBest>> {
+    let (incoming, retired) = {
+        let mut shared = global.lock().unwrap();
+        if local.loss < shared.loss {
+            (None, Some(std::mem::replace(&mut *shared, Arc::clone(local))))
+        } else if shared.loss < local.loss {
+            (Some(Arc::clone(&shared)), None)
+        } else {
+            (None, None)
+        }
+    };
+    drop(retired);
+    incoming
 }
 
 // AI-FUNC-SUMMARY: Precompute acceleration data (bbox + parry3d shape) for one particle mesh; returns ParticlePrepared; side effects: None.
@@ -54,6 +70,22 @@ fn prepare_particle(mesh: crate::types::Mesh) -> ParticlePrepared {
     let bbox = mesh_bbox(&mesh);
     let shape = to_parry_trimesh(&mesh);
     ParticlePrepared { mesh, bbox, shape }
+}
+
+// AI-FUNC-SUMMARY: Merge prepared particles once without temporary mesh clones, returning stable vertex ranges for rigid candidate updates; rebuild after population migration.
+fn merge_prepared_particles(prepared: &[ParticlePrepared]) -> (crate::types::Mesh, Vec<std::ops::Range<usize>>) {
+    let mut merged = crate::types::Mesh {
+        vertices: Vec::with_capacity(prepared.iter().map(|p| p.mesh.vertices.len()).sum()),
+        faces: Vec::with_capacity(prepared.iter().map(|p| p.mesh.faces.len()).sum()),
+    };
+    let mut ranges = Vec::with_capacity(prepared.len());
+    for particle in prepared {
+        let start = merged.vertices.len();
+        merged.vertices.extend_from_slice(&particle.mesh.vertices);
+        merged.faces.extend(particle.mesh.faces.iter().map(|f| crate::types::Triangle { a: f.a + start, b: f.b + start, c: f.c + start }));
+        ranges.push(start..merged.vertices.len());
+    }
+    (merged, ranges)
 }
 
 // AI-FUNC-SUMMARY: Format an S2 array as a fixed-width space-separated decimal string; returns String; side effects: None.
@@ -79,36 +111,31 @@ fn prune_progress_message(current_loss: f64, current_vf: f64, target_vf: f64, pa
 
 // AI-FUNC-SUMMARY:
 // Purpose: Iteratively remove particles to approach the target volume fraction while minimizing S2 loss increase.
-// Inputs: mutable particles vec, box bounds, target S2, optimization params, S2 settings, thread pool, and history log.
-// Returns: None (particles vector is pruned in place).
+// Inputs: mutable particles vec, box bounds, target S2, optimization params, fixed S2 evaluator, and history log.
+// Returns: Success or a propagated evaluator error (particles vector is pruned in place).
 // Side effects: Mutates particles and history_log; prints progress; computes S2 evaluations (expensive).
-// Notes: Uses adaptive candidate sampling and S2 loss scoring to select which particles to remove. Early exits when VF is within tolerance.
+// Notes: Uses the run-wide evaluator under the installed Rayon pool; adaptive candidate scoring and sample budget are unchanged. Early exits when VF is within tolerance.
 fn selective_prune_to_target_vf(
     particles: &mut Vec<crate::types::Mesh>,
     box_bounds: BoundingBox,
     target_s2: &[f64],
     params: &crate::config::OptimizationParams,
     r_max: usize,
-    s2_method: &str,
-    voxel_pitch: f64,
-    thread_pool: &ThreadPool,
+    evaluator: &OptimizeS2,
     history_log: &mut Vec<String>,
-) {
-    // Purpose: Remove particles before annealing to approach target VF while limiting S2 loss.
-    // Inputs: particle set, target, optimization params, S2 settings, and thread pool.
-    // Outputs: particles vector pruned in place with progress logs.
+) -> Result<()> {
     if particles.len() < 2 {
-        return;
+        return Ok(());
     }
 
     let enabled = params.prune_enabled.unwrap_or(true);
     if !enabled {
-        return;
+        return Ok(());
     }
 
     let target_vf = target_s2.first().copied().unwrap_or(0.0).clamp(0.0, 1.0);
     if target_vf <= 0.0 {
-        return;
+        return Ok(());
     }
 
     let tol = params.prune_tolerance.unwrap_or(0.01).max(0.0);
@@ -119,20 +146,18 @@ fn selective_prune_to_target_vf(
         .max(200);
     let eval_rmax = r_max.min(target_s2.len().saturating_sub(1));
 
-    let eval_loss = |parts: &[crate::types::Mesh]| {
+    let eval_loss = |parts: &[crate::types::Mesh]| -> Result<(f64, f64)> {
         let merged = merge_meshes(parts);
         let vf = volume_fraction_of_meshes_in_bbox(parts, box_bounds);
-        let s2 = thread_pool.install(|| {
-            calculate_s2(&merged, box_bounds, eval_rmax, voxel_pitch, s2_method, eval_samples)
-        });
+        let s2 = evaluator.evaluate(&merged, box_bounds, eval_rmax, eval_samples, "prune")?;
         let loss = l2_norm(&s2, target_s2);
-        (vf, loss)
+        Ok((vf, loss))
     };
 
     let mut rng = rand::thread_rng();
     let mut rounds = 0usize;
     let mut current_vf = volume_fraction_of_meshes_in_bbox(particles, box_bounds);
-    let (_, mut current_loss) = eval_loss(particles);
+    let (_, mut current_loss) = eval_loss(particles)?;
 
     println!(
         "[Info] Pruning stage: initial VF {current_vf:.6}, target VF {target_vf:.6}"
@@ -183,7 +208,7 @@ fn selective_prune_to_target_vf(
                 continue;
             }
 
-            let (vf, loss) = eval_loss(&temp);
+            let (vf, loss) = eval_loss(&temp)?;
 
             let still_above_target = vf >= target_vf;
             scored.push((idx, still_above_target, loss, vf));
@@ -240,7 +265,7 @@ fn selective_prune_to_target_vf(
         }
 
         rounds += 1;
-        let (vf_now, loss_now) = eval_loss(particles);
+        let (vf_now, loss_now) = eval_loss(particles)?;
         current_vf = vf_now;
         current_loss = loss_now;
         progress.set_position(rounds as u64);
@@ -272,15 +297,16 @@ fn selective_prune_to_target_vf(
         "Pruning Completed: rounds {rounds} | particles {} | VF {current_vf:.6} | Loss {current_loss:.6}",
         particles.len(),
     ));
+    Ok(())
 }
 
 
 // AI-FUNC-SUMMARY:
 // Purpose: Run one simulated annealing island: perturb one random particle per iteration, check constraints/collisions, compute S2 loss, accept/reject via Metropolis criterion.
-// Inputs: island_id, num_islands, initial prepared particles, target S2, optimization params, box bounds, boundary mode/params, rotation mode, thread pool, optional global best for migration, migration interval, and mutable history log.
-// Returns: IslandResult with best particles, loss, S2, and timing.
-// Side effects: Mutates history_log; prints progress; optionally exchanges best solution with global_best mutex for island migration.
-// Notes: Three move types (60% local translate+rotate, 30% move toward neighbor, 10% random reposition). Rebuilds SpatialGrid after each accepted move. Adaptive temperature adjusts within acceptance window.
+// Inputs: island_id, num_islands, initial prepared particles, target S2, optimization params, box bounds, boundary mode/params, rotation mode, fixed S2 evaluator, optional global best for migration, migration interval, and mutable history log.
+// Returns: IslandResult with best particles, loss, S2, and timing, or a propagated evaluator error.
+// Side effects: Mutates history_log; prints progress; exchanges coherent geometry/loss/S2 snapshots through global_best; evaluates all stages with the run-wide evaluator in the installed pool.
+// Notes: Three move types (60% local translate+rotate, 30% move toward neighbor, 10% random reposition). Updates only moved-particle grid cells after acceptance; migration rebuilds the grid. Adaptive temperature adjusts within acceptance window.
 #[allow(clippy::too_many_arguments)]
 fn run_sa_island(
     island_id: usize,
@@ -294,14 +320,11 @@ fn run_sa_island(
     d2: f64,
     min_neighbor: f64,
     rotation_mode: &RotationMode,
-    thread_pool: &ThreadPool,
-    global_best: Option<&Arc<Mutex<GlobalBest>>>,
+    evaluator: &OptimizeS2,
+    global_best: Option<&Arc<Mutex<Arc<GlobalBest>>>>,
     migration_interval: usize,
     history_log: &mut Vec<String>,
-    #[cfg(feature = "gpu")]
-    mut gpu_pipeline: Option<crate::gpu::s2::GpuS2Pipeline>,
-) -> IslandResult {
-    let s2_method = params.mc_method.as_str();
+) -> Result<IslandResult> {
     let mut rng = rand::thread_rng();
     let mut temperature = params.initial_temperature.max(1e-8);
     let cooling_rate = params.cooling_rate.clamp(0.8, 0.99999);
@@ -323,41 +346,19 @@ fn run_sa_island(
     let mut window_accepts = 0usize;
 
     let mut prepared = prepared_init;
-    let mut merged = merge_meshes(
-        &prepared
-            .iter()
-            .map(|p| p.mesh.clone())
-            .collect::<Vec<_>>(),
-    );
-    let mut current_s2 = {
-        #[cfg(feature = "gpu")]
-        {
-            if let Some(ref mut gpu) = gpu_pipeline {
-                gpu.update_mesh(&merged, box_bounds);
-                let mut s2 = gpu.calculate_s2_gpu(box_bounds, params.r_max, params.mc_samples.max(2000));
-                let vf = volume_fraction_of_meshes_in_bbox(&prepared.iter().map(|p| p.mesh.clone()).collect::<Vec<_>>(), box_bounds);
-                s2[0] = vf;
-                s2
-            } else {
-                thread_pool.install(|| {
-                    calculate_s2(&merged, box_bounds, params.r_max, params.voxel_pitch, s2_method, params.mc_samples.max(2000))
-                })
-            }
-        }
-        #[cfg(not(feature = "gpu"))]
-        {
-            thread_pool.install(|| {
-                calculate_s2(&merged, box_bounds, params.r_max, params.voxel_pitch, s2_method, params.mc_samples.max(2000))
-            })
-        }
-    };
+    let (mut merged, mut vertex_ranges) = merge_prepared_particles(&prepared);
+    let mut volumes = (evaluator.method == S2Method::MeshMc).then(|| IslandVolumes::new(prepared.iter().map(|p| &p.mesh), box_bounds));
+    let mut volume_updates = 0usize;
+    let mut current_s2 = evaluator.evaluate_with_vf(&merged, box_bounds, params.r_max, params.mc_samples.max(2000), "initial", volumes.as_ref().map(IslandVolumes::fraction))?;
     let mut current_loss = l2_norm(&current_s2, target);
     push_history_s2(history_log, "Post-Pruning S2", &current_s2);
     history_log.push(format!("Post-Pruning Loss: {current_loss:.6}"));
 
-    let mut best_particles = prepared.iter().map(|p| p.mesh.clone()).collect::<Vec<_>>();
-    let mut best_loss = current_loss;
-    let mut best_s2 = current_s2.clone();
+    let mut best = Arc::new(GlobalBest {
+        particles: prepared.iter().map(|p| p.mesh.clone()).collect(),
+        loss: current_loss,
+        s2: current_s2.clone(),
+    });
     let mut accepted_moves = 0usize;
 
     let mut s2_time = Duration::ZERO;
@@ -385,13 +386,12 @@ fn run_sa_island(
         "##-",
     );
     progress.set_message(format!(
-        "Loss {current_loss:.6} | Best {best_loss:.6} | Temp {temperature:.6} | Acc 0"
+        "Loss {current_loss:.6} | Best {:.6} | Temp {temperature:.6} | Acc 0", best.loss
     ));
 
     for iter in 0..params.max_iterations {
         let idx = rng.gen_range(0..prepared.len());
-        let original = prepared[idx].mesh.clone();
-        let mut candidate = original.clone();
+        let mut candidate = prepared[idx].mesh.clone();
 
         let scale = (temperature / params.initial_temperature.max(1e-8)).clamp(0.05, 1.0);
         let move_roll: f64 = rng.gen_range(0.0..1.0);
@@ -468,7 +468,7 @@ fn run_sa_island(
             progress.set_position((iter + 1) as u64);
             let acc = (accepted_moves as f64 / (iter + 1) as f64) * 100.0;
             progress.set_message(format!(
-                "Loss {current_loss:.6} | Best {best_loss:.6} | Temp {temperature:.6} | Acc {acc:.1}%"
+                "Loss {current_loss:.6} | Best {:.6} | Temp {temperature:.6} | Acc {acc:.1}%", best.loss
             ));
             collision_time += collision_start.elapsed();
             continue;
@@ -550,7 +550,7 @@ fn run_sa_island(
             progress.set_position((iter + 1) as u64);
             let acc = (accepted_moves as f64 / (iter + 1) as f64) * 100.0;
             progress.set_message(format!(
-                "Loss {current_loss:.6} | Best {best_loss:.6} | Temp {temperature:.6} | Acc {acc:.1}%"
+                "Loss {current_loss:.6} | Best {:.6} | Temp {temperature:.6} | Acc {acc:.1}%", best.loss
             ));
             collision_time += collision_start.elapsed();
             continue;
@@ -636,7 +636,7 @@ fn run_sa_island(
                 progress.set_position((iter + 1) as u64);
                 let acc = (accepted_moves as f64 / (iter + 1) as f64) * 100.0;
                 progress.set_message(format!(
-                    "Loss {current_loss:.6} | Best {best_loss:.6} | Temp {temperature:.6} | Acc {acc:.1}%"
+                    "Loss {current_loss:.6} | Best {:.6} | Temp {temperature:.6} | Acc {acc:.1}%", best.loss
                 ));
                 collision_time += collision_start.elapsed();
                 continue;
@@ -644,44 +644,19 @@ fn run_sa_island(
         }
         collision_time += collision_start.elapsed();
 
-        prepared[idx] = prepare_particle(candidate);
-        {
-            let bboxes_for_rebuild: Vec<(usize, BoundingBox)> = prepared.iter().enumerate()
-                .filter_map(|(i, p)| p.bbox.map(|b| (i, b)))
-                .collect();
-            grid = SpatialGrid::build(&bboxes_for_rebuild, box_bounds, cell_size);
-        }
-        merged = merge_meshes(
-            &prepared
-                .iter()
-                .map(|p| p.mesh.clone())
-                .collect::<Vec<_>>(),
-        );
+        let original = std::mem::replace(&mut prepared[idx], prepare_particle(candidate));
+        merged.vertices[vertex_ranges[idx].clone()].copy_from_slice(&prepared[idx].mesh.vertices);
         let adaptive_samples = ((params.mc_samples as f64) * (0.3 + 0.7 * scale)).round() as usize;
         let iter_samples = adaptive_samples.clamp(1000, params.mc_samples.max(1000));
         let s2_start = Instant::now();
-        let candidate_s2 = {
-            #[cfg(feature = "gpu")]
-            {
-                if let Some(ref mut gpu) = gpu_pipeline {
-                    gpu.update_mesh(&merged, box_bounds);
-                    let mut s2 = gpu.calculate_s2_gpu(box_bounds, params.r_max, iter_samples);
-                    let vf = volume_fraction_of_meshes_in_bbox(&prepared.iter().map(|p| p.mesh.clone()).collect::<Vec<_>>(), box_bounds);
-                    s2[0] = vf;
-                    s2
-                } else {
-                    thread_pool.install(|| {
-                        calculate_s2(&merged, box_bounds, params.r_max, params.voxel_pitch, s2_method, iter_samples)
-                    })
-                }
+        let old_volume = volumes.as_mut().map(|cache| cache.replace(idx, &prepared[idx].mesh));
+        if volumes.is_some() {
+            volume_updates += 1;
+            if volume_updates % 64 == 0 {
+                volumes = Some(IslandVolumes::new(prepared.iter().map(|p| &p.mesh), box_bounds));
             }
-            #[cfg(not(feature = "gpu"))]
-            {
-                thread_pool.install(|| {
-                    calculate_s2(&merged, box_bounds, params.r_max, params.voxel_pitch, s2_method, iter_samples)
-                })
-            }
-        };
+        }
+        let candidate_s2 = evaluator.evaluate_with_vf(&merged, box_bounds, params.r_max, iter_samples, "candidate", volumes.as_ref().map(IslandVolumes::fraction))?;
         s2_time += s2_start.elapsed();
         let candidate_loss = l2_norm(&candidate_s2, target);
         let delta = candidate_loss - current_loss;
@@ -694,24 +669,25 @@ fn run_sa_island(
         };
 
         if accept {
+            grid.update(idx, prepared[idx].bbox);
             accepted_moves += 1;
             current_s2 = candidate_s2;
             current_loss = candidate_loss;
-            if current_loss < best_loss {
-                best_loss = current_loss;
-                best_particles = prepared.iter().map(|p| p.mesh.clone()).collect::<Vec<_>>();
-                best_s2 = current_s2.clone();
+            if current_loss < best.loss {
+                best = Arc::new(GlobalBest {
+                    loss: current_loss,
+                    particles: prepared.iter().map(|p| p.mesh.clone()).collect(),
+                    s2: current_s2.clone(),
+                });
                 history_log.push(format!(
-                    "Iter {iter}: Loss {best_loss:.6} | S2 {}",
-                    format_s2_series(&best_s2)
+                    "Iter {iter}: Loss {:.6} | S2 {}",
+                    best.loss, format_s2_series(&best.s2)
                 ));
             }
         } else {
-            prepared[idx] = prepare_particle(original);
-            let bboxes_for_rebuild: Vec<(usize, BoundingBox)> = prepared.iter().enumerate()
-                .filter_map(|(i, p)| p.bbox.map(|b| (i, b)))
-                .collect();
-            grid = SpatialGrid::build(&bboxes_for_rebuild, box_bounds, cell_size);
+            if let (Some(cache), Some(old)) = (&mut volumes, old_volume) { cache.restore(idx, old); }
+            prepared[idx] = original;
+            merged.vertices[vertex_ranges[idx].clone()].copy_from_slice(&prepared[idx].mesh.vertices);
         }
 
         temperature = (temperature * cooling_rate).max(temp_floor);
@@ -732,35 +708,20 @@ fn run_sa_island(
 
         if let Some(gb) = global_best {
             if migration_interval > 0 && (iter + 1) % migration_interval == 0 {
-                let mut gb_lock = gb.lock().unwrap();
-                if best_loss < gb_lock.loss {
-                    gb_lock.loss = best_loss;
-                    gb_lock.particles = best_particles.clone();
-                } else if gb_lock.loss < best_loss {
-                    let incoming = gb_lock.particles.clone();
-                    let incoming_loss = gb_lock.loss;
-                    drop(gb_lock);
-                    best_particles = incoming;
-                    best_loss = incoming_loss;
-                    prepared = best_particles.iter().map(|m| prepare_particle(m.clone())).collect();
-                    merged = merge_meshes(&best_particles);
+                if let Some(incoming) = exchange_best_snapshot(gb, &best) {
+                    best = incoming;
+                    prepared = best.particles.iter().map(|m| prepare_particle(m.clone())).collect();
+                    (merged, vertex_ranges) = merge_prepared_particles(&prepared);
                     let bboxes_for_rebuild: Vec<(usize, BoundingBox)> = prepared.iter().enumerate()
                         .filter_map(|(i, p)| p.bbox.map(|b| (i, b)))
                         .collect();
                     grid = SpatialGrid::build(&bboxes_for_rebuild, box_bounds, cell_size);
-                    current_s2 = thread_pool.install(|| {
-                        calculate_s2(
-                            &merged,
-                            box_bounds,
-                            params.r_max,
-                            params.voxel_pitch,
-                            s2_method,
-                            params.mc_samples.max(2000),
-                        )
-                    });
+                    volumes = (evaluator.method == S2Method::MeshMc).then(|| IslandVolumes::new(prepared.iter().map(|p| &p.mesh), box_bounds));
+                    volume_updates = 0;
+                    current_s2 = evaluator.evaluate_with_vf(&merged, box_bounds, params.r_max, params.mc_samples.max(2000), "migration", volumes.as_ref().map(IslandVolumes::fraction))?;
                     current_loss = l2_norm(&current_s2, target);
                     history_log.push(format!(
-                        "Island {island_id} Iter {iter}: migrated best loss {best_loss:.6}"
+                        "Island {island_id} Iter {iter}: migrated best loss {:.6}", best.loss
                     ));
                 }
             }
@@ -769,7 +730,7 @@ fn run_sa_island(
         progress.set_position((iter + 1) as u64);
         let acc = (accepted_moves as f64 / (iter + 1) as f64) * 100.0;
         progress.set_message(format!(
-            "Loss {current_loss:.6} | Best {best_loss:.6} | Temp {temperature:.6} | Acc {acc:.1}%"
+            "Loss {current_loss:.6} | Best {:.6} | Temp {temperature:.6} | Acc {acc:.1}%", best.loss
         ));
         if temperature < 1e-9 {
             break;
@@ -778,13 +739,11 @@ fn run_sa_island(
 
     progress.finish_with_message("Optimization loop completed");
 
-    IslandResult {
-        best_particles,
-        best_loss,
-        best_s2,
+    Ok(IslandResult {
+        best,
         s2_time,
         collision_time,
-    }
+    })
 }
 
 impl Pipeline for OptimizePipeline {
@@ -793,21 +752,9 @@ impl Pipeline for OptimizePipeline {
     // Inputs: OptimizationConfig with input/output/target/box/optimization settings.
     // Returns: Ok(()) or error.
     // Side effects: Reads STL from disk; writes optimized STL and s2_history.txt; prints timing and progress to stdout.
-    // Notes: Supports multi-island parallel SA with periodic migration via Arc<Mutex<GlobalBest>>. Target S2 can come from manual_array or reference_stl.
+    // Notes: Installs every stage in one bounded Rayon pool; resolves one S2 execution context and batches islands within the worker budget. Target S2 can come from manual_array or reference_stl.
     fn run(&self) -> Result<()> {
-        let run_start = Instant::now();
         let params = &self.config.optimization;
-        let box_bounds = parse_box_dimensions(&self.config.r#box.dimensions)?;
-        let mode = params.mode.unwrap_or(1);
-        let d1 = params.min_boundary_dist.unwrap_or(0.0);
-        let d2 = params.min_cross_boundary_depth.unwrap_or(0.0);
-        let min_neighbor = params.min_neighbor_distance.unwrap_or(0.0);
-        let rotation_mode = parse_rotation_mode(
-            "optimization",
-            params.rotation_mode.as_deref(),
-            params.rotation_axis_vector.as_ref(),
-        )?;
-
         let available_cores = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1);
@@ -830,32 +777,27 @@ impl Pipeline for OptimizePipeline {
             "[Info] Rayon pool threads (effective): {}",
             effective_pool_threads
         );
-        println!(
-            "[Info] Rotation mode: {}",
-            params.rotation_mode.as_deref().unwrap_or("any")
-        );
+        thread_pool.install(|| self.run_in_pool(&thread_pool))
+    }
+}
 
-        let accel = &params.acceleration;
-        let size = box_bounds.size();
-        let pitch = if params.voxel_pitch <= 0.0 { 1.0 } else { params.voxel_pitch };
-        let est_nx = (size.x / pitch).ceil().max(1.0) as usize;
-        let est_ny = (size.y / pitch).ceil().max(1.0) as usize;
-        let est_nz = (size.z / pitch).ceil().max(1.0) as usize;
-        let est_voxels = est_nx.saturating_mul(est_ny).saturating_mul(est_nz);
-        let selection = select_backend(
-            accel.mode,
-            Some(accel.gpu_min_voxels),
-            accel.gpu_memory_limit_mb,
-            est_voxels,
-        );
-        println!(
-            "[Info] Acceleration: requested={}, effective={}",
-            accel.mode, selection.backend
-        );
-        if let Some(ref fb) = selection.fallback {
-            println!("[Info] Acceleration fallback: {}", fb.reason);
-        }
+impl OptimizePipeline {
+    // AI-FUNC-SUMMARY: Execute every optimize stage under one installed Rayon pool and a fixed S2 evaluator; returns success or input/output/backend error; writes STL, history and diagnostics.
+    fn run_in_pool(&self, thread_pool: &ThreadPool) -> Result<()> {
+        let run_start = Instant::now();
+        let params = &self.config.optimization;
+        let box_bounds = parse_box_dimensions(&self.config.r#box.dimensions)?;
+        let mode = params.mode.unwrap_or(1);
+        let d1 = params.min_boundary_dist.unwrap_or(0.0);
+        let d2 = params.min_cross_boundary_depth.unwrap_or(0.0);
+        let min_neighbor = params.min_neighbor_distance.unwrap_or(0.0);
+        let rotation_mode = parse_rotation_mode(
+            "optimization",
+            params.rotation_mode.as_deref(),
+            params.rotation_axis_vector.as_ref(),
+        )?;
 
+        println!("[Info] Rotation mode: {}", params.rotation_mode.as_deref().unwrap_or("any"));
         let input_path = Path::new(&self.config.input.stl_path);
         let mut particles: Vec<crate::types::Mesh> = Vec::new();
         if input_path.is_dir() {
@@ -887,6 +829,10 @@ impl Pipeline for OptimizePipeline {
             ));
         }
 
+        let merged_input = merge_meshes(&particles);
+        let evaluator = OptimizeS2::new(params, box_bounds, &merged_input)?;
+        println!("[Info] {}", evaluator.description);
+
         let target = match self.config.target.r#type.as_str() {
             "manual_array" => self
                 .config
@@ -907,14 +853,7 @@ impl Pipeline for OptimizePipeline {
                 } else {
                     mesh_bbox(&reference).unwrap_or(BoundingBox::from_size(Vec3::new(1.0, 1.0, 1.0)))
                 };
-                calculate_s2(
-                    &reference,
-                    reference_bbox,
-                    params.r_max,
-                    params.voxel_pitch,
-                    params.mc_method.as_str(),
-                    params.mc_samples.max(1000),
-                )
+                evaluator.evaluate(&reference, reference_bbox, params.r_max, params.mc_samples.max(1000), "target")?
             }
             other => {
                 return Err(RustMsptError::InvalidConfig(format!(
@@ -923,8 +862,8 @@ impl Pipeline for OptimizePipeline {
             }
         };
 
-        let mut history_log: Vec<String> = Vec::new();
-        let s2_method = params.mc_method.as_str();
+        let mut history_log = vec![evaluator.description.clone()];
+        let s2_method = evaluator.method.name();
         println!(
             "[Info] S2 config: method={}, r_max={}, mc_samples={}, voxel_pitch={:.6}",
             s2_method,
@@ -933,17 +872,7 @@ impl Pipeline for OptimizePipeline {
             params.voxel_pitch
         );
 
-        let merged_input = merge_meshes(&particles);
-        let input_s2 = thread_pool.install(|| {
-            calculate_s2(
-                &merged_input,
-                box_bounds,
-                params.r_max,
-                params.voxel_pitch,
-                s2_method,
-                params.mc_samples.max(1000),
-            )
-        });
+        let input_s2 = evaluator.evaluate(&merged_input, box_bounds, params.r_max, params.mc_samples.max(1000), "input")?;
         let input_vf = volume_fraction_of_meshes_in_bbox(&particles, box_bounds);
         let input_loss = l2_norm(&input_s2, &target);
         println!(
@@ -959,11 +888,9 @@ impl Pipeline for OptimizePipeline {
             &target,
             params,
             params.r_max,
-            s2_method,
-            params.voxel_pitch,
-            &thread_pool,
+            &evaluator,
             &mut history_log,
-        );
+        )?;
 
         let prepared: Vec<ParticlePrepared> = particles
             .into_iter()
@@ -973,138 +900,49 @@ impl Pipeline for OptimizePipeline {
         let num_islands = params.islands.unwrap_or(1).max(1);
         let migration_interval = params.migration_interval.unwrap_or(100).max(1);
 
-        let (best_particles, best_loss, best_s2, s2_time, collision_time) = if num_islands <= 1 {
-            let mut island_history: Vec<String> = Vec::new();
-
-            #[cfg(feature = "gpu")]
-            let gpu_pipe = {
-                let accel = &params.acceleration;
-                if accel.mode != crate::compute::backend::AccelerationMode::Cpu {
-                    let merged_for_init = merge_meshes(&prepared.iter().map(|p| p.mesh.clone()).collect::<Vec<_>>());
-                    match crate::gpu::s2::GpuS2Pipeline::new(&merged_for_init, box_bounds) {
-                        Ok(p) => {
-                            println!("[Info] GPU S2 pipeline initialized for optimizer (persistent)");
-                            Some(p)
-                        }
-                        Err(e) => {
-                            println!("[Warning] GPU S2 pipeline init failed: {e}, using CPU");
-                            None
-                        }
-                    }
-                } else {
-                    None
-                }
-            };
-            #[cfg(not(feature = "gpu"))]
-            let _gpu_pipe = None::<()>;
-
+        println!("[Info] Island model: {num_islands} islands, shared worker budget {}, migration every {migration_interval} iterations", thread_pool.current_num_threads());
+        history_log.push(format!("Execution: workers={}, islands={num_islands}, active_island_limit={}",
+            rayon::current_num_threads(), num_islands.min(thread_pool.current_num_threads())));
+        let global_best = Arc::new(Mutex::new(Arc::new(GlobalBest { loss: f64::MAX, particles: Vec::new(), s2: Vec::new() })));
+        let run = |island_id, initial| {
+            let mut island_history = Vec::new();
             let result = run_sa_island(
-                0,
-                1,
-                prepared,
-                &target,
-                params,
-                box_bounds,
-                mode,
-                d1,
-                d2,
-                min_neighbor,
-                &rotation_mode,
-                &thread_pool,
-                None,
-                migration_interval,
-                &mut island_history,
-                #[cfg(feature = "gpu")]
-                gpu_pipe,
+                island_id, num_islands, initial, &target, params, box_bounds,
+                mode, d1, d2, min_neighbor, &rotation_mode, &evaluator,
+                (num_islands > 1).then_some(&global_best), migration_interval, &mut island_history,
             );
-            history_log.extend(island_history);
-            (result.best_particles, result.best_loss, result.best_s2, result.s2_time, result.collision_time)
-        } else {
-            println!("[Info] Island model: {num_islands} islands, migration every {migration_interval} iterations");
-            let threads_per_island = (thread_count / num_islands).max(1);
-            println!("[Info] Island model: {threads_per_island} threads per island");
-
-            let global_best = Arc::new(Mutex::new(GlobalBest {
-                loss: f64::MAX,
-                particles: Vec::new(),
-            }));
-
-            let mut island_results: Vec<IslandResult> = Vec::new();
-            let mut island_histories: Vec<Vec<String>> = Vec::new();
-
-            std::thread::scope(|s| {
-                let mut handles = Vec::new();
-                for island_id in 0..num_islands {
-                    let gb = global_best.clone();
-                    let prepared_clone = prepared.clone();
-                    let target_clone = target.clone();
-                    let rotation_mode_clone = rotation_mode.clone();
-                    let handle = s.spawn(move || {
-                        let island_pool = ThreadPoolBuilder::new()
-                            .num_threads(threads_per_island)
-                            .build()
-                            .unwrap();
-                        let mut island_history: Vec<String> = Vec::new();
-
-                        #[cfg(feature = "gpu")]
-                        let island_gpu = {
-                            let merged_for_init = merge_meshes(&prepared_clone.iter().map(|p| p.mesh.clone()).collect::<Vec<_>>());
-                            crate::gpu::s2::GpuS2Pipeline::new(&merged_for_init, box_bounds).ok()
-                        };
-                        #[cfg(not(feature = "gpu"))]
-                        let _island_gpu = None::<()>;
-
-                        let result = run_sa_island(
-                            island_id,
-                            num_islands,
-                            prepared_clone,
-                            &target_clone,
-                            params,
-                            box_bounds,
-                            mode,
-                            d1,
-                            d2,
-                            min_neighbor,
-                            &rotation_mode_clone,
-                            &island_pool,
-                            Some(&gb),
-                            migration_interval,
-                            &mut island_history,
-                            #[cfg(feature = "gpu")]
-                            island_gpu,
-                        );
-                        (result, island_history)
-                    });
-                    handles.push(handle);
-                }
-                for handle in handles {
-                    let (result, history) = handle.join().unwrap();
-                    island_results.push(result);
-                    island_histories.push(history);
-                }
-            });
-
-            for h in island_histories {
-                history_log.extend(h);
-            }
-
-            let best = island_results
-                .into_iter()
-                .min_by(|a, b| a.best_loss.partial_cmp(&b.best_loss).unwrap_or(std::cmp::Ordering::Equal))
-                .unwrap();
-            (best.best_particles, best.best_loss, best.best_s2, best.s2_time, best.collision_time)
+            (result, island_history)
         };
-
-        push_history_s2(&mut history_log, "Final Best S2", &best_s2);
-        history_log.push(format!("Final Best Loss: {best_loss:.6}"));
-
+        let results = if num_islands == 1 {
+            vec![run(0, prepared)]
+        } else {
+            run_island_batches(num_islands, |island_id| run(island_id, prepared.clone()))
+        };
+        let mut best: Option<IslandResult> = None;
+        for (result, history) in results {
+            let result = result?;
+            history_log.extend(history);
+            if best.as_ref().is_none_or(|previous| result.best.loss < previous.best.loss) {
+                best = Some(result);
+            }
+        }
+        let best = best.unwrap();
+        let search_loss = best.best.loss;
+        let (s2_time, collision_time) = (best.s2_time, best.collision_time);
+        let best_mesh = merge_meshes(&best.best.particles);
         let enable_orient = params.orient_to_positive_volume.unwrap_or(false);
-        let best_mesh = merge_meshes(&best_particles);
         let (best_mesh_oriented, flipped_components, component_count) = if enable_orient {
             orient_components_to_positive_volume(&best_mesh)
         } else {
             (best_mesh.clone(), 0usize, 0usize)
         };
+        let best_s2 = evaluator.evaluate(&best_mesh_oriented, box_bounds, params.r_max,
+            params.mc_samples.max(2000), "final")?;
+        let best_loss = l2_norm(&best_s2, &target);
+        history_log.push(format!("Selected Search Loss: {search_loss:.6}"));
+        push_history_s2(&mut history_log, "Final Best S2", &best_s2);
+        history_log.push(format!("Final Best Loss: {best_loss:.6}"));
+
         save_stl(
             Path::new(&self.config.output.path),
             &best_mesh_oriented,
@@ -1138,4 +976,142 @@ impl Pipeline for OptimizePipeline {
         );
         Ok(())
     }
+}
+
+#[cfg(test)]
+mod performance_tests {
+    use super::*;
+
+    // AI-FUNC-SUMMARY: Exercise actual island initialization, candidate scoring and migration under a bounded pool and verify the adopted best geometry/loss/S2 snapshot stays coherent.
+    #[test]
+    fn migration_keeps_best_geometry_loss_and_curve_together() {
+        let params: crate::config::OptimizationParams = serde_json::from_value(serde_json::json!({
+            "max_iterations": 32, "initial_temperature": 0.1, "cooling_rate": 0.99,
+            "r_max": 0, "voxel_pitch": 1.0, "mc_method": "exact", "mc_samples": 200,
+            "max_translation": 0.00000001, "max_rotation_deg": 0.0,
+            "acceleration": {"mode": "cpu"}
+        })).unwrap();
+        let bbox = BoundingBox::from_size(Vec3::new(8.0, 8.0, 8.0));
+        let initial = crate::geometry::box_mesh(BoundingBox { min: Vec3::new(1.0,1.0,1.0), max: Vec3::new(2.0,2.0,2.0) });
+        let incoming = crate::geometry::box_mesh(BoundingBox { min: Vec3::new(3.0,3.0,3.0), max: Vec3::new(5.0,5.0,5.0) });
+        let target = vec![8.0/512.0];
+        for workers in [1, 2, 8] {
+            let pool = ThreadPoolBuilder::new().num_threads(workers).build().unwrap();
+            let evaluator = OptimizeS2::new(&params, bbox, &initial).unwrap();
+            let gb = Arc::new(Mutex::new(Arc::new(GlobalBest { particles: vec![incoming.clone()], loss: 0.0, s2: target.clone() })));
+            let mut history = Vec::new();
+            let rotation = parse_rotation_mode("optimization", Some("none"), None).unwrap();
+            let result = pool.install(|| run_sa_island(0, 2, vec![prepare_particle(initial.clone())], &target,
+                &params, bbox, 1, 0.0, 0.0, 0.0, &rotation, &evaluator, Some(&gb), 1, &mut history)).unwrap();
+            assert_eq!(result.best.loss, 0.0);
+            assert_eq!(result.best.s2, target);
+            assert_eq!(result.best.particles[0].vertices, incoming.vertices);
+            let observations = evaluator.observations.lock().unwrap();
+            for stage in ["initial", "candidate", "migration"] {
+                assert!(observations.iter().any(|(s, n, i)| *s == stage && *n == workers && i.is_some_and(|i| i < workers)), "missing {stage}");
+            }
+        }
+    }
+    // AI-FUNC-SUMMARY: Compare persistent merged vertex ranges against complete merges after candidate changes, rollback, and a migration with different population topology.
+    #[test]
+    fn merged_ranges_match_full_rebuild_and_rollback() {
+        use crate::geometry::{box_mesh, icosphere_mesh, translate_mesh};
+        let sources = vec![
+            box_mesh(BoundingBox::from_size(Vec3::new(1.0, 2.0, 3.0))),
+            icosphere_mesh(Vec3::new(5.0, 5.0, 5.0), 0.5, 1),
+        ];
+        let mut particles: Vec<_> = sources.iter().cloned().map(prepare_particle).collect();
+        let (mut merged, mut ranges) = merge_prepared_particles(&particles);
+        for step in 0..20 {
+            let idx = step % particles.len();
+            let original = particles[idx].clone();
+            translate_mesh(&mut particles[idx].mesh, Vec3::new(0.1, -0.2, 0.3));
+            merged.vertices[ranges[idx].clone()].copy_from_slice(&particles[idx].mesh.vertices);
+            let oracle = merge_meshes(&particles.iter().map(|p| p.mesh.clone()).collect::<Vec<_>>());
+            assert_eq!(merged.vertices, oracle.vertices);
+            assert_eq!(merged.faces.iter().map(|f| (f.a,f.b,f.c)).collect::<Vec<_>>(), oracle.faces.iter().map(|f| (f.a,f.b,f.c)).collect::<Vec<_>>());
+            particles[idx] = original;
+            merged.vertices[ranges[idx].clone()].copy_from_slice(&particles[idx].mesh.vertices);
+            assert_eq!(merged.vertices, merge_meshes(&sources).vertices);
+        }
+        particles.push(prepare_particle(icosphere_mesh(Vec3::new(8.0, 8.0, 8.0), 0.5, 2)));
+        (merged, ranges) = merge_prepared_particles(&particles);
+        assert_eq!(ranges.len(), 3);
+        assert_eq!(ranges.last().unwrap().end, merged.vertices.len());
+        assert_eq!(merged.vertices, merge_meshes(&particles.iter().map(|p| p.mesh.clone()).collect::<Vec<_>>()).vertices);
+    }
+
+    // AI-FUNC-SUMMARY: Verify parallel migration publishes and receives the original Arc allocation with coherent loss/curve/geometry, preserves strict ties and leaves old snapshots immutable.
+    #[test]
+    fn migration_snapshots_share_storage_and_remain_coherent() {
+        let make = |id: usize| Arc::new(GlobalBest {
+            loss: id as f64,
+            s2: vec![id as f64],
+            particles: vec![crate::types::Mesh { vertices: vec![Vec3::new(id as f64, 0.0, 0.0)], faces: Vec::new() }],
+        });
+        let old = make(100);
+        let global = Mutex::new(Arc::clone(&old));
+        let candidates: Vec<_> = (0..16).map(make).collect();
+        std::thread::scope(|scope| {
+            for candidate in &candidates {
+                let global = &global;
+                scope.spawn(move || {
+                    if let Some(incoming) = exchange_best_snapshot(global, candidate) {
+                        assert!(incoming.loss < candidate.loss);
+                        assert_eq!(incoming.s2[0], incoming.loss);
+                        assert_eq!(incoming.particles[0].vertices[0].x, incoming.loss);
+                    }
+                });
+            }
+        });
+        let winner = Arc::clone(&global.lock().unwrap());
+        assert!(Arc::ptr_eq(&winner, &candidates[0]));
+        let adopted = exchange_best_snapshot(&global, &old).unwrap();
+        assert!(Arc::ptr_eq(&adopted, &winner));
+        assert_eq!(adopted.particles.as_ptr(), candidates[0].particles.as_ptr());
+        assert_eq!(adopted.s2.as_ptr(), candidates[0].s2.as_ptr());
+        assert!(exchange_best_snapshot(&global, &make(0)).is_none());
+        assert!(Arc::ptr_eq(&global.lock().unwrap(), &winner));
+        assert_eq!(old.loss, 100.0);
+        assert_eq!(old.s2, vec![100.0]);
+        assert_eq!(old.particles[0].vertices[0].x, 100.0);
+    }
+
+    // AI-FUNC-SUMMARY: Compare the former locked deep-copy publication with immutable Arc exchange for a prepared sphere snapshot; report payload bytes and alternating warm release samples, excluding snapshot preparation.
+    #[test]
+    #[ignore = "release migration microbenchmark"]
+    fn migration_snapshot_benchmark() {
+        let mesh = crate::geometry::icosphere_mesh(Vec3::new(0.0,0.0,0.0),1.0,5);
+        let payload = mesh.vertices.len()*std::mem::size_of::<Vec3>() + mesh.faces.len()*std::mem::size_of::<crate::types::Triangle>() + std::mem::size_of::<crate::types::Mesh>() + 128*8;
+        let local = Arc::new(GlobalBest { loss: 1.0, particles: vec![mesh], s2: vec![0.5;128] });
+        let empty = Arc::new(GlobalBest { loss: f64::MAX, particles: Vec::new(), s2: Vec::new() });
+        let run = |legacy: bool| {
+            let start = std::time::Instant::now();
+            if legacy {
+                let global = Mutex::new(GlobalBest { loss: f64::MAX, particles: Vec::new(), s2: Vec::new() });
+                for _ in 0..1000 {
+                    global.lock().unwrap().loss = f64::MAX;
+                    let mut shared = global.lock().unwrap();
+                    if local.loss < shared.loss {
+                        shared.loss = local.loss;
+                        shared.particles = local.particles.clone();
+                        shared.s2 = local.s2.clone();
+                    }
+                    std::hint::black_box(&*shared);
+                }
+            } else {
+                let global = Mutex::new(Arc::clone(&empty));
+                for _ in 0..1000 {
+                    *global.lock().unwrap() = Arc::clone(&empty);
+                    std::hint::black_box(exchange_best_snapshot(&global, &local));
+                }
+            }
+            start.elapsed().as_secs_f64()
+        };
+        for sample in 0..6 {
+            let (old,new) = if sample%2 == 0 { (run(true),run(false)) } else { let new=run(false); (run(true),new) };
+            eprintln!("MIGRATION_BENCH sample={sample} repeats=1000 payload_bytes={payload} legacy={old:.9} candidate={new:.9}");
+        }
+    }
+
 }

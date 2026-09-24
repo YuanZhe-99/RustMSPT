@@ -64,7 +64,7 @@ SA 每次迭代的开销主要来自 S2 的重新计算（对整个装配体进�
 
    以上任一检查失败都会直接拒绝该移动：颗粒隐式地还原（候选状态直接被丢弃——`prepared[idx]` 从未被更新），温度仍按 `cooling_rate` 冷却，自适应温度窗口仍将此次试验计入（记为一次未接受）。随后循环 `continue` 进入下一次迭代，全程未触及 S2。
 
-5. **S2 打分。** 只有当所有约束检查都通过时：该颗粒的网格才会被提交进 `prepared[idx]`，`SpatialGrid` 围绕新构型重建，整个装配体重新合并，并为该*候选*构型重新计算 S2——如果为该岛屿初始化了 GPU 流水线，则通过 GPU 路径（`gpu.calculate_s2_gpu`），否则通过 CPU 路径（`calculate_s2`，使用来自 `mc_method` 的 `s2_method`）。用于本次迭代评估的蒙特卡洛采样数 `iter_samples`，其缩放**采用与移动幅度相同的 `scale` 因子**：`((mc_samples as f64) * (0.3 + 0.7 * scale)).round()`，并被限制在 `[1000, mc_samples]` 范围内。具体来说：温度较高时（`scale` 接近 1），迭代使用接近完整 `mc_samples` 预算的采样数；随着温度冷却趋于零，迭代使用的采样数逐渐减少，最低降至 `mc_samples` 的 30%。这与"搜索收敛时精度更紧"的直觉相反——代码实际上是在运行早期（此时移动幅度大、S2 估计中的粗噪声对整体探索的影响较小，但采样预算却被慷慨使用）花费*更多*蒙特卡洛采样（更高精度），而随着移动幅度缩小逐渐收回采样数。（此结论直接从 `run_sa_island` 中的 `adaptive_samples` 公式验证得出；若代码发生变化，请勿在未重新检查该行的情况下假定相反的结论。）
+5. **S2 打分。** 只有当所有约束检查都通过时：该颗粒的网格才会被提交进 `prepared[idx]`，`SpatialGrid` 围绕新构型重建，整个装配体重新合并，并为该*候选*构型重新计算 S2——通过整个运行共享的 `OptimizeS2` 求值器，始终保持解析后的 `voxel_exact`、`voxel_mc` 或 `mesh_mc` 定义。现有 GPU MC 内核仅用于连续网格 MC。用于本次迭代评估的蒙特卡洛采样数 `iter_samples`，其缩放**采用与移动幅度相同的 `scale` 因子**：`((mc_samples as f64) * (0.3 + 0.7 * scale)).round()`，并被限制在 `[1000, mc_samples]` 范围内。具体来说：温度较高时（`scale` 接近 1），迭代使用接近完整 `mc_samples` 预算的采样数；随着温度冷却趋于零，迭代使用的采样数逐渐减少，最低降至 `mc_samples` 的 30%。这与"搜索收敛时精度更紧"的直觉相反——代码实际上是在运行早期（此时移动幅度大、S2 估计中的粗噪声对整体探索的影响较小，但采样预算却被慷慨使用）花费*更多*蒙特卡洛采样（更高精度），而随着移动幅度缩小逐渐收回采样数。（此结论直接从 `run_sa_island` 中的 `adaptive_samples` 公式验证得出；若代码发生变化，请勿在未重新检查该行的情况下假定相反的结论。）
 
    候选损失为 `l2_norm(candidate_s2, target)`，`delta = candidate_loss - current_loss`。
 
@@ -99,14 +99,14 @@ SA 每次迭代的开销主要来自 S2 的重新计算（对整个装配体进�
 
 ## 岛屿模型
 
-当 `optimization.islands`（`OptimizationParams::islands`）大于 1 时，流水线会使用 `std::thread::scope` 并行运行多个独立的 `run_sa_island` 实例，而非单一搜索：
+当 `optimization.islands`（`OptimizationParams::islands`）大于 1 时，流水线会在同一个已安装的 Rayon 池中分批并行运行独立的 `run_sa_island` 实例，而非单一搜索：
 
 - 每个岛屿都获得初始（剪枝后）颗粒集合各自的克隆、各自的 `RotationMode`，以及——关键的一点——**各自的温度、冷却计划与自适应接受窗口状态**。这些状态从不在岛屿之间共享；`AGENTS.md` 明确将"跨线程共享可变 SA 状态"列为应避免的陷阱。若共享该状态，将会使各岛屿的搜索轨迹产生关联，从而破坏运行多个独立搜索的初衷。
-- 线程池的总工作线程数会在各岛屿间均匀分配（`threads_per_island = (thread_count / num_islands).max(1)`），每个岛屿构建自己专属的 `rayon::ThreadPool`。
-- 若启用了 GPU 特性，每个岛屿还会拥有各自的 `GpuS2Pipeline` 实例。
-- 唯一共享的状态是 `global_best: Arc<Mutex<GlobalBest>>`，其中保存着*所有*岛屿目前为止见过的最低损失及其对应颗粒集合。在 `run_sa_island` 内部，每隔 `migration_interval` 次迭代（默认 100，由 `(iter + 1) % migration_interval == 0` 触发），每个岛屿都会锁定该互斥量，并执行以下两种操作之一：
-  - 若自身的 `best_loss` 优于全局最佳，则**发布**自身最佳解到 `global_best`；
-  - 否则，若全局最佳优于自身，则**拉取**全局最佳解——替换自身的 `best_particles`/`best_loss`，重建自身准备好的颗粒、`SpatialGrid`、合并网格，并从迁移后的状态重新计算 `current_s2`/`current_loss`——因此该岛屿的*当前*游走会从更优的解继续，而不仅仅是更新其记录。
+- `run_island_batches` 将每批活跃岛数限制在共享池的 worker 数以内；岛任务和嵌套 S2/VF 工作共用预算，多余岛排队。批次边界防止嵌套任务窃取激活全部岛。
+- 若选择兼容的 GPU MC，所有阶段和岛共用一个持久 `GpuS2Pipeline`。互斥锁串行保护上传和计算回读，CPU VF 工作前释放该锁。
+- 唯一共享的状态是 `global_best: Arc<Mutex<Arc<GlobalBest>>>`，其中保存着*所有*岛屿目前为止见过的最低损失及其对应颗粒集合。在 `run_sa_island` 内部，每隔 `migration_interval` 次迭代（默认 100，由 `(iter + 1) % migration_interval == 0` 触发），每个岛屿都会锁定该互斥量，并执行以下两种操作之一：
+  - 若自身的 `best_loss` 优于全局最佳，则**发布**对应同一几何的最佳几何/loss/S2 快照到 `global_best`；
+  - 否则，若全局最佳优于自身，则**拉取**全局最佳解——同时替换自身的 `best_particles`/`best_loss`/`best_s2`，重建自身准备好的颗粒、`SpatialGrid`、合并网格，并从迁移后的状态重新计算 `current_s2`/`current_loss`——因此该岛屿的*当前*游走会从更优的解继续，而不仅仅是更新其记录。
 
   这是每个岛屿各自独立执行的一种单向"取我方与全局中较优者"的交换方式，而非广播；各岛屿会朝着当前持有全局最佳解的那个岛屿收敛，但每个岛屿始终保持自己的温度/接受率轨迹（迁移替换的是*颗粒构型*，而非驱动后续探索的 SA 状态）。
 
@@ -114,7 +114,7 @@ SA 每次迭代的开销主要来自 S2 的重新计算（对整个装配体进�
 
 ## 顶层编排：`OptimizePipeline::run`
 
-1. **后端与线程设置。** 从 `cpu_max`（或所有可用核心）解析 CPU 线程数并构建 `rayon::ThreadPool`。根据 `acceleration.mode`、估计的体素数以及 GPU 内存/体素阈值选择计算后端（`select_backend`）。
+1. **后端与线程设置。** 保留 `cpu_max` 的解析规则，创建一个 Rayon 池并安装整个运行，包括参考目标准备、VF 与 CPU 回退。加载输入后由 `OptimizeS2` 一次解析方法/后端，详见下方执行契约。
 
 2. **加载颗粒。** 从 `input.stl_path`（文件或目录）加载 STL 文件，拆分为各个颗粒（`split_mesh_into_granules`），并预先过滤掉包围盒与优化盒完全不重叠的颗粒。
 
@@ -124,9 +124,9 @@ SA 每次迭代的开销主要来自 S2 的重新计算（对整个装配体进�
 
 5. **剪枝。** 对已加载的颗粒集合调用 `selective_prune_to_target_vf`（见上文）。
 
-6. **单岛屿与多岛屿调度。** 为（剪枝后的）颗粒集合准备加速结构（`prepare_particle`），读取 `optimization.islands`（默认 1）与 `optimization.migration_interval`（默认 100）。若 `islands <= 1`，直接运行一次 `run_sa_island` 调用（可选配合持久化的 GPU 流水线）。若 `islands > 1`，在 `std::thread::scope` 内为每个岛屿生成一个线程，各自运行自己的 `run_sa_island` 并共享一个 `global_best` 句柄，随后合并所有线程，并选出 `best_loss` **最低**的岛屿结果（对 `IslandResult::best_loss` 使用 `min_by`）。
+6. **单岛屿与多岛屿调度。** 准备碰撞结构，读取 `islands`（默认 1）和 `migration_interval`（默认 100）。单岛直接消耗准备向量；多岛通过 `run_island_batches` 分批使用共享求值器及全局最佳。仅在有界任务真正开始时复制初始几何，按岛编号收集历史，以最小历史 loss 选择最佳结果。不再逐岛创建线程、线程池或设备。
 
-7. **输出。** 将获胜岛屿的最佳颗粒合并为一个网格，可选地将不相连的组件重新定向为正的带符号体积（`orient_to_positive_volume`），将结果以 STL 格式写入 `output.path`，并在其旁边写入累积的 `s2_history.txt` 日志（目标/输入/剪枝后/每次改进/最终的 S2 序列与损失）。最后打印一份耗时汇总，将总耗时分解为 S2 计算耗时与碰撞/约束检查耗时，累积自产生返回结果的那个岛屿（或单次运行）。
+7. **输出。** 在合并及可选定向之后，以相同方法及完整采样预算（至少 2000）复核最佳几何，分别记录 `Selected Search Loss` 与最终曲线/loss；MC 噪声可能使两者不同。 将获胜岛屿的最佳颗粒合并为一个网格，可选地将不相连的组件重新定向为正的带符号体积（`orient_to_positive_volume`），将结果以 STL 格式写入 `output.path`，并在其旁边写入累积的 `s2_history.txt` 日志（目标/输入/剪枝后/每次改进/最终的 S2 序列与损失）。最后打印一份耗时汇总，将总耗时分解为 S2 计算耗时与碰撞/约束检查耗时，累积自产生返回结果的那个岛屿（或单次运行）。
 
 ## 交叉引用
 
@@ -136,3 +136,36 @@ SA 每次迭代的开销主要来自 S2 的重新计算（对整个装配体进�
 - [spatial-grid-collision.md](spatial-grid-collision.md) —— `run_sa_island` 在移动校验期间所使用的 `SpatialGrid` 粗筛结构与周期性镜像碰撞检查。
 - [s2-two-point-correlation.md](s2-two-point-correlation.md) —— `calculate_s2` 与 GPU S2 流水线如何计算 SA 损失函数（`l2_norm`）用于与目标比较的相关曲线。
 </content>
+
+## 固定 S2 执行与配置（PERF-01/02）
+
+`src/pipeline/optimize_execution.rs` 一次解析定义：exact 为 `voxel_exact`，非正 pitch 规范为 1.0；
+非 exact 且 pitch 为正时为 `voxel_mc`，否则为 `mesh_mc`。目标、输入、剪枝、初始化、候选、迁移、最终复核
+全部使用同一定义及 VF 约定。GPU MC shader 不执行体素采样，因此体素方法保留 CPU 求值器并记录原因，禁止回退则报错。
+
+在 optimize 中，`RUSTMSPT_ACCELERATION=cpu|gpu|auto` 一次覆盖 YAML，非法值报错。
+CPU 和低于阈值的 auto 不探测或初始化 GPU；小任务 auto 是正常策略选择，即使禁止回退仍可选择 CPU。
+真正尝试 GPU 时，不兼容方法、设备不可用或初始化失败遵循 `cpu_fallback`。日志与历史记录实际方法、后端和有效 pitch。
+
+连续 GPU MC 复用一个持久实例，目前支持 wgpu/f32 和 `gpu_prefer_power: false`。
+工作集预算实现前，显式内存上限保守选择 CPU 或按配置报错；不兼容选项及半径/dispatch 容量在设备探测前检查。
+GPU 运行时错误、射线交点溢出和 f32 数值认证仍为 PERF-04/05 待办；其他管线的 GPU 路由不受此改动影响。
+
+迁移同时携带几何、loss 和曲线。全局迁移锁在几何/S2 工作前释放，GPU 锁在 CPU VF 工作前释放，
+防止嵌套 Rayon 任务等待其暂停调用方持有的锁。分批调度会改变随机执行交错；optimize 仍不承诺跨线程 SA 逐字节一致。
+
+GPU MC 运行时错误现遵守 `cpu_fallback`：true 停用失败实例并以 CPU 重算同一 mesh-MC 方法；false 在最终输出写入前返回带阶段的错误。见 `PLAN.Performance.md` §14。
+
+### Persistent merged geometry (PERF-10)
+
+`merge_prepared_particles` directly assembles prepared meshes and records each particle's vertex range without temporary particle clones. Rigid candidates overwrite only their range; rejection restores its original vertices and prepared collider. Faces and other vertex ranges stay resident. Population migration recreates the merged mesh/ranges. GPU triangle uploads and voxel occupancy remain full updates; geometric VF now uses the island-local cache described below.
+
+### Optimize MC 显存预算
+
+优化器的共享 GPU MC 管线以空几何启动，各阶段上传实际求值网格。mc_evaluation_peak 保守计算 triangle、四个 output/readback、576 字节参数缓冲、待执行队列上传以及本次几何/参数上传；增长时计入旧容量加新容量。启动按输入面数和最大配置阶段样本数检查，每次求值在同一 GPU mutex 内重新检查实际保留容量后才上传。因此更大的参考网格或保留峰值也可能触发原有同方法 CPU 回退或严格阶段错误。待上传字节仅在成功回读后清零。驱动内部及 CPU 网格/读回向量不属于逻辑 GPU 预算；分批和自动缩容仍待完成，release_output_capacity 提供显式释放。本节取代早先“显式预算始终回退”的说明。
+
+### 不可变迁移快照
+
+每个岛用 Arc<GlobalBest> 同时保存最佳几何/loss/S2，IslandResult 保留该 Arc 和计时。改进时在迁移锁外构造新快照，共享槽为 Arc<Mutex<Arc<GlobalBest>>>。exchange_best_snapshot 在锁内仅严格比较 loss 和交换/克隆 Arc 引用；退役快照在解锁后释放，平局保留当前状态。接收岛在锁外重建可变 prepared/grid 并复算当前游走，历史最佳曲线仍对应原几何/loss。最终选优借用获胜快照，不复制 payload。此改动消除迁移 payload 拷贝；创建新本地最佳和准备接收后的可变游走仍复制几何。
+
+mesh-MC 岛现以 IslandVolumes 缓存每粒子连通分量的域内体积。可行候选只替换对应粒子条目，拒绝恢复旧条目；迁移重建，每 64 次候选求值全量刷新。VF 仍按合并网格的源顺序累加全部缓存标量并使用原分母/截断规则，避免运行总量反复加减导致漂移。缓存仅用于连续 mesh MC，voxel 方法保留体素 VF。CPU 固定种子采样和 GPU 错误回退均可使用已验证 VF，不重复裁剪全体；GPU 锁边界不变。完全域内粒子的变换也重新计算贡献以保持浮点参考行为，未假定刚体体积位级不变。预剪枝和最终验证仍使用全量参考求值。

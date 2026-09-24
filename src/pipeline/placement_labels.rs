@@ -1,6 +1,7 @@
 use crate::config::placement::ResolvedPlacement;
 use crate::error::Result;
-use crate::geometry::VoidIndex;
+use crate::geometry::spatial::{estimate_cell_size, SpatialGrid};
+use crate::geometry::{MeshQueryScratch, PreparedMeshQuery, VoidIndex};
 use crate::io::{save_tiff_or_folder, Volume3D, VolumeNumericType};
 use crate::pipeline::placement_feasibility::PlacedParticle;
 use crate::types::{BoundingBox, Vec3};
@@ -73,41 +74,94 @@ pub fn write_voxel_labels(
         )
     };
 
-    let mut phase = vec![0i64; nx * ny * nz];
-    let mut ids = vec![0i64; nx * ny * nz];
-
+    let total = nx
+        .checked_mul(ny)
+        .and_then(|n| n.checked_mul(nz))
+        .ok_or_else(|| {
+            crate::error::RustMsptError::InvalidConfig("voxel label dimensions overflow".into())
+        })?;
+    let mut phase = vec![0i64; total];
+    let mut ids = vec![0i64; total];
+    let prepared: Vec<_> = placed
+        .iter()
+        .map(|p| PreparedMeshQuery::new(&p.mesh))
+        .collect();
+    let boxes: Vec<_> = placed.iter().map(|p| p.bbox).collect();
+    let cell = estimate_cell_size(&boxes)
+        .max(size.x.max(size.y).max(size.z) / (2.0 * (placed.len().max(1) as f64).cbrt()));
+    let grid = if placed.is_empty() {
+        None
+    } else {
+        Some(SpatialGrid::build(
+            &boxes.iter().copied().enumerate().collect::<Vec<_>>(),
+            domain,
+            cell,
+        ))
+    };
     let slab = nx * ny;
-    phase
-        .par_chunks_mut(slab)
-        .zip(ids.par_chunks_mut(slab))
+    let checks: usize = phase
+        .par_chunks_mut(1024)
+        .zip(ids.par_chunks_mut(1024))
         .enumerate()
-        .for_each(|(iz, (phase_slab, id_slab))| {
-            for iy in 0..ny {
-                for ix in 0..nx {
-                    let p = centre(ix, iy, iz);
-                    let flat = iy * nx + ix;
-                    if let Some(index) = void {
-                        if index.contains_point(p) {
-                            phase_slab[flat] = PHASE_VOID as i64;
-                            // A void voxel never carries a particle id: the void
-                            // owns it, so naming a particle there would contradict
-                            // the phase beside it.
-                            id_slab[flat] = 0;
-                            continue;
-                        }
-                    }
-                    if let Some(hit) = particle_at(placed, p) {
-                        phase_slab[flat] = PHASE_PARTICLE as i64;
-                        // Ids start at 1 so that 0 means "no particle" rather
-                        // than "the first one".
-                        id_slab[flat] = hit as i64 + 1;
+        .map_init(
+            || {
+                (
+                    MeshQueryScratch::default(),
+                    crate::geometry::spatial::SpatialQueryScratch::default(),
+                )
+            },
+            |(scratch, spatial), (tile, (phases, indices))| {
+                let base = tile * 1024;
+                let end = base + phases.len() - 1;
+                let first = [base % nx, (base / nx) % ny, base / slab];
+                let last = [end % nx, (end / nx) % ny, end / slab];
+                let lo = centre(
+                    if base / nx == end / nx { first[0] } else { 0 },
+                    if first[2] == last[2] { first[1] } else { 0 },
+                    first[2],
+                );
+                let hi = centre(
+                    if base / nx == end / nx {
+                        last[0]
                     } else {
-                        phase_slab[flat] = PHASE_MATRIX as i64;
-                        id_slab[flat] = 0;
+                        nx - 1
+                    },
+                    if first[2] == last[2] { last[1] } else { ny - 1 },
+                    last[2],
+                );
+                if let Some(grid) = &grid {
+                    grid.query_into(BoundingBox { min: lo, max: hi }, 0.0, usize::MAX, spatial);
+                } else {
+                    spatial.neighbors.clear();
+                }
+                let candidates = &mut spatial.neighbors;
+                candidates.sort_unstable();
+                let mut checks = 0usize;
+                for (offset, (phase, id)) in phases.iter_mut().zip(indices.iter_mut()).enumerate() {
+                    let flat = base + offset;
+                    let p = centre(flat % nx, (flat / nx) % ny, flat / slab);
+                    if void.is_some_and(|index| index.contains_point(p)) {
+                        *phase = PHASE_VOID as i64;
+                        continue;
+                    }
+                    let (hit, point_checks) =
+                        particle_at_prepared(placed, &prepared, candidates, p, scratch);
+                    checks += point_checks;
+                    if let Some(hit) = hit {
+                        *phase = PHASE_PARTICLE as i64;
+                        *id = hit as i64 + 1;
+                    } else {
+                        *phase = PHASE_MATRIX as i64;
                     }
                 }
-            }
-        });
+                checks
+            },
+        )
+        .sum();
+    println!(
+        "[Info] Voxel label queries: voxels={total}, particles={}, bbox_tests={checks}",
+        placed.len()
+    );
 
     let dir = config.outputs.dir.join("voxel_labels");
     std::fs::create_dir_all(&dir)?;
@@ -175,6 +229,7 @@ pub fn write_voxel_labels(
 // whose box holds the point. Particles are checked in acceptance order and the first containing one
 // wins; they never overlap, so at most one can, and the order only decides which is found first at
 // a shared boundary.
+#[cfg(test)]
 fn particle_at(placed: &[PlacedParticle], p: Vec3) -> Option<usize> {
     placed
         .iter()
@@ -186,9 +241,86 @@ fn particle_at(placed: &[PlacedParticle], p: Vec3) -> Option<usize> {
 // AI-FUNC-SUMMARY: Ray-parity containment for one particle mesh; returns bool; side effects: none.
 // Notes: Shares the void index's ray direction and hit tolerance, so a point on a shared surface is
 // not claimed by both phases through disagreeing conventions.
+#[cfg(test)]
 fn point_in_particle(mesh: &crate::types::Mesh, bbox: BoundingBox, p: Vec3) -> bool {
     if !bbox.expanded(1e-12).contains_point(p) {
         return false;
     }
     crate::geometry::point_inside_mesh(mesh, p)
+}
+
+// AI-FUNC-SUMMARY: Query a tile's sorted particle indices using cached mesh views; return the first acceptance ID and actual bbox checks while preserving original slice-order priority.
+fn particle_at_prepared(
+    placed: &[PlacedParticle],
+    prepared: &[PreparedMeshQuery<'_>],
+    candidates: &[usize],
+    p: Vec3,
+    scratch: &mut MeshQueryScratch,
+) -> (Option<usize>, usize) {
+    let mut checks = 0;
+    let hit = candidates.iter().find_map(|&i| {
+        checks += 1;
+        (placed[i].bbox.contains_point(p) && prepared[i].contains_point(p, scratch))
+            .then_some(placed[i].acceptance_index)
+    });
+    (hit, checks)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    // AI-FUNC-SUMMARY: Verify indexed prepared label queries against the retained full-scan oracle, including a shared boundary and original slice-order ownership.
+    #[test]
+    fn prepared_particle_labels_match_original() {
+        let placed: Vec<_> = [0.0, 1.0, 4.0]
+            .into_iter()
+            .enumerate()
+            .map(|(i, x)| {
+                let bbox = BoundingBox {
+                    min: Vec3::new(x, 0.0, 0.0),
+                    max: Vec3::new(x + 1.0, 1.0, 1.0),
+                };
+                PlacedParticle {
+                    acceptance_index: 10 - i,
+                    source_index: 0,
+                    shell_index: 0,
+                    scale: 1.0,
+                    rotation: crate::geometry::UnitQuat::identity(),
+                    translation: Vec3::new(0.0, 0.0, 0.0),
+                    equivalent_diameter: 1.0,
+                    reach: 1.0,
+                    size_class: 0,
+                    volume_full: 1.0,
+                    volume_in_domain: 1.0,
+                    void_overlap_volume: 0.0,
+                    clipped_faces: Vec::new(),
+                    bbox,
+                    mesh: crate::geometry::box_mesh(bbox),
+                    shape: None,
+                    triangle_range: (0, 12),
+                }
+            })
+            .collect();
+        let prepared: Vec<_> = placed
+            .iter()
+            .map(|p| PreparedMeshQuery::new(&p.mesh))
+            .collect();
+        let domain = BoundingBox::from_size(Vec3::new(6.0, 2.0, 2.0));
+        let boxes: Vec<_> = placed
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (i, p.bbox))
+            .collect();
+        let grid = SpatialGrid::build(&boxes, domain, 1.0);
+        let mut scratch = MeshQueryScratch::default();
+        for ix in 0..=120 {
+            let p = Vec3::new(ix as f64 / 20.0, 0.5, 0.5);
+            let mut ids = grid.query_neighbors(BoundingBox { min: p, max: p }, usize::MAX);
+            ids.sort_unstable();
+            assert_eq!(
+                particle_at_prepared(&placed, &prepared, &ids, p, &mut scratch).0,
+                particle_at(&placed, p)
+            );
+        }
+    }
 }

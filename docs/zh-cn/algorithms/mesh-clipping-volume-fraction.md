@@ -40,3 +40,7 @@
 - [geometry-volume-collision.md](../reference/geometry-volume-collision.md)
 - [pipeline-packing.md](../reference/pipeline-packing.md)
 - [pipeline-optimize.md](../reference/pipeline-optimize.md)
+
+### 无实际切割时的体积快路径
+
+私有平面裁剪器消费 mesh，按面引用的顶点和既有 distance >= -1e-9 判据分类。全部在内（包括相切）直接返回原分配，不生成封口；全部在外返回空；混合情况保留既有多边形/封口算法。修复完全位于域内且贴面时的重复封口，未被面引用的外部顶点不产生切割。clip_mesh_by_bbox 移动中间 mesh；particle_volume_in_bbox 对所有存储顶点都在盒内的情况直接算原网格体积，避免克隆与六次裁剪。测试覆盖内/外绕序、平移、重合边界、外向盒部分交集、未引用外部顶点。此改动不替代 legacy 部分切割封口算法，也未证明其对任意非凸/嵌套截面正确。

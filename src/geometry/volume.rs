@@ -345,12 +345,25 @@ fn triangulate_cap_from_segments(segments: &[(Vec3, Vec3)], normal: Vec3) -> Mes
 
 // AI-FUNC-SUMMARY:
 // Purpose: Clip a mesh against a single plane and cap the resulting open boundary with a triangulated surface.
-// Inputs: mesh, plane origin, plane normal.
-// Returns: Clipped and capped mesh.
+// Inputs: owned mesh, plane origin, plane normal.
+// Returns: Unchanged allocation if entirely inside (including tangency), empty if outside, otherwise clipped and capped mesh.
 // Side effects: None.
 // Notes: Uses Sutherland-Hodgman polygon clipping per triangle, then collects cross-plane segments to form a watertight cap.
-fn clip_mesh_by_plane_with_cap(mesh: &Mesh, origin: Vec3, normal: Vec3) -> Mesh {
+fn clip_mesh_by_plane_with_cap(mesh: Mesh, origin: Vec3, normal: Vec3) -> Mesh {
     let eps = 1e-9;
+    let mut inside = false;
+    let mut outside = false;
+    for vertex in mesh.faces.iter().flat_map(|f| [mesh.vertices[f.a], mesh.vertices[f.b], mesh.vertices[f.c]]) {
+        if clip_plane_signed_distance(vertex, origin, normal) >= -eps {
+            inside = true;
+        } else {
+            outside = true;
+        }
+        if inside && outside { break; }
+    }
+    // A touching plane opens no hole: retain topology, winding and allocation.
+    if !outside { return mesh; }
+    if !inside { return Mesh::empty(); }
     let mut body = Mesh::empty();
     let mut segments: Vec<(Vec3, Vec3)> = Vec::new();
 
@@ -399,7 +412,7 @@ pub fn clip_mesh_by_bbox(mesh: &Mesh, bbox: BoundingBox) -> Mesh {
 
     let mut out = mesh.clone();
     for (origin, normal) in planes {
-        out = clip_mesh_by_plane_with_cap(&out, origin, normal);
+        out = clip_mesh_by_plane_with_cap(out, origin, normal);
         if out.is_empty() {
             break;
         }
@@ -407,8 +420,12 @@ pub fn clip_mesh_by_bbox(mesh: &Mesh, bbox: BoundingBox) -> Mesh {
     out
 }
 
-// AI-FUNC-SUMMARY: Compute the volume of a mesh clipped to a bounding box; returns f64; side effects: None.
+// AI-FUNC-SUMMARY: Compute in-box volume, directly summing wholly contained geometry without allocation and otherwise clipping; returns f64; no external side effects.
 pub fn particle_volume_in_bbox(mesh: &Mesh, bbox: BoundingBox) -> f64 {
+    if mesh.vertices.iter().all(|v| v.x >= bbox.min.x && v.x <= bbox.max.x
+        && v.y >= bbox.min.y && v.y <= bbox.max.y && v.z >= bbox.min.z && v.z <= bbox.max.z) {
+        return mesh_volume(mesh);
+    }
     let clipped = clip_mesh_by_bbox(mesh, bbox);
     mesh_volume(&clipped)
 }
@@ -693,4 +710,121 @@ pub fn cut_face_names(cut: [bool; 6]) -> Vec<&'static str> {
         .filter(|(_, hit)| **hit)
         .map(|(name, _)| *name)
         .collect()
+}
+
+#[cfg(test)]
+mod clip_fast_path_tests {
+    use super::*;
+    use crate::geometry::box_mesh;
+
+    // AI-FUNC-SUMMARY: Verify tangent/contained boxes preserve topology, signed volume and owned buffers for both windings at multiple origins; fully outside geometry clips to empty.
+    #[test]
+    fn touching_planes_preserve_closed_mesh_and_volume() {
+        for origin in [Vec3::new(0.0, 0.0, 0.0), Vec3::new(11.0, -7.0, 3.0)] {
+            let bbox = BoundingBox { min: origin, max: origin.add(Vec3::new(1.0, 2.0, 3.0)) };
+            for flip in [false, true] {
+                let mut mesh = box_mesh(bbox);
+                if flip { for face in &mut mesh.faces { std::mem::swap(&mut face.b, &mut face.c); } }
+                let volume = mesh_signed_volume(&mesh);
+                assert!((volume.abs() - 6.0).abs() < 1e-10);
+                let clipped = clip_mesh_by_bbox(&mesh, bbox);
+                assert_eq!(clipped, mesh);
+                assert_eq!(mesh_signed_volume(&clipped), volume);
+                assert!((particle_volume_in_bbox(&mesh, bbox) - 6.0).abs() < 1e-10);
+                assert!((volume_fraction_in_bbox(&mesh, bbox) - 1.0).abs() < 1e-10);
+                let pointer = mesh.vertices.as_ptr();
+                let faces = mesh.faces.as_ptr();
+                let same = clip_mesh_by_plane_with_cap(mesh, origin, Vec3::new(1.0, 0.0, 0.0));
+                assert_eq!(same.vertices.as_ptr(), pointer);
+                assert_eq!(same.faces.as_ptr(), faces);
+                assert!(clip_mesh_by_plane_with_cap(same, origin.add(Vec3::new(2.0, 0.0, 0.0)), Vec3::new(1.0, 0.0, 0.0)).is_empty());
+            }
+        }
+    }
+    // AI-FUNC-SUMMARY: Check partial clipping of an outward box against analytic intersections, including tangent side planes and an unused outside vertex that must not create a cap.
+    #[test]
+    fn partial_box_cuts_and_unused_vertices() {
+        let bbox = BoundingBox::from_size(Vec3::new(1.0, 1.0, 1.0));
+        let mut mesh = box_mesh(bbox);
+        for f in &mut mesh.faces { std::mem::swap(&mut f.b, &mut f.c); }
+        for (max, expected) in [(Vec3::new(0.5,1.0,1.0),0.5), (Vec3::new(0.5,0.5,0.5),0.125)] {
+            let domain = BoundingBox { min: bbox.min, max };
+            let actual = particle_volume_in_bbox(&mesh, domain);
+            assert!((actual - expected).abs() < 1e-10, "{actual} != {expected}");
+        }
+        mesh.vertices.push(Vec3::new(10.0,10.0,10.0));
+        assert!((particle_volume_in_bbox(&mesh, bbox) - 1.0).abs() < 1e-10);
+    }
+
+    // AI-FUNC-SUMMARY: Preserve the pre-optimization plane clipper as a test-only timing reference.
+fn legacy_plane_clip(mesh: &Mesh, origin: Vec3, normal: Vec3) -> Mesh {
+    let eps = 1e-9;
+    let mut body = Mesh::empty();
+    let mut segments: Vec<(Vec3, Vec3)> = Vec::new();
+
+    for f in &mesh.faces {
+        let tri = [mesh.vertices[f.a], mesh.vertices[f.b], mesh.vertices[f.c]];
+        let clipped_poly = clip_polygon_with_plane(&tri, origin, normal, eps);
+        if clipped_poly.len() >= 3 {
+            let base = body.vertices.len();
+            body.vertices.extend(clipped_poly.iter().copied());
+            for i in 1..(clipped_poly.len() - 1) {
+                body.faces.push(Triangle {
+                    a: base,
+                    b: base + i,
+                    c: base + i + 1,
+                });
+            }
+        }
+
+        if let Some(seg) = collect_triangle_plane_segment(tri, origin, normal, eps) {
+            segments.push(seg);
+        }
+    }
+
+    if segments.is_empty() {
+        body
+    } else {
+        merge_meshes(&[body, triangulate_cap_from_segments(&segments, normal)])
+    }
+}
+
+    // AI-FUNC-SUMMARY: Apply the original six clipping passes to benchmark unchanged strictly-contained volume semantics.
+    fn legacy_box_volume(mesh: &Mesh, bbox: BoundingBox) -> f64 {
+        let planes = [
+            (Vec3::new(bbox.min.x,0.0,0.0),Vec3::new(1.0,0.0,0.0)),
+            (Vec3::new(bbox.max.x,0.0,0.0),Vec3::new(-1.0,0.0,0.0)),
+            (Vec3::new(0.0,bbox.min.y,0.0),Vec3::new(0.0,1.0,0.0)),
+            (Vec3::new(0.0,bbox.max.y,0.0),Vec3::new(0.0,-1.0,0.0)),
+            (Vec3::new(0.0,0.0,bbox.min.z),Vec3::new(0.0,0.0,1.0)),
+            (Vec3::new(0.0,0.0,bbox.max.z),Vec3::new(0.0,0.0,-1.0)),
+        ];
+        let mut out = mesh.clone();
+        for (origin, normal) in planes { out = legacy_plane_clip(&out, origin, normal); }
+        mesh_volume(&out)
+    }
+
+    // AI-FUNC-SUMMARY: Measure original six-pass clipping versus the allocation-free contained-volume path with alternating order, one warmup and five raw release samples.
+    #[test]
+    #[ignore = "release volume microbenchmark"]
+    fn contained_volume_benchmark() {
+        let bbox = BoundingBox::from_size(Vec3::new(1.0,1.0,1.0));
+        let mesh = box_mesh(BoundingBox { min: Vec3::new(0.2,0.2,0.2), max: Vec3::new(0.8,0.8,0.8) });
+        assert!((legacy_box_volume(&mesh,bbox) - particle_volume_in_bbox(&mesh,bbox)).abs() < 1e-12);
+        let run = |old: bool| {
+            let start = std::time::Instant::now();
+            let mut sum = 0.0;
+            for _ in 0..10_000 {
+                let input = std::hint::black_box(&mesh);
+                sum += if old { legacy_box_volume(input,bbox) } else { particle_volume_in_bbox(input,bbox) };
+            }
+            std::hint::black_box(sum);
+            start.elapsed().as_secs_f64()
+        };
+        for sample in 0..6 {
+            let (old,new) = if sample % 2 == 0 { (run(true),run(false)) } else { let new=run(false); (run(true),new) };
+            eprintln!("VOLUME_BENCH sample={sample} repeats=10000 legacy={old:.9} candidate={new:.9}");
+        }
+    }
+
 }

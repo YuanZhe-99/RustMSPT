@@ -14,18 +14,18 @@
 | `parse_ascii_vertex` | `src/io/stl.rs:9` | 将一行 ASCII STL 的 `vertex x y z` 记录解析为 `Vec3`。 |
 | `quantize_key` | `src/io/stl.rs:21` | 将顶点量化为固定精度的整数键，用于容差去重。 |
 | `dedup_vertex` | `src/io/stl.rs:31` | 通过量化键查找，对照现有列表对顶点去重。 |
-| `parse_ascii_stl` | `src/io/stl.rs:48` | 将 ASCII STL 文本解析为顶点已去重的 `Mesh`。 |
+| `parse_ascii_stl` | `src/io/stl.rs:52` | 将 ASCII STL 文本解析为顶点已去重的 `Mesh`。 |
 | `parse_f32_le` | `src/io/stl.rs:93` | 解析小端序 `f32` 字节并向上转换为 `f64`。 |
 | `parse_binary_stl` | `src/io/stl.rs:104` | 将二进制 STL 字节解析为顶点已去重的 `Mesh`。 |
-| `looks_ascii_stl` | `src/io/stl.rs:166` | 启发式检测字节内容是否为 ASCII STL。 |
-| `load_stl` | `src/io/stl.rs:185` | 加载 STL 文件，自动检测 ASCII/二进制格式。 |
-| `load_folder_stls` | `src/io/stl.rs:203` | 加载文件夹中所有 STL 文件。 |
-| `load_stl_or_merge_folder` | `src/io/stl.rs:226` | 加载单个 STL 文件，或将目录中所有 STL 合并为一个网格。 |
-| `save_stl` | `src/io/stl.rs:258` | 将网格保存为二进制 STL 文件。 |
+| `looks_ascii_stl` | `src/io/stl.rs:151` | 启发式检测字节内容是否为 ASCII STL。 |
+| `load_stl` | `src/io/stl.rs:170` | 加载 STL 文件，自动检测 ASCII/二进制格式。 |
+| `load_folder_stls` | `src/io/stl.rs:206` | 加载文件夹中所有 STL 文件。 |
+| `load_stl_or_merge_folder` | `src/io/stl.rs:233` | 加载单个 STL 文件，或将目录中所有 STL 合并为一个网格。 |
+| `save_stl` | `src/io/stl.rs:262` | 将网格保存为二进制 STL 文件。 |
 | `collect_sorted_files` | `src/io/volume.rs:50` | 收集文件夹中的常规文件，按名称排序，可选按扩展名过滤。 |
 | `resolve_slice_range` | `src/io/volume.rs:78` | 根据起止索引解析出闭区间切片范围，将 `-1` 视为"从头开始"/"到末尾"。 |
 | `decode_raw_slice` | `src/io/volume.rs:107` | 根据位深、符号性和字节序，将一个原始图像切片解码为 `i64` 值。 |
-| `load_raw_folder` | `src/io/volume.rs:205` | 从一个原始二进制切片文件文件夹中加载 `Volume3D`。 |
+| `load_raw_folder` | `src/io/volume.rs:227` | 从一个原始二进制切片文件文件夹中加载 `Volume3D`。 |
 | `tiff_decoding_to_i64` | `src/io/volume.rs:266` | 将 TIFF 的 `DecodingResult` 转换为 `Vec<i64>` 缓冲区及其数值类型。 |
 | `load_tiff_file_with_range` | `src/io/volume.rs:286` | 在一个闭区间页码范围内，将多页 TIFF 文件加载为 `Volume3D`。 |
 | `load_tiff_file` | `src/io/volume.rs:354` | 将一个 TIFF 文件（所有页）加载为 `Volume3D`。 |
@@ -35,6 +35,14 @@
 | `write_tiff_slice` | `src/io/volume.rs:446` | 将体数据的一个 z 切片写入 TIFF 编码器的一页。 |
 | `save_tiff_or_folder_with_ext` | `src/io/volume.rs:524` | 将 `Volume3D` 保存为多页 TIFF 文件或按切片逐一保存的 TIFF 文件夹，可配置扩展名。 |
 | `save_tiff_or_folder` | `src/io/volume.rs:586` | 使用默认的 `.tiff` 扩展名，将 `Volume3D` 保存为 TIFF 文件或切片文件序列。 |
+| `load_stl_from_reader` | `src/io/stl.rs:178` | Forward-reader STL with bounded binary records. |
+| `load_stl_hashed` | `src/io/stl.rs:193` | Single-pass STL parsing and raw digest. |
+| `parse_binary_reader` | `src/io/stl.rs:109` | Read binary triangle records with incremental deduplication. |
+| `read_stl_record` | `src/io/stl.rs:140` | Read complete record or report truncation. |
+| `HashingReader` | `src/io/hash.rs:50` | Incremental digest over delivered bytes. |
+| `HashingReader::new` | `src/io/hash.rs:58` | Wrap forward reader for hashing. |
+| `HashingReader::finish` | `src/io/hash.rs:67` | Return digest and consumed byte count. |
+| `stl_paths` | `src/io/stl.rs:218` | List STL paths in existing directory order. |
 
 ## 模块职责：`io/mod.rs`
 
@@ -84,7 +92,7 @@
 #### load_stl
 
 - **签名：** `pub fn load_stl(path: &Path) -> Result<Mesh>`
-- **源码位置：** `src/io/stl.rs:185`
+- **源码位置：** `src/io/stl.rs:170`
 - **用途：** 加载 STL 文件，自动检测其为 ASCII 还是二进制格式。
 - **参数：**
   - `path` — `.stl` 文件的路径。
@@ -95,7 +103,7 @@
 #### load_folder_stls
 
 - **签名：** `pub fn load_folder_stls(folder: &Path) -> Result<Vec<(PathBuf, Mesh)>>`
-- **源码位置：** `src/io/stl.rs:203`
+- **源码位置：** `src/io/stl.rs:206`
 - **用途：** 加载文件夹内（不递归）直接包含的每一个 `.stl` 文件（扩展名匹配不区分大小写）。
 - **参数：**
   - `folder` — 要扫描的目录（不递归）。
@@ -106,7 +114,7 @@
 #### load_stl_or_merge_folder
 
 - **签名：** `pub fn load_stl_or_merge_folder(path: &Path) -> Result<Mesh>`
-- **源码位置：** `src/io/stl.rs:226`
+- **源码位置：** `src/io/stl.rs:233`
 - **用途：** 从单个 STL 文件加载一个网格，或将目录中所有 STL 文件合并为一个网格。
 - **参数：**
   - `path` — 文件路径（单个 STL）或目录路径（待合并的 STL 文件夹）。
@@ -117,7 +125,7 @@
 #### save_stl
 
 - **签名：** `pub fn save_stl(path: &Path, mesh: &Mesh, solid_name: &str) -> Result<()>`
-- **源码位置：** `src/io/stl.rs:258`
+- **源码位置：** `src/io/stl.rs:262`
 - **用途：** 将网格以二进制 STL 文件形式写入磁盘。
 - **参数：**
   - `path` — 目标文件路径。
@@ -165,7 +173,7 @@
 #### parse_ascii_stl
 
 - **签名：** `fn parse_ascii_stl(content: &str, path: &Path) -> Result<Mesh>`
-- **源码位置：** `src/io/stl.rs:48`
+- **源码位置：** `src/io/stl.rs:52`
 - **用途：** 将完整的 ASCII STL 文档解析为已去重的 `Mesh`。
 - **参数：**
   - `content` — 完整的 STL 文本。
@@ -199,7 +207,7 @@
 #### looks_ascii_stl
 
 - **签名：** `fn looks_ascii_stl(bytes: &[u8]) -> bool`
-- **源码位置：** `src/io/stl.rs:166`
+- **源码位置：** `src/io/stl.rs:151`
 - **用途：** 启发式地嗅探一段字节缓冲区是 ASCII STL 还是二进制 STL。
 - **参数：**
   - `bytes` — 文件内容（或其前缀）。
@@ -288,7 +296,7 @@
 #### load_raw_folder
 
 - **签名：** `pub fn load_raw_folder(spec: &RawFolderSpec) -> Result<Volume3D>`
-- **源码位置：** `src/io/volume.rs:205`
+- **源码位置：** `src/io/volume.rs:227`
 - **用途：** 将文件夹中（在请求的切片范围内）的每个文件作为固定大小的原始二进制切片读取并解码，加载为 `Volume3D`。
 - **参数：**
   - `spec` — 文件夹路径、每切片尺寸、样本格式和切片范围。
@@ -426,7 +434,7 @@
 
 #### write_tiff_slice
 
-- **签名：** `fn write_tiff_slice(encoder: &mut TiffEncoder<BufWriter<fs::File>>, width: u32, height: u32, ty: VolumeNumericType, slice: &[i64]) -> Result<()>`
+- **签名：** `fn write_tiff_slice<W: Write + Seek>(encoder: &mut TiffEncoder<W>, width: u32, height: u32, ty: VolumeNumericType, slice: &[i64]) -> Result<()>`
 - **源码位置：** `src/io/volume.rs:446`
 - **用途：** 将一个切片的 `i64` 体素值窄化回其原生位宽，并通过 TIFF 编码器将其写为一个灰度页。
 - **参数：**
@@ -443,3 +451,27 @@
 - **顶点去重与体素扩宽是两种互不相关、但都为数值稳健性而存在的机制：** `stl.rs` 的 `quantize_key`/`dedup_vertex` 使用固定的 1e6 量化尺度合并近乎重复的浮点顶点位置；`volume.rs` 的扩宽为 `i64`（`decode_raw_slice`、`tiff_decoding_to_i64`）则是为了让 `Volume3D` 能以一个统一类型的缓冲区容纳六种整数样本类型中的任意一种，且不发生有损转换，同时由 `VolumeNumericType` 记录原始类型，以便保存时能精确窄化回去。
 - **两遍式 TIFF 范围加载：** `load_tiff_file_with_range` 在进行真正的（可能受范围限制的）解码之前，会完整地重新打开并重新解码文件以统计页数，这是因为底层的 `tiff` crate 的 `Decoder` 仅提供前向迭代（`more_images`/`next_image`），没有随机访问式的页数查询接口。
 - 两个文件中的所有 `AI-FUNC-SUMMARY` 注释均已对照其所标注的代码进行核对，未发现有陈旧到需要添加 `Doc note` 提示的情况。
+
+Binary STL output now uses a 64 KiB BufWriter and explicitly flushes before success, propagating late I/O failures. Header, zero normals, f32 coordinates and attribute bytes are unchanged. This reduces tiny write system calls without buffering the full file.
+
+### Shared STL stream and digest (PERF-18)
+
+`load_stl_from_reader(reader, path)` accepts a forward-only reader. It sniffs at most 512 bytes, chains that prefix back for binary parsing, and preserves ASCII-first/fallback behavior. `parse_binary_reader` reads one 50-byte triangle record at a time, deduplicates in first-encounter order, grows geometry storage as records arrive, and drains permitted trailing data. Truncated header/records return InvalidMesh; other read errors propagate. A corrupt count does not cause a count-sized initial allocation. ASCII still buffers the existing full document.
+
+`load_stl_hashed(path)` returns `(Mesh, sha256, bytes)` from one file pass through `HashingReader`, including ignored binary trailers in the digest/count. Placement shape loading uses this entry, preserving input list and first-face shell order. `HashingReader::finish` describes consumed bytes only; successful STL parsing drains its input before finishing. Independent `sha256_file` remains bounded and unchanged.
+
+`stl_paths` retains directory iteration order. Folder STL loading uses batches of at most two independent readers under the current Rayon pool; results/errors are consumed in path order. Folder merging consumes each completed batch into the output, so it retains at most two unmerged input meshes rather than the entire folder plus the output. The API returning all individual meshes still retains those results by contract.
+
+### 文件夹有界解码（2026-09-23）
+
+`consume_file_batches` 使用当前 Rayon 池最多并行加载两个 RAW/TIFF 文件（单 worker 池一次一个），随后按原文件名顺序验证并合并。逐文件 Result 保持有序，因此较早文件的 shape/type 错误优先于较晚的解码错误；失败后不启动后续批次。每个 TIFF reader 仍串行推进页，文件夹范围仍选择完整文件。上限是两个已解码文件而非字节预算：单个多页文件和汇总 Volume3D 仍常驻内存。I/O 不创建线程池，单文件 TIFF 加载仍顺序执行，输出遵循下方有界 writer 契约。线程/类型/顺序/存活缓冲验证和性能限制见 PLAN.Performance.md §59。
+
+小于 512 KiB 的 RAW 文件即使多 worker 也串行解码；该阈值依据 §59 的小文件退化与较大切片对照。只有一个文件的批次始终直接解码。
+
+### TIFF 文件夹有界写出与显式刷新（2026-09-23）
+
+`save_tiff_or_folder_with_ext` 借用切片数据、不复制整个 volume，按原 z 索引分配文件名，在当前 Rayon 池最多启用两个 encoder/writer。每批全部完成后按切片顺序检查错误，返回最早切片的错误，不启动后续批次。失败批中的另一个文件可能已经创建或覆盖；保留部分文件，不删除已有用户输出。单 worker 或单切片批直接执行，单个多页 TIFF 仍顺序编码。`write_tiff_pages<W: Write + Seek>` 借用 writer，按顺序写页，释放 encoder 后显式 flush，两种输出模式都传播刷新错误。这仅确认缓冲写出，不等于 fsync 持久化。尺寸乘积及 u32 范围检查在创建输出前拒绝溢出。测试/基准与限制见 PLAN.Performance.md §60。
+
+### RAW 汇总缓冲预留（2026-09-23）
+
+RAW 平面大小、文件字节数和选定输出体素数均使用 checked arithmetic。首个选定切片成功解码后，以 `try_reserve_exact` 一次预留最终体素数，后续按序追加不再触发几何增长。首片格式错误仍先于预留返回，分配失败显式传播。双文件解码上限和 512 KiB 并行阈值保持不变。Vec 容量请求不是进程 RSS 上限，单片临时缓冲仍与最终输出共存。见 PLAN.Performance.md §63。

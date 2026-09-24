@@ -1,5 +1,7 @@
 # `crop` 流程示例
 
+当前版本还为已完成阶段输出 `[Timing] crop stage=<name> seconds=<value>`：`load`、`background`、`pca`、`transform_and_backend`、`trim`、`encode_write`、`total_in_pool`。下方历史捕获输出早于这些计时行。后端阶段包含规划、初始化、传输及允许的回退；写出包含 flush，但不含 fsync。池内总时间不含 CLI、配置及建池；数值依实际运行而变化。
+
 ## 功能说明
 
 `crop` 加载原始 CT 切片堆栈（或 TIFF 堆栈），根据自动检测到的背景值对其进行阈值处理，

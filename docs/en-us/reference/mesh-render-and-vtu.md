@@ -34,9 +34,9 @@ subcommand (`src/pipeline/mesh_render.rs`, `src/config/mesh_render.rs`).
 | `MeshRenderParams`/`MeshRenderConfig` | `src/config/mesh_render.rs:38` | `mesh_render:` YAML block (input VTU, output_dir, views, image, coloring, opacities, filters, overlays, camera). |
 | `GpuClipPlane` | `src/gpu/scene_render.rs:45` | Optional half-space clip for the GPU preview (smooth cut, independent of the crinkle-clip filter). |
 | `GpuSceneOptions` | `src/gpu/scene_render.rs:52` | GPU-only toggles: clip plane, overlay segments, markers. |
-| `GpuScenePipeline` | `src/gpu/scene_render.rs:70` | Offscreen GPU preview: TriangleList with per-vertex colour + LineList overlay, both with clip-plane discard. |
-| `GpuScenePipeline::render_views` | `src/gpu/scene_render.rs:330` | Batch path: one geometry upload reused across every camera; one image per view. |
-| `MeshRenderPipeline` | `src/pipeline/mesh_render.rs:16` | The `mesh-render` subcommand: load VTU → build scene → one PNG per view (`<stem>_<view>.png`). |
+| `GpuScenePipeline` | `src/gpu/scene_render.rs:74` | Offscreen GPU preview: TriangleList with per-vertex colour + LineList overlay, both with clip-plane discard. |
+| `GpuScenePipeline::render_views` | `src/gpu/scene_render.rs:361` | Batch path: one geometry upload reused across every camera; one image per view. |
+| `MeshRenderPipeline` | `src/pipeline/mesh_render.rs:18` | The `mesh-render` subcommand: load VTU → build scene → one PNG per view (`<stem>_<view>.png`). |
 
 ## GPU preview path (GA-3c)
 
@@ -57,7 +57,7 @@ crinkle clip on whole cells; the renderer never applies one implicitly.
 
 `render_views` is the **batch path**: geometry is built and uploaded once and reused
 across every camera, so a diagnostic sheet of ten named views costs one upload rather
-than ten. Only the uniform buffer and render targets are per-view.
+than ten. Uniform values change per view; one uniform buffer, color/depth target pair and staging buffer are reused throughout the batch.
 
 Coincident tagged Face cells are uploaded after Volume boundary triangles and the
 GPU depth comparison is `LessEqual`; this preserves the CPU reference rule that a
@@ -141,3 +141,48 @@ headers). Compressed and base64 VTUs are rejected with explicit errors.
   GPU budget is 5% of pixels beyond 2 LSB; the simpler GA-3c opaque parity test
   remains at 2%. Transparent GPU output is not compared because GPU compositing is
   intentionally opaque-only.
+
+### PERF-19 regression entry
+
+GPU scene fixtures explicitly initialize both wireframe counters and import `SceneSegment`
+under the GPU feature. Run `cargo test --offline --features gpu --test mesh_render_tests`.
+This restores the existing opaque-preview tests without changing image baselines or rendering
+semantics. Adapter-unavailable skips are not hardware validation.
+
+
+### Prepared CPU scenes (PERF-17)
+
+`geometry::scene_render::PreparedScene::new(&RenderScene)` builds immutable QBVH and material arrays once, borrowing the scene to prevent mutation during reuse. `render(&self, camera, width, height, settings)` retains the all-hits, sorted transparency and Face-over-Volume coincidence rules. Rayon task-local hit vectors retain capacity between pixels; deduplication compacts the same vector without a second allocation. `render_scene_cpu` remains the compatible one-shot wrapper. MeshRenderPipeline prepares once only on the CPU path and reuses across views. The command uses `render_views_to` to deliver owned GPU images to the bounded writer described below, retaining at most two delivered images during overlap. The compatibility `render_views` API explicitly collects images for callers requiring a batch.
+
+
+### Streamed GPU views
+
+`GpuScenePipeline::render_views_to(..., consume)` uploads scene geometry once and invokes a fallible consumer with `(view_index, owned_image)` in camera order. It reuses one uniform buffer, color/depth pair and unmapped staging buffer, clearing targets for each view. Consumer errors stop immediately; mapping errors and device errors propagate. Dimensions and staging/vertex limits are checked. `render_views` collects this stream for compatibility. The mesh-render command consumes owned frames in order; output errors never trigger CPU fallback. An auto-mode GPU failure may occur after earlier views were saved: CPU fallback rewrites all requested views in order. A strict GPU error preserves already-saved views. GPU PNG overlap now follows the bounded writer contract below.
+
+### CPU worker budget
+
+Optional top-level `cpu_max` (beside `mesh_render`) accepts an integer or integer string. Absent/-1 uses available CPUs; other values clamp to 1..available. The complete pipeline installs one Rayon pool, including scene preparation, all CPU views and GPU-to-CPU fallback. Logs distinguish requested and actual workers, and the CPU rendering entry reports its pool index. `backend: gpu` remains strict and opaque; `auto` can fall back to the CPU transparency reference. A CPU fallback does not create another pool.
+
+| `MeshRenderPipeline::with_worker_pool` | `src/pipeline/mesh_render.rs:122` | Execute scene preparation, rendering and fallback within the worker budget. |
+
+| `MeshRenderPipeline::run_in_pool` | `src/pipeline/mesh_render.rs:147` | Execute scene preparation, rendering and fallback within the worker budget. |
+
+`RUSTMSPT_ACCELERATION=cpu|gpu|auto` overrides the validated YAML backend before input loading. Invalid environment values are errors. The effective `gpu` mode remains strict; `auto` permits fallback, and `cpu` does not initialize GPU. This does not apply STL render’s pixel threshold to the legacy mesh preview.
+
+### Scene preview working-set policy
+
+`mesh_render.gpu_memory_limit_mb` optionally limits the planned logical GPU working set. `gpu_min_pixels` applies only to auto mode and defaults to zero for legacy compatibility. Below-threshold auto avoids GPU initialization; explicit GPU ignores that threshold but obeys the budget. Auto falls back on budget/execution failure, while explicit GPU fails. CPU mode ignores GPU-only resource options.
+
+The checked planner counts visible triangles at 120 bytes each, enabled segments at 64 bytes and markers at 192 bytes. It includes one color/depth pair (8 bytes/pixel), one readback buffer (256-byte-aligned RGBA rows), and 128 uniform bytes. Pending queue uploads coexist with destination geometry/uniform buffers, giving the conservative logical peak `2 * geometry_bytes + 256 + 8 * pixels + staging_bytes`. Multiple views reuse targets. Driver/pipeline internals and host scene/PNG memory are not included, so this is not a physical VRAM/RSS cap. Device limits are checked independently before host vertex expansion; expanded host arrays are released immediately after upload. The constructor also returns scoped GPU validation/allocation errors. Image tiling remains future work.
+
+### CPU pixel task scheduling
+
+Both nearest-hit STL rendering and prepared transparent scene rendering use disjoint contiguous pixel tasks. Images with at least one row per worker and at most 1024 pixels per worker retain row tasks, avoiding loss of parallelism from the minimum tile grain. Other images in a one-worker pool use one task; otherwise the initial grain targets four tasks per worker, clamped to 256..4096 pixels, aligning to complete rows when a row fits. Wide rows can span several tasks and short rows can share one. Each task derives its starting `(x,y)` once and advances the original integer pixel coordinates; ray arithmetic, hit ordering/compositing and serial overlays are unchanged. Scene depth and RGBA use identical task boundaries and reuse task-local hit scratch. Row-grain reference tests compare complete images under 1/2/8 workers for both projections, ragged tasks and extreme aspect ratios. Grain performance acceptance is tracked in PLAN.Performance.md §40.
+
+### Bounded GPU PNG writer (2026-09-23)
+
+For multiple GPU views with more than one configured worker, `consume_frames` moves ordered images through a zero-capacity channel to one PNG writer. At most one image is being encoded and one is held by the rendering producer; GPU targets remain reused. The writer is joined and accepted frames drained before returning or starting CPU fallback. Output errors, including failure of the final frame after production succeeds, take precedence over GPU errors and never trigger fallback. One-worker and one-view execution remain sequential. CPU views still encode sequentially to keep their full Rayon worker budget. This establishes bounded overlap, not an end-to-end speedup claim; the software-GPU cold-process CLI comparison, including PNG identity and RSS, is recorded in PLAN.Performance.md §56; full workload/hardware acceptance remains open.
+
+### Opaque nearest coincidence group (2026-09-23)
+
+Prepared scenes with at least 192 triangles and every clamped alpha exactly 1 use a nearest QBVH query followed by bounded all-hit enumeration through the outward-rounded `nearest + 2 * dedup_tol`. The same distance/triangle-ID sort and moving-anchor Face-over-Volume deduplication select the first group. Its chosen normal, color and depth feed the unchanged compositor and overlays. Smaller scenes, zero/partial/NaN alpha retain full all-hits. The triangle threshold avoids the measured extra-traversal regression on a 24-triangle scene; it is a conservative workload heuristic, not a guarantee for every spatial layout. Layered release comparisons and limitations are recorded in PLAN.Performance.md §57.

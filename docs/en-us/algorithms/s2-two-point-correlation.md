@@ -206,3 +206,74 @@ criterion on that loss.
   where S2 is computed and reported as a diagnostic during the `measure` pipeline.
 - [pipeline-optimize.md#run_sa_island](../reference/pipeline-optimize.md#run_sa_island) — where the
   S2 L2 loss drives the simulated-annealing acceptance criterion.
+
+## Optimize execution (PERF-01/02)
+
+The optimizer now resolves its S2 definition once through `OptimizeS2`. Positive-pitch MC stays
+voxel MC, exact stays voxel exact, and only nonpositive-pitch non-exact requests can use continuous
+GPU MC. Target, pruning, initial/candidate/migration states and final verification share that method.
+The continuous path uses geometric VF; the voxel paths use occupancy VF. One GPU MC instance is
+shared across the whole run when selected. This does not alter `measure` or the shared GPU wrappers
+described above; their separate correctness/resource work remains pending.
+
+### GPU layout and shell boundaries (2026-09-13)
+
+Voxel parameters occupy 48 bytes with the ray direction starting at byte 32. Both
+MC and voxel triangle uploads subtract the bbox origin in f64 before narrowing to
+f32, preserving local geometry under large translations. Shell counting rejects
+out-of-domain offsets before unsigned arithmetic and processes lists in batches
+of at most 200,000 offsets. Reduction remains the equal-weight mean of valid
+per-offset ratios across every batch; empty lists retain only the supplied VF.
+These fixes do not resolve the 64-hit ray limit, MC radius limits, general workload
+planning, or runtime error fallback; see `PLAN.Performance.md` §12.
+
+### Overflow ray recovery (2026-09-13)
+
+Both MC and voxel shaders now recover rays with more than 64 raw positive triangle
+hits instead of silently truncating them. The ordinary sorted-array path remains;
+on overflow, successive full scans find the nearest remaining distinct distance
+and count parity using the same anchored `1e-6` GPU tolerance. No Monte Carlo trial
+is dropped or resampled. Recovery requires constant extra storage but can cost
+O(triangles × distinct hits), so this correctness fix may be slow on dense scenes.
+CPU/GPU numerical equivalence and runtime device/readback errors remain unresolved.
+See the GPU function reference and `PLAN.Performance.md` §13 for tests and limitations.
+
+MC execution now returns checked capacity/readback/device errors. The legacy GPU wrapper retries continuous CPU mesh MC; optimize honors its explicit fallback policy. Voxel/shell runtime propagation remains pending. See the GPU reference and `PLAN.Performance.md` §14.
+
+Measure now keeps positive-pitch voxel MC distinct from continuous mesh MC, performs CPU fallback inside its configured pool, and records actual per-method backends. The fallible GPU exact entry normalizes nonpositive pitch to 1.0 and propagates voxel/shell execution errors; it does not silently select an approximate method.
+
+### CPU preparation and sample blocks
+
+CPU mesh MC and voxelization now cache geometry queries through `PreparedMeshQuery`, preserving the full-scan parity predicate and hit tolerance. MC distributes fixed 2048-sample blocks across workers; a supplied base seed gives identical integer hit/valid reductions across worker counts. The ordinary entry draws a new base seed per evaluation. Measure reuses one lazy CPU `VoxelS2` occupancy for exact and positive-pitch MC, including GPU fallback, avoiding repeated splitting and containment. GPU occupancy sharing remains separate pending work.
+
+### Reusable exact FFT storage
+
+CPU exact FFT now reuses forward/inverse axis plans, complex grid and transpose storage for repeated same-dimension evaluations on a calling thread. It fills and normalizes under the current pool, reads shell counts directly from the complex correlation grid, and releases oversized workspaces after use. Retention is capped at 16 MiB of arrays per thread and padded axes <=4096; opaque FFT plan memory is additional. Nested evaluations take separate owned workspaces without holding a thread-local borrow. This does not replace the pending complete memory/cost planner or change 2N-1 padding.
+
+### GPU MC workgroup integer reduction
+
+The production MC shader assigns each 256-lane workgroup to one `(radius, sample block)`. Active lanes use the original logical id `radius * samples_per_radius + sample` for the RNG; padded lanes contribute zero. A uniform workgroup reduction emits one hit/valid pair per block. CPU merges these partials in u64 and applies the same ratio, reading `8 * (r_max+1) * ceil(max(samples,200)/256)` bytes instead of per-sample flags. Radius padding cannot mix counts or redraw samples. `dispatch_plan` checks logical-id overflow, the padded workgroup count and partial-buffer sizes independently. `mc_evaluation_peak` uses these partial capacities and still accounts for retained buffers/uploads/growth.
+
+`calculate_s2_gpu_counts` is a private fixed-seed path returning integer totals; the public API still draws one fresh random seed and returns the curve. A frozen pre-reduction shader at `tests/fixtures/s2_monte_carlo_samples.wgsl` is used only in tests to compare exact hit/valid totals under identical seeds, including tail blocks, 128 radii, geometry updates and invalid offsets. BVH traversal, per-radius GPU final reduction and budget-dependent sample batching remain separate work. This change establishes reduction/count semantics, not CPU/GPU f64 equivalence or a hardware speedup claim.
+
+MC workgroups now span two dispatch dimensions, with block index `group.x + group.y * num_workgroups.x`. A uniform guard rejects padded groups before any barrier or write, including when retained output capacity exceeds the live result length. The planner returns samples, partial count and `[x,y]` dispatch; logical sample IDs remain bounded by u32. Optimize startup no longer applies the obsolete one-dimensional invocation ceiling. Forced 3×3/4×2 execution matches the frozen per-sample shader at identical seeds; a spare-capacity sentinel checks that padding never writes beyond live partials. The large 65,536-group case is planner-only coverage, not a large GPU execution benchmark.
+
+GPU shell valid-pair counts are computed analytically as `(nx-|dx|)*(ny-|dy|)*(nz-|dz|)` after rejecting displacements outside any axis. Host grid validation bounds the full product by u32, so every overlap product is safe. The shader still enumerates occupancy pairs for hits and CPU still averages complete per-offset ratios with equal weight; offset tiling and device-resident occupancy remain pending. A raw-count oracle independently enumerates signed coordinates for all small offsets, thin grids, empty/full/mixed occupancy and i32 extreme displacements. This arithmetic change alone does not establish a measured speedup.
+
+The experimental `s2_shell_cooperative.wgsl` assigns one 256-lane workgroup per offset. Lanes stride through the overlap volume, then reduce integer hits in shared memory; valid counts remain analytic. Two-dimensional group flattening rejects padding uniformly before barriers. It retains one output pair per offset, so this is not yet multiple independently scheduled voxel tiles or resident voxel-to-shell dataflow. Production still selects the direct shader pending the workload benchmark. `new_with_shader(source, offsets_per_workgroup)` pairs shader indexing with the dispatch planner: direct uses 256 offsets per group and cooperative uses 1.
+
+The experimental tiled shader uses `(offset, voxel tile)` workgroups with a selectable positive tile width. Each tile reduces integer hit counts and emits its analytic overlap length; empty tiles emit zero. Host code sums all tile counts for one offset in u64 before forming that offset ratio. Batches contain at most 200,000 partial slots, reducing offsets per batch by the tile count; workloads with more than 200,000 tiles per offset currently return an explicit capacity error. This fixed cap is not a complete user-budget planner. Parameter storage is 24 bytes (offset count, dimensions, tiles per offset, tile width); older direct shaders read the first 16 bytes. Production continues to use direct evaluation while the tiled path is validated and benchmarked.
+
+The experimental tiled path can also enable a second device pass (`s2_shell_reduce.wgsl`) that sums tile hit/valid counts into one pair per offset. These sums fit u32 because every offset has at most the checked full-grid cell count. CPU still performs the original per-offset ratio averaging. The reducer and final buffers are initialized lazily and reused; explicit batch release shrinks final buffers while retaining the compiled reducer. Readback is 8 bytes per offset regardless of tile count, but tile buffers and an additional dispatch remain. This is an experimental option, not a production selection or proof of speedup.
+
+Production shell evaluation now filters offsets whose unsigned displacement magnitude reaches any grid dimension before GPU upload. Filtering preserves input order and uses a reusable bounded host batch, not a second full offset list. An unsupported-only request returns the same VF/zero curve without uploading occupancy or allocating result buffers. Test reference constructors can disable filtering so raw invalid-offset shader behavior remains covered. Per-offset ratios and their equal weighting are unchanged; this filter does not remove empty tiles inside otherwise supported offsets.
+
+GPU exact now constructs the shell stage on the voxel stage’s Device/Queue and binds its occupancy buffer directly. Shell construction does not select an adapter or request another device, and the shell does not allocate/upload a duplicate occupancy field. Both stages run sequentially with separate error scopes. Voxel occupancy counting now runs on the device and only a four-byte count is read for VF; upstream backend capability probes remain separate. Standalone host-occupancy shell calls retain their upload behavior, and later host calls cannot overwrite the producer’s borrowed buffer.
+
+`voxelize_count` dispatches voxelization followed by a lazily compiled integer occupancy reducer, leaves the full field on device and reads one u32 count. The reducer uses a single 256-lane workgroup with bounded strided reads; binary occupancy and the checked grid size bound every sum by u32. Its total work remains O(grid cells), so reduced transfer is not a guarantee of lower latency. Occupancy and staging grow independently: count-only execution needs four staging bytes, while subsequent full-readback calls grow staging as required. Switching modes and releasing capacity preserves correctness. GPU exact uses this count for VF and passes the resident field to shell; standalone `voxelize` retains its Vec-returning contract.
+
+GPU exact now lazily generates one shell-radius Vec at a time and passes its offsets through `compute_s2_shell_resident_stream`. Host batches retain at most the existing partial-slot allowance; they can span radius boundaries while preserving offset order. The support flags used for interpolation are captured when each shell is generated, eliminating the former second enumeration. All offsets, including unsupported tails, are consumed on successful evaluation. Memory is bounded by one radius shell plus a batch, not by a constant independent of radius; an individual large-radius shell is still materialized. Count diagnostics use u128 so aggregate generated counts are not silently saturated.
+
+GPU exact now uses `shell_offset_iter`, retaining only nested range cursors even within one radius. It preserves the original x/y/z order, origin special case and half-open squared-distance test; the public Vec API remains unchanged for random-access consumers. Support is detected with a peekable iterator and every generated offset is counted as consumed. Safe ordinary integer norms match the Vec implementation; larger norms use u128 to avoid signed multiplication overflow. Enumeration still scans the enclosing cube, so this reduces allocation without changing its O(radius³) search complexity.
+
+Fresh resident GPU exact evaluations use `ExactMemoryPlan` for both backend selection and execution. With triangle storage T=max(36*faces,4), occupancy M=4*cells, and B partial slots, the conservative logical peak is 2T+M+128+80B. This includes pending triangle/offset uploads and simultaneous old/new batch buffers; the 128-byte allowance covers fixed parameter/count/placeholder resources. B is reduced from 200,000 to fit an optional MiB budget, with a minimum of one. If even that does not fit, execution rejects before GPU initialization and the caller applies its fallback policy. The model excludes driver/compiler internals and CPU memory, applies to a fresh production direct-shell evaluation, and does not claim to budget experimental tiled/reduced or arbitrary retained pipelines. Existing hard exact-grid limits remain independent.

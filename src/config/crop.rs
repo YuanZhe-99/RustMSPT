@@ -1,5 +1,5 @@
+use super::deserialize::deserialize_option_i32_flexible;
 use serde::Deserialize;
-use super::deserialize::{deserialize_option_i32_flexible};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CropRawParams {
@@ -30,9 +30,12 @@ pub struct CropOutput {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CropConfig {
+    #[serde(default)]
+    pub acceleration: super::AccelerationConfig,
+    #[serde(default, deserialize_with = "deserialize_option_i32_flexible")]
+    pub cpu_max: Option<i32>,
     pub input: CropInput,
     pub output: CropOutput,
     pub interpolation: Option<String>,
     pub edge_trim: Option<i32>,
 }
-

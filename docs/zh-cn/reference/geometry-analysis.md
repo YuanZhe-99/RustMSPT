@@ -7,27 +7,44 @@
 | 函数 | 位置 | 摘要 |
 |---|---|---|
 | `MeshMetrics` | `src/geometry/metrics.rs:8` | 保存体积、表面积、等体积直径和球形度的结构体。 |
-| `mesh_is_closed` | `src/geometry/metrics.rs:20` | 校验网格是否为流形、方向一致、体积非零的壳体（或多个壳体的集合）。 |
-| `mesh_metrics` | `src/geometry/metrics.rs:105` | 为一个封闭网格计算体积、表面积、等体积直径和球形度。 |
-| `scale_mesh_to_equivalent_diameter` | `src/geometry/metrics.rs:138` | 原地重新缩放网格，使其等体积直径匹配目标值。 |
-| `RAY_DIR_GPU` | `src/geometry/s2.rs:10` | 固定的非轴对齐单位光线方向常量，与 GPU 光线投射内核共享。 |
-| `index_3d_to_flat` | `src/geometry/s2.rs:13` | 将三维体素索引转换为一维数组索引（y/z 为主步长）。 |
-| `ray_intersects_triangle` | `src/geometry/s2.rs:23` | Möller–Trumbore 光线-三角形相交测试。 |
-| `point_inside_mesh` | `src/geometry/s2.rs:60` | 光线投射的点在网格内包含测试（奇数命中规则）。 |
-| `build_bbox_occupancy` | `src/geometry/s2.rs:109` | 将网格并行体素化为布尔占据网格。 |
-| `shell_offsets_for_distance` | `src/geometry/s2.rs:181` | 枚举落在球壳环带内的整数体素偏移量。 |
-| `fill_missing_s2_with_smooth_interpolation` | `src/geometry/s2.rs:214` | 通过线性或三次样条插值填补不受支持的 S2 半径。 |
-| `fft_index_3d` | `src/geometry/s2.rs:325` | 将三维 FFT 网格索引转换为一维索引（逻辑与 `index_3d_to_flat` 相同）。 |
-| `fft_3d_in_place` | `src/geometry/s2.rs:335` | 在复数缓冲区上原地执行可分离的三维 FFT/IFFT。 |
-| `autocorrelation_counts_fft` | `src/geometry/s2.rs:409` | 通过 FFT 卷积计算占据自相关计数。 |
-| `calculate_s2_exact_direct` | `src/geometry/s2.rs:441` | 通过按壳层偏移直接枚举点对来精确计算 S2（不使用 FFT）。 |
-| `calculate_s2_exact_fft` | `src/geometry/s2.rs:531` | 使用基于 FFT 的自相关精确计算 S2。 |
-| `calculate_s2_monte_carlo_mesh` | `src/geometry/s2.rs:610` | 直接在网格上采样的蒙特卡洛 S2 估计（不做体素化）。 |
-| `calculate_s2` | `src/geometry/s2.rs:685` | 顶层 S2 调度函数；路由至精确方法（FFT 或直接法）或体素化蒙特卡洛。 |
-| `approximate_s2` | `src/geometry/s2.rs:801` | 使用默认体素间距的蒙特卡洛 S2 估计便捷封装函数。 |
-| `l2_norm` | `src/geometry/s2.rs:806` | 两个 S2 向量在其公共长度前缀上的欧氏距离。 |
-| `calculate_s2_with_gpu` | `src/geometry/s2.rs:825` | 针对蒙特卡洛/"both" 方法的 GPU 加速 S2，带 CPU 回退。*（特性 `gpu`）* |
-| `calculate_s2_gpu_exact` | `src/geometry/s2.rs:855` | GPU 加速的精确 S2（GPU 体素化 + GPU 壳层点对计数）。*（特性 `gpu`）* |
+| `mesh_is_closed` | `src/geometry/metrics.rs:23` | 校验网格是否为流形、方向一致、体积非零的壳体（或多个壳体的集合）。 |
+| `mesh_metrics` | `src/geometry/metrics.rs:149` | 为一个封闭网格计算体积、表面积、等体积直径和球形度。 |
+| `scale_mesh_to_equivalent_diameter` | `src/geometry/metrics.rs:182` | 原地重新缩放网格，使其等体积直径匹配目标值。 |
+| `RAY_DIR_GPU` | `src/geometry/s2.rs:13` | 固定的非轴对齐单位光线方向常量，与 GPU 光线投射内核共享。 |
+| `index_3d_to_flat` | `src/geometry/s2.rs:16` | 将三维体素索引转换为一维数组索引（y/z 为主步长）。 |
+| `ray_intersects_triangle` | `src/geometry/s2.rs:26` | Möller–Trumbore 光线-三角形相交测试。 |
+| `point_inside_mesh` | `src/geometry/s2.rs:63` | 光线投射的点在网格内包含测试（奇数命中规则）。 |
+| `build_bbox_occupancy` | `src/geometry/s2.rs:112` | 将网格并行体素化为布尔占据网格。 |
+| `shell_offsets_for_distance` | `src/geometry/s2.rs:184` | 枚举落在球壳环带内的整数体素偏移量。 |
+| `fill_missing_s2_with_smooth_interpolation` | `src/geometry/s2.rs:217` | 通过线性或三次样条插值填补不受支持的 S2 半径。 |
+| `fft_index_3d` | `src/geometry/s2.rs:328` | 将三维 FFT 网格索引转换为一维索引（逻辑与 `index_3d_to_flat` 相同）。 |
+| `FftWorkspace::transform` | `src/geometry/s2.rs:369` | 在复数缓冲区上原地执行可分离的三维 FFT/IFFT。 |
+| `autocorrelation_counts_fft` | `src/geometry/s2.rs:549` | 通过 FFT 卷积计算占据自相关计数。 |
+| `calculate_s2_exact_direct` | `src/geometry/s2.rs:561` | 通过按壳层偏移直接枚举点对来精确计算 S2（不使用 FFT）。 |
+| `calculate_s2_exact_fft` | `src/geometry/s2.rs:651` | 使用基于 FFT 的自相关精确计算 S2。 |
+| `calculate_s2_monte_carlo_mesh` | `src/geometry/s2.rs:730` | 直接在网格上采样的蒙特卡洛 S2 估计（不做体素化）。 |
+| `calculate_s2` | `src/geometry/s2.rs:785` | 顶层 S2 调度函数；路由至精确方法（FFT 或直接法）或体素化蒙特卡洛。 |
+| `approximate_s2` | `src/geometry/s2.rs:924` | 使用默认体素间距的蒙特卡洛 S2 估计便捷封装函数。 |
+| `l2_norm` | `src/geometry/s2.rs:929` | 两个 S2 向量在其公共长度前缀上的欧氏距离。 |
+| `calculate_s2_with_gpu` | `src/geometry/s2.rs:948` | 针对蒙特卡洛/"both" 方法的 GPU 加速 S2，带 CPU 回退。*（特性 `gpu`）* |
+| `calculate_s2_gpu_exact` | `src/geometry/s2.rs:984` | GPU 加速的精确 S2（GPU 体素化 + GPU 壳层点对计数）。*（特性 `gpu`）* |
+| `PreparedMeshQuery` | `src/geometry/mesh_query.rs:20` | Immutable cached CPU parity query. |
+| `PreparedMeshQuery::new` | `src/geometry/mesh_query.rs:29` | Prepare bbox and triangle BVH. |
+| `PreparedMeshQuery::bbox` | `src/geometry/mesh_query.rs:68` | Return cached whole-mesh bbox. |
+| `PreparedMeshQuery::contains_point` | `src/geometry/mesh_query.rs:73` | Query parity with reusable hit scratch. |
+| `MeshQueryScratch` | `src/geometry/mesh_query.rs:7` | Reusable hits and triangle-test counter. |
+| `build_nodes` | `src/geometry/mesh_query.rs:144` | Build median BVH with preorder escape links. |
+| `ray_reaches_box` | `src/geometry/mesh_query.rs:195` | Conservative positive-ray slab test. |
+| `VoxelS2` | `src/geometry/s2.rs:810` | Owned reusable occupancy grid. |
+| `VoxelS2::new` | `src/geometry/s2.rs:818` | Prepare CPU occupancy once. |
+| `VoxelS2::calculate` | `src/geometry/s2.rs:825` | Compute exact or voxel MC on shared grid. |
+| `calculate_s2_mesh_mc_seeded` | `src/geometry/s2.rs:735` | Reproducible sample-block mesh MC. |
+| `try_calculate_s2_gpu_exact` | `src/geometry/s2.rs:996` | Fallible GPU exact with checked dimensions. |
+| `FftWorkspace` | `src/geometry/s2.rs:334` | Reusable FFT plans and complex arrays. |
+| `FftWorkspace::new` | `src/geometry/s2.rs:348` | Construct dimension-specific FFT workspace. |
+| `FftWorkspace::array_bytes` | `src/geometry/s2.rs:363` | Report retained complex-array capacities. |
+| `with_fft_correlation` | `src/geometry/s2.rs:489` | Evaluate occupancy FFT with bounded cache retention. |
+| `FFT_RETAIN_BYTES` | `src/geometry/s2.rs:332` | Maximum retained FFT array bytes per calling thread. |
 
 ---
 
@@ -57,7 +74,7 @@
 #### mesh_metrics
 
 - **签名：** `pub fn mesh_metrics(mesh: &Mesh) -> Option<MeshMetrics>`
-- **源码位置：** `src/geometry/metrics.rs:105`
+- **源码位置：** `src/geometry/metrics.rs:149`
 - **用途：** 在确认网格是有效的封闭流形之后，一次性计算网格的体积、表面积、等体积直径和球形度。
 - **参数：**
   - `mesh` — 待测量的候选网格。
@@ -69,7 +86,7 @@
 #### scale_mesh_to_equivalent_diameter
 
 - **签名：** `pub fn scale_mesh_to_equivalent_diameter(mesh: &mut Mesh, metrics: MeshMetrics, target_diameter: f64) -> Option<f64>`
-- **源码位置：** `src/geometry/metrics.rs:138`
+- **源码位置：** `src/geometry/metrics.rs:182`
 - **用途：** 原地对网格进行统一缩放，使其等体积直径达到所要求的目标值。
 - **参数：**
   - `mesh` — 待缩放的网格，原地修改。
@@ -85,7 +102,7 @@
 #### mesh_is_closed
 
 - **签名：** `fn mesh_is_closed(mesh: &Mesh) -> bool`
-- **源码位置：** `src/geometry/metrics.rs:20`
+- **源码位置：** `src/geometry/metrics.rs:23`
 - **用途：** 完整的流形校验关卡：判断一个网格是否表示一个或多个方向一致、封闭无缝、体积非零、适合进行体积/面积计算的壳体。
 - **参数：**
   - `mesh` — 候选网格。
@@ -112,7 +129,7 @@
 #### RAY_DIR_GPU
 
 - **种类：** `pub const RAY_DIR_GPU: (f64, f64, f64) = (0.9428090415820634, 0.2705980500730985, 0.19611613513818402)`
-- **源码位置：** `src/geometry/s2.rs:10`
+- **源码位置：** `src/geometry/s2.rs:13`
 - **用途：** 用于光线投射点在网格内测试的固定的、非轴对齐的单位长度光线方向。使用一个没有零分量或重复分量的方向，可以规避与轴对齐网格面/边相交时的退化情形（朴素光线投射包含测试中常见的假阴性/假阳性来源）。
 - **说明：** 下面的 `point_inside_mesh` 在本地硬编码了相同的数值字面量，而不是引用这个常量——两者在数值上保持一致，但结构上并未关联。此常量被导出以供 GPU 体素化内核复用（参见 `src/gpu/voxel.rs`），CPU 侧和 GPU 侧的光线投射必须在采样方向上保持一致。
 - **另请参阅：** `point_inside_mesh`，[GPU 参考](gpu.md)。
@@ -120,7 +137,7 @@
 #### point_inside_mesh
 
 - **签名：** `pub fn point_inside_mesh(mesh: &Mesh, point: Vec3) -> bool`
-- **源码位置：** `src/geometry/s2.rs:60`
+- **源码位置：** `src/geometry/s2.rs:63`
 - **用途：** 使用奇数命中（Jordan 曲线）规则的光线投射法，判断查询点是否位于封闭网格的体积内部。
 - **参数：**
   - `mesh` — 待测试的网格。
@@ -133,7 +150,7 @@
 #### shell_offsets_for_distance
 
 - **签名：** `pub fn shell_offsets_for_distance(distance_vox: f64, half_width_vox: f64) -> Vec<[isize; 3]>`
-- **源码位置：** `src/geometry/s2.rs:181`
+- **源码位置：** `src/geometry/s2.rs:184`
 - **用途：** 枚举所有欧氏长度落在球壳环带 `[distance_vox - half_width_vox, distance_vox + half_width_vox)`（低端被钳制在零）内的整数体素网格偏移量 `[dx, dy, dz]`，表示"相距半径 `r`" 这一概念的离散体素网格近似。
 - **参数：**
   - `distance_vox` — 目标壳层半径，单位为体素。
@@ -146,7 +163,7 @@
 #### calculate_s2
 
 - **签名：** `pub fn calculate_s2(mesh: &Mesh, bbox: BoundingBox, r_max: usize, voxel_pitch: f64, method: &str, samples: usize) -> Vec<f64>`
-- **源码位置：** `src/geometry/s2.rs:685`
+- **源码位置：** `src/geometry/s2.rs:785`
 - **用途：** 两点相关函数 S2 计算的顶层调度函数；是代码库其余部分获取 `r = 0..=r_max` 的 `S2(r)` 时使用的主要入口点。
 - **参数：**
   - `mesh` — 待表征的堆积/目标网格几何体。
@@ -167,7 +184,7 @@
 #### approximate_s2
 
 - **签名：** `pub fn approximate_s2(mesh: &Mesh, bbox: BoundingBox, r_max: usize, samples: usize) -> Vec<f64>`
-- **源码位置：** `src/geometry/s2.rs:801`
+- **源码位置：** `src/geometry/s2.rs:924`
 - **用途：** 使用固定默认体素间距 `1.0` 的体素化蒙特卡洛 S2 估计便捷封装函数。
 - **参数：** 与 `calculate_s2` 参数的对应子集相同（`mesh`、`bbox`、`r_max`、`samples`）。
 - **返回值：** S2 值组成的 `Vec<f64>`，形状与 `calculate_s2` 的返回值相同。
@@ -177,14 +194,14 @@
 
 #### l2_norm
 
-`#### l2_norm` — `pub fn l2_norm(a: &[f64], b: &[f64]) -> f64` — `src/geometry/s2.rs:806`。两个 S2 向量在其公共长度前缀上的欧氏距离（`n = min(a.len(), b.len())`）；若任一切片为空则返回 `0.0`。无副作用。用于评分计算/模拟出的 `S2(r)` 曲线与目标曲线（例如来自 `data/input/gu2019_fig7b_pore_distribution.csv`）的吻合程度。
+`#### l2_norm` — `pub fn l2_norm(a: &[f64], b: &[f64]) -> f64` — `src/geometry/s2.rs:929`。两个 S2 向量在其公共长度前缀上的欧氏距离（`n = min(a.len(), b.len())`）；若任一切片为空则返回 `0.0`。无副作用。用于评分计算/模拟出的 `S2(r)` 曲线与目标曲线（例如来自 `data/input/gu2019_fig7b_pore_distribution.csv`）的吻合程度。
 
 #### calculate_s2_with_gpu
 
 > **特性门控：** 仅在启用 `--features gpu` 时编译。CPU 回退：`calculate_s2`。
 
 - **签名：** `pub fn calculate_s2_with_gpu(mesh: &Mesh, bbox: BoundingBox, r_max: usize, voxel_pitch: f64, method: &str, samples: usize, gpu_pipeline: Option<&mut crate::gpu::s2::GpuS2Pipeline>) -> Vec<f64>`
-- **源码位置：** `src/geometry/s2.rs:825`
+- **源码位置：** `src/geometry/s2.rs:948`
 - **用途：** 蒙特卡洛 S2 路径的 GPU 加速桥接函数；在有可用且适用的 `GpuS2Pipeline` 时调度给它，否则完全交由 CPU 端的 `calculate_s2` 处理。
 - **参数：**
   - `mesh`、`bbox`、`r_max`、`voxel_pitch`、`method`、`samples` — 与 `calculate_s2` 相同。
@@ -199,7 +216,7 @@
 > **特性门控：** 仅在启用 `--features gpu` 时编译。CPU 回退：`calculate_s2`（若任一 GPU 流水线初始化失败，则以 `method = "exact"` 调用）。
 
 - **签名：** `pub fn calculate_s2_gpu_exact(mesh: &Mesh, bbox: BoundingBox, r_max: usize, voxel_pitch: f64) -> Vec<f64>`
-- **源码位置：** `src/geometry/s2.rs:855`
+- **源码位置：** `src/geometry/s2.rs:984`
 - **用途：** 完全在 GPU 上计算精确 S2：GPU 体素化，随后进行 GPU 壳层偏移点对计数。
 - **参数：**
   - `mesh`、`bbox`、`r_max`、`voxel_pitch` — 含义与 `calculate_s2` 相同，但没有 `method`/`samples` 参数，因为本函数始终使用精确方法。
@@ -212,12 +229,12 @@
 
 #### index_3d_to_flat
 
-`#### index_3d_to_flat` — `fn index_3d_to_flat(x: usize, y: usize, z: usize, ny: usize, nz: usize) -> usize` — `src/geometry/s2.rs:13`。通过 `x*ny*nz + y*nz + z`（z 变化最快）将三维体素索引转换为一维数组索引。无副作用。贯穿占据网格代码路径（`build_bbox_occupancy`、`calculate_s2_exact_direct`、`calculate_s2` 的体素化蒙特卡洛分支）使用。
+`#### index_3d_to_flat` — `fn index_3d_to_flat(x: usize, y: usize, z: usize, ny: usize, nz: usize) -> usize` — `src/geometry/s2.rs:16`。通过 `x*ny*nz + y*nz + z`（z 变化最快）将三维体素索引转换为一维数组索引。无副作用。贯穿占据网格代码路径（`build_bbox_occupancy`、`calculate_s2_exact_direct`、`calculate_s2` 的体素化蒙特卡洛分支）使用。
 
 #### ray_intersects_triangle
 
 - **签名：** `fn ray_intersects_triangle(origin: Vec3, dir: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<f64>`
-- **源码位置：** `src/geometry/s2.rs:23`
+- **源码位置：** `src/geometry/s2.rs:26`
 - **用途：** Möller–Trumbore 光线-三角形相交测试。
 - **参数：**
   - `origin`、`dir` — 光线原点与方向（`dir` 不必归一化；返回的 `t` 随 `dir` 的模长缩放）。
@@ -230,7 +247,7 @@
 #### build_bbox_occupancy
 
 - **签名：** `fn build_bbox_occupancy(mesh: &Mesh, bbox: BoundingBox, voxel_pitch: f64) -> (Vec<bool>, [usize; 3])`
-- **源码位置：** `src/geometry/s2.rs:109`
+- **源码位置：** `src/geometry/s2.rs:112`
 - **用途：** 通过对每个体素中心进行包含测试，将包围盒内的网格体素化为布尔占据网格。
 - **参数：**
   - `mesh` — 待体素化的网格。
@@ -244,7 +261,7 @@
 #### fill_missing_s2_with_smooth_interpolation
 
 - **签名：** `fn fill_missing_s2_with_smooth_interpolation(values: &mut [f64], has_support: &[bool], vf: f64)`
-- **源码位置：** `src/geometry/s2.rs:214`
+- **源码位置：** `src/geometry/s2.rs:217`
 - **用途：** 使用来自相邻受支持半径的平滑插值，填补那些没有有效样本支持的半径处的 S2 值（例如空壳层，或所有点对都超出边界）。
 - **参数：**
   - `values` — S2 值数组，原地修改；不受支持的条目会被覆写。
@@ -257,28 +274,22 @@
 
 #### fft_index_3d
 
-`#### fft_index_3d` — `fn fft_index_3d(x: usize, y: usize, z: usize, ny: usize, nz: usize) -> usize` — `src/geometry/s2.rs:325`。使用与 `index_3d_to_flat` 相同的 `x*ny*nz + y*nz + z` 布局，将三维 FFT 网格索引转换为一维索引。无副作用。
+`#### fft_index_3d` — `fn fft_index_3d(x: usize, y: usize, z: usize, ny: usize, nz: usize) -> usize` — `src/geometry/s2.rs:328`。使用与 `index_3d_to_flat` 相同的 `x*ny*nz + y*nz + z` 布局，将三维 FFT 网格索引转换为一维索引。无副作用。
 
-> **文档说明：** 这是 `index_3d_to_flat`（第 13 行）在另一个名字下的逐字节复制，作用域限定在 FFT 网格代码路径（`autocorrelation_counts_fft`、`fft_3d_in_place`）内。这不是一个 bug，但值得了解这两个函数是可以互换的——未来的清理工作可以将它们统一起来。
+> **文档说明：** 这是 `index_3d_to_flat`（第 13 行）在另一个名字下的逐字节复制，作用域限定在 FFT 网格代码路径（`autocorrelation_counts_fft`、`FftWorkspace::transform`）内。这不是一个 bug，但值得了解这两个函数是可以互换的——未来的清理工作可以将它们统一起来。
 
-#### fft_3d_in_place
+#### FftWorkspace::transform
 
-- **签名：** `fn fft_3d_in_place(data: &mut [Complex<f64>], nx: usize, ny: usize, nz: usize, inverse: bool)`
-- **源码位置：** `src/geometry/s2.rs:335`
-- **用途：** 在复数数据缓冲区上原地执行可分离的三维 FFT（或逆 FFT），逐轴处理（先 z，再 y，最后 x）。
-- **参数：**
-  - `data` — 长度为 `nx*ny*nz` 的一维复数缓冲区，原地修改。
-  - `nx`、`ny`、`nz` — 网格维度。
-  - `inverse` — `false` 表示正向 FFT，`true` 表示逆 FFT（最后应用 `1/N` 归一化）。
-- **返回值：** 无——原地修改 `data`。
-- **副作用：** 修改 `data`。分配临时缓冲区（每个 y 切片线程一个的 `tmp_y`，以及用于 x 轴处理的完整 `nx * ny * nz` 大小的转置缓冲区 `buf`）。
-- **说明：** z 轴处理直接在 `data` 的连续 `nz` 长度块上操作（开销小，无需转置）。y 轴处理为每个 x 切片使用一个较小的按迭代分配的 `ny` 长度暂存缓冲区，以步长 `nz` 进行收集/散射。x 轴处理需要先将数据显式转置到 `buf` 中（因为 x 是变化最慢的轴，内存不连续），再对每一行应用 FFT，然后再转置回 `data`。三次处理各自创建自己的 `FftPlanner` 实例，而不是共享一个，因为 `rustfft` 的 `Fft` trait 对象不是 `Clone` 的，并行的 `par_chunks_mut` 调用需要每线程独立的规划器。
-- **另请参阅：** `autocorrelation_counts_fft`（唯一调用方）。
+`FftWorkspace::transform(inverse)` applies cached dimension-specific forward/inverse axis plans to its complex grid. The task count is min(current pool workers, ceil(padded cells / 65536)), at least one. One task uses serial axis gathers and one shared scratch buffer, without allocating a transpose array. Multiple tasks use a lazily allocated persistent transpose buffer and task-local `process_with_scratch` storage, with axis-specific minimum chunk lengths. Filling, power spectrum and normalization use the same task budget. Inverse normalization and the power-spectrum pass execute under the caller's Rayon pool. Padding remains exactly 2N-1.
+
+#### with_fft_correlation
+
+`with_fft_correlation(occ, dims, consume)` takes exclusive ownership of a thread-local cached workspace, resets/fills its grid, transforms the occupancy, and passes complex correlation storage and padded dimensions to the consumer. Production shell evaluation reads clamped real counts directly, avoiding another full f64 correlation allocation. A workspace is retained only when its two array capacities total at most 16 MiB and every padded axis is <=4096. Plan internals occupy additional memory; this is a cache-admission limit, not a complete process-memory budget. Dimension changes discard the prior workspace before allocating its replacement. Large workspaces are released at return. No TLS borrow survives parallel work or the consumer callback, allowing nested Rayon evaluations safely; concurrent callers have independent workspaces. The current exact cell limits remain pending the full workload planner.
 
 #### autocorrelation_counts_fft
 
 - **签名：** `fn autocorrelation_counts_fft(occ: &[bool], nx: usize, ny: usize, nz: usize) -> (Vec<f64>, [usize; 3])`
-- **源码位置：** `src/geometry/s2.rs:409`
+- **源码位置：** `src/geometry/s2.rs:549`
 - **用途：** 通过 FFT 卷积定理（正向 FFT → 功率谱 → 逆 FFT）计算完整的占据自相关计数网格，一次性给出每个可能的整数偏移量对应的占据-占据体素点对计数。
 - **参数：**
   - `occ` — 一维布尔占据网格。
@@ -286,12 +297,12 @@
 - **返回值：** `(corr, [fx, fy, fz])`——填充后 FFT 维度上的一维 `f64` 相关计数网格，以及这些填充后的维度本身。
 - **副作用：** 无（分配并返回新的缓冲区；不修改 `occ`）。
 - **说明：** 在变换之前将每个轴填充到 `2N-1`（`fx = 2*nx-1` 等），以避免会破坏网格边界附近相关计数的循环卷积回绕伪影。经过 FFT → 共轭平方 → IFFT 的往返变换后，取实部并钳制到 `>= 0.0`（自相关计数应为非负；此钳制是为了防止微小的负浮点噪声）。负偏移量通过调用方（`calculate_s2_exact_fft` 的 `get_corr` 闭包）中的回绕索引从填充网格中恢复。
-- **另请参阅：** `fft_3d_in_place`、`calculate_s2_exact_fft`（唯一调用方）。
+- **另请参阅：** `FftWorkspace::transform`、`calculate_s2_exact_fft`（唯一调用方）。
 
 #### calculate_s2_exact_direct
 
 - **签名：** `fn calculate_s2_exact_direct(occ: &[bool], nx: usize, ny: usize, nz: usize, r_max: usize, voxel_pitch: f64, vf: f64) -> Vec<f64>`
-- **源码位置：** `src/geometry/s2.rs:441`
+- **源码位置：** `src/geometry/s2.rs:561`
 - **用途：** 通过为每个半径的每个壳层偏移直接枚举并计数体素对来计算精确 S2——不使用 FFT，用于填充后的 FFT 网格过大而无法高效分配/处理的情形。
 - **参数：**
   - `occ`、`nx`、`ny`、`nz` — 占据网格及其维度。
@@ -306,7 +317,7 @@
 #### calculate_s2_exact_fft
 
 - **签名：** `fn calculate_s2_exact_fft(occ: &[bool], nx: usize, ny: usize, nz: usize, r_max: usize, voxel_pitch: f64, vf: f64) -> Vec<f64>`
-- **源码位置：** `src/geometry/s2.rs:531`
+- **源码位置：** `src/geometry/s2.rs:651`
 - **用途：** 先通过 FFT（`autocorrelation_counts_fft`）一次性构建完整的自相关网格，然后从该预先计算好的网格中为每个半径的每个壳层偏移读取点对计数，以此计算精确 S2。
 - **参数：** 与 `calculate_s2_exact_direct` 相同。
 - **返回值：** 长度为 `r_max + 1` 的 `Vec<f64>`，每个半径对应一个 S2 值，不受支持的半径通过 `fill_missing_s2_with_smooth_interpolation` 填补。
@@ -317,7 +328,7 @@
 #### calculate_s2_monte_carlo_mesh
 
 - **签名：** `fn calculate_s2_monte_carlo_mesh(mesh: &Mesh, bbox: BoundingBox, r_max: usize, samples: usize) -> Vec<f64>`
-- **源码位置：** `src/geometry/s2.rs:610`
+- **源码位置：** `src/geometry/s2.rs:730`
 - **用途：** 通过直接针对网格几何体对点对进行蒙特卡洛采样来估计 S2，完全不做体素化步骤。
 - **参数：**
   - `mesh`、`bbox` — 网格与采样域。
@@ -327,3 +338,25 @@
 - **副作用：** 无（纯计算）；通过 rayon 并行化外层半径循环。
 - **说明：** 对每个半径 `r`，在 `bbox` 内均匀抽取 `mc_samples` 个随机点 `p`，为每个点配对一个随机单位方向（从单位立方体中拒绝采样得到，`x²+y²+z² ∈ (1e-12, 1]`），并构造 `q = p + dir*r`。`q` 落在 `bbox` 之外的点对会被完全丢弃（不计入未命中）——因此每个半径的有效样本数可能低于 `mc_samples`，并且随着 `r` 接近域尺寸而进一步减少。对于存活下来的点对，对 `p` 和 `q` 都调用 `point_inside_mesh`，并统计联合占据命中数。这是几何上最忠实的方法（无体素离散化误差），但也最慢，因为每个样本都需要对原始网格进行两次完整的 `O(faces)` 光线投射——当 `calculate_s2` 中 `voxel_pitch <= 0` 且 `method != "exact"` 时使用此方法。
 - **另请参阅：** `point_inside_mesh`、`volume_fraction_in_bbox`（`src/geometry/volume.rs`）、`calculate_s2`（唯一调用方，无体素间距分支）。
+
+`calculate_s2_with_gpu` 现捕获 MC 执行错误并记录原因，用连续 CPU mesh MC（pitch 0）重算，避免变为 voxel MC。旧 Vec 接口没有禁止回退开关；optimize 使用自己的 Result 求值接口。
+
+### Prepared CPU S2 queries (PERF-06)
+
+`PreparedMeshQuery::new(&Mesh)` borrows immutable geometry and caches its bbox and a median triangle BVH (more than 32 finite triangles; leaves at most eight). `contains_point(Vec3, &mut MeshQueryScratch)` keeps the original ray, triangle predicate and anchored 1e-8 hit deduplication. Scratch retains hit capacity and exposes the most recent triangle-test count. Small meshes use cached direct queries. Geometry changes require a new prepared query; the original `point_inside_mesh` remains the full-scan reference.
+
+`calculate_s2_mesh_mc_seeded(mesh, bbox, r_max, samples, seed, prepared)` returns continuous MC S2. Radius/sample blocks of 2048 use independent ChaCha12 streams derived from radius and block, with integer reductions. Results are reproducible across worker counts; `prepared=false` uses full-scan containment for differential benchmarks. Ordinary mesh MC chooses a fresh base seed and uses prepared queries. This changes the old unseeded RNG draw protocol, not the point/direction distribution.
+
+`VoxelS2::new(mesh, bbox, pitch)` owns one voxelization at a positive pitch (minimum 1e-9). `calculate(r_max, method, samples)` reuses it for exact or voxel MC, reporting occupancy VF. Measure lazily retains this object across CPU methods/fallbacks; continuous MC remains independent. Voxelization prepares per-component queries and reuses per-worker hit scratch. Components below the domain have their upper index clamped before unsigned conversion.
+
+GPU exact 现将 shell 构造在 voxel 的同一 Device/Queue 上，直接绑定其 occupancy 缓冲。shell 不再选择适配器或申请第二个设备，也不再为占据场分配和上传副本。两阶段顺序运行，各自配对错误作用域。Voxel 现于设备端计数，仅为 VF 回读 4 字节；上层 backend 能力探测仍独立计数。独立主机占据场 API 保留上传行为，之后的主机求值不会覆盖借用的 voxel 缓冲。
+
+voxelize_count 在 voxelization 后执行延迟编译的整数占据归约，完整占据场留在设备，仅回读一个 u32。归约器使用一个 256-lane 工作组跨步扫描；二值占据与已检查的网格大小保证各级计数不超过 u32。总工作量仍为 O(网格体素数)，减少传输不等于必然降低时延。occupancy 和 staging 分别按需增长：count-only 只需 4 字节 staging，之后完整回读再按需增长；模式切换和释放后重算已有对照。GPU exact 用该计数计算 VF 并将驻留占据场传给 shell，独立 voxelize 保留 Vec 返回契约。
+
+GPU exact 现逐半径延迟生成一个 shell Vec，经 compute_s2_shell_resident_stream 按批消费。批次仍受已有部分结果槽上限约束，可跨半径但保持原偏移顺序。插值支持标志在生成该半径时记录，取消原来的第二遍枚举；成功求值会消费全部偏移，包括末尾无支持偏移。内存范围为一个半径 shell 加一个批次，并非与半径无关的常量；单个大半径 shell 仍会物化。累计生成数量采用 u128，日志不静默饱和截断。
+
+GPU exact 现使用 shell_offset_iter，单个半径内部也只保留嵌套范围游标；保持原 x/y/z 顺序、原点特殊情况和半开平方距离判定。需要随机访问的公共 Vec API 保持不变。用 peekable 判定该半径是否有支持，生成数量在消费时累计。普通范围沿用原整数范数，更大范数用 u128 避免有符号乘法溢出。仍扫描包围立方体，降低分配并未改变 O(半径³) 搜索复杂度。
+
+| Function | Source | Contract |
+|---|---|---|
+| `shell_offset_iter` | `src/geometry/s2.rs:213` | Lazy ordered shell enumeration with constant cursor storage; GPU exact streaming and tests. |

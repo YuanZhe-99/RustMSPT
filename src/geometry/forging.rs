@@ -1,5 +1,5 @@
-use crate::types::{BoundingBox, Mesh, Vec3};
 use super::bbox::mesh_bbox;
+use crate::types::{BoundingBox, Mesh, Vec3};
 
 // AI-FUNC-SUMMARY:
 // Purpose: Apply FFD-style forging deformation: compress along Z and bulge laterally around the mesh center.
@@ -22,14 +22,14 @@ pub fn simulate_forging_ffd(mesh: &Mesh, compression_ratio: f64, bulge_factor: f
     let axis_scale = (1.0 - compression_ratio).clamp(0.01, 1.0);
     let lateral_scale = (1.0 / axis_scale.sqrt()).powf(bulge_factor.clamp(0.0, 1.0));
 
-    for v in &mut out.vertices {
+    super::mesh_ops::map_vertices(&mut out.vertices, |v| {
         let local = v.sub(center);
-        *v = Vec3::new(
+        Vec3::new(
             center.x + local.x * lateral_scale,
             center.y + local.y * lateral_scale,
             center.z + local.z * axis_scale,
-        );
-    }
+        )
+    });
 
     out
 }
@@ -42,6 +42,29 @@ pub fn simulate_forging_ffd(mesh: &Mesh, compression_ratio: f64, bulge_factor: f
 // Notes: Void-type meshes get a centroid-based closure scaling. ROI tracking transforms all 8 corners and recomputes the AABB.
 pub fn simulate_forging_ffd_with_tracking(
     mesh: &Mesh,
+    lattice_bbox: BoundingBox,
+    track_bbox: Option<BoundingBox>,
+    compression_ratio: f64,
+    compression_axis: usize,
+    bulge_factor: f64,
+    mesh_type: &str,
+    void_densification: f64,
+) -> (Mesh, Option<BoundingBox>) {
+    forge_owned(
+        mesh.clone(),
+        lattice_bbox,
+        track_bbox,
+        compression_ratio,
+        compression_axis,
+        bulge_factor,
+        mesh_type,
+        void_densification,
+    )
+}
+
+// AI-FUNC-SUMMARY: Consume a mesh and apply the existing FFD/void/ROI mapping in place; preserves the public clone-returning wrapper and exact post-transform centroid accumulation order.
+pub fn forge_owned(
+    mut out: Mesh,
     lattice_bbox: BoundingBox,
     track_bbox: Option<BoundingBox>,
     compression_ratio: f64,
@@ -80,18 +103,12 @@ pub fn simulate_forging_ffd_with_tracking(
         }
     };
 
-    let mut out = mesh.clone();
-    for v in &mut out.vertices {
-        *v = transform_point(*v);
-    }
+    super::mesh_ops::map_vertices(&mut out.vertices, transform_point);
 
     if mesh_type.eq_ignore_ascii_case("void") {
         let closure = (1.0 - 0.05 * compression_ratio * void_densification).clamp(0.85, 1.0);
         let c = super::mesh_ops::mesh_centroid(&out);
-        for v in &mut out.vertices {
-            let local = v.sub(c);
-            *v = c.add(local.scale(closure));
-        }
+        super::mesh_ops::map_vertices(&mut out.vertices, |v| c.add(v.sub(c).scale(closure)));
     }
 
     let tracked = track_bbox.map(|tb| {
@@ -116,7 +133,10 @@ pub fn simulate_forging_ffd_with_tracking(
             max_p.y = max_p.y.max(p.y);
             max_p.z = max_p.z.max(p.z);
         }
-        BoundingBox { min: min_p, max: max_p }
+        BoundingBox {
+            min: min_p,
+            max: max_p,
+        }
     });
 
     (out, tracked)

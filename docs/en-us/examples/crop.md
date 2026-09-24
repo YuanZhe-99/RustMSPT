@@ -1,5 +1,7 @@
 # `crop` pipeline example
 
+Current builds additionally emit `[Timing] crop stage=<name> seconds=<value>` for completed stages: `load`, `background`, `pca`, `transform_and_backend`, `trim`, `encode_write`, and `total_in_pool`. The captured output below predates these lines. Backend timing includes planning, initialization, transfers and permitted fallback; write timing includes flush but not fsync. Pool total excludes CLI/configuration/pool creation; values depend on the run.
+
 ## What it does
 
 `crop` loads a raw CT slice stack (or a TIFF stack), thresholds it against an auto-detected

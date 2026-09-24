@@ -8,10 +8,10 @@ mean-sphericity steering engine (`src/pipeline/pack_targets.rs`).
 | Item | Location | Summary |
 |---|---|---|
 | `TARGET_BIN_PROBES` | `src/pipeline/pack.rs:27` | Max consecutive placement failures tolerated for a chosen bin before it is excluded from this round's re-selection. |
-| `PackPipeline` | `src/pipeline/pack.rs:29` | Pipeline struct wrapping a `PackingConfig`; implements `Pipeline`. |
+| `PackPipeline` | `src/pipeline/pack.rs:95` | Pipeline struct wrapping a `PackingConfig`; implements `Pipeline`. |
 | `CandidateProposal` | `src/pipeline/pack.rs:34` | One drawn candidate mesh plus its optional precomputed `MeshMetrics`. |
-| `validate_sphericity_target` | `src/pipeline/pack.rs:44` | Validates `target_mean_sphericity`/`mean_sphericity_tolerance` config before packing starts. |
-| `check_geometry_filters` | `src/pipeline/pack.rs:75` | Applies configured `min_volume`, `max_aspect_ratio`, `max_sharpness_ratio` filters to a candidate mesh. |
+| `validate_sphericity_target` | `src/pipeline/pack.rs:110` | Validates `target_mean_sphericity`/`mean_sphericity_tolerance` config before packing starts. |
+| `check_geometry_filters` | `src/pipeline/pack.rs:141` | Applies configured `min_volume`, `max_aspect_ratio`, `max_sharpness_ratio` filters to a candidate mesh. |
 | `PackPipeline::run` | `src/pipeline/pack.rs:124` | Core sequential random packing loop with optional target-diameter-distribution and mean-sphericity steering. |
 | `DiameterBin` | `src/pipeline/pack_targets.rs:8` | Half-open (closed at the final bin) diameter interval with a target frequency. |
 | `DiameterBin::midpoint` | `src/pipeline/pack_targets.rs:16` | Arithmetic midpoint of the interval. |
@@ -34,6 +34,11 @@ mean-sphericity steering engine (`src/pipeline/pack_targets.rs`).
 | `write_distribution_comparison_csv` | `src/pipeline/pack_targets.rs:495` | Writes the `<output_stem>_diameter_distribution.csv` target-vs-actual report. |
 | `parse_csv_f64` | `src/pipeline/pack_targets.rs:564` | Parses a required finite CSV float cell with row/column error context. |
 | `parse_optional_csv_f64` | `src/pipeline/pack_targets.rs:587` | Parses an optional CSV float cell where a blank means "absent". |
+| `PackCollider` | `src/pipeline/pack.rs:27` | Cached collider bbox and shape. |
+| `PackCollider::new` | `src/pipeline/pack.rs:34` | Prepare collision shape once. |
+| `PackCollider::blocks` | `src/pipeline/pack.rs:42` | Cached overlap or clearance predicate. |
+| `pack_blocked` | `src/pipeline/pack.rs:68` | Check incremental spatial candidates. |
+| `PackPipeline::run_in_pool` | `src/pipeline/pack.rs:221` | Packing work under configured pool. |
 
 **See also:** [geometry-analysis.md](geometry-analysis.md) for `MeshMetrics` and `scale_mesh_to_equivalent_diameter`, used throughout this pipeline.
 
@@ -51,7 +56,7 @@ mean-sphericity steering engine (`src/pipeline/pack_targets.rs`).
 #### PackPipeline
 
 - **Kind:** struct
-- **Source:** `src/pipeline/pack.rs:29`
+- **Source:** `src/pipeline/pack.rs:95`
 - **Fields:**
 
 | Field | Type | Description |
@@ -76,7 +81,7 @@ mean-sphericity steering engine (`src/pipeline/pack_targets.rs`).
 #### validate_sphericity_target
 
 - **Signature:** `fn validate_sphericity_target(config: &PackingConfig) -> Result<Option<(f64, Option<f64>)>>`
-- **Source:** `src/pipeline/pack.rs:44`
+- **Source:** `src/pipeline/pack.rs:110`
 - **Purpose:** Validates the optional `packing.target_mean_sphericity` / `packing.mean_sphericity_tolerance` configuration before any packing work begins.
 - **Parameters:** `config` — the packing configuration.
 - **Returns:** `Ok(Some((target, tolerance)))` when a target is configured; `Ok(None)` when neither field is set; `Err(InvalidConfig)` when `target_mean_sphericity` is outside `(0, 1]`, `mean_sphericity_tolerance` is outside `[0, 1]`, or a tolerance is given without a target.
@@ -85,7 +90,7 @@ mean-sphericity steering engine (`src/pipeline/pack_targets.rs`).
 #### check_geometry_filters
 
 - **Signature:** `fn check_geometry_filters(mesh: &Mesh, config: &PackingConfig, check_min_volume: bool) -> bool`
-- **Source:** `src/pipeline/pack.rs:75`
+- **Source:** `src/pipeline/pack.rs:141`
 - **Purpose:** Validates a candidate mesh against the configured `packing.filters` (`min_volume`, `max_aspect_ratio`, `max_sharpness_ratio`).
 - **Parameters:**
   - `mesh` — candidate mesh to check.
@@ -351,3 +356,7 @@ mean-sphericity steering engine (`src/pipeline/pack_targets.rs`).
 - **Purpose:** Parses an optional CSV cell (used for the `right` column) where an absent or blank value means "not provided" rather than an error.
 - **Returns:** `Ok(None)` if the cell is absent or blank; otherwise delegates to `parse_csv_f64` and wraps in `Some`.
 - **Side effects:** None.
+
+### Cached legacy packing feasibility (PERF-11)
+
+`PackCollider::new(&Mesh)` retains bbox and optional parry TriMesh without another raw mesh copy. `blocks(other, gap)` keeps the old bbox rejection, uses cached solid collision at zero gap and cached solid distance below a positive gap. `pack_blocked` directly scans fewer than 32 colliders, otherwise queries an incremental grid plus every bbox-less collider. Candidate images are prepared once per proposal; accepted particle/image shapes are appended once and indexed. This replaces the previous `placed.clone()`, repeated ghost generation, shape construction and separate minimum-distance pass. The grid has at most eight cells on the longest domain axis. Void/nesting semantics and gap equality remain governed by the same prepared collision/distance functions. Periodic checks still include candidate ghosts against accepted real particles and ghosts. `PackPipeline::run` installs the worker pool around `run_in_pool`, including loading and finalization; proposal RNG remains sequential.

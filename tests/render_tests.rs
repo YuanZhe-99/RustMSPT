@@ -330,16 +330,17 @@ fn gpu_render_matches_cpu_within_tolerance() {
         .expect("camera should build");
 
         let cpu = render_mesh_cpu(&mesh, &camera, w, h, &settings);
-        let gpu = match rustmspt::gpu::GpuRenderPipeline::new()
-            .and_then(|mut p| p.render(&mesh, &camera, w, h, &settings))
-        {
-            Ok(image) => image,
+        let mut pipeline = match rustmspt::gpu::GpuRenderPipeline::new() {
+            Ok(pipeline) => pipeline,
             Err(e) => {
                 println!("Skipping GPU render comparison (no GPU available): {e}");
                 return;
             }
         };
 
+        assert!(pipeline.render(&mesh, &camera, usize::MAX, h, &settings).is_err());
+        assert!(pipeline.render(&mesh, &camera, 0, h, &settings).is_err());
+        let gpu = pipeline.render(&mesh, &camera, w, h, &settings).expect("initialized GPU must render successfully");
         assert_eq!(cpu.rgba.len(), gpu.rgba.len());
 
         let mut mismatched = 0usize;

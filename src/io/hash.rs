@@ -46,3 +46,35 @@ fn hex_digest(digest: &[u8]) -> String {
     }
     out
 }
+
+pub(crate) struct HashingReader<R> {
+    reader: R,
+    hasher: Sha256,
+    bytes: u64,
+}
+
+impl<R> HashingReader<R> {
+    // AI-FUNC-SUMMARY: Wrap a forward reader with incremental SHA-256 state without allocating a file-sized buffer.
+    pub(crate) fn new(reader: R) -> Self {
+        Self {
+            reader,
+            hasher: Sha256::new(),
+            bytes: 0,
+        }
+    }
+
+    // AI-FUNC-SUMMARY: Consume the reader wrapper and return the digest and count of bytes actually delivered to its consumer.
+    pub(crate) fn finish(self) -> (String, u64) {
+        (hex_digest(&self.hasher.finalize()), self.bytes)
+    }
+}
+
+impl<R: Read> Read for HashingReader<R> {
+    // AI-FUNC-SUMMARY: Read and hash each successfully delivered byte exactly once; propagate the underlying read error.
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let count = self.reader.read(buffer)?;
+        self.hasher.update(&buffer[..count]);
+        self.bytes += count as u64;
+        Ok(count)
+    }
+}

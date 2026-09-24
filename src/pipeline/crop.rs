@@ -2,7 +2,7 @@ use crate::config::CropConfig;
 use crate::error::{Result, RustMsptError};
 use crate::io::{
     load_raw_folder, load_tiff_or_folder_with_range, save_tiff_or_folder_with_ext, ByteOrder,
-    RawFolderSpec, Volume3D,
+    RawFolderSpec, Volume3D, VolumeNumericType,
 };
 use crate::pipeline::Pipeline;
 use nalgebra::{Matrix3, SymmetricEigen, Vector3};
@@ -21,9 +21,23 @@ enum InterpolationMode {
     Trilinear,
 }
 
+// AI-FUNC-SUMMARY: Check lossless i64-to-i32 upload and, for trilinear interpolation, exact f32 input representation; nearest retains all i32 label bits.
+fn gpu_crop_values_supported(volume: &Volume3D, background: i64, mode: InterpolationMode) -> bool {
+    let supported = |value: i64| {
+        i32::try_from(value).is_ok()
+            && (matches!(mode, InterpolationMode::Nearest) || (value as f32) as i64 == value)
+    };
+    supported(background) && volume.data.iter().copied().all(supported)
+}
+
 // AI-FUNC-SUMMARY: Parse byte order config string into ByteOrder enum; returns ByteOrder; side effects: None.
 fn parse_byte_order(value: Option<&str>) -> Result<ByteOrder> {
-    match value.unwrap_or("little").trim().to_ascii_lowercase().as_str() {
+    match value
+        .unwrap_or("little")
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
         "little" | "le" => Ok(ByteOrder::LittleEndian),
         "big" | "be" => Ok(ByteOrder::BigEndian),
         other => Err(RustMsptError::InvalidConfig(format!(
@@ -34,7 +48,12 @@ fn parse_byte_order(value: Option<&str>) -> Result<ByteOrder> {
 
 // AI-FUNC-SUMMARY: Parse interpolation mode config string (nearest/trilinear); returns InterpolationMode, defaulting to trilinear; side effects: None.
 fn parse_interpolation_mode(value: Option<&str>) -> Result<InterpolationMode> {
-    match value.unwrap_or("trilinear").trim().to_ascii_lowercase().as_str() {
+    match value
+        .unwrap_or("trilinear")
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
         "nearest" => Ok(InterpolationMode::Nearest),
         "trilinear" => Ok(InterpolationMode::Trilinear),
         other => Err(RustMsptError::InvalidConfig(format!(
@@ -88,7 +107,13 @@ fn voxel_index(width: usize, height: usize, x: usize, y: usize, z: usize) -> usi
 }
 
 // AI-FUNC-SUMMARY: Sample a voxel value at integer coordinates, returning background value when out of bounds; returns i64; side effects: None.
-fn sample_voxel_or_background(volume: &Volume3D, background: i64, x: isize, y: isize, z: isize) -> i64 {
+fn sample_voxel_or_background(
+    volume: &Volume3D,
+    background: i64,
+    x: isize,
+    y: isize,
+    z: isize,
+) -> i64 {
     if x < 0
         || y < 0
         || z < 0
@@ -98,7 +123,13 @@ fn sample_voxel_or_background(volume: &Volume3D, background: i64, x: isize, y: i
     {
         return background;
     }
-    let idx = voxel_index(volume.width, volume.height, x as usize, y as usize, z as usize);
+    let idx = voxel_index(
+        volume.width,
+        volume.height,
+        x as usize,
+        y as usize,
+        z as usize,
+    );
     volume.data[idx]
 }
 
@@ -226,7 +257,11 @@ fn infer_trim_pixels(volume: &Volume3D, background: i64) -> usize {
 // Inputs: config value (-1=auto, 0/1/2=explicit), current volume, and background value.
 // Returns: Trim pixel count clamped to [0, min(2, volume_half_size)].
 // Side effects: None.
-fn resolve_trim_pixels(config_value: Option<i32>, volume: &Volume3D, background: i64) -> Result<usize> {
+fn resolve_trim_pixels(
+    config_value: Option<i32>,
+    volume: &Volume3D,
+    background: i64,
+) -> Result<usize> {
     let requested = match config_value.unwrap_or(0) {
         -1 => Ok(infer_trim_pixels(volume, background)),
         0 => Ok(0),
@@ -245,80 +280,97 @@ fn resolve_trim_pixels(config_value: Option<i32>, volume: &Volume3D, background:
 }
 
 // AI-FUNC-SUMMARY:
-// Purpose: Trim border voxels from XY faces of a volume by the specified pixel count.
-// Inputs: source volume and trim pixels.
-// Returns: Trimmed Volume3D or error if trim is too large for the volume shape.
-// Side effects: None.
-fn trim_volume_border(volume: &Volume3D, trim: usize) -> Result<Volume3D> {
+// Purpose: Consume a volume and compact retained XY rows in its existing allocation.
+// Inputs: owned source volume and trim pixels.
+// Returns: Trimmed volume with unchanged depth and numeric type, or an invalid-shape error.
+// Side effects: Moves retained rows toward the start and truncates the data without reallocating.
+fn trim_volume_border(mut volume: Volume3D, trim: usize) -> Result<Volume3D> {
     if trim == 0 {
-        return Ok(volume.clone());
+        return Ok(volume);
     }
-
-    if volume.width <= 2 * trim || volume.height <= 2 * trim {
+    if trim > volume.width.saturating_sub(1) / 2 || trim > volume.height.saturating_sub(1) / 2 {
         return Err(RustMsptError::InvalidConfig(format!(
             "edge_trim={} is too large for output shape ({},{},{})",
             trim, volume.width, volume.height, volume.depth
         )));
     }
-
     let out_w = volume.width - 2 * trim;
     let out_h = volume.height - 2 * trim;
-    let out_d = volume.depth;
-    let mut out = vec![0i64; out_w * out_h * out_d];
-
-    for z in 0..out_d {
+    for z in 0..volume.depth {
         for y in 0..out_h {
-            for x in 0..out_w {
-                let src_x = x + trim;
-                let src_y = y + trim;
-                let src_z = z;
-                let src_idx = voxel_index(volume.width, volume.height, src_x, src_y, src_z);
-                let dst_idx = voxel_index(out_w, out_h, x, y, z);
-                out[dst_idx] = volume.data[src_idx];
+            let src = voxel_index(volume.width, volume.height, trim, y + trim, z);
+            let dst = voxel_index(out_w, out_h, 0, y, z);
+            volume.data.copy_within(src..src + out_w, dst);
+        }
+    }
+    volume.data.truncate(out_w * out_h * volume.depth);
+    volume.width = out_w;
+    volume.height = out_h;
+    Ok(volume)
+}
+
+// AI-FUNC-SUMMARY: Visit each boundary voxel once in z-major order without scanning interior voxels; the caller supplies a specialized counter, and collapsed dimensions do not duplicate edges/corners.
+fn for_each_boundary_value(volume: &Volume3D, mut record: impl FnMut(i64)) {
+    for z in 0..volume.depth {
+        let slab = z * volume.width * volume.height;
+        if z == 0 || z + 1 == volume.depth {
+            for &value in &volume.data[slab..slab + volume.width * volume.height] { record(value); }
+        } else {
+            for y in 0..volume.height {
+                let row = slab + y * volume.width;
+                if y == 0 || y + 1 == volume.height {
+                    for &value in &volume.data[row..row + volume.width] { record(value); }
+                } else {
+                    record(volume.data[row]);
+                    if volume.width > 1 { record(volume.data[row + volume.width - 1]); }
+                }
             }
         }
     }
-
-    Ok(Volume3D {
-        width: out_w,
-        height: out_h,
-        depth: out_d,
-        data: out,
-        numeric_type: volume.numeric_type,
-    })
 }
 
 // AI-FUNC-SUMMARY:
 // Purpose: Detect the background value of a volume by finding the most frequent value on boundary voxels.
 // Inputs: volume reference.
-// Returns: The modal boundary voxel value as i64.
+// Returns: The modal boundary voxel value as i64, choosing the smallest tied value.
+// Notes: Bounded dense counters cover common 8/16-bit types; sparse spill preserves arbitrary i64 values and large types.
 // Side effects: None.
 fn detect_background_mode(volume: &Volume3D) -> i64 {
     let mut counts: HashMap<i64, usize> = HashMap::new();
-
-    for z in 0..volume.depth {
-        for y in 0..volume.height {
-            for x in 0..volume.width {
-                let on_boundary = x == 0
-                    || y == 0
-                    || z == 0
-                    || x + 1 == volume.width
-                    || y + 1 == volume.height
-                    || z + 1 == volume.depth;
-                if !on_boundary {
-                    continue;
-                }
-                let idx = voxel_index(volume.width, volume.height, x, y, z);
-                *counts.entry(volume.data[idx]).or_insert(0usize) += 1;
-            }
-        }
+    if volume.width == 0 || volume.height == 0 || volume.depth == 0 { return 0; }
+    // Dense counters avoid per-voxel hashing for common integer image types.
+    // Unexpected out-of-range values remain valid keys in the sparse spill map.
+    let (base, bins) = match volume.numeric_type {
+        VolumeNumericType::U8 => (0i64, 256),
+        VolumeNumericType::I8 => (-128, 256),
+        VolumeNumericType::U16 if volume.data.len() >= 65_536 => (0, 65_536),
+        VolumeNumericType::I16 if volume.data.len() >= 65_536 => (-32_768, 65_536),
+        _ => (0, 0),
+    };
+    if bins == 0 {
+        for_each_boundary_value(volume, |value| { *counts.entry(value).or_insert(0usize) += 1; });
+        return counts.into_iter().max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
+            .map(|(value, _)| value).unwrap_or(0);
     }
+    let mut dense = vec![0usize; bins];
+    let (mut best_value, mut best_count) = (0i64, 0usize);
+    let mut record = |value: i64| {
+        let index = value.checked_sub(base).and_then(|n| usize::try_from(n).ok());
+        let count = if let Some(index) = index.filter(|&n| n < dense.len()) {
+            &mut dense[index]
+        } else {
+            counts.entry(value).or_insert(0usize)
+        };
+        *count += 1;
+        if *count > best_count || (*count == best_count && value < best_value) {
+            best_count = *count;
+            best_value = value;
+        }
+    };
+    for_each_boundary_value(volume, &mut record);
+    // Equal boundary counts choose the smallest value, independent of hash iteration order.
+    best_value
 
-    counts
-        .into_iter()
-        .max_by_key(|(_, c)| *c)
-        .map(|(v, _)| v)
-        .unwrap_or(0)
 }
 
 // AI-FUNC-SUMMARY:
@@ -330,7 +382,120 @@ fn detect_background_mode(volume: &Volume3D) -> i64 {
 fn estimate_pca_bbox(
     volume: &Volume3D,
     background: i64,
-) -> Result<(Matrix3<f64>, Vector3<f64>, Vector3<f64>, Vector3<f64>, usize)> {
+) -> Result<(
+    Matrix3<f64>,
+    Vector3<f64>,
+    Vector3<f64>,
+    Vector3<f64>,
+    usize,
+)> {
+    let partials = foreground_blocks(volume, background, || (0usize, Vector3::zeros()), |state, p| {
+        state.0 += 1;
+        state.1 += p;
+    });
+    let (count, sum) = partials.into_iter().fold((0usize, Vector3::zeros()), |(count, sum), (n, value)| (count + n, sum + value));
+
+    if count == 0 {
+        return Err(RustMsptError::InvalidConfig(
+            "No foreground voxels found after background detection".to_string(),
+        ));
+    }
+
+    let centroid = sum / count as f64;
+    let partials = foreground_blocks(volume, background, Matrix3::zeros, |cov, p| {
+        let d = p - centroid;
+        cov[(0, 0)] += d.x * d.x;
+        cov[(0, 1)] += d.x * d.y;
+        cov[(0, 2)] += d.x * d.z;
+        cov[(1, 0)] += d.y * d.x;
+        cov[(1, 1)] += d.y * d.y;
+        cov[(1, 2)] += d.y * d.z;
+        cov[(2, 0)] += d.z * d.x;
+        cov[(2, 1)] += d.z * d.y;
+        cov[(2, 2)] += d.z * d.z;
+    });
+    let mut cov = partials.into_iter().fold(Matrix3::zeros(), |sum, value| sum + value);
+    cov /= count as f64;
+
+    let eig = SymmetricEigen::new(cov);
+    let mut order = [0usize, 1usize, 2usize];
+    order.sort_by(|a, b| {
+        eig.eigenvalues[*b]
+            .partial_cmp(&eig.eigenvalues[*a])
+            .unwrap_or(Ordering::Equal)
+    });
+
+    let mut rot = Matrix3::from_columns(&[
+        eig.eigenvectors.column(order[0]).into_owned(),
+        eig.eigenvectors.column(order[1]).into_owned(),
+        eig.eigenvectors.column(order[2]).into_owned(),
+    ]);
+
+    if rot.determinant() < 0.0 {
+        let c2 = -rot.column(2).into_owned();
+        rot.set_column(2, &c2);
+    }
+
+    let inv = rot.transpose();
+    let empty_bounds = || (Vector3::repeat(f64::INFINITY), Vector3::repeat(f64::NEG_INFINITY));
+    let partials = foreground_blocks(volume, background, empty_bounds, |(min, max), p| {
+        let q = inv * (p - centroid);
+        for axis in 0..3 { min[axis] = min[axis].min(q[axis]); max[axis] = max[axis].max(q[axis]); }
+    });
+    let (min_v, max_v) = partials.into_iter().fold(empty_bounds(), |(mut min, mut max), (lo, hi)| {
+        for axis in 0..3 { min[axis] = min[axis].min(lo[axis]); max[axis] = max[axis].max(hi[axis]); }
+        (min, max)
+    });
+
+    Ok((rot, centroid, min_v, max_v, count))
+}
+
+
+// AI-FUNC-SUMMARY: Scan fixed 65536-voxel blocks in parallel, visiting foreground positions in source order and collecting partials by block index regardless of worker count.
+fn foreground_blocks<T: Send>(
+    volume: &Volume3D,
+    background: i64,
+    initial: impl Fn() -> T + Sync + Send,
+    accumulate: impl Fn(&mut T, Vector3<f64>) + Sync + Send,
+) -> Vec<T> {
+    const BLOCK: usize = 65536;
+    let scan = |(block, values): (usize, &[i64])| {
+        let mut result = initial();
+        let mut offset = 0;
+        while offset < values.len() {
+            let index = block * BLOCK + offset;
+            let x0 = index % volume.width;
+            let y = (index / volume.width) % volume.height;
+            let z = index / (volume.width * volume.height);
+            let count = (volume.width - x0).min(values.len() - offset);
+            for (x, &value) in values[offset..offset + count].iter().enumerate() {
+                if value != background { accumulate(&mut result, Vector3::new((x0 + x) as f64, y as f64, z as f64)); }
+            }
+            offset += count;
+        }
+        result
+    };
+    if volume.data.len() < 1_048_576 || rayon::current_num_threads() == 1 {
+        volume.data.chunks(BLOCK).enumerate().map(scan).collect()
+    } else {
+        let tasks = volume.data.len().div_ceil(1_048_576).min(rayon::current_num_threads());
+        let blocks_per_task = volume.data.len().div_ceil(BLOCK).div_ceil(tasks);
+        volume.data.par_chunks(BLOCK).enumerate().with_min_len(blocks_per_task).map(scan).collect()
+    }
+}
+
+#[cfg(test)]
+// AI-FUNC-SUMMARY: Original serial three-pass PCA retained as a numerical oracle for fixed-block reductions.
+fn estimate_pca_bbox_serial(
+    volume: &Volume3D,
+    background: i64,
+) -> Result<(
+    Matrix3<f64>,
+    Vector3<f64>,
+    Vector3<f64>,
+    Vector3<f64>,
+    usize,
+)> {
     let mut count: usize = 0;
     let mut sum = Vector3::new(0.0, 0.0, 0.0);
 
@@ -448,31 +613,53 @@ fn rotate_and_crop(
     let out_d = (z1 - z0 + 1).max(1) as usize;
 
     let mut data = vec![background; out_w * out_h * out_d];
-    let slice_len = out_w * out_h;
-
-    data.par_chunks_mut(slice_len).enumerate().for_each(|(z, slab)| {
-        let z_coord = z0 as f64 + z as f64;
-        for y in 0..out_h {
-            let y_coord = y0 as f64 + y as f64;
-            for x in 0..out_w {
-                let local = Vector3::new(
-                    x0 as f64 + x as f64,
-                    y_coord,
-                    z_coord,
-                );
-                let src = rot * local + centroid;
-                let idx = y * out_w + x;
-                slab[idx] = match interpolation_mode {
-                    InterpolationMode::Nearest => {
-                        sample_nearest(volume, background, src.x, src.y, src.z)
+    // Preserve cheap slice loops when depth already exposes enough parallelism.
+    // Otherwise use row-aligned tiles to make shallow volumes share the pool.
+    if out_d >= rayon::current_num_threads() {
+        data.par_chunks_mut(out_w * out_h)
+            .enumerate()
+            .for_each(|(z, slab)| {
+                let z_coord = z0 as f64 + z as f64;
+                for y in 0..out_h {
+                    let y_coord = y0 as f64 + y as f64;
+                    for x in 0..out_w {
+                        let src =
+                            rot * Vector3::new(x0 as f64 + x as f64, y_coord, z_coord) + centroid;
+                        slab[y * out_w + x] = match interpolation_mode {
+                            InterpolationMode::Nearest => {
+                                sample_nearest(volume, background, src.x, src.y, src.z)
+                            }
+                            InterpolationMode::Trilinear => {
+                                sample_trilinear(volume, background, src.x, src.y, src.z)
+                            }
+                        };
                     }
-                    InterpolationMode::Trilinear => {
-                        sample_trilinear(volume, background, src.x, src.y, src.z)
+                }
+            });
+    } else {
+        let rows_per_task = (4096 / out_w).max(1).min(out_h);
+        data.par_chunks_mut(out_w * rows_per_task)
+            .enumerate()
+            .for_each(|(tile, values)| {
+                for (row, values) in values.chunks_mut(out_w).enumerate() {
+                    let row_index = tile * rows_per_task + row;
+                    let y_coord = y0 as f64 + (row_index % out_h) as f64;
+                    let z_coord = z0 as f64 + (row_index / out_h) as f64;
+                    for (x, value) in values.iter_mut().enumerate() {
+                        let local = Vector3::new(x0 as f64 + x as f64, y_coord, z_coord);
+                        let src = rot * local + centroid;
+                        *value = match interpolation_mode {
+                            InterpolationMode::Nearest => {
+                                sample_nearest(volume, background, src.x, src.y, src.z)
+                            }
+                            InterpolationMode::Trilinear => {
+                                sample_trilinear(volume, background, src.x, src.y, src.z)
+                            }
+                        };
                     }
-                };
-            }
-        }
-    });
+                }
+            });
+    }
 
     Volume3D {
         width: out_w,
@@ -482,7 +669,6 @@ fn rotate_and_crop(
         numeric_type: volume.numeric_type,
     }
 }
-
 
 // AI-FUNC-SUMMARY:
 // Purpose: GPU-accelerated rotate-and-crop: upload volume to GPU, dispatch compute, download result.
@@ -505,16 +691,38 @@ fn rotate_and_crop_gpu(
     let (y0, y1) = float_bounds_to_inclusive_i64(min_v.y, max_v.y, eps);
     let (z0, z1) = float_bounds_to_inclusive_i64(min_v.z, max_v.z, eps);
 
-    let out_w = (x1 - x0 + 1).max(1) as u32;
-    let out_h = (y1 - y0 + 1).max(1) as u32;
-    let out_d = (z1 - z0 + 1).max(1) as u32;
+    let dimension = |lo: isize, hi: isize| {
+        hi.checked_sub(lo)
+            .and_then(|n| n.checked_add(1))
+            .and_then(|n| u32::try_from(n.max(1)).ok())
+            .ok_or("crop GPU dimension exceeds u32")
+    };
+    let out_w = dimension(x0, x1)?;
+    let out_h = dimension(y0, y1)?;
+    let out_d = dimension(z0, z1)?;
+    let source_dims = [volume.width, volume.height, volume.depth].map(u32::try_from);
+    let [src_w, src_h, src_d] = source_dims;
+    let (src_w, src_h, src_d) = (
+        src_w.map_err(|_| "source width exceeds u32")?,
+        src_h.map_err(|_| "source height exceeds u32")?,
+        src_d.map_err(|_| "source depth exceeds u32")?,
+    );
 
+    if !gpu_crop_values_supported(volume, background, interpolation_mode) {
+        return Err(
+            "crop GPU cannot preserve input integers for the selected interpolation".into(),
+        );
+    }
     let t0 = std::time::Instant::now();
 
     let mut pipeline = crate::gpu::volume_transform::GpuVolumeTransformPipeline::new()?;
 
-    let src_i32: Vec<i32> = volume.data.iter().map(|&v| v as i32).collect();
-    let bg_i32 = background as i32;
+    let src_i32: Vec<i32> = volume
+        .data
+        .iter()
+        .map(|&v| i32::try_from(v).map_err(|_| "crop GPU input exceeds i32".to_string()))
+        .collect::<std::result::Result<_, _>>()?;
+    let bg_i32 = i32::try_from(background).map_err(|_| "crop GPU background exceeds i32")?;
     let interp = match interpolation_mode {
         InterpolationMode::Nearest => 0u32,
         InterpolationMode::Trilinear => 1u32,
@@ -522,24 +730,15 @@ fn rotate_and_crop_gpu(
     let origin = Vector3::new(x0 as f64, y0 as f64, z0 as f64);
 
     let out_i32 = pipeline.rotate_and_crop(
-        &src_i32,
-        volume.width as u32,
-        volume.height as u32,
-        volume.depth as u32,
-        bg_i32,
-        rot,
-        centroid,
-        &origin,
-        out_w,
-        out_h,
-        out_d,
-        interp,
-    );
+        &src_i32, src_w, src_h, src_d, bg_i32, rot, centroid, &origin, out_w, out_h, out_d, interp,
+    )?;
 
     let data: Vec<i64> = out_i32.iter().map(|&v| v as i64).collect();
     let elapsed = t0.elapsed().as_secs_f64();
-    println!("[Info] GPU volume transform: {:.3}s, {}x{}x{} -> {}x{}x{}",
-        elapsed, volume.width, volume.height, volume.depth, out_w, out_h, out_d);
+    println!(
+        "[Info] GPU volume transform: {:.3}s, {}x{}x{} -> {}x{}x{}",
+        elapsed, volume.width, volume.height, volume.depth, out_w, out_h, out_d
+    );
 
     Ok(Volume3D {
         width: out_w as usize,
@@ -557,19 +756,48 @@ impl Pipeline for CropPipeline {
     // Returns: Ok(()) or error.
     // Side effects: Reads volume from disk; writes cropped TIFF output to disk; prints diagnostics to stdout.
     fn run(&self) -> Result<()> {
+        let available = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        let workers = match self.config.cpu_max.unwrap_or(-1) {
+            -1 => available,
+            n => (n.max(1) as usize).min(available),
+        };
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(workers)
+            .build()
+            .map_err(|e| {
+                RustMsptError::InvalidConfig(format!("Failed to build crop thread pool: {e}"))
+            })?;
+        pool.install(|| self.run_in_pool())
+    }
+}
+
+impl CropPipeline {
+    // AI-FUNC-SUMMARY: Execute all crop stages under one configured pool, preserving interpolation/type/backend/fallback policy; report completed-stage wall times, with backend selection and GPU initialization included in transform_and_backend.
+    fn run_in_pool(&self) -> Result<()> {
+        let requested = crate::compute::policy::configured_mode(&self.config.acceleration)?;
+        let total_started = std::time::Instant::now();
+        let stage_started = std::time::Instant::now();
         let input_volume = load_input_volume(&self.config)?;
+        println!("[Timing] crop stage=load seconds={:.9}", stage_started.elapsed().as_secs_f64());
         println!(
             "[Info] Crop input loaded: shape=({},{},{})",
             input_volume.width, input_volume.height, input_volume.depth
         );
 
+        let stage_started = std::time::Instant::now();
         let background = detect_background_mode(&input_volume);
+        println!("[Timing] crop stage=background seconds={:.9}", stage_started.elapsed().as_secs_f64());
         println!("[Info] Background value detected: {}", background);
 
         let interpolation_mode = parse_interpolation_mode(self.config.interpolation.as_deref())?;
         println!("[Info] Interpolation mode: {:?}", interpolation_mode);
 
+        let stage_started = std::time::Instant::now();
         let (rot, centroid, min_v, max_v, fg_count) = estimate_pca_bbox(&input_volume, background)?;
+        println!("[Timing] crop stage=pca seconds={:.9}", stage_started.elapsed().as_secs_f64());
+        let stage_started = std::time::Instant::now();
         println!("[Info] Foreground voxels: {}", fg_count);
         println!(
             "[Info] Rotated bbox: min=({:.3},{:.3},{:.3}) max=({:.3},{:.3},{:.3})",
@@ -583,42 +811,377 @@ impl Pipeline for CropPipeline {
             x0, x1, y0, y1, z0, z1
         );
 
-        let cropped = {
-            #[cfg(feature = "gpu")]
-            {
-                let out_total = ((x1 - x0 + 1).max(1) * (y1 - y0 + 1).max(1) * (z1 - z0 + 1).max(1)) as usize;
-                if out_total > 100_000 {
-                    match rotate_and_crop_gpu(&input_volume, background, &rot, &centroid, &min_v, &max_v, interpolation_mode) {
-                        Ok(vol) => vol,
-                        Err(e) => {
-                            println!("[Warning] GPU volume transform failed: {e}, falling back to CPU");
-                            rotate_and_crop(&input_volume, background, &rot, &centroid, &min_v, &max_v, interpolation_mode)
-                        }
-                    }
-                } else {
-                    rotate_and_crop(&input_volume, background, &rot, &centroid, &min_v, &max_v, interpolation_mode)
-                }
+        let mut out_total = 1usize;
+        for (lo, hi) in [(x0, x1), (y0, y1), (z0, z1)] {
+            let count = hi
+                .checked_sub(lo)
+                .and_then(|n| n.checked_add(1))
+                .and_then(|n| usize::try_from(n.max(1)).ok())
+                .ok_or_else(|| {
+                    RustMsptError::InvalidConfig("crop output dimension overflow".into())
+                })?;
+            out_total = out_total
+                .checked_mul(count)
+                .ok_or_else(|| RustMsptError::InvalidConfig("crop output size overflow".into()))?;
+        }
+        let consider_gpu = requested == crate::compute::backend::AccelerationMode::Gpu
+            || (requested == crate::compute::backend::AccelerationMode::Auto
+                && out_total >= self.config.acceleration.gpu_min_voxels);
+        let integer_safe = !consider_gpu
+            || gpu_crop_values_supported(&input_volume, background, interpolation_mode);
+        if consider_gpu && !integer_safe {
+            let reason = "crop GPU cannot preserve input integers for the selected interpolation";
+            if !self.config.acceleration.cpu_fallback {
+                return Err(RustMsptError::Gpu(reason.into()));
             }
-            #[cfg(not(feature = "gpu"))]
-            {
-                rotate_and_crop(&input_volume, background, &rot, &centroid, &min_v, &max_v, interpolation_mode)
+            eprintln!("[Info] {reason}; using CPU");
+        }
+        let estimated = (input_volume.data.len() as u64)
+            .checked_mul(4)
+            .and_then(|n| {
+                (out_total as u64)
+                    .checked_mul(8)
+                    .and_then(|out| n.checked_add(out))
+            })
+            .and_then(|n| n.checked_add(128));
+        let selection = crate::compute::policy::resolve_execution(
+            &self.config.acceleration,
+            requested,
+            out_total,
+            self.config.acceleration.gpu_min_voxels,
+            integer_safe,
+            estimated,
+        )?;
+        if let Some(reason) = &selection.fallback {
+            eprintln!("[Info] crop: {}", reason.reason);
+        }
+        #[cfg(feature = "gpu")]
+        let attempted = if selection.backend.is_gpu() {
+            Some(rotate_and_crop_gpu(
+                &input_volume,
+                background,
+                &rot,
+                &centroid,
+                &min_v,
+                &max_v,
+                interpolation_mode,
+            ))
+        } else {
+            None
+        };
+        #[cfg(not(feature = "gpu"))]
+        let attempted: Option<std::result::Result<Volume3D, String>> = None;
+        let (cropped, backend) = match attempted {
+            Some(Ok(volume)) => (volume, "gpu"),
+            Some(Err(error)) if !self.config.acceleration.cpu_fallback => {
+                return Err(RustMsptError::Gpu(format!("crop transform: {error}")))
+            }
+            other => {
+                if let Some(Err(error)) = other {
+                    eprintln!("[Warning] crop transform: {error}; falling back to CPU");
+                }
+                (
+                    rotate_and_crop(
+                        &input_volume,
+                        background,
+                        &rot,
+                        &centroid,
+                        &min_v,
+                        &max_v,
+                        interpolation_mode,
+                    ),
+                    "cpu",
+                )
             }
         };
+        println!(
+            "[Info] Crop execution: backend={backend}, workers={}, worker_index={:?}",
+            rayon::current_num_threads(),
+            rayon::current_thread_index()
+        );
 
+        println!("[Timing] crop stage=transform_and_backend seconds={:.9}", stage_started.elapsed().as_secs_f64());
+        let stage_started = std::time::Instant::now();
         let trim_pixels = resolve_trim_pixels(self.config.edge_trim, &cropped, background)?;
         println!("[Info] Edge trim pixels (xy): {}", trim_pixels);
-        let cropped = trim_volume_border(&cropped, trim_pixels)?;
+        let cropped = trim_volume_border(cropped, trim_pixels)?;
+        println!("[Timing] crop stage=trim seconds={:.9}", stage_started.elapsed().as_secs_f64());
 
         println!(
             "[Info] Cropped output shape=({},{},{})",
             cropped.width, cropped.height, cropped.depth
         );
 
+        let stage_started = std::time::Instant::now();
         let output = Path::new(&self.config.output.path);
         let prefix = self.config.output.folder_prefix.as_deref();
         let ext = self.config.output.folder_extension.as_deref();
         save_tiff_or_folder_with_ext(&cropped, output, prefix, ext)?;
-        println!("[Info] Crop pipeline completed. Output written: {}", output.display());
+        println!("[Timing] crop stage=encode_write seconds={:.9}", stage_started.elapsed().as_secs_f64());
+        println!(
+            "[Info] Crop pipeline completed. Output written: {}",
+            output.display()
+        );
+        println!("[Timing] crop stage=total_in_pool seconds={:.9}", total_started.elapsed().as_secs_f64());
         Ok(())
     }
+}
+
+#[cfg(test)]
+mod performance_tests {
+    use super::*;
+
+    // AI-FUNC-SUMMARY: Compare owned in-place trimming with indexed source rows and verify allocation reuse.
+    #[test]
+    fn owned_trim_preserves_rows_and_allocation() {
+        for (w, h, d) in [(1, 1, 1), (9, 7, 3), (8, 6, 2)] {
+            for trim in 0..=2 {
+                let mut source = Volume3D {
+                    width: w,
+                    height: h,
+                    depth: d,
+                    data: vec![0; w * h * d],
+                    numeric_type: crate::io::volume::VolumeNumericType::U32,
+                };
+                for (i, value) in source.data.iter_mut().enumerate() {
+                    *value = i as i64;
+                }
+                let ptr = source.data.as_ptr();
+                let expected: Vec<_> = (0..d)
+                    .flat_map(|z| {
+                        (trim..h.saturating_sub(trim)).flat_map(move |y| {
+                            (trim..w.saturating_sub(trim))
+                                .map(move |x| voxel_index(w, h, x, y, z) as i64)
+                        })
+                    })
+                    .collect();
+                let result = trim_volume_border(source, trim);
+                if w <= 2 * trim || h <= 2 * trim {
+                    assert!(result.is_err());
+                    continue;
+                }
+                let result = result.unwrap();
+                assert_eq!(result.data, expected);
+                assert_eq!(result.data.as_ptr(), ptr);
+                assert_eq!(
+                    (result.width, result.height, result.depth),
+                    (w - 2 * trim, h - 2 * trim, d)
+                );
+            }
+        }
+    }
+    // AI-FUNC-SUMMARY: Compare tiled CPU sampling with a serial voxel oracle across workers and tile tails.
+    #[test]
+    fn tiled_resampling_matches_serial_coordinates() {
+        let volume = Volume3D {
+            width: 90,
+            height: 80,
+            depth: 3,
+            data: (0..21600).map(|i| (i % 251) as i64 - 100).collect(),
+            numeric_type: crate::io::volume::VolumeNumericType::I16,
+        };
+        let rot = Matrix3::new(0.98, -0.1, 0.0, 0.1, 0.98, 0.0, 0.0, 0.0, 1.0);
+        let center = Vector3::new(1.5, -0.5, 0.0);
+        for depth in [1, 3] {
+            let min = Vector3::new(-1.0, -2.0, 0.0);
+            let max = Vector3::new(83.0, 68.0, (depth - 1) as f64);
+            for mode in [InterpolationMode::Nearest, InterpolationMode::Trilinear] {
+                let mut expected = Vec::new();
+                for z in 0..depth {
+                    for y in 0..71 {
+                        for x in 0..85 {
+                            let src = rot * Vector3::new(x as f64 - 1.0, y as f64 - 2.0, z as f64)
+                                + center;
+                            expected.push(match mode {
+                                InterpolationMode::Nearest => {
+                                    sample_nearest(&volume, -999, src.x, src.y, src.z)
+                                }
+                                InterpolationMode::Trilinear => {
+                                    sample_trilinear(&volume, -999, src.x, src.y, src.z)
+                                }
+                            });
+                        }
+                    }
+                }
+                for workers in [1, 2, 8] {
+                    let pool = rayon::ThreadPoolBuilder::new()
+                        .num_threads(workers)
+                        .build()
+                        .unwrap();
+                    let result = pool.install(|| {
+                        rotate_and_crop(&volume, -999, &rot, &center, &min, &max, mode)
+                    });
+                    assert_eq!((result.width, result.height, result.depth), (85, 71, depth));
+                    assert_eq!(result.data, expected);
+                }
+            }
+        }
+    }
+    // AI-FUNC-SUMMARY: Measure original slice scheduling versus bounded tiles with identical trilinear outputs.
+    #[test]
+    #[ignore = "release performance measurement"]
+    fn crop_tile_benchmark() {
+        use std::time::Instant;
+        for (width, height, depth) in [(1024, 512, 1), (256, 256, 32)] {
+            let volume = Volume3D {
+                width,
+                height,
+                depth,
+                data: (0..width * height * depth)
+                    .map(|i| (i % 251) as i64)
+                    .collect(),
+                numeric_type: crate::io::volume::VolumeNumericType::U16,
+            };
+            let rot = Matrix3::identity();
+            let center = Vector3::new(0.25, 0.25, 0.25);
+            let min = Vector3::zeros();
+            let max = Vector3::new((width - 1) as f64, (height - 1) as f64, (depth - 1) as f64);
+            for workers in [1, 2, 8] {
+                let pool = rayon::ThreadPoolBuilder::new()
+                    .num_threads(workers)
+                    .build()
+                    .unwrap();
+                for repeat in 0..6 {
+                    pool.install(|| {
+                        let start = Instant::now();
+                        let mut old = vec![0; volume.data.len()];
+                        old.par_chunks_mut(width*height).enumerate().for_each(|(z, slab)| {
+                            for y in 0..height { for x in 0..width {
+                                let src = rot * Vector3::new(x as f64, y as f64, z as f64) + center;
+                                slab[y*width+x] = sample_trilinear(&volume, 0, src.x, src.y, src.z);
+                            } }
+                        });
+                        let old_secs = start.elapsed().as_secs_f64();
+                        let start = Instant::now();
+                        let new = rotate_and_crop(&volume, 0, &rot, &center, &min, &max, InterpolationMode::Trilinear);
+                        let new_secs = start.elapsed().as_secs_f64();
+                        assert_eq!(new.data, old);
+                        println!("crop_tiles shape={width}x{height}x{depth} workers={workers} repeat={repeat} slice_seconds={old_secs:.9} tile_seconds={new_secs:.9}");
+                    });
+                }
+            }
+        }
+    }
+    // AI-FUNC-SUMMARY: Build asymmetric and rank-deficient foreground volumes spanning multiple fixed PCA blocks.
+    fn pca_fixture(kind: usize) -> Volume3D {
+        let (width, height, depth) = (97usize, 73usize, 29usize);
+        let mut data = vec![0; width * height * depth];
+        for z in 0..depth { for y in 0..height { for x in 0..width {
+            let dx = x as f64 - 48.0;
+            let dy = y as f64 - 36.0;
+            let dz = z as f64 - 14.0;
+            let solid = match kind {
+                0 => ((dx + 0.37*dy)/34.0).powi(2) + ((dy - 0.12*dz)/21.0).powi(2) + (dz/10.0).powi(2) < 1.0,
+                1 => dx.abs() <= 10.0 && dy.abs() <= 10.0 && dz.abs() <= 10.0,
+                2 => x == 48 && y == 36,
+                3 => z == 14 && dx.abs() <= 10.0 && dy.abs() <= 10.0,
+                _ => x == 48 && y == 36 && z == 14,
+            };
+            if solid { data[voxel_index(width, height, x, y, z)] = 1; }
+        } } }
+        Volume3D { width, height, depth, data, numeric_type: crate::io::volume::VolumeNumericType::U8 }
+    }
+
+    // AI-FUNC-SUMMARY: Verify fixed-block PCA is worker-independent and agrees numerically with the serial oracle, including degenerate foregrounds.
+    #[test]
+    fn fixed_block_pca_matches_serial_and_workers() {
+        for kind in 0..5 {
+            let mut volume = pca_fixture(kind);
+            if kind == 0 {
+                volume.depth *= 8;
+                volume.data.resize(volume.width * volume.height * volume.depth, 0);
+            }
+            let serial = estimate_pca_bbox_serial(&volume, 0).unwrap();
+            let mut reference = None;
+            for workers in [1, 2, 8] {
+                let pool = rayon::ThreadPoolBuilder::new().num_threads(workers).build().unwrap();
+                let actual = pool.install(|| estimate_pca_bbox(&volume, 0)).unwrap();
+                if let Some(previous) = &reference { assert_eq!(&actual, previous); }
+                assert_eq!(actual.4, serial.4);
+                assert!((actual.1 - serial.1).norm() < 1e-12);
+                assert!((actual.0.transpose()*actual.0 - Matrix3::identity()).norm() < 1e-12);
+                assert!(actual.0.determinant() > 0.999999999);
+                if kind == 0 {
+                    assert!((actual.0 - serial.0).norm() < 1e-10);
+                    assert!((actual.2 - serial.2).norm() < 1e-9);
+                    assert!((actual.3 - serial.3).norm() < 1e-9);
+                    let new = rotate_and_crop(&volume, 0, &actual.0, &actual.1, &actual.2, &actual.3, InterpolationMode::Nearest);
+                    let old = rotate_and_crop(&volume, 0, &serial.0, &serial.1, &serial.2, &serial.3, InterpolationMode::Nearest);
+                    assert_eq!(new.data, old.data);
+                }
+                reference = Some(actual);
+            }
+        }
+        let mut empty = pca_fixture(4); empty.data.fill(0);
+        assert!(estimate_pca_bbox(&empty, 0).is_err());
+    }
+
+    // AI-FUNC-SUMMARY: Measure serial and fixed-block three-pass PCA with one warmup and five alternating samples per worker count.
+    #[test]
+    #[ignore = "release performance measurement"]
+    fn pca_block_benchmark() {
+        let small = pca_fixture(0);
+        let mut large = Volume3D { width: small.width*2, height: small.height*2, depth: small.depth*2, data: vec![0; small.data.len()*8], numeric_type: small.numeric_type };
+        for z in 0..large.depth { for y in 0..large.height { for x in 0..large.width {
+            large.data[voxel_index(large.width, large.height, x, y, z)] = small.data[voxel_index(small.width, small.height, x/2, y/2, z/2)];
+        } } }
+        for (case, volume) in [("small", small), ("large", large)] {
+        for workers in [1, 2, 8] {
+            let pool = rayon::ThreadPoolBuilder::new().num_threads(workers).build().unwrap();
+            for sample in 0..6 {
+                pool.install(|| {
+                    let mut times = [0.0; 2];
+                    for which in if sample % 2 == 0 { [0, 1] } else { [1, 0] } {
+                        let start = std::time::Instant::now();
+                        for _ in 0..10 {
+                            std::hint::black_box(if which == 0 { estimate_pca_bbox_serial(&volume, 0) } else { estimate_pca_bbox(&volume, 0) }).unwrap();
+                        }
+                        times[which] = start.elapsed().as_secs_f64();
+                    }
+                    println!("pca_blocks case={case} workers={workers} sample={sample} repeats=10 serial_seconds={:.9} parallel_seconds={:.9}", times[0], times[1]);
+                });
+            }
+        }
+    }
+    }
+
+    // AI-FUNC-SUMMARY: Compare dense/sparse background modes to an independent full-grid ordered-map oracle across integer metadata, collapsed dimensions, ties and out-of-range i64 extrema.
+    #[test]
+    fn background_dense_and_spill_match_reference() {
+        for (width,height,depth) in [(1,7,3),(7,1,3),(7,3,1),(256,256,1),(64,64,16)] {
+            for values in [vec![0,1,128,255],vec![-32768,-1,0,32767],vec![0,1,65535,65536],vec![i64::MIN,i64::MAX,-129,256]] {
+                let mut volume=Volume3D {width,height,depth,data:(0..width*height*depth).map(|i|values[(i*17+3)%values.len()]).collect(),numeric_type:VolumeNumericType::U8};
+                let mut counts=std::collections::BTreeMap::new();
+                for z in 0..depth {for y in 0..height {for x in 0..width {
+                    if x==0 || x+1==width || y==0 || y+1==height || z==0 || z+1==depth {
+                        *counts.entry(volume.data[(z*height+y)*width+x]).or_insert(0usize)+=1;
+                    }
+                }}}
+                let max_count=*counts.values().max().unwrap();
+                let expected=counts.into_iter().find(|(_,n)|*n==max_count).unwrap().0;
+                for ty in [VolumeNumericType::U8,VolumeNumericType::I8,VolumeNumericType::U16,VolumeNumericType::I16,VolumeNumericType::U32,VolumeNumericType::I32] {
+                    volume.numeric_type=ty;
+                    assert_eq!(detect_background_mode(&volume),expected,"{width}x{height}x{depth} {ty:?}");
+                }
+            }
+        }
+    }
+
+    // AI-FUNC-SUMMARY: Compare face-only boundary counts with full-scan counting, including collapsed dimensions and deterministic ties.
+    #[test]
+    fn background_faces_match_shell_without_duplicate_edges() {
+        for width in [1, 2, 9] { for height in [1, 2, 7] { for depth in [1, 2, 5] {
+            let volume = Volume3D { width, height, depth, data: (0..width*height*depth).map(|i| ((i*17+3)%11) as i64 - 5).collect(), numeric_type: crate::io::volume::VolumeNumericType::I16 };
+            let mut expected = std::collections::BTreeMap::new();
+            for z in 0..depth { for y in 0..height { for x in 0..width {
+                if x == 0 || x + 1 == width || y == 0 || y + 1 == height || z == 0 || z + 1 == depth {
+                    *expected.entry(volume.data[voxel_index(width,height,x,y,z)]).or_insert(0usize) += 1;
+                }
+            } } }
+            let count = expected.values().copied().max().unwrap();
+            let value = expected.into_iter().find(|(_, n)| *n == count).unwrap().0;
+            assert_eq!(detect_background_mode(&volume), value);
+        } } }
+    }
+
 }

@@ -21,20 +21,20 @@ S0、S1 与 G2-1 至 G2-5 已实现。流水线在 S0 前按区域对角线归�
 | `DeterminismMode` | `src/config/meshgen.rs:50` | 运行可复现性契约：`strict`（默认，按位）/ `fast`（尽力）。 |
 | `UnmappedPolicy` | `src/config/meshgen.rs:59` | INP 导出时对缺少材料映射区域的行为：`error`（默认）/ `elset-only`；kebab-case。 |
 | `SnapshotMode` | `src/config/meshgen.rs:68` | 契约快照产出级别：`none` / `key`（默认，s02/s05/s08/s11）/ `all`。 |
-| `MeshGenInput` | `src/config/meshgen.rs:80` | 单个 STL 输入：`stl` 路径、可选 `priority`（**每个输入均默认为 0**）、`kind`（默认 `auto`）。 |
-| `MeshGenDomain` | `src/config/meshgen.rs:90` | 轴对齐生成区域；`min`/`max` 各须为 3 分量，且每轴 `min < max`。 |
-| `MeshGenSizing` | `src/config/meshgen.rs:99` | 作为区域包围盒对角线分数的尺寸场上下限，外加 `grading`（默认 2.0，即 2:1 梯度）与 `gap_cells`（默认 2.0）。 |
-| `MeshGenGaps` | `src/config/meshgen.rs:114` | 间隙场厚度因子（x 局部 h(x)）与分离置信度下限。 |
-| `MeshGenEnvelope` | `src/config/meshgen.rs:125` | 作为区域包围盒对角线分数的数值包络厚度。 |
-| `MeshGenRepair` | `src/config/meshgen.rs:132` | S0 修复配置（`level`）。 |
-| `MeshGenMaterials` | `src/config/meshgen.rs:143` | Abaqus INP 导出的材料分配；`by_component` 会保留重复键到 `validate()`。 |
-| `MeshGenOutput` | `src/config/meshgen.rs:154` | 输出目的地：必填 `vtu`，可选 `abaqus`/`report`。 |
-| `MeshGenParams` | `src/config/meshgen.rs:168` | `meshgen:` YAML 块；加载后须调用 `validate()`。 |
-| `MeshGenConfig` | `src/config/meshgen.rs:198` | 顶层 YAML 包装（`meshgen:`）。 |
-| `MeshGenInput::resolved_priority` | `src/config/meshgen.rs:204` | 有效优先级：显式取值，否则为 0。不接收文件索引——「由文件顺序推导默认优先级」正是它所修复的缺陷。 |
-| `MeshGenParams::validate` | `src/config/meshgen.rs:218` | 强制 PLAN §6.3 的解析期拒绝；返回 `Ok(())` 或 `InvalidConfig`。 |
-| `deserialize_component_map` | `src/config/meshgen.rs:352` | 将 `by_component` 反序列化为保留重复键的有序对列表。 |
-| `MeshGenPipeline` | `src/pipeline/meshgen.rs:23` | 运行归一化 S0/S1/G2-1..G2-5/S3/S4，产出 s02、s03 与 s04，并对 S5..S11 返回 `NotAvailable`。 |
+| `MeshGenInput` | `src/config/meshgen.rs:84` | 单个 STL 输入：`stl` 路径、可选 `priority`（**每个输入均默认为 0**）、`kind`（默认 `auto`）。 |
+| `MeshGenDomain` | `src/config/meshgen.rs:94` | 轴对齐生成区域；`min`/`max` 各须为 3 分量，且每轴 `min < max`。 |
+| `MeshGenSizing` | `src/config/meshgen.rs:107` | 作为区域包围盒对角线分数的尺寸场上下限，外加 `grading`（默认 2.0，即 2:1 梯度）与 `gap_cells`（默认 2.0）。 |
+| `MeshGenGaps` | `src/config/meshgen.rs:128` | 间隙场厚度因子（x 局部 h(x)）与分离置信度下限。 |
+| `MeshGenEnvelope` | `src/config/meshgen.rs:176` | 作为区域包围盒对角线分数的数值包络厚度。 |
+| `MeshGenRepair` | `src/config/meshgen.rs:183` | S0 修复配置（`level`）。 |
+| `MeshGenMaterials` | `src/config/meshgen.rs:194` | Abaqus INP 导出的材料分配；`by_component` 会保留重复键到 `validate()`。 |
+| `MeshGenOutput` | `src/config/meshgen.rs:211` | 输出目的地：必填 `vtu`，可选 `abaqus`/`report`。 |
+| `MeshGenParams` | `src/config/meshgen.rs:225` | `meshgen:` YAML 块；加载后须调用 `validate()`。 |
+| `MeshGenConfig` | `src/config/meshgen.rs:257` | 顶层 YAML 包装（`meshgen:`）。 |
+| `MeshGenInput::resolved_priority` | `src/config/meshgen.rs:265` | 有效优先级：显式取值，否则为 0。不接收文件索引——「由文件顺序推导默认优先级」正是它所修复的缺陷。 |
+| `MeshGenParams::validate` | `src/config/meshgen.rs:279` | 强制 PLAN §6.3 的解析期拒绝；返回 `Ok(())` 或 `InvalidConfig`。 |
+| `deserialize_component_map` | `src/config/meshgen.rs:509` | 将 `by_component` 反序列化为保留重复键的有序对列表。 |
+| `MeshGenPipeline` | `src/pipeline/meshgen.rs:57` | 运行归一化 S0/S1/G2-1..G2-5/S3/S4，产出 s02、s03 与 s04，并对 S5..S11 返回 `NotAvailable`。 |
 | `ConditionedSurface` / `ConditionStats` | `src/meshgen/surface.rs:88/116` | S0 几何、持久源构件 ID、修复日志与汇总计数。 |
 | `SurfaceComponent`（`ArrangeComponent`） | `src/meshgen/surface.rs:99` | 面阶段共享的契约构件行 `{X, 优先级 Y, solid/sheet 类型, closed}`。 |
 | `condition_surface` | `src/meshgen/surface.rs:135` | 在 `q=0.1*eps` 上焊接、丢弃精确退化面、按源身份去重、定向/修复并导出临时构件。 |

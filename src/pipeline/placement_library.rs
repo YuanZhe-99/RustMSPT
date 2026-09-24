@@ -4,7 +4,7 @@ use crate::geometry::{
     mesh_bbox, mesh_closedness, mesh_metrics, mesh_signed_volume, mesh_volume_centroid,
     split_mesh_into_granules, translate_mesh,
 };
-use crate::io::{load_stl, sha256_bytes, sha256_file};
+use crate::io::{load_stl_hashed, sha256_bytes};
 use crate::types::{BoundingBox, Mesh, Vec3};
 use std::path::PathBuf;
 
@@ -73,7 +73,7 @@ pub struct ShapeLibrary {
 // Purpose: Load every listed STL, split it into closed shells, measure them, and apply the library filters.
 // Inputs: the resolved shape file paths, the paths as written, and the optional filters.
 // Returns: the library, or an error when a file cannot be read or a shell is not a closed solid.
-// Side effects: Reads each STL twice - once for its bytes to hash, once through the STL reader.
+// Side effects: Reads and hashes each STL in the same forward pass; binary input uses bounded record buffering.
 // Notes: An unclosed shell is a refusal, not a skip. Volume, centroid and equivalent diameter are
 // meaningless for an open surface, so quietly dropping one would change the size distribution a run
 // actually drew from without saying so. The filters are a different matter: aspect and sharpness
@@ -92,13 +92,11 @@ pub fn load_shape_library(
     let mut rejected = Vec::new();
 
     for (source_index, path) in files.iter().enumerate() {
-        let (sha256, bytes) = sha256_file(path).map_err(|e| {
-            RustMsptError::InvalidConfig(format!(
-                "placement.shapes.files[{source_index}]: cannot read {}: {e}",
-                path.display()
-            ))
+        let (mesh, sha256, bytes) = load_stl_hashed(path).map_err(|e| {
+            if matches!(e, RustMsptError::Io(_)) {
+                RustMsptError::InvalidConfig(format!("placement.shapes.files[{source_index}]: cannot read {}: {e}", path.display()))
+            } else { e }
         })?;
-        let mesh = load_stl(path)?;
         let granules = split_mesh_into_granules(&mesh);
         let shells_found = granules.len();
         if shells_found == 0 {

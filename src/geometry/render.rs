@@ -363,7 +363,7 @@ fn shade_channel(base: u8, intensity: f64) -> u8 {
 // Purpose: Render a mesh into an RGBA8 image on the CPU via BVH-accelerated ray casting.
 // Inputs: mesh, validated camera, output resolution, shading settings.
 // Returns: RenderedImage (background-filled where no triangle is hit).
-// Side effects: Parallelizes over image rows with rayon.
+// Side effects: Parallelizes over disjoint pixel tasks in the current Rayon pool.
 // Notes: Uses parry3d's QBVH-backed cast_local_ray_and_get_normal with the nearest hit; degenerate
 // triangles never intersect a ray (zero cross product), matching GPU rasterization behavior.
 // Rows are written top-to-bottom, matching image conventions.
@@ -374,6 +374,22 @@ pub fn render_mesh_cpu(
     height: usize,
     settings: &RenderSettings,
 ) -> RenderedImage {
+    render_mesh_cpu_with_tiles(mesh, camera, width, height, settings, cpu_render_tile_pixels(width, height))
+}
+
+// AI-FUNC-SUMMARY: Choose bounded contiguous pixel tasks, grouping short rows and splitting wide rows; use one serial task with a single worker, without creating another pool.
+pub(super) fn cpu_render_tile_pixels(width: usize, height: usize) -> usize {
+    let total = width.saturating_mul(height).max(1);
+    let workers = rayon::current_num_threads();
+    // Keep existing row parallelism when the minimum tile grain would leave too few tasks.
+    if height >= workers && total <= workers.saturating_mul(1024) { return width.max(1); }
+    if workers == 1 { return total; }
+    let target = (total / workers.saturating_mul(4)).clamp(256, 4096);
+    if width > 0 && width <= target { (target / width).max(1) * width } else { target }
+}
+
+// AI-FUNC-SUMMARY: Render nearest-hit pixels in disjoint contiguous tasks using exact original pixel coordinates; an explicit grain supports row-reference correctness and performance comparisons.
+fn render_mesh_cpu_with_tiles(mesh: &Mesh, camera: &RenderCamera, width: usize, height: usize, settings: &RenderSettings, tile_pixels: usize) -> RenderedImage {
     let background = [
         settings.background[0],
         settings.background[1],
@@ -385,13 +401,15 @@ pub fn render_mesh_cpu(
         return image;
     };
 
-    let row_len = width * 4;
     image
         .rgba
-        .par_chunks_mut(row_len)
+        .par_chunks_mut(tile_pixels * 4)
         .enumerate()
-        .for_each(|(py, row)| {
-            for px in 0..width {
+        .for_each(|(tile, row)| {
+            let start = tile * tile_pixels;
+            let mut py = start / width;
+            let mut px = start % width;
+            for local in 0..row.len() / 4 {
                 let (origin, dir) = camera.ray_for_pixel(px, py, width, height);
                 let ray = Ray::new(
                     Point::new(origin.x, origin.y, origin.z),
@@ -400,12 +418,80 @@ pub fn render_mesh_cpu(
                 if let Some(hit) = shape.cast_local_ray_and_get_normal(&ray, f64::MAX, false) {
                     let normal = Vec3::new(hit.normal.x, hit.normal.y, hit.normal.z);
                     let intensity = shade_intensity(normal, dir, settings.ambient);
-                    row[px * 4] = shade_channel(settings.base_color[0], intensity);
-                    row[px * 4 + 1] = shade_channel(settings.base_color[1], intensity);
-                    row[px * 4 + 2] = shade_channel(settings.base_color[2], intensity);
+                    row[local * 4] = shade_channel(settings.base_color[0], intensity);
+                    row[local * 4 + 1] = shade_channel(settings.base_color[1], intensity);
+                    row[local * 4 + 2] = shade_channel(settings.base_color[2], intensity);
                 }
+                px += 1;
+                if px == width { px = 0; py += 1; }
             }
         });
 
     image
+}
+
+#[cfg(test)]
+pub(crate) mod tile_tests {
+    use super::*;
+
+    // AI-FUNC-SUMMARY: Build a fixed camera whose footprint stays constant across aspect ratios, exposing real ray work in strip-image scheduling tests.
+    pub(crate) fn fixture_camera(projection: RenderProjection) -> RenderCamera {
+        RenderCamera { eye: Vec3::new(0.5,0.5,-3.0), forward: Vec3::new(0.0,0.0,1.0), right: Vec3::new(1.0,0.0,0.0), up: Vec3::new(0.0,1.0,0.0), projection,
+            ortho_half_width: 0.6, ortho_half_height: 0.6, persp_tan_half_fov: 0.2, aspect: 1.0, near: 0.1, far: 10.0 }
+    }
+
+    // AI-FUNC-SUMMARY: Compare tiled nearest-hit output byte-for-byte against forced row scheduling for both projections, ragged tasks, tiny images and extreme aspect ratios at 1/2/8 workers.
+    #[test]
+    fn mesh_pixel_tiles_match_rows() {
+        let mesh = crate::geometry::box_mesh(crate::types::BoundingBox::from_size(Vec3::new(1.0,1.0,1.0)));
+        for projection in [RenderProjection::Orthographic, RenderProjection::Perspective] {
+            let camera = fixture_camera(projection);
+            for (w,h) in [(1,1),(37,29),(65537,1),(1,65537),(8193,3)] {
+                let expected = render_mesh_cpu_with_tiles(&mesh,&camera,w,h,&RenderSettings::default(),w);
+                for workers in [1,2,8] {
+                    let pool = rayon::ThreadPoolBuilder::new().num_threads(workers).build().unwrap();
+                    let actual = pool.install(|| render_mesh_cpu(&mesh,&camera,w,h,&RenderSettings::default()));
+                    assert_eq!(actual.rgba,expected.rgba,"{projection:?} {w}x{h} workers={workers}");
+                }
+            }
+        }
+    }
+
+    // AI-FUNC-SUMMARY: Verify small-image comparisons really retain the reference row grain while a single long row supplies work to every configured worker.
+    #[test]
+    fn pixel_grain_preserves_small_row_parallelism() {
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(8).build().unwrap();
+        pool.install(|| {
+            for (w,h) in [(32,32),(37,29),(64,64),(65,65)] {
+                assert_eq!(cpu_render_tile_pixels(w,h),w);
+            }
+            let grain = cpu_render_tile_pixels(65536,1);
+            assert!(65536usize.div_ceil(grain) >= rayon::current_num_threads());
+        });
+    }
+
+    // AI-FUNC-SUMMARY: Benchmark row versus pixel scheduling with identical ray work and QBVH preparation, reporting warm alternating raw samples under 1/2/8 worker pools.
+    #[test]
+    #[ignore = "release render scheduling benchmark"]
+    fn render_pixel_tile_benchmark() {
+        let mesh = crate::geometry::icosphere_mesh(Vec3::new(0.5,0.5,0.5),0.5,3);
+        let camera = fixture_camera(RenderProjection::Orthographic);
+        for workers in [1,2,8] {
+            let pool = rayon::ThreadPoolBuilder::new().num_threads(workers).build().unwrap();
+            for (w,h) in [(65536,1),(1,65536),(256,256),(32,32)] {
+                let run = |legacy: bool| pool.install(|| {
+                    let now = std::time::Instant::now();
+                    for _ in 0..3 {
+                        let grain = if legacy { w } else { cpu_render_tile_pixels(w,h) };
+                        std::hint::black_box(render_mesh_cpu_with_tiles(&mesh,&camera,w,h,&RenderSettings::default(),grain));
+                    }
+                    now.elapsed().as_secs_f64()
+                });
+                for sample in 0..6 {
+                    let (old,new) = if sample%2==0 { (run(true),run(false)) } else { let new=run(false); (run(true),new) };
+                    eprintln!("RENDER_TILE_BENCH workers={workers} width={w} height={h} sample={sample} repeats=3 rows={old:.9} tiles={new:.9}");
+                }
+            }
+        }
+    }
 }

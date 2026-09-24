@@ -7,3 +7,26 @@
 CPU 路径通过 parry3d `TriMesh` 的 QBVH 为每个像素查询最近交点，并由 rayon 按行并行。GPU 路径使用 `GpuRenderPipeline` 将三角形离屏光栅化到颜色和深度纹理，再通过 256 字节对齐的 staging buffer 读回。GPU 失败时回退 CPU。
 
 两条路径共享相机与着色定义。CPU 为 f64 光线投射，GPU 为 f32 光栅化，因此测试允许边缘约 1 像素和通道约 1 LSB 的差异。参见[英文完整算法说明](../../en-us/algorithms/stl-rendering.md)。
+
+
+### Execution policy (2026-09-21)
+
+The entire STL render pipeline runs inside its `cpu_max` pool. `RUSTMSPT_ACCELERATION` overrides the configured mode, with invalid values rejected. Auto uses `gpu_min_pixels`; explicit GPU bypasses this threshold. Device budget estimation includes expanded triangle vertices (72 bytes/face), color/depth textures (8 bytes/pixel), 256-byte-aligned readback rows and 128 uniform bytes. GPU options use the common execution validator. Device texture/buffer limits are checked before allocation, and scoped validation/allocation errors plus checked readback propagate through the fallback policy. Per-call resources are still allocated afresh; persistent scene/target caching remains pending.
+
+### Scene 预览工作集策略
+
+mesh_render.gpu_memory_limit_mb 可选限制逻辑 GPU 工作集；gpu_min_pixels 仅用于 auto，缺省 0 保留既有预览选择。低于阈值的 auto 不初始化 GPU；显式 GPU 绕过阈值但遵守预算。预算/执行失败时 auto 回退，gpu 报错，CPU 跳过 GPU 专属资源选项。
+
+checked planner 按可见三角形每面 120、启用 segment 每条 64、marker 每个 192 字节计数；目标 color/depth 为 8×pixels，readback 为按 256 字节对齐的 RGBA 行，uniform 128 字节。保守计入待完成 queue 上传，逻辑峰值 = 2×geometry_bytes+256+8×pixels+staging_bytes。多个视图共用目标。驱动/pipeline 内部及主存场景/PNG 不计入，所以这不是物理 VRAM/RSS 上限。独立 device 限制检查先于 host 顶点展开，上传后即释放临时 host 顶点。构造器返回受作用域保护的 GPU 验证/分配错误；图像分块仍待实现。
+
+### CPU 像素任务划分
+
+STL 最近命中和 prepared 透明 scene 渲染均使用不重叠连续像素任务。当行数不少于 worker 且每 worker 不超过 1024 像素时保留按行，避免最小块粒度减少并行任务；其他图单 worker 为单任务，否则目标为每 worker 四个任务，粒度夹取 256..4096 像素，整行能放下时按行对齐。宽行可跨任务，短行可合并。任务仅在起点计算 (x,y)，随后递增原整数像素坐标，射线运算、命中排序/合成与串行叠加不变。scene depth/RGBA 共用边界并复用任务内 hits scratch。两种投影、非整除尺寸、极端纵横比在 1/2/8 worker 下逐字节对照按行参考。粒度性能验收见 PLAN.Performance.md §40。
+
+### GPU PNG 有界写出（2026-09-23）
+
+GPU 多视图且配置 worker 数大于 1 时，`consume_frames` 通过零容量通道按顺序将图像所有权移交给单个 PNG writer。最多一张图像正在编码、一张由渲染生产端持有；GPU 渲染目标继续复用。返回或 CPU 回退前，必须等待 writer 退出并排空已接收帧。输出错误优先于 GPU 错误，不触发回退；即使 producer 成功，末帧写出错误也不会丢失。单 worker 或单视图保持顺序执行；CPU 多视图仍顺序编码，保留完整 Rayon 渲染预算。这证明有界重叠机制，不代表端到端提速；软件 GPU 冷进程 CLI 对照（含 PNG 身份与 RSS）见 PLAN.Performance.md §56；完整负载和硬件验收仍开放。
+
+### 不透明场景最近命中组（2026-09-23）
+
+准备后的场景至少有 192 个三角形、且每个 clamp 后的 alpha 都恰为 1 时，先用 QBVH 求最近距离，再以向外取整的 `nearest + 2 * dedup_tol` 为界枚举附近命中。保留原距离/triangle ID 排序及移动锚点的 Face-over-Volume 去重，只取首组；所选法线、颜色和深度交给原合成器与覆盖线逻辑。更小场景或包含零/部分/NaN alpha 时维持全命中枚举。三角形阈值避开了实测 24 三角形场景的双遍历退化，只是保守启发式，不能保证所有空间布局提速。分层场景 release 对照和限制见 PLAN.Performance.md §57。

@@ -1,10 +1,12 @@
 use super::Pipeline;
+use crate::compute::backend::AccelerationMode;
+use crate::compute::policy::configured_mode;
 use crate::config::mesh_render::{FilterSpec, MeshRenderConfig, ViewSpec};
 use crate::error::{Result, RustMsptError};
 use crate::geometry::render::{
     build_render_camera, parse_render_projection, parse_render_vec3, RenderCameraSpec,
 };
-use crate::geometry::scene_render::{named_view, render_scene_cpu, SceneRenderSettings};
+use crate::geometry::scene_render::{named_view, PreparedScene, SceneRenderSettings};
 use crate::io::save_image;
 use crate::io::vtu::{load_vtu, ArrayData};
 use crate::meshgen::render_scene::{
@@ -17,6 +19,49 @@ use std::path::{Path, PathBuf};
 // AI-FUNC-SUMMARY: Pipeline wrapper for the mesh-render subcommand; holds the parsed MeshRenderConfig; side effects: none until run().
 pub struct MeshRenderPipeline {
     pub config: MeshRenderConfig,
+}
+
+// AI-FUNC-SUMMARY: Consume ordered owned frames using a rendezvous writer when overlap is enabled; join/drain before returning, and report output errors separately from producer errors so GPU fallback never hides a write failure. At most one frame is being written and one is held by the producer.
+fn consume_frames<T: Send>(
+    overlap: bool,
+    produce: impl FnOnce(
+        &mut dyn FnMut(T) -> std::result::Result<(), String>,
+    ) -> std::result::Result<(), String>,
+    mut write: impl FnMut(T) -> Result<()> + Send,
+) -> (std::result::Result<(), String>, Result<()>) {
+    if !overlap {
+        let mut output = Ok(());
+        let result = produce(&mut |frame| match write(frame) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let message = error.to_string();
+                output = Err(error);
+                Err(message)
+            }
+        });
+        return (result, output);
+    }
+    std::thread::scope(|scope| {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(0);
+        let writer = scope.spawn(move || {
+            for frame in receiver {
+                write(frame)?;
+            }
+            Ok(())
+        });
+        let result = produce(&mut |frame| {
+            sender
+                .send(frame)
+                .map_err(|_| "image writer stopped".to_string())
+        });
+        drop(sender);
+        let output = writer.join().unwrap_or_else(|_| {
+            Err(RustMsptError::Io(std::io::Error::other(
+                "image writer panicked",
+            )))
+        });
+        (result, output)
+    })
 }
 
 fn parse_rgb(name: &str, values: &[u8], allow_alpha: bool) -> Result<[u8; 4]> {
@@ -73,7 +118,7 @@ fn build_filters(specs: &[FilterSpec]) -> Result<Vec<SceneFilter>> {
 // AI-FUNC-SUMMARY:
 // Purpose: Render every requested view through the GPU opaque preview in one batch.
 // Inputs: extracted scene, named cameras, resolution, appearance settings.
-// Returns: Ok(one image per camera) or Err(message) when the GPU path is unavailable.
+// Returns: Ok after ordered consumption, or the first rendering/consumer error.
 // Side effects: Initializes wgpu on the first call of the process.
 // Notes: Compiled out without the `gpu` feature, where it always reports unavailability so
 //   `backend: auto` degrades to the CPU renderer exactly as it does on a machine with no adapter.
@@ -84,12 +129,13 @@ fn render_views_gpu(
     width: usize,
     height: usize,
     settings: &SceneRenderSettings,
-) -> std::result::Result<Vec<crate::types::RenderedImage>, String> {
+    consume: impl FnMut(usize, crate::types::RenderedImage) -> std::result::Result<(), String>,
+) -> std::result::Result<(), String> {
     let cams: Vec<crate::geometry::render::RenderCamera> =
         cameras.iter().map(|(_, c)| *c).collect();
     let options = crate::gpu::GpuSceneOptions::with_overlays();
     crate::gpu::GpuScenePipeline::new()?
-        .render_views(scene, &cams, width, height, settings, &options)
+        .render_views_to(scene, &cams, width, height, settings, &options, consume)
 }
 
 #[cfg(not(feature = "gpu"))]
@@ -99,7 +145,8 @@ fn render_views_gpu(
     _width: usize,
     _height: usize,
     _settings: &SceneRenderSettings,
-) -> std::result::Result<Vec<crate::types::RenderedImage>, String> {
+    _consume: impl FnMut(usize, crate::types::RenderedImage) -> std::result::Result<(), String>,
+) -> std::result::Result<(), String> {
     Err("built without the `gpu` feature".to_string())
 }
 
@@ -111,7 +158,54 @@ impl Pipeline for MeshRenderPipeline {
     // Side effects: Reads the VTU; creates output_dir; writes `<input_stem>_<view>.png` per view; prints scene stats and written paths.
     // Notes: Coloring by an integer cell array is categorical, by a float array sequential (viridis); "uniform" uses `uniform_color`. Camera framing uses the full document bbox so all views and filter variations frame identically.
     fn run(&self) -> Result<()> {
+        self.with_worker_pool(|| self.run_in_pool())
+    }
+}
+
+impl MeshRenderPipeline {
+    // AI-FUNC-SUMMARY: Install all mesh-render work in a bounded Rayon pool; default/-1 uses available CPUs, other requests clamp to 1..available; propagate pool and operation errors.
+    fn with_worker_pool<T: Send>(&self, operation: impl FnOnce() -> Result<T> + Send) -> Result<T> {
+        let available = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        let requested = self.config.cpu_max.unwrap_or(-1);
+        let workers = if requested == -1 {
+            available
+        } else {
+            (requested.max(1) as usize).min(available)
+        };
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(workers)
+            .build()
+            .map_err(|e| {
+                RustMsptError::InvalidConfig(format!(
+                    "Failed to build mesh-render thread pool: {e}"
+                ))
+            })?;
+        pool.install(|| {
+            println!("[mesh-render] CPU setting: cpu_max={requested}, actual workers={} (available {available})", rayon::current_num_threads());
+            operation()
+        })
+    }
+
+    // AI-FUNC-SUMMARY: Load VTU, prepare one scene and render/save all views within the installed worker budget, including GPU fallback; preserve opaque-preview versus CPU transparency behavior.
+    fn run_in_pool(&self) -> Result<()> {
         let p = &self.config.mesh_render;
+        let configured = match p.backend.trim().to_ascii_lowercase().as_str() {
+            "cpu" => AccelerationMode::Cpu,
+            "gpu" => AccelerationMode::Gpu,
+            "auto" => AccelerationMode::Auto,
+            other => {
+                return Err(RustMsptError::InvalidConfig(format!(
+                    "mesh_render.backend '{other}' must be cpu, gpu, or auto"
+                )))
+            }
+        };
+        let backend = configured_mode(&crate::config::AccelerationConfig {
+            mode: configured,
+            ..Default::default()
+        })?;
+        println!("[mesh-render] requested backend: {backend}");
         let doc = load_vtu(Path::new(&p.input))?;
 
         let color_mode = if p.color_by.eq_ignore_ascii_case("uniform") {
@@ -262,41 +356,233 @@ impl Pipeline for MeshRenderPipeline {
             cameras.push((view_name, build_render_camera(&corner_mesh, &camera_spec)?));
         }
 
-        let backend = p.backend.trim().to_ascii_lowercase();
-        let images = match backend.as_str() {
-            "cpu" => None,
-            "gpu" | "auto" => {
-                match render_views_gpu(&scene, &cameras, p.width, p.height, &settings) {
-                    Ok(images) => Some(images),
-                    Err(e) if backend == "auto" => {
+        let gpu_preflight = || -> std::result::Result<(), String> {
+            let plan = crate::compute::render_memory::SceneRenderMemory::plan(
+                scene.tris.iter().filter(|t| !(t.alpha <= 0.0)).count(),
+                scene.segments.len(),
+                scene.markers.len(),
+                p.width,
+                p.height,
+            )?;
+            plan.check_buffers(u64::MAX)?;
+            plan.check_budget(p.gpu_memory_limit_mb)?;
+            println!(
+                "[mesh-render] GPU planned peak: {} logical bytes, padded row {} bytes",
+                plan.gpu_peak_bytes, plan.padded_row_bytes
+            );
+            Ok(())
+        };
+        let below_threshold = backend == AccelerationMode::Auto
+            && p.width
+                .checked_mul(p.height)
+                .is_some_and(|pixels| pixels < p.gpu_min_pixels);
+        if below_threshold {
+            println!(
+                "[mesh-render] CPU selected: below gpu_min_pixels={}",
+                p.gpu_min_pixels
+            );
+        }
+
+        let gpu_completed = match backend {
+            AccelerationMode::Cpu => false,
+            _ if below_threshold => false,
+            AccelerationMode::Gpu | AccelerationMode::Auto => {
+                let (render_result, output_result) = consume_frames(
+                    rayon::current_num_threads() > 1 && cameras.len() > 1,
+                    |consume| {
+                        gpu_preflight().and_then(|()| {
+                            render_views_gpu(
+                                &scene,
+                                &cameras,
+                                p.width,
+                                p.height,
+                                &settings,
+                                &mut |index, image| consume((index, image)),
+                            )
+                        })
+                    },
+                    |(index, image): (usize, crate::types::RenderedImage)| {
+                        let out_path = out_dir.join(format!("{stem}_{}.png", cameras[index].0));
+                        save_image(&out_path, &image)?;
+                        println!("[mesh-render] wrote {}", out_path.display());
+                        Ok(())
+                    },
+                );
+                output_result?;
+                match render_result {
+                    Ok(()) => true,
+                    Err(e) if backend == AccelerationMode::Auto => {
                         println!(
                             "[mesh-render] GPU preview unavailable, using the CPU renderer: {e}"
                         );
-                        None
+                        false
                     }
                     Err(e) => return Err(RustMsptError::Gpu(e)),
                 }
             }
-            other => {
-                return Err(RustMsptError::InvalidConfig(format!(
-                    "mesh_render.backend '{other}' must be cpu, gpu, or auto"
-                )))
-            }
         };
-        if images.is_some() {
+        if gpu_completed {
             println!("[mesh-render] GPU opaque preview (per-set opacity ignored; the CPU path is the transparency reference)");
         }
 
-        for (i, (view_name, camera)) in cameras.iter().enumerate() {
-            let image = match &images {
-                Some(batch) => batch[i].clone(),
-                None => render_scene_cpu(&scene, camera, p.width, p.height, &settings),
-            };
-            let out_path = out_dir.join(format!("{stem}_{view_name}.png"));
-            save_image(&out_path, &image)?;
-            println!("[mesh-render] wrote {}", out_path.display());
+        if !gpu_completed {
+            println!(
+                "[mesh-render] CPU transparency renderer: workers={}, worker_index={:?}",
+                rayon::current_num_threads(),
+                rayon::current_thread_index()
+            );
+            let prepared = PreparedScene::new(&scene);
+            for (view_name, camera) in &cameras {
+                let image = prepared.render(camera, p.width, p.height, &settings);
+                let out_path = out_dir.join(format!("{stem}_{view_name}.png"));
+                save_image(&out_path, &image)?;
+                println!("[mesh-render] wrote {}", out_path.display());
+            }
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod execution_tests {
+    use super::*;
+    use rayon::prelude::*;
+
+    // AI-FUNC-SUMMARY: Compare sequential and overlapped PNG bytes and verify ordered draining even when rendering fails after delivering frames.
+    #[test]
+    fn frame_writer_preserves_pngs_and_drains_on_render_error() {
+        let dir = tempfile::tempdir().unwrap();
+        for overlap in [false, true] {
+            let mut written = Vec::new();
+            let (render, output) = consume_frames(
+                overlap,
+                |consume| {
+                    for index in 0..5 {
+                        consume((
+                            index,
+                            crate::types::RenderedImage {
+                                width: 3,
+                                height: 2,
+                                rgba: vec![index as u8 * 31; 24],
+                            },
+                        ))?;
+                    }
+                    Err("injected render failure".to_string())
+                },
+                |(index, image)| {
+                    written.push(index);
+                    save_image(&dir.path().join(format!("{overlap}_{index}.png")), &image)
+                },
+            );
+            assert_eq!(render.unwrap_err(), "injected render failure");
+            output.unwrap();
+            assert_eq!(written, vec![0, 1, 2, 3, 4]);
+        }
+        for index in 0..5 {
+            assert_eq!(
+                std::fs::read(dir.path().join(format!("false_{index}.png"))).unwrap(),
+                std::fs::read(dir.path().join(format!("true_{index}.png"))).unwrap()
+            );
+        }
+    }
+
+    // AI-FUNC-SUMMARY: Verify a final-frame write error survives successful production and earlier failures stop ordered writing without a fallback-shaped error.
+    #[test]
+    fn frame_writer_propagates_first_and_last_output_errors() {
+        for overlap in [false, true] {
+            for fail_at in [0, 4] {
+                let mut written = Vec::new();
+                let (_, output) = consume_frames(
+                    overlap,
+                    |consume| {
+                        for index in 0..5 {
+                            consume(index)?;
+                        }
+                        Ok(())
+                    },
+                    |index| {
+                        written.push(index);
+                        if index == fail_at {
+                            return Err(RustMsptError::InvalidConfig(
+                                "injected write failure".into(),
+                            ));
+                        }
+                        Ok(())
+                    },
+                );
+                assert!(output
+                    .unwrap_err()
+                    .to_string()
+                    .contains("injected write failure"));
+                assert_eq!(written, (0..=fail_at).collect::<Vec<_>>());
+            }
+        }
+    }
+
+    // AI-FUNC-SUMMARY: Prove the writer can remain active while the producer starts its next frame, without timing-dependent performance assertions.
+    #[test]
+    fn frame_writer_overlaps_production() {
+        let (next, started) = std::sync::mpsc::channel();
+        let (render, output) = consume_frames(
+            true,
+            |consume| {
+                consume(0)?;
+                next.send(()).unwrap();
+                consume(1)
+            },
+            move |index| {
+                if index == 0 {
+                    started.recv().unwrap();
+                }
+                Ok(())
+            },
+        );
+        render.unwrap();
+        output.unwrap();
+    }
+
+    // AI-FUNC-SUMMARY: Observe nested Rayon work under the same installation used by run, including defaults, clamping and error propagation.
+    #[test]
+    fn mesh_render_worker_budget_reaches_nested_work() {
+        let available = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        for request in [None, Some(-1), Some(0), Some(-2), Some(1), Some(2), Some(8)] {
+            let mut config: MeshRenderConfig =
+                serde_yaml::from_str("mesh_render: { input: unused.vtu }").unwrap();
+            config.cpu_max = request;
+            let expected = match request {
+                None | Some(-1) => available,
+                Some(n) => (n.max(1) as usize).min(available),
+            };
+            let pipeline = MeshRenderPipeline { config };
+            let observed = pipeline
+                .with_worker_pool(|| {
+                    Ok((0..128)
+                        .into_par_iter()
+                        .map(|_| {
+                            (0..4)
+                                .into_par_iter()
+                                .map(|_| {
+                                    (rayon::current_num_threads(), rayon::current_thread_index())
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .flatten()
+                        .collect::<Vec<_>>())
+                })
+                .unwrap();
+            assert_eq!(observed.len(), 512);
+            assert!(observed.iter().all(
+                |&(workers, index)| workers == expected && index.is_some_and(|i| i < expected)
+            ));
+            let error = pipeline
+                .with_worker_pool::<()>(|| {
+                    Err(RustMsptError::InvalidConfig("operation failure".into()))
+                })
+                .unwrap_err();
+            assert!(error.to_string().contains("operation failure"));
+        }
     }
 }

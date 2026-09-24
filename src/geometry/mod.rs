@@ -2,6 +2,7 @@ pub mod bbox;
 pub mod collision;
 pub mod forging;
 pub mod mesh_ops;
+pub mod mesh_query;
 pub mod metrics;
 pub mod quaternion;
 pub mod render;
@@ -42,3 +43,5 @@ pub use volume::{
     clip_mesh_by_bbox, mesh_signed_volume, mesh_volume, orient_components_to_positive_volume,
     particle_volume_in_bbox, volume_fraction_in_bbox, volume_fraction_of_meshes_in_bbox,
 };
+
+pub use mesh_query::{MeshQueryScratch, PreparedMeshQuery};

@@ -15,12 +15,12 @@
 | `quantize_point_key` | `src/geometry/volume.rs:125` | 将点四舍五入为固定精度整数键，用于去重/哈希。 |
 | `collect_triangle_plane_segment` | `src/geometry/volume.rs:139` | 提取三角形与裁剪平面相交的线段。 |
 | `plane_basis` | `src/geometry/volume.rs:175` | 在垂直于法线的平面内构建一组正交基 (u, v)。 |
-| `triangulate_cap_from_segments` | `src/geometry/volume.rs:204` | 从跨平面边线段三角剖分出一个平面封盖（环查找 + 扇形三角剖分）。 |
-| `clip_mesh_by_plane_with_cap` | `src/geometry/volume.rs:345` | 对网格执行一次平面裁剪，并对产生的开口进行封盖。 |
-| `clip_mesh_by_bbox` | `src/geometry/volume.rs:383` | 通过连续六次平面裁剪，将网格裁剪到一个轴对齐包围盒内。 |
-| `particle_volume_in_bbox` | `src/geometry/volume.rs:404` | 网格裁剪到包围盒后的体积。 |
-| `volume_fraction_in_bbox` | `src/geometry/volume.rs:410` | 单个网格在包围盒内的体积分数。 |
-| `volume_fraction_of_meshes_in_bbox` | `src/geometry/volume.rs:420` | 多个网格在包围盒内的总体积分数（并行计算）。 |
+| `triangulate_cap_from_segments` | `src/geometry/volume.rs:211` | 从跨平面边线段三角剖分出一个平面封盖（环查找 + 扇形三角剖分）。 |
+| `clip_mesh_by_plane_with_cap` | `src/geometry/volume.rs:352` | 对网格执行一次平面裁剪，并对产生的开口进行封盖。 |
+| `clip_mesh_by_bbox` | `src/geometry/volume.rs:403` | 通过连续六次平面裁剪，将网格裁剪到一个轴对齐包围盒内。 |
+| `particle_volume_in_bbox` | `src/geometry/volume.rs:424` | 网格裁剪到包围盒后的体积。 |
+| `volume_fraction_in_bbox` | `src/geometry/volume.rs:434` | 单个网格在包围盒内的体积分数。 |
+| `volume_fraction_of_meshes_in_bbox` | `src/geometry/volume.rs:444` | 多个网格在包围盒内的总体积分数（并行计算）。 |
 | `to_parry_trimesh` | `src/geometry/collision.rs:29` | 将 `Mesh` 转换为 parry3d 的 `TriMesh`。 |
 | `trimesh_contains_point` | `src/geometry/collision.rs:61` | 借助形状的层次包围体，以射线奇偶判定点是否位于实体内部。 |
 | `mesh_surfaces_intersect_prepared` | `src/geometry/collision.rs:99` | 给定预先构建的包围盒/形状，精确判定两个网格*表面*是否相交。 |
@@ -32,6 +32,7 @@
 | `generate_periodic_ghosts` | `src/geometry/collision.rs:282` | 为周期边界碰撞生成网格的平移镜像副本。 |
 | `simulate_forging_ffd` | `src/geometry/forging.rs:10` | 简单的 Z 轴 FFD 压缩加侧向鼓起。 |
 | `simulate_forging_ffd_with_tracking` | `src/geometry/forging.rs:43` | 轴可配置的 FFD 锻造，带孔隙致密化与 ROI 包围盒跟踪。 |
+| `forge_owned` | `src/geometry/forging.rs:66` | Ownership-consuming FFD and ROI transform. |
 
 ## volume.rs
 
@@ -112,7 +113,7 @@
 #### triangulate_cap_from_segments
 
 - **签名：** `fn triangulate_cap_from_segments(segments: &[(Vec3, Vec3)], normal: Vec3) -> Mesh`
-- **源码位置：** `src/geometry/volume.rs:204`
+- **源码位置：** `src/geometry/volume.rs:211`
 - **用途：** 给定网格三角形与裁剪平面相交处所形成的一组边线段，重建该平面上的闭合边界环，并将每个环以质心为中心进行扇形三角剖分，生成一个封闭的封盖网格。
 - **参数：**
   - `segments` — 无序的 `(point_a, point_b)` 边对，每个与平面相交的三角形对应一对（来自 `collect_triangle_plane_segment`）。
@@ -127,8 +128,8 @@
 
 #### clip_mesh_by_plane_with_cap
 
-- **签名：** `fn clip_mesh_by_plane_with_cap(mesh: &Mesh, origin: Vec3, normal: Vec3) -> Mesh`
-- **源码位置：** `src/geometry/volume.rs:345`
+- **签名：** `fn clip_mesh_by_plane_with_cap(mesh: Mesh, origin: Vec3, normal: Vec3) -> Mesh`
+- **源码位置：** `src/geometry/volume.rs:352`
 - **用途：** 对整个网格执行一次平面裁剪，并对产生的开放边界进行封盖，使输出结果仍是一个封闭（watertight）的实体。
 - **参数：**
   - `mesh` — 待裁剪的网格。
@@ -141,7 +142,7 @@
 #### clip_mesh_by_bbox
 
 - **签名：** `pub fn clip_mesh_by_bbox(mesh: &Mesh, bbox: BoundingBox) -> Mesh`
-- **源码位置：** `src/geometry/volume.rs:383`
+- **源码位置：** `src/geometry/volume.rs:390`
 - **用途：** 通过依次对包围盒的六个面平面进行裁剪，使网格完全位于一个轴对齐包围盒内。
 - **参数：**
   - `mesh` — 待裁剪的网格。
@@ -155,7 +156,7 @@
 #### particle_volume_in_bbox
 
 - **签名：** `pub fn particle_volume_in_bbox(mesh: &Mesh, bbox: BoundingBox) -> f64`
-- **源码位置：** `src/geometry/volume.rs:404`
+- **源码位置：** `src/geometry/volume.rs:411`
 - **用途：** 计算位于包围盒内的网格部分的体积。
 - **参数：**
   - `mesh` — 网格（通常是单个颗粒/分量）。
@@ -166,7 +167,7 @@
 #### volume_fraction_in_bbox
 
 - **签名：** `pub fn volume_fraction_in_bbox(mesh: &Mesh, bbox: BoundingBox) -> f64`
-- **源码位置：** `src/geometry/volume.rs:410`
+- **源码位置：** `src/geometry/volume.rs:417`
 - **用途：** 计算单个网格占包围盒体积的分数。
 - **参数：**
   - `mesh` — 待测量的网格。
@@ -177,7 +178,7 @@
 #### volume_fraction_of_meshes_in_bbox
 
 - **签名：** `pub fn volume_fraction_of_meshes_in_bbox(meshes: &[Mesh], bbox: BoundingBox) -> f64`
-- **源码位置：** `src/geometry/volume.rs:420`
+- **源码位置：** `src/geometry/volume.rs:427`
 - **用途：** 计算一组网格在包围盒内所占的合计体积分数 —— 这是报告堆积密度的核心指标。
 - **参数：**
   - `meshes` — 参与体积求和的网格集合（例如一次堆积中的所有颗粒）。
@@ -348,3 +349,13 @@
 - **另请参阅：** [`simulate_forging_ffd`](#simulate_forging_ffd)，更简单的仅 Z 轴版本。
 
   > **算法：** 关于 FFD 锻造模型、轴选择与孔隙致密化启发式方法背后的完整设计原理，见 `../algorithms/ffd-forging.md`。
+
+### Owned CPU transforms (PERF-16)
+
+`forge_owned(mesh, lattice_bbox, track_bbox, compression_ratio, compression_axis, bulge_factor, mesh_type, void_densification)` consumes the mesh and applies the existing tracked FFD mapping. The public borrowed wrapper clones once and delegates. ForgePipeline moves its input into this entry, retains the already computed input bbox, removes unused whole-mesh volume scans, and moves the output when orientation is disabled. ScalePipeline likewise moves its transformed mesh when orientation is disabled. Both log transform-only seconds separately from I/O.
+
+`map_vertices` keeps small slices serial and maps disjoint 8192-vertex blocks on the current Rayon pool only with multiple workers and at least max(131072, workers * 65536) vertices. Scale, translate and both FFD variants use it. Each vertex retains its arithmetic order; void centroid is still accumulated serially after the affine pass. ROI remains unaffected by void closure. Clipped ROI VF and output bbox are still measured from actual geometry; no determinant approximation is substituted.
+
+### 无实际切割时的体积快路径
+
+私有平面裁剪器消费 mesh，按面引用的顶点和既有 distance >= -1e-9 判据分类。全部在内（包括相切）直接返回原分配，不生成封口；全部在外返回空；混合情况保留既有多边形/封口算法。修复完全位于域内且贴面时的重复封口，未被面引用的外部顶点不产生切割。clip_mesh_by_bbox 移动中间 mesh；particle_volume_in_bbox 对所有存储顶点都在盒内的情况直接算原网格体积，避免克隆与六次裁剪。测试覆盖内/外绕序、平移、重合边界、外向盒部分交集、未引用外部顶点。此改动不替代 legacy 部分切割封口算法，也未证明其对任意非凸/嵌套截面正确。

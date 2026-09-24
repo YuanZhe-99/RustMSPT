@@ -64,3 +64,9 @@ RustMSPT 中的锻造是对轴向压缩锻造的**几何近似**：代表微结�
 
 - [geometry-volume-collision.md](../reference/geometry-volume-collision.md) — `simulate_forging_ffd` 与 `simulate_forging_ffd_with_tracking` 的完整函数级参考（签名、参数表、源码位置）。
 - [pipeline-core.md#ForgePipeline::run](../reference/pipeline-core.md#forgepipelinerun) — 驱动本算法端到端运行的流水线的完整参考条目。
+
+### Owned CPU transforms (PERF-16)
+
+`forge_owned(mesh, lattice_bbox, track_bbox, compression_ratio, compression_axis, bulge_factor, mesh_type, void_densification)` consumes the mesh and applies the existing tracked FFD mapping. The public borrowed wrapper clones once and delegates. ForgePipeline moves its input into this entry, retains the already computed input bbox, removes unused whole-mesh volume scans, and moves the output when orientation is disabled. ScalePipeline likewise moves its transformed mesh when orientation is disabled. Both log transform-only seconds separately from I/O.
+
+`map_vertices` keeps small slices serial and maps disjoint 8192-vertex blocks on the current Rayon pool only with multiple workers and at least max(131072, workers * 65536) vertices. Scale, translate and both FFD variants use it. Each vertex retains its arithmetic order; void centroid is still accumulated serially after the affine pass. ROI remains unaffected by void closure. Clipped ROI VF and output bbox are still measured from actual geometry; no determinant approximation is substituted.

@@ -6,23 +6,25 @@ Covers the `Pipeline` trait infrastructure and the simpler/support pipelines: `r
 
 | Item | Location | Summary |
 |---|---|---|
+| `RenderPipeline::run_in_pool` | `src/pipeline/render.rs:59` | Execute render stages and fallback within the configured pool. |
 | `Pipeline::run` (trait) | `src/pipeline/mod.rs:17` | Trait method every pipeline struct implements to execute end-to-end. |
-| `create_progress_bar` | `src/pipeline/mod.rs:25` | Builds a tty-aware indicatif progress bar with a given template and fill characters. |
+| `create_progress_bar` | `src/pipeline/mod.rs:37` | Builds a tty-aware indicatif progress bar with a given template and fill characters. |
 | `RotationMode` (enum) | `src/pipeline/rotation.rs:6` | Represents no rotation, a fixed axis, or a random axis. |
 | `parse_rotation_mode` | `src/pipeline/rotation.rs:18` | Parses `none/x/y/z/vector/any` config strings into a `RotationMode`. |
 | `sample_rotation_axis` | `src/pipeline/rotation.rs:57` | Draws a concrete rotation axis vector for a given `RotationMode`. |
 | `ScalePipeline` (struct) | `src/pipeline/scale.rs:8` | Holds `ScaleConfig` for the scaling pipeline. |
 | `ScalePipeline::run` | `src/pipeline/scale.rs:19` | Loads an STL, applies unit-conversion/factor scaling, optionally fixes orientation, saves output. |
-| `ForgePipeline` (struct) | `src/pipeline/forge.rs:13` | Holds `ForgingConfig` for the FFD forging pipeline. |
-| `ForgePipeline::parse_roi_bbox` | `src/pipeline/forge.rs:19` | Parses an optional 6-element ROI bounding box from config. |
-| `ForgePipeline::parse_compression_axis` | `src/pipeline/forge.rs:38` | Parses the compression axis string (`x`/`y`/`z`) into an index and label. |
+| `ForgePipeline` (struct) | `src/pipeline/forge.rs:12` | Holds `ForgingConfig` for the FFD forging pipeline. |
+| `ForgePipeline::parse_roi_bbox` | `src/pipeline/forge.rs:18` | Parses an optional 6-element ROI bounding box from config. |
+| `ForgePipeline::parse_compression_axis` | `src/pipeline/forge.rs:37` | Parses the compression axis string (`x`/`y`/`z`) into an index and label. |
 | `ForgePipeline::run` | `src/pipeline/forge.rs:58` | Runs FFD-based compression/forging, tracks ROI, writes forged STL and a text report. |
-| `MeasurePipeline` (struct) | `src/pipeline/measure.rs:16` | Holds `MeasurementConfig` for the S2/volume-fraction measurement pipeline. |
-| `MeasurePipeline::parse_optional_bbox` | `src/pipeline/measure.rs:22` | Parses an optional bounding box (3-element size or 6-element min/max) from config. |
-| `MeasurePipeline::l2_error` | `src/pipeline/measure.rs:31` | Computes the L2 distance between two S2 value vectors over their common prefix length. |
+| `MeasurePipeline` (struct) | `src/pipeline/measure.rs:12` | Holds `MeasurementConfig` for the S2/volume-fraction measurement pipeline. |
+| `MeasurePipeline::parse_optional_bbox` | `src/pipeline/measure.rs:18` | Parses an optional bounding box (3-element size or 6-element min/max) from config. |
+| `MeasurePipeline::l2_error` | `src/pipeline/measure.rs:27` | Computes the L2 distance between two S2 value vectors over their common prefix length. |
 | `MeasurePipeline::run` | `src/pipeline/measure.rs:53` | Loads an STL, computes volume fraction and S2 correlation (exact/MC/both, CPU or GPU), writes a report. |
 | `RenderPipeline` | `src/pipeline/render.rs` | Holds `RenderConfig`. |
 | `RenderPipeline::run` | `src/pipeline/render.rs` | Loads STL, builds camera, selects CPU/GPU, and writes PNG. |
+| `MeasurePipeline::run_in_pool` | `src/pipeline/measure.rs:83` | Method-specific measurement in configured pool. |
 
 ---
 
@@ -42,7 +44,7 @@ Covers the `Pipeline` trait infrastructure and the simpler/support pipelines: `r
 #### create_progress_bar
 
 - **Signature:** `pub fn create_progress_bar(length: u64, template: &str, chars: &str) -> ProgressBar`
-- **Source:** `src/pipeline/mod.rs:25`
+- **Source:** `src/pipeline/mod.rs:37`
 - **Purpose:** Build a standardized `indicatif` progress bar, automatically hidden when output isn't an interactive terminal.
 - **Parameters:**
   - `length` — total number of steps/units the bar represents.
@@ -116,13 +118,13 @@ Shared rotation-axis utilities used by the `pack` and `optimize` pipelines when 
 
 #### ForgePipeline (struct)
 
-- **Source:** `src/pipeline/forge.rs:13`
+- **Source:** `src/pipeline/forge.rs:12`
 - **Fields:** `config: ForgingConfig` — forging parameters (input/output paths, compression ratio/axis, bulge factor, ROI bounding box, mesh type, void densification, orientation flag).
 
 #### ForgePipeline::parse_roi_bbox
 
 - **Signature:** `fn parse_roi_bbox(values: &Option<Vec<f64>>) -> Option<BoundingBox>`
-- **Source:** `src/pipeline/forge.rs:19`
+- **Source:** `src/pipeline/forge.rs:18`
 - **Purpose:** Parse an optional 6-element `[min_x, min_y, min_z, max_x, max_y, max_z]` region-of-interest box from config.
 - **Parameters:** `values` — `Option<Vec<f64>>` from `config.forging.roi_bounding_box`.
 - **Returns:** `Some(BoundingBox)` if the vector has exactly 6 elements; `None` otherwise (missing config or wrong length — the wrong-length case is silently treated as "no ROI" rather than an error).
@@ -131,7 +133,7 @@ Shared rotation-axis utilities used by the `pack` and `optimize` pipelines when 
 #### ForgePipeline::parse_compression_axis
 
 - **Signature:** `fn parse_compression_axis(axis: Option<&str>) -> Result<(usize, &'static str)>`
-- **Source:** `src/pipeline/forge.rs:38`
+- **Source:** `src/pipeline/forge.rs:37`
 - **Purpose:** Resolve the configured compression axis string to a numeric mesh-axis index and a display label.
 - **Parameters:** `axis` — optional string, defaults to `"z"` when `None`; matched case-insensitively after trimming.
 - **Returns:** `Ok((0, "x"))`, `Ok((1, "y"))`, or `Ok((2, "z"))`.
@@ -163,13 +165,13 @@ Shared rotation-axis utilities used by the `pack` and `optimize` pipelines when 
 
 #### MeasurePipeline (struct)
 
-- **Source:** `src/pipeline/measure.rs:16`
+- **Source:** `src/pipeline/measure.rs:12`
 - **Fields:** `config: MeasurementConfig` — measurement parameters (STL path, bounding box(es), S2 method/samples/pitch, acceleration policy, output path, CPU cap).
 
 #### MeasurePipeline::parse_optional_bbox
 
 - **Signature:** `fn parse_optional_bbox(values: &Option<Vec<f64>>) -> Result<Option<BoundingBox>>`
-- **Source:** `src/pipeline/measure.rs:22`
+- **Source:** `src/pipeline/measure.rs:18`
 - **Purpose:** Parse an optional bounding box from config, accepting either a 3-element size vector or a 6-element min/max vector (delegating the actual shape-dependent parsing to `config::parse_box_dimensions`).
 - **Parameters:** `values` — `Option<Vec<f64>>`.
 - **Returns:** `Ok(None)` if `values` is `None` or an empty vector; otherwise `Ok(Some(BoundingBox))` from `parse_box_dimensions`, or a propagated `Err` if that parse fails.
@@ -178,40 +180,25 @@ Shared rotation-axis utilities used by the `pack` and `optimize` pipelines when 
 #### MeasurePipeline::l2_error
 
 - **Signature:** `fn l2_error(a: &[f64], b: &[f64]) -> f64`
-- **Source:** `src/pipeline/measure.rs:31`
+- **Source:** `src/pipeline/measure.rs:27`
 - **Purpose:** Compute the L2 (Euclidean) distance between two S2 correlation value vectors, used to compare "exact" vs. "monte_carlo" results when `method = "both"`.
 - **Parameters:** `a`, `b` — S2 value slices, potentially of different lengths.
 - **Returns:** `sqrt(sum((a[i]-b[i])^2))` over `i` in `0..min(a.len(), b.len())`; `0.0` if either slice is empty.
 - **Side effects:** None.
 - **Notes:** This duplicates the core logic of `geometry::l2_norm` (sum-of-squared-differences then square root over a shared-length prefix). It is kept as a private, pipeline-local helper rather than reusing the geometry module's function — the two implementations should be kept in sync if either changes, since there is currently no shared code path between them.
 
-#### MeasurePipeline::run
+#### MeasurePipeline::run / run_in_pool
 
-- **Signature:** `fn run(&self) -> Result<()>`
-- **Source:** `src/pipeline/measure.rs:53`
-- **Purpose:** Execute the S2 two-point correlation and volume-fraction measurement pipeline: load the mesh, resolve the bounding box, select a compute backend (CPU/GPU), compute S2 via the requested method(s), and write a report.
-- **Parameters:** `&self` — reads `self.config.measurement.*`: `cpu_max`, `stl_path`, `bounding_box`, `stl_bounding_box`, `mc_method` (`"exact"` / `"both"` / anything else treated as `"monte_carlo"`), `r_max`, `mc_samples` (default `10_000`), `voxel_pitch`, `acceleration` (mode, `gpu_min_voxels`, `gpu_memory_limit_mb`), `output_path`.
-- **Returns:** `Ok(())` on success, or a propagated error (e.g. thread-pool build failure wrapped as `InvalidConfig`, I/O errors).
-- **Side effects:**
-  - Builds a dedicated Rayon thread pool sized from `cpu_max` (or all available cores when `cpu_max == -1`).
-  - Reads the input STL (or merged folder).
-  - Computes particle count (`split_mesh_into_granules`) and volume fraction (`volume_fraction_in_bbox`) over the resolved bbox.
-  - Resolves compute backend via `select_backend(accel.mode, Some(accel.gpu_min_voxels), accel.gpu_memory_limit_mb, voxel_count)`, where `voxel_count` is derived from bbox size divided by `voxel_pitch` (pitch clamped to `1.0` if `<= 0.0`).
-  - When the `gpu` feature is enabled and the backend selection is GPU, initializes a `crate::gpu::s2::GpuS2Pipeline`; on init failure, logs a warning and falls back to CPU silently.
-  - Runs `calculate_s2` (CPU, inside the custom thread pool) or `calculate_s2_with_gpu`/`calculate_s2_gpu_exact` (GPU, feature-gated) depending on method and backend.
-  - Writes a text report to `params.output_path` (creating parent directories as needed) containing volume fraction, compute backend, method, S2(0)-vs-VF difference, and the full S2 value series (and, for `"both"`, the L2 error between exact and Monte Carlo series).
-  - Prints extensive `[Info]`/`[Warning]` diagnostics to stdout throughout (thread pool sizing, bbox, S2 config, backend selection/fallback, per-method summaries, final output path).
-- **Notes:**
-  - Bounding box resolution precedence: explicit `bounding_box` > `stl_bounding_box` > mesh-derived bbox (`mesh_bbox`) > a unit-cube fallback (`BoundingBox::from_size(Vec3::new(1,1,1))`).
-  - `method = "exact"` (alone or as part of `"both"`) is automatically downgraded to `"monte_carlo"` when the voxel grid exceeds `exact_voxel_limit = 1_500_000` voxels, with a `[Warning]` printed; for `"both"` this means only the Monte Carlo branch runs and the report notes "(exact skipped by voxel limit)".
-  - GPU code paths are entirely absent when the crate is built without the `gpu` feature (`#[cfg(not(feature = "gpu"))]` branches use the CPU thread pool unconditionally); a runtime warning is printed if GPU acceleration was requested but the feature isn't compiled in.
-- **See also:** [../algorithms/s2-two-point-correlation.md](../algorithms/s2-two-point-correlation.md), [gpu.md](gpu.md)
+`run() -> Result<()>` installs the whole measurement in a configured Rayon pool, including loading, preparation, GPU errors and CPU fallback. `run_in_pool() -> Result<()>` resolves `RUSTMSPT_ACCELERATION` once, validates finite pitch/dimensions, and executes exact/MC/both using method-specific decisions. Positive-pitch MC remains voxel MC and does not use the continuous GPU kernel. Only requested methods allocate pipelines. GPU errors obey `cpu_fallback`; output records each method's actual backend after fallback. Reports are written only when all requested methods succeed. The current 1,500,000-cell exact safety ceiling returns an explicit error, never substitutes MC; its replacement by a cost/memory model is PERF-07. Worker count/index are observed inside the execution pool.
 
-## `pipeline/render.rs`
 
-#### RenderPipeline::run
+### Owned CPU transforms (PERF-16)
 
-- **Signature:** `fn run(&self) -> Result<()>`
-- **Purpose:** Build the configured rayon pool, load STL, parse camera values, select a pixel-workload backend, render, and call `save_image`.
-- **Side effects:** Reads STL, may initialize wgpu, writes PNG, and prints diagnostics.
-- **Notes:** GPU failures fall back to CPU. See [STL Rendering](../algorithms/stl-rendering.md).
+`forge_owned(mesh, lattice_bbox, track_bbox, compression_ratio, compression_axis, bulge_factor, mesh_type, void_densification)` consumes the mesh and applies the existing tracked FFD mapping. The public borrowed wrapper clones once and delegates. ForgePipeline moves its input into this entry, retains the already computed input bbox, removes unused whole-mesh volume scans, and moves the output when orientation is disabled. ScalePipeline likewise moves its transformed mesh when orientation is disabled. Both log transform-only seconds separately from I/O.
+
+`map_vertices` keeps small slices serial and maps disjoint 8192-vertex blocks on the current Rayon pool only with multiple workers and at least max(131072, workers * 65536) vertices. Scale, translate and both FFD variants use it. Each vertex retains its arithmetic order; void centroid is still accumulated serially after the affine pass. ROI remains unaffected by void closure. Clipped ROI VF and output bbox are still measured from actual geometry; no determinant approximation is substituted.
+
+
+### Render execution policy
+
+`RenderPipeline::run` installs the whole pipeline in the configured worker pool. `run_in_pool` loads geometry, resolves the environment override and method budget, renders and writes only after success. Both selection and runtime failures honor `cpu_fallback`. GPU work estimates include vertices, color/depth, aligned staging and uniforms. Actual CPU fallback executes in the same pool.

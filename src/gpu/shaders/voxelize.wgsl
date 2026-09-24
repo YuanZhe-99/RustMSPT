@@ -36,6 +36,30 @@ fn ray_triangle(origin: vec3<f32>, dir: vec3<f32>, a: vec3<f32>, b: vec3<f32>, c
     return select(-1.0, t, t > 1e-10);
 }
 
+// AI-FUNC-SUMMARY: Recover overflow parity by repeatedly selecting the next distinct positive hit; uses constant storage and the fast path's anchored 1e-6 deduplication tolerance.
+fn point_inside_overflow(point: vec3<f32>, dir: vec3<f32>) -> bool {
+    var last_t: f32 = -1.0;
+    var unique: u32 = 0u;
+    for (var step: u32 = 0u; step < params.num_triangles; step++) {
+        var nearest: f32 = -1.0;
+        for (var i: u32 = 0u; i < params.num_triangles; i++) {
+            let base = i * 9u;
+            let a = vec3<f32>(triangles[base], triangles[base + 1u], triangles[base + 2u]);
+            let b = vec3<f32>(triangles[base + 3u], triangles[base + 4u], triangles[base + 5u]);
+            let c = vec3<f32>(triangles[base + 6u], triangles[base + 7u], triangles[base + 8u]);
+            let t = ray_triangle(point, dir, a, b, c);
+            if (t > 0.0 && (unique == 0u || t - last_t > 1e-6)) {
+                if (nearest < 0.0 || t < nearest) { nearest = t; }
+            }
+        }
+        if (nearest < 0.0) { break; }
+        unique++;
+        last_t = nearest;
+    }
+    return (unique & 1u) == 1u;
+}
+
+// AI-FUNC-SUMMARY: Classify containment with a 64-hit sorted fast path; recover the full ray on its 65th positive triangle hit.
 fn point_inside(point: vec3<f32>) -> bool {
     let dir = params.ray_dir;
     var ts: array<f32, 64>;
@@ -48,7 +72,8 @@ fn point_inside(point: vec3<f32>) -> bool {
         let b = vec3<f32>(triangles[base + 3u], triangles[base + 4u], triangles[base + 5u]);
         let c = vec3<f32>(triangles[base + 6u], triangles[base + 7u], triangles[base + 8u]);
         let t = ray_triangle(point, dir, a, b, c);
-        if (t > 0.0 && hit_count < MAX_HITS) {
+        if (t > 0.0) {
+            if (hit_count == MAX_HITS) { return point_inside_overflow(point, dir); }
             ts[hit_count] = t;
             hit_count++;
         }
@@ -79,8 +104,8 @@ fn point_inside(point: vec3<f32>) -> bool {
 }
 
 @compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let idx = gid.x;
+fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
+    let idx = gid.x + gid.y * groups.x * 64u;
     let total = params.nx * params.ny * params.nz;
     if (idx >= total) { return; }
 

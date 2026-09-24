@@ -4,6 +4,29 @@ Master index of every documented function, struct, enum, and constant across `sr
 
 | Item | Module | Source | Summary |
 |---|---|---|---|
+| `GpuVoxelPipeline::resize_grid_buffers` | GPU | `src/gpu/voxel.rs:251` | Manage retained output/readback capacity without rebuilding the pipeline. |
+| `GpuVoxelPipeline::release_grid_capacity` | GPU | `src/gpu/voxel.rs:265` | Manage retained output/readback capacity without rebuilding the pipeline. |
+| `GpuVolumeTransformPipeline::resize_output_buffers` | GPU | `src/gpu/volume_transform.rs:269` | Manage retained output/readback capacity without rebuilding the pipeline. |
+| `GpuVolumeTransformPipeline::release_output_capacity` | GPU | `src/gpu/volume_transform.rs:284` | Manage retained output/readback capacity without rebuilding the pipeline. |
+| `read_u32_prefix` | GPU | `src/gpu/runtime.rs:34` | Validate and read only the live staging-buffer prefix. |
+| `GpuS2Pipeline::resize_output_buffers` | GPU | `src/gpu/s2.rs:309` | Replace MC output and staging capacity together. |
+| `GpuS2Pipeline::release_output_capacity` | GPU | `src/gpu/s2.rs:338` | Release retained MC output/readback peak capacity. |
+| `shared_instance` | GPU | `src/gpu/context.rs:84` | Retain one backend instance for non-GL selection. |
+| `select_adapter` | GPU | `src/gpu/context.rs:99` | Serialize selection and isolate selected GL adapters. |
+| `select_from_instance` | GPU | `src/gpu/context.rs:118` | Apply name/index/default selection within an instance. |
+| `request_device` | GPU | `src/gpu/context.rs:69` | Request a fresh logical device without memoizing failure. |
+| `request_adapter` | GPU | `src/gpu/context.rs:90` | Shared name/index/default adapter selection. |
+| `foreground_blocks` | Pipeline | `src/pipeline/crop.rs:422` | Fixed-block foreground scan with ordered partial results. |
+| `ParticleMetrics` | Pipeline | `src/pipeline/split_filter.rs:305` | Cached component volume/aspect/area. |
+| `prepare_particle_metrics` | Pipeline | `src/pipeline/split_filter.rs:312` | Prepare requested metrics in stable component order. |
+| `SplitFilterPipeline::run_in_pool` | Pipeline | `src/pipeline/split_filter.rs:349` | Execute split-filter inside the configured pool. |
+| `GpuScenePipeline::render_views_to` | GPU | `src/gpu/scene_render.rs:387` | Stream owned views in order while reusing scene and target resources. |
+| `PreparedScene` | Geometry | `src/geometry/scene_render.rs:108` | Immutable CPU scene accelerator shared across cameras. |
+| `PreparedScene::new` | Geometry | `src/geometry/scene_render.rs:115` | Prepare QBVH and materials once. |
+| `PreparedScene::render` | Geometry | `src/geometry/scene_render.rs:120` | Render a view with retained preparation and per-task hit scratch. |
+| `RenderPipeline::run_in_pool` | Pipeline | `src/pipeline/render.rs:59` | Execute render stages and fallback within the configured pool. |
+| `gpu_crop_values_supported` | Pipeline | `src/pipeline/crop.rs:25` | Check exact integer representation for GPU interpolation. |
+| `CropPipeline::run_in_pool` | Pipeline | `src/pipeline/crop.rs:621` | Execute crop stages within the configured pool and report completed-stage wall times. |
 | `PlacementParams` | Config | `src/config/placement.rs:22` | The `placement:` block as written in YAML, before validation. |
 | `PlacementParams::validate` | Config | `src/config/placement.rs:584` | Applies every cross-field rule and resolves every path into a `ResolvedPlacement`. |
 | `ResolvedPlacement` | Config | `src/config/placement.rs:386` | A checked placement block with paths resolved and nothing left optional. |
@@ -16,41 +39,41 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `missing` (placement.rs) | Config | `src/config/placement.rs:902` | Builds the error for a distribution parameter a kind requires. |
 | `default_threads` | Config | `src/config/placement.rs:47` | Default thread setting, `-1` meaning every available core. |
 | `default_vf_tolerance` | Config | `src/config/placement.rs:279` | Default relative tolerance on the target volume fraction. |
-| `load_yaml` | Config | `src/config/mod.rs:47` | Reads a file and deserializes it as YAML into a typed config struct. |
-| `parse_box_dimensions` | Config | `src/config/mod.rs:58` | Converts a 3- or 6-element dimensions slice into a `BoundingBox`. |
+| `load_yaml` | Config | `src/config/mod.rs:52` | Reads a file and deserializes it as YAML into a typed config struct. |
+| `parse_box_dimensions` | Config | `src/config/mod.rs:63` | Converts a 3- or 6-element dimensions slice into a `BoundingBox`. |
 | `parse_usize_like` | Config | `src/config/deserialize.rs:4` | Parses a `usize` from a string, stripping underscore separators. |
 | `deserialize_usize_flexible` | Config | `src/config/deserialize.rs:17` | Serde `deserialize_with` helper: accepts a YAML number or numeric string as `usize`. |
 | `deserialize_option_usize_flexible` | Config | `src/config/deserialize.rs:39` | Serde `deserialize_with` helper: accepts a YAML number/string/null as `Option<usize>`. |
 | `parse_i32_like` | Config | `src/config/deserialize.rs:61` | Parses an `i32` from a string, stripping underscore separators. |
 | `deserialize_option_i32_flexible` | Config | `src/config/deserialize.rs:73` | Serde `deserialize_with` helper: accepts a YAML number/string/null as `Option<i32>`. |
-| `default_backend` | Config | `src/config/acceleration.rs:21` | Serde default for `backend`: `"wgpu"`. |
-| `default_true` | Config | `src/config/acceleration.rs:25` | Serde default for `cpu_fallback`: `true`. |
-| `default_gpu_min_voxels` | Config | `src/config/acceleration.rs:29` | Serde default for `gpu_min_voxels`: `250_000`. |
-| `default_gpu_precision` | Config | `src/config/acceleration.rs:33` | Serde default for `gpu_precision`: `"f32"`. |
+| `default_backend` | Config | `src/config/acceleration.rs:23` | Serde default for `backend`: `"wgpu"`. |
+| `default_true` | Config | `src/config/acceleration.rs:27` | Serde default for `cpu_fallback`: `true`. |
+| `default_gpu_min_voxels` | Config | `src/config/acceleration.rs:31` | Serde default for `gpu_min_voxels`: `250_000`. |
+| `default_gpu_precision` | Config | `src/config/acceleration.rs:40` | Serde default for `gpu_precision`: `"f32"`. |
 | `AccelerationConfig::default` | Config | `src/config/acceleration.rs:38` | Rust-level `Default` impl matching the serde defaults. |
 | `RustMsptError` | Core & Compute | `src/error.rs:4` | Crate-wide error enum including image encoding failures. |
 | `Result` | Core & Compute | `src/error.rs:27` | Type alias `Result<T> = std::result::Result<T, RustMsptError>` used throughout the crate. |
 | `cli_path_as_config_relative` | Core & Compute | `src/main.rs:157` | Re-expresses a command-line path so config-relative resolution keeps its meaning. |
-| `BoundingBox::intersects_domain` | Core & Compute | `src/types.rs:96` | Whether two boxes meet at all; touching counts. |
+| `BoundingBox::intersects_domain` | Core & Compute | `src/types.rs:128` | Whether two boxes meet at all; touching counts. |
 | `BuildIdentity` | Core & Compute | `src/version.rs:18` | What this binary is: version, git commit, worktree dirtiness, features, build platform. |
 | `build_identity` | Core & Compute | `src/version.rs:36` | Returns the compiled-in build identity; the single source of truth for tool identity. |
 | `BuildIdentity::version_detail` | Core & Compute | `src/version.rs:64` | Identity as one line without the program name, for clap's `--version`. |
 | `BuildIdentity::version_line` | Core & Compute | `src/version.rs:92` | Identity as one line including the program name. |
 | `identity_json` | Core & Compute | `src/version.rs:103` | Serializes the identity as pretty-printed JSON with `null` for undetermined values. |
 | `non_empty` (version.rs) | Core & Compute | `src/version.rs:4` | Maps an empty build-script env string to `None`. |
-| `build_identity_version_line` | Core & Compute | `src/main.rs:146` | Leaks the version detail as a `&'static str` for clap. |
+| `build_identity_version_line` | Core & Compute | `src/main.rs:174` | Leaks the version detail as a `&'static str` for clap. |
 | `git_output` | Core & Compute | `build.rs:11` | Runs a git command at build time, returning `None` on any failure. |
 | `rerun_if_exists` | Core & Compute | `build.rs:25` | Emits a `rerun-if-changed` line only for paths that exist. |
 | `emit_rerun_triggers` | Core & Compute | `build.rs:37` | Emits every rerun trigger that can change the recorded identity. |
 | `enabled_features` | Core & Compute | `build.rs:62` | Reads enabled cargo features from `CARGO_FEATURE_*`, sorted. |
 | `main` (build.rs) | Core & Compute | `build.rs:80` | Stamps the build identity into compile-time environment variables. |
-| `Cli` | Core & Compute | `src/main.rs:26` | Top-level clap CLI struct wrapping a `Commands` subcommand. |
-| `Commands` | Core & Compute | `src/main.rs:32` | Enum of the 8 CLI subcommands, including Render. |
-| `default_config_path` | Core & Compute | `src/main.rs:151` | Builds the default config path under `data/input/`. |
-| `pick_config_path` | Core & Compute | `src/main.rs:156` | Chooses a user-supplied config path or falls back to the default. |
-| `main` (main.rs) | Core & Compute | `src/main.rs:166` | CLI entry point: parses args, loads config, applies overrides, runs the selected pipeline. |
-| `main` (precision_test.rs) | Core & Compute | `src/bin/precision_test.rs:5` | Standalone diagnostic binary comparing S2 computation precision/performance across CPU exact, CPU Monte Carlo, and GPU Monte Carlo methods. |
-| `BoundingBox::expanded` | Core & Compute | `src/types.rs:88` | Grows or shrinks a box by the same margin on every side. |
+| `Cli` | Core & Compute | `src/main.rs:27` | Top-level clap CLI struct wrapping a `Commands` subcommand. |
+| `Commands` | Core & Compute | `src/main.rs:33` | Enum of the 8 CLI subcommands, including Render. |
+| `default_config_path` | Core & Compute | `src/main.rs:179` | Builds the default config path under `data/input/`. |
+| `pick_config_path` | Core & Compute | `src/main.rs:184` | Chooses a user-supplied config path or falls back to the default. |
+| `main` (main.rs) | Core & Compute | `src/main.rs:194` | CLI entry point: parses args, loads config, applies overrides, runs the selected pipeline. |
+| `main` (precision_test.rs) | Core & Compute | `src/bin/precision_test.rs:6` | Standalone diagnostic binary comparing S2 computation precision/performance across CPU exact, CPU Monte Carlo, and GPU Monte Carlo methods. |
+| `BoundingBox::expanded` | Core & Compute | `src/types.rs:105` | Grows or shrinks a box by the same margin on every side. |
 | `Vec3` | Core & Compute | `src/types.rs:2` | 3D vector of `f64` components with basic vector algebra methods. |
 | `Vec3::new` | Core & Compute | `src/types.rs:10` | Constructs a vector from x/y/z components. |
 | `Vec3::add` | Core & Compute | `src/types.rs:15` | Vector addition. |
@@ -63,10 +86,10 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `BoundingBox::size` | Core & Compute | `src/types.rs:60` | Returns the box's side lengths. |
 | `BoundingBox::volume` | Core & Compute | `src/types.rs:65` | Returns the box's (non-negative) volume. |
 | `BoundingBox::contains_point` | Core & Compute | `src/types.rs:71` | Tests whether a point lies inside or on the box boundary. |
-| `Triangle` | Core & Compute | `src/types.rs:82` | Index triple `(a, b, c)` referencing a mesh's vertex array. |
-| `Mesh` | Core & Compute | `src/types.rs:89` | Vertex/face container: `vertices: Vec<Vec3>`, `faces: Vec<Triangle>`. |
-| `Mesh::empty` | Core & Compute | `src/types.rs:96` | Constructs an empty mesh. |
-| `Mesh::is_empty` | Core & Compute | `src/types.rs:104` | True if the mesh has no vertices or no faces. |
+| `Triangle` | Core & Compute | `src/types.rs:114` | Index triple `(a, b, c)` referencing a mesh's vertex array. |
+| `Mesh` | Core & Compute | `src/types.rs:121` | Vertex/face container: `vertices: Vec<Vec3>`, `faces: Vec<Triangle>`. |
+| `Mesh::empty` | Core & Compute | `src/types.rs:128` | Constructs an empty mesh. |
+| `Mesh::is_empty` | Core & Compute | `src/types.rs:136` | True if the mesh has no vertices or no faces. |
 | `AccelerationMode` | Core & Compute | `src/compute/backend.rs:5` | Enum of requested compute modes: `Auto` (default), `Cpu`, `Gpu`. |
 | `AccelerationMode::fmt` (Display) | Core & Compute | `src/compute/backend.rs:12` | Formats the mode as `"auto"`/`"cpu"`/`"gpu"`. |
 | `BackendCaps` | Core & Compute | `src/compute/backend.rs:23` | Reported capabilities of a selected backend (name, GPU support, buffer size limits). |
@@ -77,31 +100,31 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `ComputeBackend::fmt` (Display) | Core & Compute | `src/compute/backend.rs:87` | Formats as `"cpu"` or `"gpu/wgpu/{adapter_name}"`. |
 | `FallbackReason` | Core & Compute | `src/compute/policy.rs:4` | Records why a requested backend could not be honored and what was requested instead. |
 | `BackendSelection` | Core & Compute | `src/compute/policy.rs:10` | Result of backend selection: chosen `ComputeBackend` plus optional `FallbackReason`. |
-| `select_backend` | Core & Compute | `src/compute/policy.rs:21` | Central CPU/GPU/Auto dispatch policy used by compute-heavy pipelines. |
+| `select_backend` | Core & Compute | `src/compute/policy.rs:22` | Central CPU/GPU/Auto dispatch policy used by compute-heavy pipelines. |
 | `mesh_closedness` | Geometry — Analysis | `src/geometry/metrics.rs:37` | Decides whether a mesh is a closed oriented manifold, and if not, says why. |
 | `mesh_is_closed` | Geometry — Analysis | `src/geometry/metrics.rs:23` | Boolean wrapper over `mesh_closedness`. |
 | `MeshMetrics` | Geometry — Analysis | `src/geometry/metrics.rs:8` | Struct holding volume, surface area, equivalent diameter, and sphericity. |
-| `mesh_is_closed` | Geometry — Analysis | `src/geometry/metrics.rs:20` | Validates that a mesh is a manifold, consistently-oriented, nonzero-volume shell (or set of shells). |
-| `mesh_metrics` | Geometry — Analysis | `src/geometry/metrics.rs:105` | Computes volume, surface area, equivalent diameter, and sphericity for a closed mesh. |
-| `scale_mesh_to_equivalent_diameter` | Geometry — Analysis | `src/geometry/metrics.rs:138` | Rescales a mesh in place so its equivalent-volume diameter matches a target. |
-| `RAY_DIR_GPU` | Geometry — Analysis | `src/geometry/s2.rs:10` | Fixed non-axis-aligned unit ray direction constant, shared with the GPU ray-casting kernels. |
-| `index_3d_to_flat` | Geometry — Analysis | `src/geometry/s2.rs:13` | Converts a 3D voxel index to a flat array index (y/z-major strides). |
-| `ray_intersects_triangle` | Geometry — Analysis | `src/geometry/s2.rs:23` | Möller–Trumbore ray-triangle intersection test. |
-| `point_inside_mesh` | Geometry — Analysis | `src/geometry/s2.rs:60` | Ray-casting point-in-mesh containment test (odd-hit rule). |
-| `build_bbox_occupancy` | Geometry — Analysis | `src/geometry/s2.rs:109` | Parallel voxelization of a mesh into a boolean occupancy grid. |
-| `shell_offsets_for_distance` | Geometry — Analysis | `src/geometry/s2.rs:181` | Enumerates integer voxel offsets lying within a spherical shell annulus. |
-| `fill_missing_s2_with_smooth_interpolation` | Geometry — Analysis | `src/geometry/s2.rs:214` | Fills unsupported S2 radii via linear or cubic-spline interpolation. |
-| `fft_index_3d` | Geometry — Analysis | `src/geometry/s2.rs:325` | Converts a 3D FFT-grid index to a flat index (identical logic to `index_3d_to_flat`). |
-| `fft_3d_in_place` | Geometry — Analysis | `src/geometry/s2.rs:335` | Separable 3D FFT/IFFT performed in place on a complex buffer. |
-| `autocorrelation_counts_fft` | Geometry — Analysis | `src/geometry/s2.rs:409` | Computes occupancy autocorrelation counts via FFT convolution. |
-| `calculate_s2_exact_direct` | Geometry — Analysis | `src/geometry/s2.rs:441` | Exact S2 by direct pair enumeration per shell offset (no FFT). |
-| `calculate_s2_exact_fft` | Geometry — Analysis | `src/geometry/s2.rs:531` | Exact S2 using FFT-based autocorrelation. |
-| `calculate_s2_monte_carlo_mesh` | Geometry — Analysis | `src/geometry/s2.rs:610` | Monte Carlo S2 estimation sampling directly on the mesh (no voxelization). |
-| `calculate_s2` | Geometry — Analysis | `src/geometry/s2.rs:685` | Top-level S2 dispatcher; routes to exact (FFT or direct) or voxelized Monte Carlo. |
-| `approximate_s2` | Geometry — Analysis | `src/geometry/s2.rs:801` | Convenience wrapper for Monte Carlo S2 estimation with a default voxel pitch. |
-| `l2_norm` | Geometry — Analysis | `src/geometry/s2.rs:806` | Euclidean distance between two S2 vectors over their common-length prefix. |
-| `calculate_s2_with_gpu` | Geometry — Analysis | `src/geometry/s2.rs:825` | GPU-accelerated S2 for Monte Carlo/"both" methods, with CPU fallback. *(feature `gpu`)* |
-| `calculate_s2_gpu_exact` | Geometry — Analysis | `src/geometry/s2.rs:855` | GPU-accelerated exact S2 (GPU voxelization + GPU shell pair counting). *(feature `gpu`)* |
+| `mesh_is_closed` | Geometry — Analysis | `src/geometry/metrics.rs:23` | Validates that a mesh is a manifold, consistently-oriented, nonzero-volume shell (or set of shells). |
+| `mesh_metrics` | Geometry — Analysis | `src/geometry/metrics.rs:149` | Computes volume, surface area, equivalent diameter, and sphericity for a closed mesh. |
+| `scale_mesh_to_equivalent_diameter` | Geometry — Analysis | `src/geometry/metrics.rs:182` | Rescales a mesh in place so its equivalent-volume diameter matches a target. |
+| `RAY_DIR_GPU` | Geometry — Analysis | `src/geometry/s2.rs:13` | Fixed non-axis-aligned unit ray direction constant, shared with the GPU ray-casting kernels. |
+| `index_3d_to_flat` | Geometry — Analysis | `src/geometry/s2.rs:16` | Converts a 3D voxel index to a flat array index (y/z-major strides). |
+| `ray_intersects_triangle` | Geometry — Analysis | `src/geometry/s2.rs:26` | Möller–Trumbore ray-triangle intersection test. |
+| `point_inside_mesh` | Geometry — Analysis | `src/geometry/s2.rs:63` | Ray-casting point-in-mesh containment test (odd-hit rule). |
+| `build_bbox_occupancy` | Geometry — Analysis | `src/geometry/s2.rs:112` | Parallel voxelization of a mesh into a boolean occupancy grid. |
+| `shell_offsets_for_distance` | Geometry — Analysis | `src/geometry/s2.rs:184` | Enumerates integer voxel offsets lying within a spherical shell annulus. |
+| `fill_missing_s2_with_smooth_interpolation` | Geometry — Analysis | `src/geometry/s2.rs:217` | Fills unsupported S2 radii via linear or cubic-spline interpolation. |
+| `fft_index_3d` | Geometry — Analysis | `src/geometry/s2.rs:328` | Converts a 3D FFT-grid index to a flat index (identical logic to `index_3d_to_flat`). |
+| `FftWorkspace::transform` | Geometry — Analysis | `src/geometry/s2.rs:369` | Separable 3D FFT/IFFT performed in place on a complex buffer. |
+| `autocorrelation_counts_fft` | Geometry — Analysis | `src/geometry/s2.rs:549` | Computes occupancy autocorrelation counts via FFT convolution. |
+| `calculate_s2_exact_direct` | Geometry — Analysis | `src/geometry/s2.rs:561` | Exact S2 by direct pair enumeration per shell offset (no FFT). |
+| `calculate_s2_exact_fft` | Geometry — Analysis | `src/geometry/s2.rs:651` | Exact S2 using FFT-based autocorrelation. |
+| `calculate_s2_monte_carlo_mesh` | Geometry — Analysis | `src/geometry/s2.rs:730` | Monte Carlo S2 estimation sampling directly on the mesh (no voxelization). |
+| `calculate_s2` | Geometry — Analysis | `src/geometry/s2.rs:785` | Top-level S2 dispatcher; routes to exact (FFT or direct) or voxelized Monte Carlo. |
+| `approximate_s2` | Geometry — Analysis | `src/geometry/s2.rs:924` | Convenience wrapper for Monte Carlo S2 estimation with a default voxel pitch. |
+| `l2_norm` | Geometry — Analysis | `src/geometry/s2.rs:929` | Euclidean distance between two S2 vectors over their common-length prefix. |
+| `calculate_s2_with_gpu` | Geometry — Analysis | `src/geometry/s2.rs:948` | GPU-accelerated S2 for Monte Carlo/"both" methods, with CPU fallback. *(feature `gpu`)* |
+| `calculate_s2_gpu_exact` | Geometry — Analysis | `src/geometry/s2.rs:984` | GPU-accelerated exact S2 (GPU voxelization + GPU shell pair counting). *(feature `gpu`)* |
 | `UnitQuat` | Geometry — Core | `src/geometry/quaternion.rs:17` | Scalar-first unit quaternion `[w, x, y, z]`, canonicalised to `w >= 0`. |
 | `UnitQuat::identity` | Geometry — Core | `src/geometry/quaternion.rs:26` | The identity rotation. |
 | `UnitQuat::new` | Geometry — Core | `src/geometry/quaternion.rs:42` | Normalizes and sign-canonicalizes raw components. |
@@ -111,7 +134,7 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `UnitQuat::to_matrix` | Geometry — Core | `src/geometry/quaternion.rs:89` | Row-major 3x3 rotation matrix derived from the quaternion. |
 | `sample_uniform_quaternion` | Geometry — Core | `src/geometry/quaternion.rs:123` | Shoemake's Haar-uniform rotation from exactly three uniforms. |
 | `transform_shell` | Geometry — Core | `src/geometry/quaternion.rs:148` | The single definition of scale, then rotate, then translate. |
-| `icosphere_mesh` | Geometry — Core | `src/geometry/mesh_ops.rs:248` | Closed outward-oriented subdivided icosahedron sphere. |
+| `icosphere_mesh` | Geometry — Core | `src/geometry/mesh_ops.rs:261` | Closed outward-oriented subdivided icosahedron sphere. |
 | `mesh_bbox` | Geometry — Core | `src/geometry/bbox.rs:8` | Axis-aligned bounding box of a mesh. |
 | `bbox_overlaps` | Geometry — Core | `src/geometry/bbox.rs:28` | Strict overlap test between two bounding boxes. |
 | `bbox_distance` | Geometry — Core | `src/geometry/bbox.rs:38` | Minimum Euclidean distance between two bounding boxes. |
@@ -119,22 +142,22 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `mesh_centroid` | Geometry — Core | `src/geometry/mesh_ops.rs:5` | Arithmetic centroid of mesh vertices. |
 | `vec_norm` | Geometry — Core | `src/geometry/mesh_ops.rs:19` | Euclidean length of a vector. |
 | `merge_meshes` | Geometry — Core | `src/geometry/mesh_ops.rs:24` | Combines multiple meshes into one, remapping face indices. |
-| `split_mesh_into_granules` | Geometry — Core | `src/geometry/mesh_ops.rs:44` | Splits a mesh into connected components (BFS over shared vertices). |
-| `translate_mesh` | Geometry — Core | `src/geometry/mesh_ops.rs:117` | Translates all mesh vertices by a delta vector, in place. |
-| `move_mesh_to_target_center` | Geometry — Core | `src/geometry/mesh_ops.rs:124` | Moves a mesh so its centroid matches a target position. |
-| `wrap_mesh_centroid_to_box` | Geometry — Core | `src/geometry/mesh_ops.rs:135` | Wraps a mesh's centroid into a box under periodic boundary conditions. |
-| `scale_mesh` | Geometry — Core | `src/geometry/mesh_ops.rs:156` | Uniformly scales mesh vertices about the origin, in place. |
-| `mesh_surface_area` | Geometry — Core | `src/geometry/mesh_ops.rs:163` | Total surface area of a mesh (sum of triangle areas). |
-| `rotate_mesh_around_center` | Geometry — Core | `src/geometry/mesh_ops.rs:182` | Rotates a mesh about its centroid using Rodrigues' rotation formula. |
-| `box_mesh` | Geometry — Core | `src/geometry/mesh_ops.rs:203` | Builds a triangulated box mesh from a `BoundingBox`. |
-| `SpatialGrid::new` | Geometry — Core | `src/geometry/spatial.rs:14` | Constructs an empty uniform grid over a box with given cell size. |
-| `SpatialGrid::insert` | Geometry — Core | `src/geometry/spatial.rs:31` | Inserts an item index into every cell its bbox overlaps. |
-| `SpatialGrid::build` | Geometry — Core | `src/geometry/spatial.rs:49` | Constructs and populates a grid from a batch of (index, bbox) pairs. |
-| `SpatialGrid::query_neighbors` | Geometry — Core | `src/geometry/spatial.rs:58` | Finds candidate neighbor indices overlapping a query bbox. |
-| `SpatialGrid::query_neighbors_with_margin` | Geometry — Core | `src/geometry/spatial.rs:68` | Same as `query_neighbors`, expanded by a margin distance. |
-| `SpatialGrid::point_to_cell_clamped` | Geometry — Core | `src/geometry/spatial.rs:93` | Maps a point to grid cell coordinates, clamped to grid bounds. |
-| `SpatialGrid::point_to_cell` | Geometry — Core | `src/geometry/spatial.rs:99` | Maps a point to grid cell coordinates, unclamped. |
-| `estimate_cell_size` | Geometry — Core | `src/geometry/spatial.rs:108` | Heuristically picks a `SpatialGrid` cell size from a set of bboxes. |
+| `split_mesh_into_granules` | Geometry — Core | `src/geometry/mesh_ops.rs:47` | Splits a mesh into connected components (BFS over shared vertices). |
+| `translate_mesh` | Geometry — Core | `src/geometry/mesh_ops.rs:120` | Translates all mesh vertices by a delta vector, in place. |
+| `move_mesh_to_target_center` | Geometry — Core | `src/geometry/mesh_ops.rs:125` | Moves a mesh so its centroid matches a target position. |
+| `wrap_mesh_centroid_to_box` | Geometry — Core | `src/geometry/mesh_ops.rs:136` | Wraps a mesh's centroid into a box under periodic boundary conditions. |
+| `scale_mesh` | Geometry — Core | `src/geometry/mesh_ops.rs:157` | Uniformly scales mesh vertices about the origin, in place. |
+| `mesh_surface_area` | Geometry — Core | `src/geometry/mesh_ops.rs:176` | Total surface area of a mesh (sum of triangle areas). |
+| `rotate_mesh_around_center` | Geometry — Core | `src/geometry/mesh_ops.rs:195` | Rotates a mesh about its centroid using Rodrigues' rotation formula. |
+| `box_mesh` | Geometry — Core | `src/geometry/mesh_ops.rs:216` | Builds a triangulated box mesh from a `BoundingBox`. |
+| `SpatialGrid::new` | Geometry — Core | `src/geometry/spatial.rs:22` | Constructs an empty uniform grid over a box with given cell size. |
+| `SpatialGrid::insert` | Geometry — Core | `src/geometry/spatial.rs:40` | Inserts an item index into every cell its bbox overlaps. |
+| `SpatialGrid::build` | Geometry — Core | `src/geometry/spatial.rs:80` | Constructs and populates a grid from a batch of (index, bbox) pairs. |
+| `SpatialGrid::query_neighbors` | Geometry — Core | `src/geometry/spatial.rs:89` | Finds candidate neighbor indices overlapping a query bbox. |
+| `SpatialGrid::query_neighbors_with_margin` | Geometry — Core | `src/geometry/spatial.rs:99` | Margin query with first-encounter ordering and adaptive linear/hash deduplication. |
+| `SpatialGrid::point_to_cell_clamped` | Geometry — Core | `src/geometry/spatial.rs:157` | Maps a point to grid cell coordinates, clamped to grid bounds. |
+| `SpatialGrid::point_to_cell` | Geometry — Core | `src/geometry/spatial.rs:167` | Maps a point to grid cell coordinates, unclamped. |
+| `estimate_cell_size` | Geometry — Core | `src/geometry/spatial.rs:176` | Heuristically picks a `SpatialGrid` cell size from a set of bboxes. |
 | `VoidVolumeMethod` | Geometry — Volume & Collision | `src/geometry/void_index.rs:18` | Which method produced a void's in-domain volume. |
 | `VoidIndex` | Geometry — Volume & Collision | `src/geometry/void_index.rs:32` | A frozen void, indexed for the queries a placement run makes. |
 | `VoidIndex::build` | Geometry — Volume & Collision | `src/geometry/void_index.rs:56` | Validates a void mesh and builds its index; refuses mixed orientation. |
@@ -169,12 +192,12 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `quantize_point_key` | Geometry — Volume & Collision | `src/geometry/volume.rs:125` | Rounds a point to a fixed-precision integer key for dedup/hashing. |
 | `collect_triangle_plane_segment` | Geometry — Volume & Collision | `src/geometry/volume.rs:139` | Extracts the segment where a triangle crosses a clip plane. |
 | `plane_basis` | Geometry — Volume & Collision | `src/geometry/volume.rs:175` | Builds an orthonormal (u, v) basis in the plane perpendicular to a normal. |
-| `triangulate_cap_from_segments` | Geometry — Volume & Collision | `src/geometry/volume.rs:204` | Triangulates a planar cap from cross-plane edge segments (ring-finding + fan). |
-| `clip_mesh_by_plane_with_cap` | Geometry — Volume & Collision | `src/geometry/volume.rs:345` | Clips a mesh against one plane and caps the resulting opening. |
-| `clip_mesh_by_bbox` | Geometry — Volume & Collision | `src/geometry/volume.rs:383` | Clips a mesh to an axis-aligned box via six successive plane clips. |
-| `particle_volume_in_bbox` | Geometry — Volume & Collision | `src/geometry/volume.rs:404` | Volume of a mesh after clipping it to a bounding box. |
-| `volume_fraction_in_bbox` | Geometry — Volume & Collision | `src/geometry/volume.rs:410` | Volume fraction of a single mesh within a bounding box. |
-| `volume_fraction_of_meshes_in_bbox` | Geometry — Volume & Collision | `src/geometry/volume.rs:420` | Total volume fraction of multiple meshes within a bounding box (parallel). |
+| `triangulate_cap_from_segments` | Geometry — Volume & Collision | `src/geometry/volume.rs:211` | Triangulates a planar cap from cross-plane edge segments (ring-finding + fan). |
+| `clip_mesh_by_plane_with_cap` | Geometry — Volume & Collision | `src/geometry/volume.rs:352` | Clips a mesh against one plane and caps the resulting opening. |
+| `clip_mesh_by_bbox` | Geometry — Volume & Collision | `src/geometry/volume.rs:390` | Clips a mesh to an axis-aligned box via six successive plane clips. |
+| `particle_volume_in_bbox` | Geometry — Volume & Collision | `src/geometry/volume.rs:411` | Volume of a mesh after clipping it to a bounding box. |
+| `volume_fraction_in_bbox` | Geometry — Volume & Collision | `src/geometry/volume.rs:417` | Volume fraction of a single mesh within a bounding box. |
+| `volume_fraction_of_meshes_in_bbox` | Geometry — Volume & Collision | `src/geometry/volume.rs:427` | Total volume fraction of multiple meshes within a bounding box (parallel). |
 | `to_parry_trimesh` | Geometry — Volume & Collision | `src/geometry/collision.rs:29` | Converts a `Mesh` into a parry3d `TriMesh`. |
 | `trimesh_contains_point` | Geometry — Volume & Collision | `src/geometry/collision.rs:61` | Ray-parity point-in-solid test over a shape's bounding-volume hierarchy. |
 | `mesh_surfaces_intersect_prepared` | Geometry — Volume & Collision | `src/geometry/collision.rs:99` | Bbox-filtered exact test for whether two mesh surfaces cross. |
@@ -189,42 +212,52 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `GpuContext` | GPU | `src/gpu/context.rs:3` | Holds adapter name and buffer-size capabilities after successful GPU init. |
 | `GpuContext::caps` | GPU | `src/gpu/context.rs:11` | Returns `BackendCaps` describing this GPU context. |
 | `GpuInitError` | GPU | `src/gpu/context.rs:22` | Error type wrapping a GPU initialization failure message. |
-| `GpuInitError` (`Display` impl) | GPU | `src/gpu/context.rs:24` | Formats the error message. |
+| `GpuInitError` (`Display` impl) | GPU | `src/gpu/context.rs:22` | Formats the error message. |
 | `try_init_gpu` | GPU | `src/gpu/context.rs:38` | Probes for a wgpu adapter/device and returns a `GpuContext`; used by `compute::policy::select_backend`. |
 | `GpuS2Pipeline` | GPU | `src/gpu/s2.rs:10` | GPU pipeline state for Monte Carlo S2 two-point correlation. |
-| `build_triangle_buffer` (s2.rs) | GPU | `src/gpu/s2.rs:27` | Builds a normalized `f32` triangle position buffer for the S2 Monte Carlo pipeline. |
-| `pack_params` | GPU | `src/gpu/s2.rs:48` | Packs Monte Carlo S2 shader parameters into a byte buffer matching the WGSL `Params` layout. |
-| `GpuS2Pipeline::new` | GPU | `src/gpu/s2.rs:95` | Initializes the wgpu device and Monte Carlo S2 compute pipeline. |
-| `GpuS2Pipeline::update_mesh` | GPU | `src/gpu/s2.rs:266` | Re-uploads triangle data for a new mesh without recreating the pipeline. |
-| `GpuS2Pipeline::ensure_output_capacity` | GPU | `src/gpu/s2.rs:287` | Grows the output buffers if the invocation count exceeds current capacity. |
-| `GpuS2Pipeline::calculate_s2_gpu` | GPU | `src/gpu/s2.rs:311` | Dispatches the Monte Carlo S2 kernel for all radii and reads back results. |
+| `build_triangle_buffer` (s2.rs) | GPU | `src/gpu/s2.rs:29` | Builds a normalized `f32` triangle position buffer for the S2 Monte Carlo pipeline. |
+| `pack_params` | GPU | `src/gpu/s2.rs:50` | Packs Monte Carlo S2 shader parameters into a byte buffer matching the WGSL `Params` layout. |
+| `dispatch_plan` | GPU | `src/gpu/s2.rs:101` | Validate logical MC ids, partial buffers and two-dimensional dispatch. |
+| `check_buffer_size` | GPU | `src/gpu/s2.rs:115` | Check single-buffer and storage limits. |
+| `check_mesh_capacity` | GPU | `src/gpu/s2.rs:125` | Check triangle count and upload capacity. |
+| `scoped` | GPU | `src/gpu/runtime.rs:2` | Capture scoped GPU errors and balance all scopes. |
+| `read_u32` | GPU | `src/gpu/runtime.rs:29` | Check mapping completion before copying and unmapping u32 readback. |
+| `GpuS2Pipeline::new` | GPU | `src/gpu/s2.rs:141` | Initializes the wgpu device and Monte Carlo S2 compute pipeline. |
+| `GpuS2Pipeline::update_mesh` | GPU | `src/gpu/s2.rs:277` | Re-uploads triangle data for a new mesh without recreating the pipeline. |
+| `GpuS2Pipeline::ensure_output_capacity` | GPU | `src/gpu/s2.rs:302` | Grows the output buffers if the invocation count exceeds current capacity. |
+| `GpuS2Pipeline::calculate_s2_gpu` | GPU | `src/gpu/s2.rs:351` | Dispatches the Monte Carlo S2 kernel for all radii and reads back results. |
 | `OffsetEntry` | GPU | `src/gpu/s2_shell.rs:6` | Packed `(radius_idx, dx, dy, dz)` shell-offset record matching the WGSL layout. |
+| `point_inside` (s2_monte_carlo.wgsl) | GPU | `src/gpu/shaders/s2_monte_carlo.wgsl:85` | Classify ray parity with overflow recovery. |
+| `point_inside_overflow` (s2_monte_carlo.wgsl) | GPU | `src/gpu/shaders/s2_monte_carlo.wgsl:62` | Classify ray parity with overflow recovery. |
+| `point_inside` (voxelize.wgsl) | GPU | `src/gpu/shaders/voxelize.wgsl:63` | Classify ray parity with overflow recovery. |
+| `point_inside_overflow` (voxelize.wgsl) | GPU | `src/gpu/shaders/voxelize.wgsl:40` | Classify ray parity with overflow recovery. |
 | `GpuShellS2Pipeline` | GPU | `src/gpu/s2_shell.rs:13` | GPU pipeline state for exact shell-pair S2 computation. |
 | `build_offset_buffer` | GPU | `src/gpu/s2_shell.rs:30` | Converts `(radius_idx, [dx,dy,dz])` tuples into `OffsetEntry` records. |
 | `GpuShellS2Pipeline::new` | GPU | `src/gpu/s2_shell.rs:48` | Initializes the wgpu device and shell S2 compute pipeline. |
-| `GpuShellS2Pipeline::compute_s2_shell` | GPU | `src/gpu/s2_shell.rs:135` | Dispatches exact shell-pair counting over an occupancy grid and reads back S2(r). |
+| `GpuShellS2Pipeline::compute_s2_shell` | GPU | `src/gpu/s2_shell.rs:181` | Dispatches exact shell-pair counting over an occupancy grid and reads back S2(r). |
 | `GpuVoxelPipeline` | GPU | `src/gpu/voxel.rs:5` | GPU pipeline state for mesh voxelization. |
 | `build_triangle_buffer` (voxel.rs) | GPU | `src/gpu/voxel.rs:17` | Builds a normalized `f32` triangle position buffer for the voxelization pipeline (separate copy from `s2.rs`). |
-| `GpuVoxelPipeline::new` | GPU | `src/gpu/voxel.rs:37` | Initializes the wgpu device and voxelization compute pipeline. |
-| `GpuVoxelPipeline::voxelize` | GPU | `src/gpu/voxel.rs:116` | Dispatches ray-casting voxelization and reads back the occupancy grid. |
+| `pack_params` (voxel.rs) | GPU | `src/gpu/voxel.rs:32` | Serialize the 48-byte voxel parameters with the ray at byte 32. |
+| `GpuVoxelPipeline::new` | GPU | `src/gpu/voxel.rs:57` | Initializes the wgpu device and voxelization compute pipeline. |
+| `GpuVoxelPipeline::voxelize` | GPU | `src/gpu/voxel.rs:168` | Dispatches ray-casting voxelization and reads back the occupancy grid. |
 | `GpuVolumeTransformPipeline` | GPU | `src/gpu/volume_transform.rs:5` | GPU pipeline state for volume rotate-and-crop. |
 | `GpuVolumeTransformPipeline::new` | GPU | `src/gpu/volume_transform.rs:23` | Initializes the wgpu device and volume-transform compute pipeline. |
-| `GpuVolumeTransformPipeline::rotate_and_crop` | GPU | `src/gpu/volume_transform.rs:145` | Dispatches the rotate/crop/resample kernel and reads back the transformed volume. |
+| `GpuVolumeTransformPipeline::rotate_and_crop` | GPU | `src/gpu/volume_transform.rs:123` | Dispatches the rotate/crop/resample kernel and reads back the transformed volume. |
 | `parse_ascii_vertex` | I/O | `src/io/stl.rs:9` | Parses one ASCII STL `vertex x y z` line into a `Vec3`. |
 | `quantize_key` | I/O | `src/io/stl.rs:21` | Quantizes a vertex to a fixed-precision integer key for tolerant deduplication. |
 | `dedup_vertex` | I/O | `src/io/stl.rs:31` | Deduplicates a vertex against an existing list via quantized key lookup. |
-| `parse_ascii_stl` | I/O | `src/io/stl.rs:48` | Parses ASCII STL text into a `Mesh` with deduplicated vertices. |
+| `parse_ascii_stl` | I/O | `src/io/stl.rs:52` | Parses ASCII STL text into a `Mesh` with deduplicated vertices. |
 | `parse_f32_le` | I/O | `src/io/stl.rs:93` | Parses little-endian `f32` bytes and upcasts to `f64`. |
 | `parse_binary_stl` | I/O | `src/io/stl.rs:104` | Parses binary STL bytes into a `Mesh` with deduplicated vertices. |
-| `looks_ascii_stl` | I/O | `src/io/stl.rs:166` | Heuristically detects whether bytes represent ASCII STL. |
-| `load_stl` | I/O | `src/io/stl.rs:185` | Loads an STL file with automatic ASCII/binary detection. |
-| `load_folder_stls` | I/O | `src/io/stl.rs:203` | Loads all STL files in a folder. |
-| `load_stl_or_merge_folder` | I/O | `src/io/stl.rs:226` | Loads a single STL file, or merges all STLs in a directory into one mesh. |
-| `save_stl` | I/O | `src/io/stl.rs:258` | Saves a mesh as a binary STL file. |
+| `looks_ascii_stl` | I/O | `src/io/stl.rs:151` | Heuristically detects whether bytes represent ASCII STL. |
+| `load_stl` | I/O | `src/io/stl.rs:170` | Loads an STL file with automatic ASCII/binary detection. |
+| `load_folder_stls` | I/O | `src/io/stl.rs:206` | Loads all STL files in a folder. |
+| `load_stl_or_merge_folder` | I/O | `src/io/stl.rs:233` | Loads a single STL file, or merges all STLs in a directory into one mesh. |
+| `save_stl` | I/O | `src/io/stl.rs:262` | Saves a mesh as a binary STL file. |
 | `collect_sorted_files` | I/O | `src/io/volume.rs:50` | Collects regular files in a folder, sorted by name, optionally filtered by extension. |
 | `resolve_slice_range` | I/O | `src/io/volume.rs:78` | Resolves an inclusive slice range from start/end indices, treating `-1` as "from beginning"/"to end". |
 | `decode_raw_slice` | I/O | `src/io/volume.rs:107` | Decodes one raw image slice into `i64` values per bit depth, sign, and byte order. |
-| `load_raw_folder` | I/O | `src/io/volume.rs:205` | Loads a `Volume3D` from a folder of raw binary slice files. |
+| `load_raw_folder` | I/O | `src/io/volume.rs:227` | Loads ordered RAW slices with checked sizing, bounded decoding and one final-output reservation. |
 | `tiff_decoding_to_i64` | I/O | `src/io/volume.rs:266` | Converts a TIFF `DecodingResult` into a `Vec<i64>` buffer plus its numeric type. |
 | `load_tiff_file_with_range` | I/O | `src/io/volume.rs:286` | Loads a multi-page TIFF file into a `Volume3D` over an inclusive page range. |
 | `load_tiff_file` | I/O | `src/io/volume.rs:354` | Loads a TIFF file (all pages) into a `Volume3D`. |
@@ -240,40 +273,40 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `u01` | Pipeline — Core | `src/pipeline/rng.rs:32` | The single uniform primitive: one draw in `[0, 1)`. |
 | `uniform_range` | Pipeline — Core | `src/pipeline/rng.rs:45` | One uniform in `[lo, hi)`; degenerate ranges yield `lo`. |
 | `uniform_index` | Pipeline — Core | `src/pipeline/rng.rs:62` | One index uniformly from `0..n`. |
-| `create_progress_bar` | Pipeline — Core | `src/pipeline/mod.rs:25` | Builds a tty-aware indicatif progress bar with a given template and fill characters. |
+| `create_progress_bar` | Pipeline — Core | `src/pipeline/mod.rs:37` | Builds a tty-aware indicatif progress bar with a given template and fill characters. |
 | `RotationMode` (enum) | Pipeline — Core | `src/pipeline/rotation.rs:6` | Represents no rotation, a fixed axis, or a random axis. |
 | `parse_rotation_mode` | Pipeline — Core | `src/pipeline/rotation.rs:18` | Parses `none/x/y/z/vector/any` config strings into a `RotationMode`. |
 | `sample_rotation_axis` | Pipeline — Core | `src/pipeline/rotation.rs:57` | Draws a concrete rotation axis vector for a given `RotationMode`. |
 | `ScalePipeline` (struct) | Pipeline — Core | `src/pipeline/scale.rs:8` | Holds `ScaleConfig` for the scaling pipeline. |
 | `ScalePipeline::run` | Pipeline — Core | `src/pipeline/scale.rs:19` | Loads an STL, applies unit-conversion/factor scaling, optionally fixes orientation, saves output. |
-| `ForgePipeline` (struct) | Pipeline — Core | `src/pipeline/forge.rs:13` | Holds `ForgingConfig` for the FFD forging pipeline. |
-| `ForgePipeline::parse_roi_bbox` | Pipeline — Core | `src/pipeline/forge.rs:19` | Parses an optional 6-element ROI bounding box from config. |
-| `ForgePipeline::parse_compression_axis` | Pipeline — Core | `src/pipeline/forge.rs:38` | Parses the compression axis string (`x`/`y`/`z`) into an index and label. |
+| `ForgePipeline` (struct) | Pipeline — Core | `src/pipeline/forge.rs:12` | Holds `ForgingConfig` for the FFD forging pipeline. |
+| `ForgePipeline::parse_roi_bbox` | Pipeline — Core | `src/pipeline/forge.rs:18` | Parses an optional 6-element ROI bounding box from config. |
+| `ForgePipeline::parse_compression_axis` | Pipeline — Core | `src/pipeline/forge.rs:37` | Parses the compression axis string (`x`/`y`/`z`) into an index and label. |
 | `ForgePipeline::run` | Pipeline — Core | `src/pipeline/forge.rs:58` | Runs FFD-based compression/forging, tracks ROI, writes forged STL and a text report. |
-| `MeasurePipeline` (struct) | Pipeline — Core | `src/pipeline/measure.rs:16` | Holds `MeasurementConfig` for the S2/volume-fraction measurement pipeline. |
-| `MeasurePipeline::parse_optional_bbox` | Pipeline — Core | `src/pipeline/measure.rs:22` | Parses an optional bounding box (3-element size or 6-element min/max) from config. |
-| `MeasurePipeline::l2_error` | Pipeline — Core | `src/pipeline/measure.rs:31` | Computes the L2 distance between two S2 value vectors over their common prefix length. |
+| `MeasurePipeline` (struct) | Pipeline — Core | `src/pipeline/measure.rs:12` | Holds `MeasurementConfig` for the S2/volume-fraction measurement pipeline. |
+| `MeasurePipeline::parse_optional_bbox` | Pipeline — Core | `src/pipeline/measure.rs:18` | Parses an optional bounding box (3-element size or 6-element min/max) from config. |
+| `MeasurePipeline::l2_error` | Pipeline — Core | `src/pipeline/measure.rs:27` | Computes the L2 distance between two S2 value vectors over their common prefix length. |
 | `MeasurePipeline::run` | Pipeline — Core | `src/pipeline/measure.rs:53` | Loads an STL, computes volume fraction and S2 correlation (exact/MC/both, CPU or GPU), writes a report. |
 | `CropPipeline` (struct) | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:14` | Holds `CropConfig` for the crop pipeline. |
 | `InterpolationMode` (enum) | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:19` | Nearest vs. trilinear resampling mode used during rotate+crop. |
-| `parse_byte_order` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:25` | Parses `little`/`big` (or `le`/`be`) into a `ByteOrder`. |
-| `parse_interpolation_mode` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:36` | Parses `nearest`/`trilinear` into an `InterpolationMode`, defaulting to trilinear. |
-| `load_input_volume` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:52` | Loads the input CT volume from a raw folder or TIFF/TIFF-folder per config. |
-| `voxel_index` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:86` | Computes the flat data index for `(x, y, z)` voxel coordinates. |
-| `sample_voxel_or_background` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:91` | Reads a voxel at integer coordinates, returning the background value if out of bounds. |
-| `sample_nearest` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:106` | Nearest-neighbor sample at fractional source coordinates. |
-| `sample_trilinear` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:114` | Trilinear-interpolated sample at fractional source coordinates. |
-| `stabilize_bound` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:147` | Snaps a near-integer float to its exact integer within an epsilon. |
-| `float_bounds_to_inclusive_i64` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:157` | Converts float min/max bounds to an inclusive integer `[start, end]` range. |
-| `boundary_non_bg_ratio` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:170` | Fraction of non-background voxels within a boundary shell of given thickness. |
-| `infer_trim_pixels` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:211` | Heuristically infers 0/1/2 pixels of edge trim from boundary artifact intensity. |
-| `resolve_trim_pixels` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:229` | Resolves the effective edge-trim pixel count from config, supporting `-1` for auto. |
-| `trim_volume_border` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:252` | Trims a fixed number of border voxels from the XY faces of a volume. |
-| `detect_background_mode` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:296` | Detects the background value as the modal voxel value on the volume boundary. |
-| `estimate_pca_bbox` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:330` | Computes PCA rotation, centroid, and rotated-frame foreground bounding box. |
-| `rotate_and_crop` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:432` | CPU, rayon-parallel rotate-and-crop of the volume into an axis-aligned output. |
-| `rotate_and_crop_gpu` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:494` | GPU-accelerated rotate-and-crop via `GpuVolumeTransformPipeline` (feature `gpu`). |
-| `CropPipeline::run` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:559` | Orchestrates load → background detect → PCA bbox → rotate+crop (GPU or CPU) → edge trim → save TIFF. |
+| `parse_byte_order` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:34` | Parses `little`/`big` (or `le`/`be`) into a `ByteOrder`. |
+| `parse_interpolation_mode` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:50` | Parses `nearest`/`trilinear` into an `InterpolationMode`, defaulting to trilinear. |
+| `load_input_volume` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:71` | Loads the input CT volume from a raw folder or TIFF/TIFF-folder per config. |
+| `voxel_index` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:105` | Computes the flat data index for `(x, y, z)` voxel coordinates. |
+| `sample_voxel_or_background` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:110` | Reads a voxel at integer coordinates, returning the background value if out of bounds. |
+| `sample_nearest` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:137` | Nearest-neighbor sample at fractional source coordinates. |
+| `sample_trilinear` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:145` | Trilinear-interpolated sample at fractional source coordinates. |
+| `stabilize_bound` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:178` | Snaps a near-integer float to its exact integer within an epsilon. |
+| `float_bounds_to_inclusive_i64` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:188` | Converts float min/max bounds to an inclusive integer `[start, end]` range. |
+| `boundary_non_bg_ratio` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:201` | Fraction of non-background voxels within a boundary shell of given thickness. |
+| `infer_trim_pixels` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:242` | Heuristically infers 0/1/2 pixels of edge trim from boundary artifact intensity. |
+| `resolve_trim_pixels` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:260` | Resolves the effective edge-trim pixel count from config, supporting `-1` for auto. |
+| `trim_volume_border` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:287` | Trims a fixed number of border voxels from the XY faces of a volume. |
+| `detect_background_mode` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:317` | Detects the background value as the modal voxel value on the volume boundary. |
+| `estimate_pca_bbox` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:351` | Computes PCA rotation, centroid, and rotated-frame foreground bounding box. |
+| `rotate_and_crop` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:459` | CPU, rayon-parallel rotate-and-crop of the volume into an axis-aligned output. |
+| `rotate_and_crop_gpu` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:520` | GPU-accelerated rotate-and-crop via `GpuVolumeTransformPipeline` (feature `gpu`). |
+| `CropPipeline::run` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:598` | Orchestrates load → background detect → PCA bbox → rotate+crop (GPU or CPU) → edge trim → save TIFF. |
 | `SplitFilterPipeline` (struct) | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:13` | Holds `SplitFilterConfig` for the split-filter pipeline. |
 | `VolumeStats` (struct) | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:18` | Min/max/mean/median summary of kept-particle volumes. |
 | `volume_stats_for_kept` | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:26` | Computes `VolumeStats` over particles whose `keep` flag is true. |
@@ -285,45 +318,57 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `erf_approx` | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:208` | Abramowitz & Stegun 7.1.26 approximation of the error function. |
 | `apply_lognormal_rebalance` | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:225` | Drops excess particles from over-represented log-volume bins relative to a fitted lognormal. |
 | `SplitFilterPipeline::run` | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:300` | Orchestrates split → aspect-ratio/sharpness/volume filters → save STLs → report. |
-| `OptimizePipeline` | Pipeline — Optimize | `src/pipeline/optimize.rs:27` | Pipeline entry-point struct wrapping the parsed `OptimizationConfig`. |
-| `ParticlePrepared` | Pipeline — Optimize | `src/pipeline/optimize.rs:32` | Per-particle cache of mesh + precomputed bbox + parry3d collision shape. |
-| `IslandResult` | Pipeline — Optimize | `src/pipeline/optimize.rs:39` | Outcome of one SA island run: best particles/loss/S2 plus profiling durations. |
-| `GlobalBest` | Pipeline — Optimize | `src/pipeline/optimize.rs:47` | Cross-island shared best solution, guarded by `Arc<Mutex<GlobalBest>>`. |
-| `prepare_particle` | Pipeline — Optimize | `src/pipeline/optimize.rs:53` | Builds a `ParticlePrepared` (bbox + parry3d shape) from a raw mesh. |
-| `format_s2_series` | Pipeline — Optimize | `src/pipeline/optimize.rs:60` | Formats an S2 vector as a fixed-precision, space-separated string. |
-| `push_history_s2` | Pipeline — Optimize | `src/pipeline/optimize.rs:69` | Appends a labeled S2 snapshot line to the run's history log. |
-| `prune_progress_message` | Pipeline — Optimize | `src/pipeline/optimize.rs:74` | Builds the progress-bar message string for the pruning stage. |
-| `selective_prune_to_target_vf` | Pipeline — Optimize | `src/pipeline/optimize.rs:86` | Pre-annealing stage: iteratively removes particles to approach the target volume fraction while minimizing S2-loss increase. |
-| `run_sa_island` | Pipeline — Optimize | `src/pipeline/optimize.rs:285` | The core simulated-annealing loop for one island; the single most important function in the codebase. |
-| `OptimizePipeline::run` | Pipeline — Optimize | `src/pipeline/optimize.rs:797` | Top-level `Pipeline::run` orchestration: load, target computation, pruning, single/multi-island SA, save. |
-| `PHASE_MATRIX` | Pipeline — Packing | `src/pipeline/placement_labels.rs:12` | Phase code 0 in the written label field. |
-| `VoxelLabelsHeader` | Pipeline — Packing | `src/pipeline/placement_labels.rs:21` | What the label stacks are: spacing, origin, layout, phase table. |
-| `PhaseLabel` | Pipeline — Packing | `src/pipeline/placement_labels.rs:38` | One phase code and its name. |
-| `write_voxel_labels` | Pipeline — Packing | `src/pipeline/placement_labels.rs:56` | Writes the three-phase label field and the per-voxel particle id field. |
-| `particle_at` | Pipeline — Packing | `src/pipeline/placement_labels.rs:178` | Finds which placed particle, if any, contains a point. |
-| `point_in_particle` | Pipeline — Packing | `src/pipeline/placement_labels.rs:189` | Ray-parity containment for one particle mesh. |
+| `OptimizePipeline` | Pipeline — Optimize | `src/pipeline/optimize.rs:27` | Pipeline configuration and bounded execution entry point. |
+| `ParticlePrepared` | Pipeline — Optimize | `src/pipeline/optimize.rs:32` | Cached mesh, bbox and collision shape. |
+| `IslandResult` | Pipeline — Optimize | `src/pipeline/optimize.rs:39` | Best geometry/loss/S2 snapshot and candidate-stage timings. |
+| `GlobalBest` | Pipeline — Optimize | `src/pipeline/optimize.rs:47` | Mutex-protected coherent geometry/loss/S2 migration snapshot. |
+| `prepare_particle` | Pipeline — Optimize | `src/pipeline/optimize.rs:54` | Prepare one particle for collision queries. |
+| `format_s2_series` | Pipeline — Optimize | `src/pipeline/optimize.rs:61` | Format a curve at six decimal places. |
+| `push_history_s2` | Pipeline — Optimize | `src/pipeline/optimize.rs:86` | Append a labeled curve to history. |
+| `prune_progress_message` | Pipeline — Optimize | `src/pipeline/optimize.rs:91` | Format pruning loss, VF and particle count. |
+| `selective_prune_to_target_vf` | Pipeline — Optimize | `src/pipeline/optimize.rs:103` | Prune with the run-wide S2 definition under the installed pool. |
+| `run_sa_island` | Pipeline — Optimize | `src/pipeline/optimize.rs:296` | Run one SA island with the fixed evaluator and coherent migration. |
+| `OptimizePipeline::run` | Pipeline — Optimize | `src/pipeline/optimize.rs:741` | Install every optimize stage in one configured Rayon pool. |
+| `OptimizePipeline::run_in_pool` | Pipeline — Optimize | `src/pipeline/optimize.rs:768` | Resolve execution, load/prepare, prune, batch islands and verify/save the winner. |
+| `S2Method` | Pipeline — Optimize | `src/pipeline/optimize_execution.rs:12` | Internal voxel_exact, voxel_mc and mesh_mc definitions. |
+| `S2Method::resolve` | Pipeline — Optimize | `src/pipeline/optimize_execution.rs:20` | Preserve existing exact/non-exact and pitch routing. |
+| `S2Method::name` | Pipeline — Optimize | `src/pipeline/optimize_execution.rs:31` | Return the actual method name for diagnostics. |
+| `resolve_mode` | Pipeline — Optimize | `src/pipeline/optimize_execution.rs:41` | Resolve the optional environment override above YAML; reject invalid values. |
+| `select_s2_backend` | Pipeline — Optimize | `src/pipeline/optimize_execution.rs:57` | Apply method/CPU/auto/capacity gates before any GPU probe; enforce fallback policy. |
+| `OptimizeS2` | Pipeline — Optimize | `src/pipeline/optimize_execution.rs:130` | Fixed per-run method, pitch and optional shared GPU evaluator. |
+| `OptimizeS2::new` | Pipeline — Optimize | `src/pipeline/optimize_execution.rs:144` | Resolve execution once and initialize at most one persistent GPU MC instance. |
+| `OptimizeS2::evaluate` | Pipeline — Optimize | `src/pipeline/optimize_execution.rs:220` | Evaluate any stage consistently; serialize GPU buffers and release the lock before VF work. |
+| `run_island_batches` | Pipeline — Optimize | `src/pipeline/optimize_execution.rs:275` | Run ordered batches bounded by active Rayon worker count. |
+| `PHASE_MATRIX` | Pipeline — Packing | `src/pipeline/placement_labels.rs:13` | Phase code 0 in the written label field. |
+| `VoxelLabelsHeader` | Pipeline — Packing | `src/pipeline/placement_labels.rs:22` | What the label stacks are: spacing, origin, layout, phase table. |
+| `PhaseLabel` | Pipeline — Packing | `src/pipeline/placement_labels.rs:39` | One phase code and its name. |
+| `write_voxel_labels` | Pipeline — Packing | `src/pipeline/placement_labels.rs:57` | Writes the three-phase label field and the per-voxel particle id field. |
+| `particle_at` | Pipeline — Packing | `src/pipeline/placement_labels.rs:233` | Finds which placed particle, if any, contains a point. |
+| `point_in_particle` | Pipeline — Packing | `src/pipeline/placement_labels.rs:245` | Ray-parity containment for one particle mesh. |
 | `VoidReport` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:278` | What the run did with the frozen void, and how it measured it. |
-| `build_void_report` | Pipeline — Packing | `src/pipeline/placement.rs:1156` | Describes the frozen void for the report, including its volume method. |
+| `build_void_report` | Pipeline — Packing | `src/pipeline/placement.rs:1170` | Describes the frozen void for the report, including its volume method. |
 | `PlacementPipeline` | Pipeline — Packing | `src/pipeline/placement.rs:38` | Pipeline struct holding a validated `ResolvedPlacement`. |
 | `PlacementOutcome` | Pipeline — Packing | `src/pipeline/placement.rs:61` | What a completed run produced, for in-process callers. |
-| `run_placement` | Pipeline — Packing | `src/pipeline/placement.rs:76` | Runs the engine end to end and writes every output file. |
-| `resolve_threads` | Pipeline — Packing | `src/pipeline/placement.rs:253` | Turns a thread setting into a worker count, at least 1. |
-| `EngineState` | Pipeline — Packing | `src/pipeline/placement.rs:265` | Everything the placement loop accumulates. |
-| `place_all` | Pipeline — Packing | `src/pipeline/placement.rs:347` | Attempts every planned size in order, accepting what fits. |
-| `try_place_one` | Pipeline — Packing | `src/pipeline/placement.rs:386` | Tries one size within its per-particle attempt budget. |
-| `accept` | Pipeline — Packing | `src/pipeline/placement.rs:544` | Commits an accepted candidate into the geometry and the record. |
-| `run_top_up` | Pipeline — Packing | `src/pipeline/placement.rs:605` | Draws further batches when clipping alone left the target short. |
-| `decide_stop` | Pipeline — Packing | `src/pipeline/placement.rs:788` | Decides which of the four stop reasons a run ended with. |
-| `write_outputs` | Pipeline — Packing | `src/pipeline/placement.rs:788` | Writes the geometry, the per-particle record and the size CSV. |
-| `entity_id` | Pipeline — Packing | `src/pipeline/placement.rs:933` | The stable id of a placed particle. |
-| `particle_record` | Pipeline — Packing | `src/pipeline/placement.rs:938` | Turns one placed particle into its record entry. |
-| `size_class_rows` | Pipeline — Packing | `src/pipeline/placement.rs:986` | Builds the per-class target-against-actual rows. |
-| `blank_report` | Pipeline — Packing | `src/pipeline/placement.rs:1012` | The report as it stands before placement starts. |
-| `describe_input` | Pipeline — Packing | `src/pipeline/placement.rs:1191` | Describes an input file with its digest for the report. |
-| `finish_report` | Pipeline — Packing | `src/pipeline/placement.rs:1210` | Fills in everything the finished run knows. |
-| `summary` (placement.rs) | Pipeline — Packing | `src/pipeline/placement.rs:1274` | Builds the human-readable stdout summary. |
-| `read_record` | Pipeline — Packing | `src/pipeline/placement.rs:1335` | Reads a written per-particle record back. |
-| `read_report` | Pipeline — Packing | `src/pipeline/placement.rs:1343` | Reads a written run report back. |
+| `run_placement` | Pipeline — Packing | `src/pipeline/placement.rs:76` | Runs the engine in a dedicated configured Rayon pool and writes every output file. |
+| `with_placement_pool` | Pipeline — Packing | `src/pipeline/placement.rs:81` | Creates and installs a dedicated Rayon pool for one operation, propagating creation/work errors. |
+| `run_placement_in_pool` | Pipeline — Packing | `src/pipeline/placement.rs:90` | Runs all placement stages in the active pool and records its actual worker count. |
+| `resolve_threads` | Pipeline — Packing | `src/pipeline/placement.rs:267` | Turns a thread setting into a worker count, at least 1. |
+| `EngineState` | Pipeline — Packing | `src/pipeline/placement.rs:279` | Everything the placement loop accumulates. |
+| `place_all` | Pipeline — Packing | `src/pipeline/placement.rs:361` | Attempts every planned size in order, accepting what fits. |
+| `try_place_one` | Pipeline — Packing | `src/pipeline/placement.rs:400` | Tries one size within its per-particle attempt budget. |
+| `accept` | Pipeline — Packing | `src/pipeline/placement.rs:558` | Commits an accepted candidate into the geometry and the record. |
+| `run_top_up` | Pipeline — Packing | `src/pipeline/placement.rs:619` | Draws further batches when clipping alone left the target short. |
+| `decide_stop` | Pipeline — Packing | `src/pipeline/placement.rs:802` | Decides which of the four stop reasons a run ended with. |
+| `write_outputs` | Pipeline — Packing | `src/pipeline/placement.rs:802` | Writes the geometry, the per-particle record and the size CSV. |
+| `entity_id` | Pipeline — Packing | `src/pipeline/placement.rs:947` | The stable id of a placed particle. |
+| `particle_record` | Pipeline — Packing | `src/pipeline/placement.rs:952` | Turns one placed particle into its record entry. |
+| `size_class_rows` | Pipeline — Packing | `src/pipeline/placement.rs:1000` | Builds the per-class target-against-actual rows. |
+| `blank_report` | Pipeline — Packing | `src/pipeline/placement.rs:1026` | The report as it stands before placement starts. |
+| `describe_input` | Pipeline — Packing | `src/pipeline/placement.rs:1205` | Describes an input file with its digest for the report. |
+| `finish_report` | Pipeline — Packing | `src/pipeline/placement.rs:1224` | Fills in everything the finished run knows. |
+| `summary` (placement.rs) | Pipeline — Packing | `src/pipeline/placement.rs:1288` | Builds the human-readable stdout summary. |
+| `read_record` | Pipeline — Packing | `src/pipeline/placement.rs:1349` | Reads a written per-particle record back. |
+| `read_report` | Pipeline — Packing | `src/pipeline/placement.rs:1357` | Reads a written run report back. |
 | `RejectReason` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:17` | Why a proposed placement was not accepted; the report's keys. |
 | `RejectReason::as_str` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:44` | The stable report key for a rejection reason. |
 | `PlacedParticle` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:76` | A particle that cleared every check, with its cached shape. |
@@ -365,13 +410,13 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `RejectedShell` | Pipeline — Packing | `src/pipeline/placement_library.rs:53` | A shell read but not kept, and why. |
 | `ShapeLibrary` | Pipeline — Packing | `src/pipeline/placement_library.rs:61` | Every shape a run may draw from, plus what was read and not kept. |
 | `load_shape_library` | Pipeline — Packing | `src/pipeline/placement_library.rs:85` | Loads, splits, measures and filters the shape files. |
-| `filter_reason` | Pipeline — Packing | `src/pipeline/placement_library.rs:236` | Says which library filter a shell failed, if any. |
-| `shell_geometry_sha256` | Pipeline — Packing | `src/pipeline/placement_library.rs:276` | Digests a shell's geometry so a re-ordered file is detectable. |
+| `filter_reason` | Pipeline — Packing | `src/pipeline/placement_library.rs:234` | Says which library filter a shell failed, if any. |
+| `shell_geometry_sha256` | Pipeline — Packing | `src/pipeline/placement_library.rs:274` | Digests a shell's geometry so a re-ordered file is detectable. |
 | `TARGET_BIN_PROBES` | Pipeline — Packing | `src/pipeline/pack.rs:27` | Max consecutive placement failures tolerated for a chosen bin before it is excluded from this round's re-selection. |
-| `PackPipeline` | Pipeline — Packing | `src/pipeline/pack.rs:29` | Pipeline struct wrapping a `PackingConfig`; implements `Pipeline`. |
+| `PackPipeline` | Pipeline — Packing | `src/pipeline/pack.rs:95` | Pipeline struct wrapping a `PackingConfig`; implements `Pipeline`. |
 | `CandidateProposal` | Pipeline — Packing | `src/pipeline/pack.rs:34` | One drawn candidate mesh plus its optional precomputed `MeshMetrics`. |
-| `validate_sphericity_target` | Pipeline — Packing | `src/pipeline/pack.rs:44` | Validates `target_mean_sphericity`/`mean_sphericity_tolerance` config before packing starts. |
-| `check_geometry_filters` | Pipeline — Packing | `src/pipeline/pack.rs:75` | Applies configured `min_volume`, `max_aspect_ratio`, `max_sharpness_ratio` filters to a candidate mesh. |
+| `validate_sphericity_target` | Pipeline — Packing | `src/pipeline/pack.rs:110` | Validates `target_mean_sphericity`/`mean_sphericity_tolerance` config before packing starts. |
+| `check_geometry_filters` | Pipeline — Packing | `src/pipeline/pack.rs:141` | Applies configured `min_volume`, `max_aspect_ratio`, `max_sharpness_ratio` filters to a candidate mesh. |
 | `PackPipeline::run` | Pipeline — Packing | `src/pipeline/pack.rs:124` | Core sequential random packing loop with optional target-diameter-distribution and mean-sphericity steering. |
 | `DiameterBin` | Pipeline — Packing | `src/pipeline/pack_targets.rs:8` | Half-open (closed at the final bin) diameter interval with a target frequency. |
 | `DiameterBin::midpoint` | Pipeline — Packing | `src/pipeline/pack_targets.rs:16` | Arithmetic midpoint of the interval. |
@@ -459,8 +504,8 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `ViewSpec` | Mesh Tooling | `src/config/mesh_render.rs:7` | YAML view: named preset or custom camera block (untagged enum). |
 | `FilterSpec` | Mesh Tooling | `src/config/mesh_render.rs:22` | YAML kind-tagged filter mapped onto SceneFilter. |
 | `MeshRenderParams` | Mesh Tooling | `src/config/mesh_render.rs:38` | mesh_render: YAML block (input, views, image, coloring, filters, overlays). |
-| `MeshRenderConfig` | Mesh Tooling | `src/config/mesh_render.rs:88` | Top-level YAML document for the mesh-render subcommand. |
-| `MeshRenderPipeline::run` | Mesh Tooling | `src/pipeline/mesh_render.rs:16` | mesh-render subcommand: load VTU, extract scene, render one PNG per view. |
+| `MeshRenderConfig` | Mesh Tooling | `src/config/mesh_render.rs:92` | Top-level YAML document for the mesh-render subcommand. |
+| `MeshRenderPipeline::run` | Mesh Tooling | `src/pipeline/mesh_render.rs:18` | mesh-render subcommand: load VTU, extract scene, render one PNG per view. |
 | `orient2d_3d` | Mesh Tooling | `src/meshgen/predicates.rs:28` | Exact-sign triangle orientation in the best-conditioned 2D projection; S0 degenerate check. |
 | `ProjectionAxis` / `best_projection_axis` | Mesh Tooling | `src/meshgen/predicates.rs:54/61` | Axis dropped by, and selector for, the best-conditioned planar projection. |
 | `project_to_2d` / `orient2d_axis` / value and DD helpers | Mesh Tooling | `src/meshgen/predicates.rs:74/83/92/178` | Project by a selected axis and evaluate exact, f64-permanent, and DD `orient2d` values. |
@@ -514,13 +559,13 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `report_to_log` | Mesh Tooling | `src/meshgen/verify.rs:1619` | Sectioned human-readable report with a per-check status line. |
 | `annotate` | Mesh Tooling | `src/meshgen/verify.rs:1681` | Copy of the mesh carrying quality arrays and the verify_flags bitmask. |
 | `VerifyGateParams` | Mesh Tooling | `src/config/mesh_verify.rs:8` | YAML gate overrides for the verification catalog. |
-| `MeshVerifyParams` | Mesh Tooling | `src/config/mesh_verify.rs:36` | mesh_verify: YAML block (input, report/json/annotate, gates). |
+| `MeshVerifyParams` | Mesh Tooling | `src/config/mesh_verify.rs:78` | mesh_verify: YAML block (input, report/json/annotate, gates). |
 | `MeshVerifySurface` | Mesh Tooling | `src/config/mesh_verify.rs` | One [V5] input surface: a bare path, or `{stl, priority}` when the mesh was built with an explicit rank. |
 | `MeshVerifySurface::resolved_priority` | Mesh Tooling | `src/config/mesh_verify.rs` | Effective priority of a [V5] surface: the explicit value, else 0 — it must mirror the `meshgen.inputs` priority the mesh was built with. |
-| `MeshVerifyConfig` | Mesh Tooling | `src/config/mesh_verify.rs:50` | Top-level YAML document for the mesh-verify subcommand. |
-| `gates_from_config` | Mesh Tooling | `src/pipeline/mesh_verify.rs:18` | Overlay YAML overrides onto the contract default gates. |
-| `verify_file` | Mesh Tooling | `src/pipeline/mesh_verify.rs:42` | Load, validate, verify, and write log/JSON/annotated VTU. |
-| `MeshVerifyPipeline::run` | Mesh Tooling | `src/pipeline/mesh_verify.rs:9` | mesh-verify subcommand; nonzero exit when a gate fails. |
+| `MeshVerifyConfig` | Mesh Tooling | `src/config/mesh_verify.rs:100` | Top-level YAML document for the mesh-verify subcommand. |
+| `gates_from_config` | Mesh Tooling | `src/pipeline/mesh_verify.rs:21` | Overlay YAML overrides onto the contract default gates. |
+| `verify_file` | Mesh Tooling | `src/pipeline/mesh_verify.rs:53` | Load, validate, verify, and write log/JSON/annotated VTU. |
+| `MeshVerifyPipeline::run` | Mesh Tooling | `src/pipeline/mesh_verify.rs:12` | mesh-verify subcommand; nonzero exit when a gate fails. |
 | `InputKind` | Mesh Tooling | `src/config/meshgen.rs:10` | Per-input surface role override: auto / solid / sheet. |
 | `RepairLevel` | Mesh Tooling | `src/config/meshgen.rs:20` | S0 repair aggressiveness: strict / conservative / permissive. |
 | `CoincidencePolicy` | Mesh Tooling | `src/config/meshgen.rs:30` | G2-2 coincidence policy: merge / reject / warn. |
@@ -528,19 +573,19 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `DeterminismMode` | Mesh Tooling | `src/config/meshgen.rs:50` | Run reproducibility contract: strict (bitwise) / fast. |
 | `UnmappedPolicy` | Mesh Tooling | `src/config/meshgen.rs:59` | INP export behaviour for unmapped regions: error / elset-only. |
 | `SnapshotMode` | Mesh Tooling | `src/config/meshgen.rs:68` | Contract snapshot emission level: none / key / all. |
-| `MeshGenInput` | Mesh Tooling | `src/config/meshgen.rs:80` | One STL input: stl path, optional priority, kind. |
-| `MeshGenDomain` | Mesh Tooling | `src/config/meshgen.rs:90` | Axis-aligned generation domain (min/max, 3-component, min < max). |
-| `MeshGenSizing` | Mesh Tooling | `src/config/meshgen.rs:99` | Sizing-field limits as fractions of the box diagonal. |
-| `MeshGenGaps` | Mesh Tooling | `src/config/meshgen.rs:114` | Gap-field thickness factors and confidence floor. |
-| `MeshGenEnvelope` | Mesh Tooling | `src/config/meshgen.rs:125` | Numerical envelope thickness as a fraction of the box diagonal. |
-| `MeshGenRepair` | Mesh Tooling | `src/config/meshgen.rs:132` | S0 repair configuration (level). |
-| `MeshGenMaterials` | Mesh Tooling | `src/config/meshgen.rs:143` | Material assignments for INP export; by_component preserves duplicate keys. |
-| `MeshGenOutput` | Mesh Tooling | `src/config/meshgen.rs:154` | Output destinations: required vtu, optional abaqus/report. |
-| `MeshGenParams` | Mesh Tooling | `src/config/meshgen.rs:168` | The meshgen: YAML block; call validate() after loading. |
-| `MeshGenConfig` | Mesh Tooling | `src/config/meshgen.rs:198` | Top-level YAML wrapper (meshgen:). |
-| `MeshGenInput::resolved_priority` | Mesh Tooling | `src/config/meshgen.rs:204` | Effective priority (explicit override or the file index). |
-| `MeshGenParams::validate` | Mesh Tooling | `src/config/meshgen.rs:218` | Enforce the PLAN §6.3 parse-time rejects; Ok or InvalidConfig. |
-| `deserialize_component_map` | Mesh Tooling | `src/config/meshgen.rs:352` | Deserialize by_component as a pair list preserving duplicate keys. |
+| `MeshGenInput` | Mesh Tooling | `src/config/meshgen.rs:84` | One STL input: stl path, optional priority, kind. |
+| `MeshGenDomain` | Mesh Tooling | `src/config/meshgen.rs:94` | Axis-aligned generation domain (min/max, 3-component, min < max). |
+| `MeshGenSizing` | Mesh Tooling | `src/config/meshgen.rs:107` | Sizing-field limits as fractions of the box diagonal. |
+| `MeshGenGaps` | Mesh Tooling | `src/config/meshgen.rs:128` | Gap-field thickness factors and confidence floor. |
+| `MeshGenEnvelope` | Mesh Tooling | `src/config/meshgen.rs:176` | Numerical envelope thickness as a fraction of the box diagonal. |
+| `MeshGenRepair` | Mesh Tooling | `src/config/meshgen.rs:183` | S0 repair configuration (level). |
+| `MeshGenMaterials` | Mesh Tooling | `src/config/meshgen.rs:194` | Material assignments for INP export; by_component preserves duplicate keys. |
+| `MeshGenOutput` | Mesh Tooling | `src/config/meshgen.rs:211` | Output destinations: required vtu, optional abaqus/report. |
+| `MeshGenParams` | Mesh Tooling | `src/config/meshgen.rs:225` | The meshgen: YAML block; call validate() after loading. |
+| `MeshGenConfig` | Mesh Tooling | `src/config/meshgen.rs:257` | Top-level YAML wrapper (meshgen:). |
+| `MeshGenInput::resolved_priority` | Mesh Tooling | `src/config/meshgen.rs:265` | Effective priority (explicit override or the file index). |
+| `MeshGenParams::validate` | Mesh Tooling | `src/config/meshgen.rs:279` | Enforce the PLAN §6.3 parse-time rejects; Ok or InvalidConfig. |
+| `deserialize_component_map` | Mesh Tooling | `src/config/meshgen.rs:509` | Deserialize by_component as a pair list preserving duplicate keys. |
 | `MeshGenPipeline::run` | Mesh Tooling | `src/pipeline/meshgen.rs:158` | Normalize before S0, run S0/S1/G2-1..G2-3, withhold partial s02, return NotAvailable for G2-4/G2-5 and later stages. |
 | `SampleKind` / `PairClass` | Mesh Generation | `src/meshgen/gapfield.rs:48/57` | S3 sample provenance and the frozen pair classes (intra / inter / solid-sheet / sheet-sheet / surface-box). |
 | `GapPairing` / `GapSample` / `GapSample::passes_battery` | Mesh Generation | `src/meshgen/gapfield.rs:68/81/100` | One S3 correspondence, one sample (side, direction, t_raw/t/t_exact, battery flags), and the all-applicable-checks predicate. |
@@ -616,9 +661,9 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `check_v13` | Mesh Tooling | `src/meshgen/verify.rs:3603` | [V13] interface fidelity: the material boundary read off the volume, measured against the input surface (the plan's P3). |
 | `GpuClipPlane` | Mesh Tooling | `src/gpu/scene_render.rs:45` | Optional half-space clip for the GPU scene preview (smooth cut). |
 | `GpuSceneOptions` | Mesh Tooling | `src/gpu/scene_render.rs:52` | GPU-only toggles: clip plane, overlay segments, markers. |
-| `GpuScenePipeline` | Mesh Tooling | `src/gpu/scene_render.rs:70` | Offscreen GPU scene preview: coloured TriangleList + LineList overlay with clip-plane discard. |
-| `GpuScenePipeline::render` | Mesh Tooling | `src/gpu/scene_render.rs:310` | Render one scene from one camera as an opaque preview. |
-| `GpuScenePipeline::render_views` | Mesh Tooling | `src/gpu/scene_render.rs:330` | Batch views: one geometry upload reused across every camera. |
+| `GpuScenePipeline` | Mesh Tooling | `src/gpu/scene_render.rs:74` | Offscreen GPU scene preview: coloured TriangleList + LineList overlay with clip-plane discard. |
+| `GpuScenePipeline::render` | Mesh Tooling | `src/gpu/scene_render.rs:333` | Render one scene from one camera as an opaque preview. |
+| `GpuScenePipeline::render_views` | Mesh Tooling | `src/gpu/scene_render.rs:361` | Batch views: one geometry upload reused across every camera. |
 
 **Total: 422 documented rows** (functions, methods, structs, enums, constants, and grouped closely-related APIs) across the reference tree.
 
@@ -723,3 +768,150 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `point_on_triangle` | `src/meshgen/cut.rs` | Whether a point lies within `eps` of a triangle (plane distance plus barycentric containment). |
 | `contact_patches` | `src/pipeline/meshgen.rs` | S2's multi-tagged arranged faces as triangles paired with their component set - the only route the arrangement's coincidence takes into S8. |
 | `DEFAULT_MAX_WIREFRAME_EDGES` | `src/meshgen/render_scene.rs` | Default ceiling on emitted wireframe segments; past it the frame is stride-thinned, never cut short. |
+
+| `PreparedMeshQuery` | Geometry Analysis | `src/geometry/mesh_query.rs:20` | Immutable cached CPU parity query. |
+| `PreparedMeshQuery::new` | Geometry Analysis | `src/geometry/mesh_query.rs:29` | Prepare bbox and triangle BVH. |
+| `PreparedMeshQuery::bbox` | Geometry Analysis | `src/geometry/mesh_query.rs:68` | Return cached whole-mesh bbox. |
+| `PreparedMeshQuery::contains_point` | Geometry Analysis | `src/geometry/mesh_query.rs:73` | Query parity with reusable hit scratch. |
+| `MeshQueryScratch` | Geometry Analysis | `src/geometry/mesh_query.rs:7` | Reusable hits and triangle-test counter. |
+| `build_nodes` | Geometry Analysis | `src/geometry/mesh_query.rs:144` | Build median BVH with preorder escape links. |
+| `ray_reaches_box` | Geometry Analysis | `src/geometry/mesh_query.rs:195` | Conservative positive-ray slab test. |
+| `VoxelS2` | Geometry Analysis | `src/geometry/s2.rs:810` | Owned reusable occupancy grid. |
+| `VoxelS2::new` | Geometry Analysis | `src/geometry/s2.rs:818` | Prepare CPU occupancy once. |
+| `VoxelS2::calculate` | Geometry Analysis | `src/geometry/s2.rs:825` | Compute exact or voxel MC on shared grid. |
+| `calculate_s2_mesh_mc_seeded` | Geometry Analysis | `src/geometry/s2.rs:735` | Reproducible sample-block mesh MC. |
+| `try_calculate_s2_gpu_exact` | Geometry Analysis | `src/geometry/s2.rs:996` | Fallible GPU exact with checked dimensions. |
+
+| `SpatialGrid::remove` | Geometry Core | `src/geometry/spatial.rs:59` | Remove all item cell references. |
+| `SpatialGrid::update` | Geometry Core | `src/geometry/spatial.rs:72` | Replace one item membership. |
+| `SpatialQueryScratch` | Geometry Core | `src/geometry/spatial.rs:5` | Retained neighbors and membership storage. |
+| `SpatialGrid::query_into` | Geometry Core | `src/geometry/spatial.rs:111` | Fill reusable query scratch. |
+
+| `PackCollider` | Pipeline Packing | `src/pipeline/pack.rs:27` | Cached collider bbox and shape. |
+| `PackCollider::new` | Pipeline Packing | `src/pipeline/pack.rs:34` | Prepare collision shape once. |
+| `PackCollider::blocks` | Pipeline Packing | `src/pipeline/pack.rs:42` | Cached overlap or clearance predicate. |
+| `pack_blocked` | Pipeline Packing | `src/pipeline/pack.rs:68` | Check incremental spatial candidates. |
+| `PackPipeline::run_in_pool` | Pipeline Packing | `src/pipeline/pack.rs:221` | Packing work under configured pool. |
+
+| `MeasurePipeline::run_in_pool` | Pipeline Core | `src/pipeline/measure.rs:83` | Method-specific measurement in configured pool. |
+
+| `configured_mode` | Core & Compute | `src/compute/policy.rs:142` | Resolve strict environment override. |
+| `resolve_execution` | Core & Compute | `src/compute/policy.rs:162` | Resolve method support, workload budget and fallback. |
+
+| `GridPlan` | GPU | `src/gpu/runtime.rs:60` | Checked two-dimensional grid dispatch. |
+| `grid_plan` | GPU | `src/gpu/runtime.rs:67` | Validate product, buffer and dispatch limits. |
+| `GpuVoxelPipeline::voxelize_limited` | GPU | `src/gpu/voxel.rs:179` | Fallible voxel execution with bounded dispatch. |
+
+| `particle_at_prepared` | Pipeline Placement | `src/pipeline/placement_labels.rs:253` | First particle in ordered cached candidates. |
+
+| `map_vertices` | Geometry Core | `src/geometry/mesh_ops.rs:162` | Serial or parallel independent vertex mapping. |
+
+| `forge_owned` | Geometry Volume/Collision | `src/geometry/forging.rs:66` | Ownership-consuming FFD and ROI transform. |
+
+| `load_stl_from_reader` | I/O | `src/io/stl.rs:178` | Forward-reader STL with bounded binary records. |
+| `load_stl_hashed` | I/O | `src/io/stl.rs:193` | Single-pass STL parsing and raw digest. |
+| `parse_binary_reader` | I/O | `src/io/stl.rs:109` | Read binary triangle records with incremental deduplication. |
+| `read_stl_record` | I/O | `src/io/stl.rs:140` | Read complete record or report truncation. |
+| `HashingReader` | I/O | `src/io/hash.rs:50` | Incremental digest over delivered bytes. |
+| `HashingReader::new` | I/O | `src/io/hash.rs:58` | Wrap forward reader for hashing. |
+| `HashingReader::finish` | I/O | `src/io/hash.rs:67` | Return digest and consumed byte count. |
+
+| `stl_paths` | I/O | `src/io/stl.rs:218` | List STL paths in existing directory order. |
+
+| `merge_prepared_particles` | Pipeline Optimize | `src/pipeline/optimize.rs:61` | Merge geometry and assign stable particle vertex ranges. |
+
+| `FftWorkspace` | Geometry Analysis | `src/geometry/s2.rs:334` | Reusable FFT plans and complex arrays. |
+| `FftWorkspace::new` | Geometry Analysis | `src/geometry/s2.rs:348` | Construct dimension-specific FFT workspace. |
+| `FftWorkspace::array_bytes` | Geometry Analysis | `src/geometry/s2.rs:363` | Report retained complex-array capacities. |
+| `with_fft_correlation` | Geometry Analysis | `src/geometry/s2.rs:489` | Evaluate occupancy FFT with bounded cache retention. |
+
+| `FFT_RETAIN_BYTES` | Geometry Analysis | `src/geometry/s2.rs:332` | Maximum retained FFT array bytes per calling thread. |
+
+| `GpuShellS2Pipeline::resize_batch_buffers` | `src/gpu/s2_shell.rs:193` | Shell batch buffer capacity management; occupancy retained. |
+
+| `GpuShellS2Pipeline::release_batch_capacity` | `src/gpu/s2_shell.rs:230` | Shell batch buffer capacity management; occupancy retained. |
+
+| `MeshRenderPipeline::with_worker_pool` | `src/pipeline/mesh_render.rs:122` | Execute scene preparation, rendering and fallback within the worker budget. |
+
+| `MeshRenderPipeline::run_in_pool` | `src/pipeline/mesh_render.rs:147` | Execute scene preparation, rendering and fallback within the worker budget. |
+
+| `SceneRenderMemory::plan` | `src/compute/render_memory.rs:20` | Checked scene preview workset, budget and buffer planning without allocation. |
+
+| `SceneRenderMemory::check_budget` | `src/compute/render_memory.rs:77` | Checked scene preview workset, budget and buffer planning without allocation. |
+
+| `SceneRenderMemory::check_buffers` | `src/compute/render_memory.rs:93` | Checked scene preview workset, budget and buffer planning without allocation. |
+
+| `mc_evaluation_peak` | `src/compute/mc_memory.rs:4` | Check logical MC peak including retained capacity and pending uploads. |
+
+| `check_mc_budget` | `src/compute/mc_memory.rs:44` | Check logical MC peak including retained capacity and pending uploads. |
+
+| `GpuS2Pipeline::check_evaluation_budget` | `src/gpu/s2.rs:275` | Check logical MC peak including retained capacity and pending uploads. |
+
+| `exchange_best_snapshot` | `src/pipeline/optimize.rs:52` | Exchange immutable best Arc snapshots; release retired payload outside the lock. |
+
+| `cpu_render_tile_pixels` | `src/geometry/render.rs:381` | Bounded CPU pixel-task scheduling with an explicit row reference. |
+
+| `render_mesh_cpu_with_tiles` | `src/geometry/render.rs:390` | Bounded CPU pixel-task scheduling with an explicit row reference. |
+
+| `GpuS2Pipeline::new_with_shader` | `src/gpu/s2.rs:154` | GPU MC partial-count execution and fixed-seed reference validation. |
+
+| `GpuS2Pipeline::calculate_s2_gpu_counts` | `src/gpu/s2.rs:420` | GPU MC partial-count execution and fixed-seed reference validation. |
+
+| Function | Source | Contract |
+|---|---|---|
+| `GpuShellS2Pipeline::new_with_shader` | `src/gpu/s2_shell.rs:55` | Private constructor taking shader source; returns initialized resources or a GPU error. Production uses the analytic shader; tests can use the frozen enumerated-count fixture. |
+
+| Function | Source | Contract |
+|---|---|---|
+| `GpuShellS2Pipeline::ensure_reduction` | `src/gpu/s2_shell.rs:211` | Lazily compile the device tile reducer and grow its final buffers under the caller error scope. |
+
+| Function | Source | Contract |
+|---|---|---|
+| `offset_has_overlap` | `src/gpu/s2_shell.rs:57` | Check all unsigned displacement magnitudes against grid dimensions without signed overflow. |
+
+| Function | Source | Contract |
+|---|---|---|
+| `GpuShellS2Pipeline::with_device` | `src/gpu/s2_shell.rs:84` | Build production shell resources on supplied device/queue; no new device. |
+| `GpuShellS2Pipeline::build_on_device` | `src/gpu/s2_shell.rs:96` | Compile shell resources on supplied handles with balanced GPU error scopes. |
+| `GpuShellS2Pipeline::compute_s2_shell_resident` | `src/gpu/s2_shell.rs:385` | Read a same-device occupancy buffer directly; caller serializes producer and consumer. |
+| `GpuShellS2Pipeline::compute_shell_input` | `src/gpu/s2_shell.rs:410` | Shared execution for host-uploaded or resident occupancy with identical offset semantics. |
+| `GpuVoxelPipeline::device_queue` | `src/gpu/voxel.rs:59` | Clone device/queue handles for sequential stages; no device creation. |
+| `GpuVoxelPipeline::occupancy_buffer` | `src/gpu/voxel.rs:54` | Clone completed occupancy storage handle; producer must not overwrite while consumed. |
+
+| Function | Source | Contract |
+|---|---|---|
+| `GpuVoxelPipeline::voxelize_count` | `src/gpu/voxel.rs:199` | Voxelize and return only the occupied-cell count; retain the device field. |
+| `GpuVoxelPipeline::ensure_counter` | `src/gpu/voxel.rs:218` | Lazily construct the integer counter and four-byte output under caller error scope. |
+| `GpuVoxelPipeline::voxelize_impl` | `src/gpu/voxel.rs:267` | Checked common voxel execution with full-grid or count-only readback. |
+
+| Function | Source | Contract |
+|---|---|---|
+| `GpuShellS2Pipeline::compute_s2_shell_resident_stream` | `src/gpu/s2_shell.rs:410` | Consume ordered offsets lazily in bounded batches on a resident grid; preserve per-offset ratios. |
+
+| Function | Source | Contract |
+|---|---|---|
+| `shell_offset_iter` | `src/geometry/s2.rs:213` | Lazy ordered shell enumeration with constant cursor storage; GPU exact streaming and tests. |
+
+| Symbol | Source | Contract |
+|---|---|---|
+| `ExactMemoryPlan` | `src/compute/exact_memory.rs:5` | Fresh resident exact logical GPU peak and budget-selected partial batch. |
+| `ExactMemoryPlan::new` | `src/compute/exact_memory.rs:12` | Checked resource arithmetic and batch selection; may still require check_budget for infeasible minima. |
+| `ExactMemoryPlan::check_budget` | `src/compute/exact_memory.rs:52` | Enforce configured MiB cap before initialization. |
+
+| Function | Source | Contract |
+|---|---|---|
+| `IslandVolumes::new` | `src/pipeline/optimize_volume.rs:12` | Build ordered connected-component contributions for a population. |
+| `IslandVolumes::contributions` | `src/pipeline/optimize_volume.rs:20` | Clip connected components using the existing geometric volume definition. |
+| `IslandVolumes::replace` | `src/pipeline/optimize_volume.rs:33` | Update one particle and return prior entries for rollback. |
+| `IslandVolumes::restore` | `src/pipeline/optimize_volume.rs:41` | Restore entries after rejection. |
+| `IslandVolumes::fraction` | `src/pipeline/optimize_volume.rs:46` | Sum cached scalars in merged component order, then clamp. |
+| `OptimizeS2::evaluate_with_vf` | `src/pipeline/optimize_execution.rs:242` | Evaluate mesh MC with optional validated VF; reject geometric cache for voxel methods. |
+| `calculate_s2_mesh_mc_seeded_with_vf` | `src/geometry/s2.rs:765` | Preserve fixed-seed mesh MC samples while using caller-provided VF. |
+
+| Function | Source | Contract |
+|---|---|---|
+| `consume_frames` | `src/pipeline/mesh_render.rs:25` | Ordered bounded PNG writer; joins before fallback, preserves output errors; sequential for one worker/view. |
+| `collect_opaque_hits` | `src/geometry/scene_render.rs:96` | Nearest-distance bounded coincidence group preserving Face priority and overlay depth. |
+| `consume_file_batches` | `src/io/volume.rs:47` | Decode at most two files in the current pool; consume/validate in source order and stop subsequent batches on errors. |
+| `write_tiff_pages` | `src/io/volume.rs:552` | Borrowed sequential TIFF encoding with explicit final flush and propagated output errors. |
+| `for_each_boundary_value` | `src/pipeline/crop.rs:313` | Visit boundary voxels once in z-major order for specialized background counters. |

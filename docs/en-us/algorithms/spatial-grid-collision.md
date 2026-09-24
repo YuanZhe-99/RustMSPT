@@ -44,6 +44,12 @@ the packing domain:
   indices found there, and deduplicate — an `O(k)` operation where `k` is the number of particles
   actually near the query, independent of `N`.
 
+Query deduplication preserves the first encounter in the original x/y/z cell and bucket order.
+Small results use a linear scan; immediately upon reaching 256 unique IDs, including within the first bucket, a query-local hash membership set takes over.
+The set is never iterated, supports sparse `usize` IDs, and is not shared between concurrent queries.
+For larger results the expected deduplication work is linear in visited bucket references, including
+duplicates, rather than their count times the number of unique neighbors. Reverse memberships support incremental updates, and caller-owned scratch retains query capacities.
+
 ### Choosing the cell size
 
 Cell size controls the grid's effectiveness: too small and a single particle spans many cells
@@ -130,31 +136,10 @@ caught.
 
 ## How this composes in the pipelines
 
-The two consumers of this machinery differ in how (and whether) they use `SpatialGrid`:
+Optimize and legacy pack both use cached geometry and spatial candidates:
 
-- **`pipeline/optimize.rs::run_sa_island`** builds a `SpatialGrid` once at the start of each SA
-  island run, sized via `estimate_cell_size` over all particle bounding boxes, and queries it with
-  `query_neighbors_with_margin` before falling back to `mesh_collision_exact_prepared` /
-  `mesh_distance_exact_prepared` for the narrowed candidate set. Because SA repeatedly perturbs
-  particle positions (translate/rotate, move-toward-neighbor, or random reposition), the grid is
-  invalidated whenever a move is accepted and is rebuilt (`SpatialGrid::build`) at those points, as
-  well as periodically elsewhere in the loop. Ghost meshes from `generate_periodic_ghosts` are
-  folded into the same broad/narrow-phase treatment for boundary mode 3. This is the case the
-  `SpatialGrid` was built for: many repeated neighbor queries against a population whose positions
-  keep changing, where amortizing an `O(N)` grid rebuild against many `O(k)` queries is a clear win
-  over `O(N)` linear scans per query.
-
-- **`pipeline/pack.rs::PackPipeline::run`**, by contrast, does **not** use `SpatialGrid` at all.
-  Its collision-check loop against `placed` particles (and, in mode 3, their periodic ghosts) calls
-  `mesh_collision_exact` / `mesh_distance_exact` directly over the full `collision_set`, using
-  Rayon's `par_iter` to parallelize the scan across CPU cores, with an inline `bbox_distance`
-  short-circuit per pair before falling back to the exact mesh test. This is consistent with
-  packing's placement model: particles are placed once, sequentially (one accept/reject decision
-  at a time, growing the placed set incrementally), so there is no repeated-query-against-a-fixed-
-  population pattern to amortize a grid rebuild against — each newly placed particle only ever
-  needs to be checked once, and the `Rayon`-parallelized brute-force scan over the (potentially
-  large but not quadratically revisited) `placed` list is the actual code path in production, not
-  a grid-backed one.
+- **`run_sa_island`** builds the initial grid, updates only the accepted particle's membership, and leaves it unchanged on rejection. Whole-population migration rebuilds the grid. Prepared collision geometry and merged vertex ranges are retained between proposals.
+- **`PackPipeline::run`** caches each accepted particle and periodic image as a `PackCollider`. Small populations use a cached direct scan; larger populations query the incremental grid, then apply bbox and exact solid checks. Positive clearance uses a fused solid-distance predicate. Proposal RNG and acceptance remain sequential.
 
 ## Cross-references
 
@@ -162,3 +147,14 @@ The two consumers of this machinery differ in how (and whether) they use `Spatia
 - [geometry-volume-collision.md](../reference/geometry-volume-collision.md)
 - [pipeline-optimize.md#run_sa_island](../reference/pipeline-optimize.md#run_sa_island)
 - [pipeline-packing.md](../reference/pipeline-packing.md)
+
+### Incremental grid acceptance (PERF-10/13)
+
+`SpatialGrid` retains reverse item-to-cell membership. `remove(idx)` removes all insertions of that id and preserves remaining bucket order; `update(idx, Option<BoundingBox>)` replaces membership or removes the item. Query order remains first encounter, but moving an item appends it in its new buckets, so consumers must not assume rebuild order. Candidate sets match a full rebuild. Optimize queries the current grid before evaluating a proposal, updates one membership only after acceptance, and restores the original prepared particle directly on rejection. Whole-population migration still rebuilds the grid. Repeated inserts retain their old semantics and removal clears every copy. Reverse membership consumes additional memory proportional to inserted cell references.
+
+### Legacy pack cache update
+
+The earlier full-scan description above records the original implementation. Pack now caches accepted particle/periodic-image bbox and TriMesh data and incrementally indexes them. Small populations use a cached direct scan; larger populations use spatial candidates. Positive clearance uses one cached solid-distance predicate instead of separate collision/minimum-distance scans. No accepted geometry or ghosts are cloned per proposal. Candidate order, steering and clipped-volume acceptance remain unchanged.
+
+
+PERF-13 dense-bucket correction: membership switches within a bucket at 256 unique candidates, bounding the initial linear phase even for a single extremely dense bucket. Order and exclusions are unchanged.

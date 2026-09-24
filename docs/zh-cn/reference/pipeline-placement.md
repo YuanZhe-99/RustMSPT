@@ -36,34 +36,36 @@
 | `VoidIndex::overlap_volume` | `src/geometry/void_index.rs:330` | 以域锚定的体素计数给出颗粒落在孔隙内的体积。 |
 | `point_inside_mesh_local` | `src/geometry/void_index.rs:375` | 对无层次结构的小网格做射线奇偶判定。 |
 | `PlacementPipeline` | `src/pipeline/placement.rs:38` | 持有已校验 `ResolvedPlacement` 的流水线结构体。 |
-| `PHASE_MATRIX` | `src/pipeline/placement_labels.rs:12` | 标签场中相编码 0。 |
-| `VoxelLabelsHeader` | `src/pipeline/placement_labels.rs:21` | 标签体数据的说明：间距、原点、排布与相表。 |
-| `PhaseLabel` | `src/pipeline/placement_labels.rs:38` | 一个相编码及其名称。 |
-| `write_voxel_labels` | `src/pipeline/placement_labels.rs:56` | 写出三相标签场与逐体素颗粒标识场。 |
-| `particle_at` | `src/pipeline/placement_labels.rs:178` | 查找包含某点的已放置颗粒。 |
-| `point_in_particle` | `src/pipeline/placement_labels.rs:189` | 对单个颗粒网格做射线奇偶包含判定。 |
+| `PHASE_MATRIX` | `src/pipeline/placement_labels.rs:13` | 标签场中相编码 0。 |
+| `VoxelLabelsHeader` | `src/pipeline/placement_labels.rs:22` | 标签体数据的说明：间距、原点、排布与相表。 |
+| `PhaseLabel` | `src/pipeline/placement_labels.rs:39` | 一个相编码及其名称。 |
+| `write_voxel_labels` | `src/pipeline/placement_labels.rs:57` | 写出三相标签场与逐体素颗粒标识场。 |
+| `particle_at` | `src/pipeline/placement_labels.rs:233` | 查找包含某点的已放置颗粒。 |
+| `point_in_particle` | `src/pipeline/placement_labels.rs:245` | 对单个颗粒网格做射线奇偶包含判定。 |
 | `VoidReport` | `src/pipeline/placement_outputs.rs:278` | 运行如何处理冻结孔隙，以及如何度量它。 |
-| `build_void_report` | `src/pipeline/placement.rs:1156` | 为报告描述冻结孔隙，含其体积计算方法。 |
+| `build_void_report` | `src/pipeline/placement.rs:1170` | 为报告描述冻结孔隙，含其体积计算方法。 |
 | `PlacementPipeline` | `src/pipeline/placement.rs:38` | 持有已校验 `ResolvedPlacement` 的流水线结构体。 |
 | `PlacementOutcome` | `src/pipeline/placement.rs:61` | 一次完整运行的产出，供进程内调用方使用。 |
-| `run_placement` | `src/pipeline/placement.rs:76` | 端到端运行引擎并写出全部输出文件。 |
-| `resolve_threads` | `src/pipeline/placement.rs:253` | 把线程设置换算为至少为 1 的工作线程数。 |
-| `EngineState` | `src/pipeline/placement.rs:265` | 放置循环累积的全部状态。 |
-| `place_all` | `src/pipeline/placement.rs:347` | 按顺序尝试每个已规划尺寸，接受放得下的。 |
-| `try_place_one` | `src/pipeline/placement.rs:386` | 在单颗粒尝试预算内尝试放置一个尺寸。 |
-| `accept` | `src/pipeline/placement.rs:544` | 把已接受的候选提交进几何与记录。 |
-| `run_top_up` | `src/pipeline/placement.rs:605` | 仅因裁剪而未达标时补抽新批次。 |
-| `decide_stop` | `src/pipeline/placement.rs:788` | 判定运行以四种停止原因中的哪一种结束。 |
-| `write_outputs` | `src/pipeline/placement.rs:788` | 写出几何、逐颗粒记录与尺寸 CSV。 |
-| `entity_id` | `src/pipeline/placement.rs:933` | 已放置颗粒的稳定标识。 |
-| `particle_record` | `src/pipeline/placement.rs:938` | 把一个已放置颗粒转为其记录条目。 |
-| `size_class_rows` | `src/pipeline/placement.rs:986` | 构造逐分组的目标与实际对照行。 |
-| `blank_report` | `src/pipeline/placement.rs:1012` | 放置开始之前的报告初始形态。 |
-| `describe_input` | `src/pipeline/placement.rs:1191` | 为报告描述输入文件及其摘要。 |
-| `finish_report` | `src/pipeline/placement.rs:1210` | 填入运行结束后已知的全部内容。 |
-| `summary` (placement.rs) | `src/pipeline/placement.rs:1274` | 构造供人阅读的 stdout 摘要。 |
-| `read_record` | `src/pipeline/placement.rs:1335` | 读回已写出的逐颗粒记录。 |
-| `read_report` | `src/pipeline/placement.rs:1343` | 读回已写出的运行报告。 |
+| `run_placement` | `src/pipeline/placement.rs:76` | 在按配置创建的专用 Rayon 线程池中运行引擎并写出全部输出。 |
+| `with_placement_pool` | `src/pipeline/placement.rs:81` | 为一次操作创建并安装专用 Rayon 线程池，传播创建及执行错误。 |
+| `run_placement_in_pool` | `src/pipeline/placement.rs:90` | 在当前线程池内执行所有 placement 阶段，并记录实际 worker 数。 |
+| `resolve_threads` | `src/pipeline/placement.rs:267` | 把线程设置换算为至少为 1 的工作线程数。 |
+| `EngineState` | `src/pipeline/placement.rs:279` | 放置循环累积的全部状态。 |
+| `place_all` | `src/pipeline/placement.rs:361` | 按顺序尝试每个已规划尺寸，接受放得下的。 |
+| `try_place_one` | `src/pipeline/placement.rs:400` | 在单颗粒尝试预算内尝试放置一个尺寸。 |
+| `accept` | `src/pipeline/placement.rs:558` | 把已接受的候选提交进几何与记录。 |
+| `run_top_up` | `src/pipeline/placement.rs:619` | 仅因裁剪而未达标时补抽新批次。 |
+| `decide_stop` | `src/pipeline/placement.rs:802` | 判定运行以四种停止原因中的哪一种结束。 |
+| `write_outputs` | `src/pipeline/placement.rs:802` | 写出几何、逐颗粒记录与尺寸 CSV。 |
+| `entity_id` | `src/pipeline/placement.rs:947` | 已放置颗粒的稳定标识。 |
+| `particle_record` | `src/pipeline/placement.rs:952` | 把一个已放置颗粒转为其记录条目。 |
+| `size_class_rows` | `src/pipeline/placement.rs:1000` | 构造逐分组的目标与实际对照行。 |
+| `blank_report` | `src/pipeline/placement.rs:1026` | 放置开始之前的报告初始形态。 |
+| `describe_input` | `src/pipeline/placement.rs:1205` | 为报告描述输入文件及其摘要。 |
+| `finish_report` | `src/pipeline/placement.rs:1224` | 填入运行结束后已知的全部内容。 |
+| `summary` (placement.rs) | `src/pipeline/placement.rs:1288` | 构造供人阅读的 stdout 摘要。 |
+| `read_record` | `src/pipeline/placement.rs:1349` | 读回已写出的逐颗粒记录。 |
+| `read_report` | `src/pipeline/placement.rs:1357` | 读回已写出的运行报告。 |
 | `RejectReason` | `src/pipeline/placement_feasibility.rs:17` | 候选放置未被接受的原因；即报告中的键。 |
 | `RejectReason::as_str` | `src/pipeline/placement_feasibility.rs:44` | 拒绝原因在报告中的稳定键名。 |
 | `PlacedParticle` | `src/pipeline/placement_feasibility.rs:76` | 通过全部检查的颗粒，附带缓存的形状。 |
@@ -105,8 +107,9 @@
 | `RejectedShell` | `src/pipeline/placement_library.rs:53` | 读入但未保留的壳，以及未保留的原因。 |
 | `ShapeLibrary` | `src/pipeline/placement_library.rs:61` | 运行可抽取的全部形状，以及读入但未保留的部分。 |
 | `load_shape_library` | `src/pipeline/placement_library.rs:85` | 加载、拆分、度量并过滤形状文件。 |
-| `filter_reason` | `src/pipeline/placement_library.rs:236` | 指出某个壳未通过哪条形状库过滤规则。 |
-| `shell_geometry_sha256` | `src/pipeline/placement_library.rs:276` | 对壳的几何计算摘要，使文件重排可被察觉。 |
+| `filter_reason` | `src/pipeline/placement_library.rs:234` | 指出某个壳未通过哪条形状库过滤规则。 |
+| `shell_geometry_sha256` | `src/pipeline/placement_library.rs:274` | 对壳的几何计算摘要，使文件重排可被察觉。 |
+| `particle_at_prepared` | `src/pipeline/placement_labels.rs:253` | First particle in ordered cached candidates. |
 
 ## 阅读顺序
 
@@ -187,3 +190,23 @@ run_placement
 - `VoidIndex` 的 `Debug` 实现刻意精简：网格及其层次结构会刷满一屏，却说不出读者想要的任何信息。
 - 报告在 `outputs` 中列出自身，摘要为 null。文件无法包含自身的哈希；若不如此，逐一校验清单中每个
   摘要的适配器就会在唯一那个不可能有摘要的条目上卡住。
+
+### run_placement / run_placement_in_pool — PERF-02
+
+`run_placement(config: &ResolvedPlacement) -> Result<PlacementOutcome>` 使用 `resolve_threads`
+创建专用 Rayon 线程池，并在池中执行私有
+`run_placement_in_pool(config: &ResolvedPlacement) -> Result<PlacementOutcome>`，覆盖源库准备、
+几何计算、void 查询与标签输出。创建线程池失败时，在读写文件前返回 `InvalidConfig`。
+内部执行函数保持随机数消费和体积累计串行，并用 `rayon::current_num_threads()` 记录实际池大小。
+因此 `runtime.threads` 是执行现场观测值。正数线程配置按原值执行，非正值采用可用并行度。
+本改动修复资源契约，接受循环并行化仍为后续工作。
+
+`with_placement_pool<T: Send>(threads: i32, work: impl FnOnce() -> Result<T> + Send) -> Result<T>`
+是私有执行封装：启动并回收 worker，返回操作结果。单元测试在 1/2/8 worker 的嵌套 `par_iter`
+内部观察池大小和 worker 索引，与标签输出集成测试共同验证执行契约。
+
+### Label preparation (PERF-12)
+
+`voxel_labels` prepares immutable per-particle mesh queries and a bounded spatial grid once. Parallel 1024-voxel tiles query their enclosing box once, sort candidate slice indices, and preserve original particle ownership order and void-first classification. Worker scratch retains ray hits. `particle_at_prepared` returns the first acceptance id and bbox-test count, reduced without shared atomics. The test-only original particle scan is the differential oracle. Output phase/id arrays and file schema are unchanged; full-array allocation and streaming I/O remain pending.
+
+Shape library input now uses `load_stl_hashed` so geometry and source digest come from one byte stream. Binary raw-file buffering is bounded; ASCII retains the legacy text parser. Source/shell order and digests are unchanged.

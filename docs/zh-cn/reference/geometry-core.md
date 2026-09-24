@@ -15,22 +15,27 @@
 | `mesh_centroid` | `src/geometry/mesh_ops.rs:5` | 网格顶点的算术质心。 |
 | `vec_norm` | `src/geometry/mesh_ops.rs:19` | 向量的欧氏长度。 |
 | `merge_meshes` | `src/geometry/mesh_ops.rs:24` | 将多个网格合并为一个，并重新映射面索引。 |
-| `split_mesh_into_granules` | `src/geometry/mesh_ops.rs:44` | 将网格拆分为连通分量（基于共享顶点的 BFS）。 |
-| `translate_mesh` | `src/geometry/mesh_ops.rs:117` | 原地按增量向量平移所有网格顶点。 |
-| `move_mesh_to_target_center` | `src/geometry/mesh_ops.rs:124` | 移动网格使其质心与目标位置一致。 |
-| `wrap_mesh_centroid_to_box` | `src/geometry/mesh_ops.rs:135` | 在周期边界条件下，将网格质心折回到盒子内。 |
-| `scale_mesh` | `src/geometry/mesh_ops.rs:156` | 原地围绕原点对网格顶点进行统一缩放。 |
-| `mesh_surface_area` | `src/geometry/mesh_ops.rs:163` | 网格的总表面积（各三角形面积之和）。 |
-| `rotate_mesh_around_center` | `src/geometry/mesh_ops.rs:182` | 使用罗德里格斯旋转公式，围绕质心旋转网格。 |
-| `box_mesh` | `src/geometry/mesh_ops.rs:203` | 从 `BoundingBox` 构建三角剖分的盒状网格。 |
-| `SpatialGrid::new` | `src/geometry/spatial.rs:14` | 以给定单元大小，在一个盒子上构造空的均匀网格。 |
-| `SpatialGrid::insert` | `src/geometry/spatial.rs:31` | 将一个条目索引插入其包围盒重叠的每个单元格。 |
-| `SpatialGrid::build` | `src/geometry/spatial.rs:49` | 从一批 (index, bbox) 对构造并填充网格。 |
-| `SpatialGrid::query_neighbors` | `src/geometry/spatial.rs:58` | 查找与查询包围盒重叠的候选邻居索引。 |
-| `SpatialGrid::query_neighbors_with_margin` | `src/geometry/spatial.rs:68` | 与 `query_neighbors` 相同，但按边距距离进行扩展。 |
-| `SpatialGrid::point_to_cell_clamped` | `src/geometry/spatial.rs:93` | 将点映射到网格单元坐标，并钳制在网格边界内。 |
-| `SpatialGrid::point_to_cell` | `src/geometry/spatial.rs:99` | 将点映射到网格单元坐标，不做钳制。 |
-| `estimate_cell_size` | `src/geometry/spatial.rs:108` | 根据一组包围盒，启发式地选取 `SpatialGrid` 的单元大小。 |
+| `split_mesh_into_granules` | `src/geometry/mesh_ops.rs:47` | 将网格拆分为连通分量（基于共享顶点的 BFS）。 |
+| `translate_mesh` | `src/geometry/mesh_ops.rs:120` | 原地按增量向量平移所有网格顶点。 |
+| `move_mesh_to_target_center` | `src/geometry/mesh_ops.rs:125` | 移动网格使其质心与目标位置一致。 |
+| `wrap_mesh_centroid_to_box` | `src/geometry/mesh_ops.rs:136` | 在周期边界条件下，将网格质心折回到盒子内。 |
+| `scale_mesh` | `src/geometry/mesh_ops.rs:157` | 原地围绕原点对网格顶点进行统一缩放。 |
+| `mesh_surface_area` | `src/geometry/mesh_ops.rs:176` | 网格的总表面积（各三角形面积之和）。 |
+| `rotate_mesh_around_center` | `src/geometry/mesh_ops.rs:195` | 使用罗德里格斯旋转公式，围绕质心旋转网格。 |
+| `box_mesh` | `src/geometry/mesh_ops.rs:216` | 从 `BoundingBox` 构建三角剖分的盒状网格。 |
+| `SpatialGrid::new` | `src/geometry/spatial.rs:22` | 以给定单元大小，在一个盒子上构造空的均匀网格。 |
+| `SpatialGrid::insert` | `src/geometry/spatial.rs:40` | 将一个条目索引插入其包围盒重叠的每个单元格。 |
+| `SpatialGrid::build` | `src/geometry/spatial.rs:80` | 从一批 (index, bbox) 对构造并填充网格。 |
+| `SpatialGrid::query_neighbors` | `src/geometry/spatial.rs:89` | 查找与查询包围盒重叠的候选邻居索引。 |
+| `SpatialGrid::query_neighbors_with_margin` | `src/geometry/spatial.rs:99` | 与 `query_neighbors` 相同，但按边距距离进行扩展。 |
+| `SpatialGrid::point_to_cell_clamped` | `src/geometry/spatial.rs:157` | 将点映射到网格单元坐标，并钳制在网格边界内。 |
+| `SpatialGrid::point_to_cell` | `src/geometry/spatial.rs:167` | 将点映射到网格单元坐标，不做钳制。 |
+| `estimate_cell_size` | `src/geometry/spatial.rs:176` | 根据一组包围盒，启发式地选取 `SpatialGrid` 的单元大小。 |
+| `SpatialGrid::remove` | `src/geometry/spatial.rs:59` | Remove all item cell references. |
+| `SpatialGrid::update` | `src/geometry/spatial.rs:72` | Replace one item membership. |
+| `SpatialQueryScratch` | `src/geometry/spatial.rs:5` | Retained neighbors and membership storage. |
+| `SpatialGrid::query_into` | `src/geometry/spatial.rs:111` | Fill reusable query scratch. |
+| `map_vertices` | `src/geometry/mesh_ops.rs:162` | Serial or parallel independent vertex mapping. |
 
 ## 模块角色：`geometry/mod.rs`
 
@@ -130,7 +135,7 @@
 #### split_mesh_into_granules
 
 - **签名：** `pub fn split_mesh_into_granules(mesh: &Mesh) -> Vec<Mesh>`
-- **源码位置：** `src/geometry/mesh_ops.rs:44`
+- **源码位置：** `src/geometry/mesh_ops.rs:47`
 - **用途：** 将单个网格拆分为其连通分量（"颗粒"），连通性由三角形之间共享的顶点定义。
 - **参数：**
   - `mesh` — 待分解的网格。
@@ -147,7 +152,7 @@
 #### translate_mesh
 
 - **签名：** `pub fn translate_mesh(mesh: &mut Mesh, delta: Vec3)`
-- **源码位置：** `src/geometry/mesh_ops.rs:117`
+- **源码位置：** `src/geometry/mesh_ops.rs:120`
 - **用途：** 将网格的每个顶点按固定偏移量平移。
 - **参数：**
   - `mesh` — 待平移的网格，原地修改。
@@ -158,7 +163,7 @@
 #### move_mesh_to_target_center
 
 - **签名：** `pub fn move_mesh_to_target_center(mesh: &mut Mesh, target: Vec3)`
-- **源码位置：** `src/geometry/mesh_ops.rs:124`
+- **源码位置：** `src/geometry/mesh_ops.rs:125`
 - **用途：** 重新定位网格，使其质心恰好落在 `target` 上。
 - **参数：**
   - `mesh` — 待移动的网格，原地修改。
@@ -169,7 +174,7 @@
 #### wrap_mesh_centroid_to_box
 
 - **签名：** `pub fn wrap_mesh_centroid_to_box(mesh: &mut Mesh, box_bounds: BoundingBox)`
-- **源码位置：** `src/geometry/mesh_ops.rs:135`
+- **源码位置：** `src/geometry/mesh_ops.rs:136`
 - **用途：** 在周期边界条件下，将网格质心折回堆积盒内，然后将网格移动到该折回后的位置。
 - **参数：**
   - `mesh` — 待折回的网格，原地修改。
@@ -181,7 +186,7 @@
 #### scale_mesh
 
 - **签名：** `pub fn scale_mesh(mesh: &mut Mesh, factor: f64)`
-- **源码位置：** `src/geometry/mesh_ops.rs:156`
+- **源码位置：** `src/geometry/mesh_ops.rs:157`
 - **用途：** 围绕坐标原点，将网格的每个顶点按 `factor` 进行统一缩放。
 - **参数：**
   - `mesh` — 待缩放的网格，原地修改。
@@ -193,7 +198,7 @@
 #### mesh_surface_area
 
 - **签名：** `pub fn mesh_surface_area(mesh: &Mesh) -> f64`
-- **源码位置：** `src/geometry/mesh_ops.rs:163`
+- **源码位置：** `src/geometry/mesh_ops.rs:176`
 - **用途：** 计算三角剖分网格的总表面积。
 - **参数：**
   - `mesh` — 待测量的网格。
@@ -204,7 +209,7 @@
 #### rotate_mesh_around_center
 
 - **签名：** `pub fn rotate_mesh_around_center(mesh: &mut Mesh, axis: Vec3, angle: f64)`
-- **源码位置：** `src/geometry/mesh_ops.rs:182`
+- **源码位置：** `src/geometry/mesh_ops.rs:195`
 - **用途：** 使用罗德里格斯旋转公式，围绕任意轴将网格绕自身质心旋转 `angle` 弧度。
 - **参数：**
   - `mesh` — 待旋转的网格，原地修改。
@@ -217,7 +222,7 @@
 #### box_mesh
 
 - **签名：** `pub fn box_mesh(bbox: BoundingBox) -> Mesh`
-- **源码位置：** `src/geometry/mesh_ops.rs:203`
+- **源码位置：** `src/geometry/mesh_ops.rs:216`
 - **用途：** 根据给定的包围盒构建一个封闭的三角剖分矩形盒网格。
 - **参数：**
   - `bbox` — 盒子的最小/最大角点。
@@ -242,7 +247,7 @@
 #### SpatialGrid::new
 
 - **签名：** `pub fn new(box_bounds: BoundingBox, cell_size: f64) -> Self`
-- **源码位置：** `src/geometry/spatial.rs:14`
+- **源码位置：** `src/geometry/spatial.rs:22`
 - **用途：** 构造一个覆盖 `box_bounds` 的空 `SpatialGrid`，划分为（近似）`cell_size` 大小的立方单元。
 - **参数：**
   - `box_bounds` — 网格覆盖的世界空间区域。
@@ -253,7 +258,7 @@
 #### SpatialGrid::insert
 
 - **签名：** `pub fn insert(&mut self, idx: usize, bbox: BoundingBox)`
-- **源码位置：** `src/geometry/spatial.rs:31`
+- **源码位置：** `src/geometry/spatial.rs:40`
 - **用途：** 将一个条目（由 `idx` 标识）注册到其包围盒重叠的每个网格单元中。
 - **参数：**
   - `idx` — 待插入的条目索引（通常是颗粒/网格索引）。
@@ -265,7 +270,7 @@
 #### SpatialGrid::build
 
 - **签名：** `pub fn build(bboxes: &[(usize, BoundingBox)], box_bounds: BoundingBox, cell_size: f64) -> Self`
-- **源码位置：** `src/geometry/spatial.rs:49`
+- **源码位置：** `src/geometry/spatial.rs:80`
 - **用途：** 便捷构造函数，一次性创建网格并插入一整批 (index, bbox) 对。
 - **参数：**
   - `bboxes` — 待插入的 `(index, bbox)` 对切片。
@@ -277,7 +282,7 @@
 #### SpatialGrid::query_neighbors
 
 - **签名：** `pub fn query_neighbors(&self, bbox: BoundingBox, exclude: usize) -> Vec<usize>`
-- **源码位置：** `src/geometry/spatial.rs:58`
+- **源码位置：** `src/geometry/spatial.rs:89`
 - **用途：** 查找与 `bbox` 重叠的单元中的所有条目索引，排除给定索引。
 - **参数：**
   - `bbox` — 查询区域。
@@ -290,13 +295,13 @@
 #### SpatialGrid::query_neighbors_with_margin
 
 - **签名：** `pub fn query_neighbors_with_margin(&self, bbox: BoundingBox, margin: f64, exclude: usize) -> Vec<usize>`
-- **源码位置：** `src/geometry/spatial.rs:68`
+- **源码位置：** `src/geometry/spatial.rs:99`
 - **用途：** 查找与 `bbox` 重叠的单元（向外扩展 `margin`）中的所有条目索引，排除给定索引。
 - **参数：**
   - `bbox` — 查询区域。
   - `margin` — 用于扩充搜索区域的额外世界空间距离（通过 `ceil(margin * inv_cell) + 1` 转换为整数单元边距）。
   - `exclude` — 从结果中排除的索引。
-- **返回值：** 去重后的候选邻居索引 `Vec<usize>`（在构建结果时通过线性 `contains` 检查去重）。
+- **返回值：** 去重后的候选邻居索引 `Vec<usize>`（保持首次遇见的顺序；不足 256 个 ID 时线性去重，之后使用哈希集合判断成员资格，但绝不遍历集合）。
 - **副作用：** 无。
 - **说明：** 用于需要检查 `min_neighbor_distance`（或类似间隙）约束的场合，因为即使邻居的包围盒与查询包围盒不直接重叠，只要分隔距离在 `margin` 以内，仍需被考虑。结果是 `margin` 范围内真实邻居的超集——候选项在下游仍需经过精确的几何检查（此函数仅是粗筛阶段过滤器）。
 - **另请参阅：** `../algorithms/spatial-grid-collision.md`。
@@ -304,7 +309,7 @@
 #### SpatialGrid::point_to_cell_clamped
 
 - **签名：** `fn point_to_cell_clamped(&self, p: Vec3) -> (usize, usize, usize)`
-- **源码位置：** `src/geometry/spatial.rs:93`
+- **源码位置：** `src/geometry/spatial.rs:157`
 - **用途：** 将世界空间中的点映射到网格单元坐标，并钳制以确保结果始终索引一个有效单元。
 - **参数：**
   - `p` — 世界空间中的点。
@@ -315,7 +320,7 @@
 #### SpatialGrid::point_to_cell
 
 - **签名：** `fn point_to_cell(&self, p: Vec3) -> (usize, usize, usize)`
-- **源码位置：** `src/geometry/spatial.rs:99`
+- **源码位置：** `src/geometry/spatial.rs:167`
 - **用途：** 将世界空间中的点转换为原始（未钳制的）网格单元坐标。
 - **参数：**
   - `p` — 世界空间中的点。
@@ -326,7 +331,7 @@
 #### estimate_cell_size
 
 - **签名：** `pub fn estimate_cell_size(bboxes: &[BoundingBox]) -> f64`
-- **源码位置：** `src/geometry/spatial.rs:108`
+- **源码位置：** `src/geometry/spatial.rs:176`
 - **用途：** 基于一组条目中最大的包围盒范围，为构造 `SpatialGrid` 启发式地选取单元大小。
 - **参数：**
   - `bboxes` — 将要填充网格的条目的包围盒（例如某次堆积运行中所有颗粒网格的包围盒）。
@@ -334,3 +339,24 @@
 - **副作用：** 无。
 - **说明：** 将单元大小设定为最大条目的范围，可确保任何单个条目至多跨越少量、有界数量的单元，从而使 `insert`/`query_neighbors` 调用保持低成本。调用方通常为每个颗粒计算 `mesh_bbox`，将所得的盒子传入此函数以选取 `cell_size`，然后通过 `SpatialGrid::build` 构建网格。
 - **另请参阅：** `../algorithms/spatial-grid-collision.md`。
+
+### Incremental grid acceptance (PERF-10/13)
+
+`SpatialGrid` retains reverse item-to-cell membership. `remove(idx)` removes all insertions of that id and preserves remaining bucket order; `update(idx, Option<BoundingBox>)` replaces membership or removes the item. Query order remains first encounter, but moving an item appends it in its new buckets, so consumers must not assume rebuild order. Candidate sets match a full rebuild. Optimize queries the current grid before evaluating a proposal, updates one membership only after acceptance, and restores the original prepared particle directly on rejection. Whole-population migration still rebuilds the grid. Repeated inserts retain their old semantics and removal clears every copy. Reverse membership consumes additional memory proportional to inserted cell references.
+
+`SpatialQueryScratch` owns reusable neighbors and hash membership storage. `SpatialGrid::query_into(bbox, margin, exclude, scratch)` clears logical contents and retains capacity, preserving first-encounter deduplication. Placement label tiles reuse it alongside their mesh-query scratch. Extremely large margins saturate cell padding rather than overflowing.
+
+`map_vertices(&mut [Vec3], transform)` applies independent vertex maps with a serial small-input path and disjoint Rayon chunks above the cutoff. Scale and translation preserve their arithmetic and topology. The current pool controls parallel execution.
+
+`merge_meshes` reserves final vertex and face capacities before concatenation, preserving the existing input/index order.
+
+
+Dense-bucket query contract: hash promotion occurs immediately on the 256th distinct candidate, even inside the first bucket. No bucket is scanned completely with unbounded linear deduplication. The set is never iterated, preserving first-encounter ordering and sparse-ID/exclusion semantics. Both buffers remain query-local reusable scratch.
+
+### CPU 像素任务划分
+
+STL 最近命中和 prepared 透明 scene 渲染均使用不重叠连续像素任务。当行数不少于 worker 且每 worker 不超过 1024 像素时保留按行，避免最小块粒度减少并行任务；其他图单 worker 为单任务，否则目标为每 worker 四个任务，粒度夹取 256..4096 像素，整行能放下时按行对齐。宽行可跨任务，短行可合并。任务仅在起点计算 (x,y)，随后递增原整数像素坐标，射线运算、命中排序/合成与串行叠加不变。scene depth/RGBA 共用边界并复用任务内 hits scratch。两种投影、非整除尺寸、极端纵横比在 1/2/8 worker 下逐字节对照按行参考。粒度性能验收见 PLAN.Performance.md §40。
+
+| `cpu_render_tile_pixels` | `src/geometry/render.rs:381` | Bounded CPU pixel-task scheduling with an explicit row reference. |
+
+| `render_mesh_cpu_with_tiles` | `src/geometry/render.rs:390` | Bounded CPU pixel-task scheduling with an explicit row reference. |

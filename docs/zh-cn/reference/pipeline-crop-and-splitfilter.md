@@ -6,26 +6,28 @@
 
 | 条目 | 位置 | 摘要 |
 |---|---|---|
+| `gpu_crop_values_supported` | `src/pipeline/crop.rs:25` | Check exact integer representation for GPU interpolation. |
+| `CropPipeline::run_in_pool` | `src/pipeline/crop.rs:621` | Execute crop stages within the configured pool and report completed-stage wall times. |
 | `CropPipeline`（结构体） | `src/pipeline/crop.rs:14` | 持有裁剪流水线所用的 `CropConfig`。 |
 | `InterpolationMode`（枚举） | `src/pipeline/crop.rs:19` | 旋转+裁剪期间使用的最近邻与三线性重采样模式。 |
-| `parse_byte_order` | `src/pipeline/crop.rs:25` | 将 `little`/`big`（或 `le`/`be`）解析为 `ByteOrder`。 |
-| `parse_interpolation_mode` | `src/pipeline/crop.rs:36` | 将 `nearest`/`trilinear` 解析为 `InterpolationMode`，默认为三线性。 |
-| `load_input_volume` | `src/pipeline/crop.rs:52` | 根据配置从原始文件夹或 TIFF/TIFF 文件夹加载输入 CT 体数据。 |
-| `voxel_index` | `src/pipeline/crop.rs:86` | 计算 `(x, y, z)` 体素坐标对应的扁平数据索引。 |
-| `sample_voxel_or_background` | `src/pipeline/crop.rs:91` | 在整数坐标处读取体素，越界时返回背景值。 |
-| `sample_nearest` | `src/pipeline/crop.rs:106` | 在小数源坐标处进行最近邻采样。 |
-| `sample_trilinear` | `src/pipeline/crop.rs:114` | 在小数源坐标处进行三线性插值采样。 |
-| `stabilize_bound` | `src/pipeline/crop.rs:147` | 将接近整数的浮点数在误差范围内吸附到其精确整数值。 |
-| `float_bounds_to_inclusive_i64` | `src/pipeline/crop.rs:157` | 将浮点最小/最大边界转换为闭区间整数 `[start, end]` 范围。 |
-| `boundary_non_bg_ratio` | `src/pipeline/crop.rs:170` | 给定厚度的边界壳层中非背景体素所占的比例。 |
-| `infer_trim_pixels` | `src/pipeline/crop.rs:211` | 根据边界伪影强度启发式地推断需裁剪的 0/1/2 像素。 |
-| `resolve_trim_pixels` | `src/pipeline/crop.rs:229` | 从配置中解析出有效的边缘裁剪像素数，支持 `-1` 表示自动。 |
-| `trim_volume_border` | `src/pipeline/crop.rs:252` | 从体数据的 XY 面裁剪固定数量的边界体素。 |
-| `detect_background_mode` | `src/pipeline/crop.rs:296` | 将体数据边界上的众数体素值检测为背景值。 |
-| `estimate_pca_bbox` | `src/pipeline/crop.rs:330` | 计算 PCA 旋转、质心以及旋转坐标系下的前景包围盒。 |
-| `rotate_and_crop` | `src/pipeline/crop.rs:432` | CPU 上、基于 rayon 并行的旋转+裁剪，将体数据重采样为轴对齐输出。 |
-| `rotate_and_crop_gpu` | `src/pipeline/crop.rs:494` | 通过 `GpuVolumeTransformPipeline` 实现的 GPU 加速旋转+裁剪（`gpu` 特性）。 |
-| `CropPipeline::run` | `src/pipeline/crop.rs:559` | 编排加载 → 背景检测 → PCA 包围盒 → 旋转+裁剪（GPU 或 CPU）→ 边缘裁剪 → 保存 TIFF。 |
+| `parse_byte_order` | `src/pipeline/crop.rs:34` | 将 `little`/`big`（或 `le`/`be`）解析为 `ByteOrder`。 |
+| `parse_interpolation_mode` | `src/pipeline/crop.rs:50` | 将 `nearest`/`trilinear` 解析为 `InterpolationMode`，默认为三线性。 |
+| `load_input_volume` | `src/pipeline/crop.rs:71` | 根据配置从原始文件夹或 TIFF/TIFF 文件夹加载输入 CT 体数据。 |
+| `voxel_index` | `src/pipeline/crop.rs:105` | 计算 `(x, y, z)` 体素坐标对应的扁平数据索引。 |
+| `sample_voxel_or_background` | `src/pipeline/crop.rs:110` | 在整数坐标处读取体素，越界时返回背景值。 |
+| `sample_nearest` | `src/pipeline/crop.rs:137` | 在小数源坐标处进行最近邻采样。 |
+| `sample_trilinear` | `src/pipeline/crop.rs:145` | 在小数源坐标处进行三线性插值采样。 |
+| `stabilize_bound` | `src/pipeline/crop.rs:178` | 将接近整数的浮点数在误差范围内吸附到其精确整数值。 |
+| `float_bounds_to_inclusive_i64` | `src/pipeline/crop.rs:188` | 将浮点最小/最大边界转换为闭区间整数 `[start, end]` 范围。 |
+| `boundary_non_bg_ratio` | `src/pipeline/crop.rs:201` | 给定厚度的边界壳层中非背景体素所占的比例。 |
+| `infer_trim_pixels` | `src/pipeline/crop.rs:242` | 根据边界伪影强度启发式地推断需裁剪的 0/1/2 像素。 |
+| `resolve_trim_pixels` | `src/pipeline/crop.rs:260` | 从配置中解析出有效的边缘裁剪像素数，支持 `-1` 表示自动。 |
+| `trim_volume_border` | `src/pipeline/crop.rs:287` | 从体数据的 XY 面裁剪固定数量的边界体素。 |
+| `detect_background_mode` | `src/pipeline/crop.rs:317` | 将体数据边界上的众数体素值检测为背景值。 |
+| `estimate_pca_bbox` | `src/pipeline/crop.rs:351` | 计算 PCA 旋转、质心以及旋转坐标系下的前景包围盒。 |
+| `rotate_and_crop` | `src/pipeline/crop.rs:459` | CPU 上、基于 rayon 并行的旋转+裁剪，将体数据重采样为轴对齐输出。 |
+| `rotate_and_crop_gpu` | `src/pipeline/crop.rs:520` | 通过 `GpuVolumeTransformPipeline` 实现的 GPU 加速旋转+裁剪（`gpu` 特性）。 |
+| `CropPipeline::run` | `src/pipeline/crop.rs:598` | 编排加载 → 背景检测 → PCA 包围盒 → 旋转+裁剪（GPU 或 CPU）→ 边缘裁剪 → 保存 TIFF。 |
 | `SplitFilterPipeline`（结构体） | `src/pipeline/split_filter.rs:13` | 持有拆分-过滤流水线所用的 `SplitFilterConfig`。 |
 | `VolumeStats`（结构体） | `src/pipeline/split_filter.rs:18` | 保留颗粒体积的最小/最大/均值/中位数汇总。 |
 | `volume_stats_for_kept` | `src/pipeline/split_filter.rs:26` | 在 `keep` 标志为真的颗粒上计算 `VolumeStats`。 |
@@ -72,7 +74,7 @@ CT 体数据裁剪流水线。加载体数据、检测背景强度、计算基�
   2. `detect_background_mode`——找出众数边界体素值。
   3. `parse_interpolation_mode`——从配置解析最近邻或三线性模式。
   4. `estimate_pca_bbox`——计算 PCA 旋转、质心以及旋转坐标系下的前景边界。
-  5. 旋转+裁剪：当使用 `--features gpu` 编译**且**输出体素数（`(x1-x0+1)*(y1-y0+1)*(z1-z0+1)`）超过 100,000 时，调用 `rotate_and_crop_gpu`；GPU 失败时打印 `[Warning]` 并回退到 CPU 路径（`rotate_and_crop`）。低于 10 万体素阈值，或未启用 `gpu` 特性时，始终使用 CPU 路径。
+  5. 旋转+裁剪：遵循 acceleration、环境覆盖、工作量阈值和预算；GPU 不可用或执行失败时仅在 cpu_fallback 允许时回退，否则返回错误。
   6. `resolve_trim_pixels` + `trim_volume_border`——可选的边缘伪影裁剪（当 `edge_trim == -1` 时自动检测）。
   7. `save_tiff_or_folder_with_ext`——写出输出结果。
 - **另请参阅：** `estimate_pca_bbox`、`rotate_and_crop`、`rotate_and_crop_gpu`；算法细节见 [../algorithms/pca-volume-alignment-crop.md](../algorithms/pca-volume-alignment-crop.md)；GPU 派发细节见 [gpu.md](gpu.md)。
@@ -187,11 +189,11 @@ CT 体数据裁剪流水线。加载体数据、检测背景强度、计算基�
 
 #### trim_volume_border
 
-- **签名：** `fn trim_volume_border(volume: &Volume3D, trim: usize) -> Result<Volume3D>`
+- **签名：** `fn trim_volume_border(volume: Volume3D, trim: usize) -> Result<Volume3D>`
 - **源码位置：** `src/pipeline/crop.rs:252`
 - **用途：** 从体数据的四条 XY 面边界（不包括 Z/深度面）剥离 `trim` 个体素。
 - **参数：** `volume`、`trim`——从四个 X/Y 边各自移除的像素数。
-- **返回值：** 当 `trim == 0` 时返回 `Ok(volume.clone())` 不变；否则返回一个更小的新 `Volume3D`，`width -= 2*trim`、`height -= 2*trim`，`depth` 不变；若 `width <= 2*trim || height <= 2*trim` 则返回 `Err(InvalidConfig)`。
+- **返回值：** 当 `trim == 0` 时返回 `Ok(volume)` 不变；否则返回一个更小的新 `Volume3D`，`width -= 2*trim`、`height -= 2*trim`，`depth` 不变；若 `width <= 2*trim || height <= 2*trim` 则返回 `Err(InvalidConfig)`。
 - **副作用：** 无（会分配一个新的数据缓冲区）。
 - **说明：** 深度（Z）方向永不裁剪——仅裁剪 X/Y（面内）边界，这与该流水线中的边缘伪影源于 XY 旋转/重采样、而非切片截断这一事实相符。
 
@@ -202,8 +204,8 @@ CT 体数据裁剪流水线。加载体数据、检测背景强度、计算基�
 - **用途：** 将 CT 体数据边界面上出现频率最高的体素值检测为背景强度。
 - **参数：** `volume`。
 - **返回值：** 众数边界体素值；若体数据没有边界体素（退化/空体数据）则为 `0`。
-- **副作用：** 无。对所有边界体素（`x==0 || y==0 || z==0` 或位于对面）构建一个 `HashMap<i64, usize>`（值 → 计数），然后取计数最大者。
-- **说明：** 假定背景在边界上占主导——对于标本不触及体数据边缘的 CT 扫描而言是合理假设。并列情况通过 `max_by_key` 依 `HashMap` 迭代顺序任意打破。
+- **副作用：** 无。每个边界体素只计数一次；符合条件的 8/16 位图像使用有界稠密计数，其他情况使用稀疏表，详见下方契约。
+- **说明：** 假定背景在边界上占主导——对于标本不触及体数据边缘的 CT 扫描而言是合理假设。并列时确定性选择最小体素值。
 
 #### estimate_pca_bbox
 
@@ -246,7 +248,7 @@ CT 体数据裁剪流水线。加载体数据、检测背景强度、计算基�
 - **参数：** 与 `rotate_and_crop` 相同。
 - **返回值：** `Ok(Volume3D)`，形状/语义与 CPU 路径相同；或 `Err(String)` 描述 GPU 初始化/派发失败。
 - **副作用：** 初始化一个 `crate::gpu::volume_transform::GpuVolumeTransformPipeline`（首次使用时创建 `wgpu` 设备/队列），将体数据以 `i32`（由 `i64` 转换而来）形式上传，派发计算着色器，下载 `i32` 结果并转换回 `i64`。向标准输出打印一行 `[Info]` 计时信息（`"[Info] GPU volume transform: {elapsed}s, {w}x{h}x{d} -> {w}x{h}x{d}"`）。
-- **说明：** 数据以 `i32` 而非 `i64` 往返传输——这是一次窄化转换，假定 CT 强度值落在 `i32` 范围内（对所有支持的位深都成立，但值得了解这是一个潜在的精度边界）。插值模式作为 `u32` 标志传给着色器（`0` = 最近邻，`1` = 三线性）。传给着色器的原点为浮点转闭区间整数边界转换得到的 `(x0, y0, z0)`，即着色器接收到与 CPU 路径相同的坐标系。
+- **说明：** 数据以 `i32` 而非 `i64` 往返传输——窄化前检查值域；最近邻要求值可无损表示为 i32，三线性还要求整数可精确表示为 f32。不满足时返回错误，由管线按回退策略处理。插值模式作为 `u32` 标志传给着色器（`0` = 最近邻，`1` = 三线性）。传给着色器的原点为浮点转闭区间整数边界转换得到的 `(x0, y0, z0)`，即着色器接收到与 CPU 路径相同的坐标系。
 - **另请参阅：** `GpuVolumeTransformPipeline` 及底层 WGSL 计算着色器见 [gpu.md](gpu.md)；CPU 回退路径见 `rotate_and_crop`；GPU/CPU 选择逻辑与失败回退行为见 `CropPipeline::run`。
 
 ---
@@ -366,3 +368,26 @@ CT 体数据裁剪流水线。加载体数据、检测背景强度、计算基�
   5. 对每个区间，计算若使用 `(mu, sigma)` 的正态分布，理论上会落入该区间对数体积范围内的总体*期望*占比（`normal_cdf(hi) - normal_cdf(lo)`），乘以候选总数得到期望数量，再计算 `allowed = ceil(expected * over_factor)`。
   6. 若某区间内的候选数超过 `allowed`，则对该区间的索引洗牌，并将除前 `allowed` 个之外的其余标记为 `keep[idx] = false`。
 - **说明（配置语义）：** `over_factor` 是在开始剔除之前、允许超出理论对数正态隐含数量的宽裕度——`over_factor = 1.0` 会将每个区间精确剔减到拟合模型的期望值；更大的值则允许更多的代表过多情况后才开始丢弃颗粒。这是一种启发式的重平衡工具，而非真正的重采样/拒绝采样算法——它从不向代表不足的区间*添加*颗粒，只从代表过多的区间中移除。
+
+
+### Crop execution updates (2026-09-18)
+
+`CropPipeline::run` installs a pool bounded by `cpu_max`; `run_in_pool` performs all stages. `gpu_crop_values_supported` rejects lossy integer narrowing before adapter initialization. `acceleration` and the environment override determine the backend, budget and permission to fall back. GPU runtime errors propagate when fallback is forbidden. Resampling uses adaptive slice/row tasks. `trim_volume_border` consumes and compacts the original allocation, preserving depth, numeric type and row order, including zero-copy zero trim.
+
+
+### Split-filter metric preparation (PERF-15)
+
+`SplitFilterConfig.cpu_max` bounds one pool for loading, splitting, metric preparation, filtering and saving (`-1`/absent: available workers). `prepare_particle_metrics` computes immutable volume/aspect/area records in component order. At least 32 components use indexed parallel collection; smaller sets remain serial. Each component uses the original geometry functions and reduction order. Bbox is only requested by the aspect filter; area is only computed for sharpness candidates that survive the aspect and positive-volume gates. Filtering reads those records in its original order, and lognormal RNG/deletions remain serial. Before/after reporting shares the immutable volume array instead of cloning it. STL writes run in batches of at most two in the same pool, with names and errors consumed in rank order; an error may leave another file in its current batch written.
+
+
+`foreground_blocks` maps foreground voxels in fixed 65,536-voxel chunks, collecting partials in block order. `estimate_pca_bbox` uses it for count/sum, centered covariance and projected min/max. `detect_background_mode` scans boundary faces only and resolves tied counts by smallest value. The original serial PCA is retained only under tests for numerical comparison.
+
+PCA task grain: for the parallel branch, `foreground_blocks` sets a minimum number of blocks per Rayon job using a workload-derived task budget, `min(workers, ceil(N/1,048,576))`; fixed block boundaries and ordered collection remain unchanged.
+
+### Crop 阶段计时（2026-09-23）
+
+已完成的阶段输出 `[Timing] crop stage=<name> seconds=<wall_seconds>`，名称为 `load`、`background`、`pca`、`transform_and_backend`、`trim`、`encode_write`、`total_in_pool`。`transform_and_backend` 包含输出尺寸、策略/设备初始化、GPU 传输与回读或 CPU 重采样、允许的回退，不是 GPU kernel 时间。`encode_write` 包含显式 flush，不包含 fsync。`total_in_pool` 排除 CLI/配置/线程池创建，但包含日志开销；端到端进程基准另外计入这些成本。失败阶段不伪造零耗时或完成记录。真实输入 CPU 1/2/4/8 worker 的进程/RSS 矩阵及缓存限制见 PLAN.Performance.md §61。
+
+### 背景稠密计数（2026-09-23）
+
+`for_each_boundary_value` 只访问边界面，棱和角只计数一次。U8/I8 使用 256 个 usize 计数；至少 65,536 体素的 U16/I16 体数据使用 65,536 个计数，在 64 位主机最多 512 KiB。更小的 16 位以及所有 32 位数据保持 HashMap 路径。checked 索引将声明范围外的值放入稀疏 spill 表，不依赖元数据截断或拒绝任意 i64 值。两种计数共同维护当前众数，平票仍选择最小值，无需最后扫描整张稠密表。计数局部持有，PCA 前释放。独立全网格有序表 oracle 覆盖退化维度、整数极值、有符号范围和元数据不一致。真实输入端到端证据见 PLAN.Performance.md §62。

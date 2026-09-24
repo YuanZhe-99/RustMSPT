@@ -8,10 +8,10 @@
 | 条目 | 位置 | 摘要 |
 |---|---|---|
 | `TARGET_BIN_PROBES` | `src/pipeline/pack.rs:27` | 某个已选中区间在被排除出本轮重新选择之前，可容忍的最大连续放置失败次数。 |
-| `PackPipeline` | `src/pipeline/pack.rs:29` | 包装 `PackingConfig` 的流水线结构体；实现 `Pipeline`。 |
+| `PackPipeline` | `src/pipeline/pack.rs:95` | 包装 `PackingConfig` 的流水线结构体；实现 `Pipeline`。 |
 | `CandidateProposal` | `src/pipeline/pack.rs:34` | 一个抽取的候选网格，及其可选的预计算 `MeshMetrics`。 |
-| `validate_sphericity_target` | `src/pipeline/pack.rs:44` | 在堆积开始前验证 `target_mean_sphericity`/`mean_sphericity_tolerance` 配置。 |
-| `check_geometry_filters` | `src/pipeline/pack.rs:75` | 对候选网格应用配置中的 `min_volume`、`max_aspect_ratio`、`max_sharpness_ratio` 过滤器。 |
+| `validate_sphericity_target` | `src/pipeline/pack.rs:110` | 在堆积开始前验证 `target_mean_sphericity`/`mean_sphericity_tolerance` 配置。 |
+| `check_geometry_filters` | `src/pipeline/pack.rs:141` | 对候选网格应用配置中的 `min_volume`、`max_aspect_ratio`、`max_sharpness_ratio` 过滤器。 |
 | `PackPipeline::run` | `src/pipeline/pack.rs:124` | 核心的顺序随机堆积循环，可选带有目标粒径分布与平均球形度引导。 |
 | `DiameterBin` | `src/pipeline/pack_targets.rs:8` | 半开（最后一个区间为闭区间）的粒径区间，带有目标频率。 |
 | `DiameterBin::midpoint` | `src/pipeline/pack_targets.rs:16` | 该区间的算术中点。 |
@@ -34,6 +34,11 @@
 | `write_distribution_comparison_csv` | `src/pipeline/pack_targets.rs:495` | 写出 `<output_stem>_diameter_distribution.csv` 目标与实际对比报告。 |
 | `parse_csv_f64` | `src/pipeline/pack_targets.rs:564` | 解析一个必填的有限浮点 CSV 单元格，错误信息含行/列上下文。 |
 | `parse_optional_csv_f64` | `src/pipeline/pack_targets.rs:587` | 解析一个可选的浮点 CSV 单元格，空白表示"缺省"。 |
+| `PackCollider` | `src/pipeline/pack.rs:27` | Cached collider bbox and shape. |
+| `PackCollider::new` | `src/pipeline/pack.rs:34` | Prepare collision shape once. |
+| `PackCollider::blocks` | `src/pipeline/pack.rs:42` | Cached overlap or clearance predicate. |
+| `pack_blocked` | `src/pipeline/pack.rs:68` | Check incremental spatial candidates. |
+| `PackPipeline::run_in_pool` | `src/pipeline/pack.rs:221` | Packing work under configured pool. |
 
 **另请参阅：** 关于本流水线中大量使用的 `MeshMetrics` 与 `scale_mesh_to_equivalent_diameter`，见
 [geometry-analysis.md](geometry-analysis.md)。
@@ -55,7 +60,7 @@
 #### PackPipeline
 
 - **种类：** 结构体
-- **源码位置：** `src/pipeline/pack.rs:29`
+- **源码位置：** `src/pipeline/pack.rs:95`
 - **字段：**
 
 | 字段 | 类型 | 描述 |
@@ -81,7 +86,7 @@
 #### validate_sphericity_target
 
 - **签名：** `fn validate_sphericity_target(config: &PackingConfig) -> Result<Option<(f64, Option<f64>)>>`
-- **源码位置：** `src/pipeline/pack.rs:44`
+- **源码位置：** `src/pipeline/pack.rs:110`
 - **用途：** 在任何堆积工作开始之前，验证可选的 `packing.target_mean_sphericity` /
   `packing.mean_sphericity_tolerance` 配置。
 - **参数：** `config` —— 堆积配置。
@@ -93,7 +98,7 @@
 #### check_geometry_filters
 
 - **签名：** `fn check_geometry_filters(mesh: &Mesh, config: &PackingConfig, check_min_volume: bool) -> bool`
-- **源码位置：** `src/pipeline/pack.rs:75`
+- **源码位置：** `src/pipeline/pack.rs:141`
 - **用途：** 依据配置中的 `packing.filters`（`min_volume`、`max_aspect_ratio`、
   `max_sharpness_ratio`）验证候选网格。
 - **参数：**
@@ -505,3 +510,7 @@
 - **返回值：** 若单元格缺失或为空白，返回 `Ok(None)`；否则委托给 `parse_csv_f64` 并用 `Some`
   包装。
 - **副作用：** 无。
+
+### Cached legacy packing feasibility (PERF-11)
+
+`PackCollider::new(&Mesh)` retains bbox and optional parry TriMesh without another raw mesh copy. `blocks(other, gap)` keeps the old bbox rejection, uses cached solid collision at zero gap and cached solid distance below a positive gap. `pack_blocked` directly scans fewer than 32 colliders, otherwise queries an incremental grid plus every bbox-less collider. Candidate images are prepared once per proposal; accepted particle/image shapes are appended once and indexed. This replaces the previous `placed.clone()`, repeated ghost generation, shape construction and separate minimum-distance pass. The grid has at most eight cells on the longest domain axis. Void/nesting semantics and gap equality remain governed by the same prepared collision/distance functions. Periodic checks still include candidate ghosts against accepted real particles and ghosts. `PackPipeline::run` installs the worker pool around `run_in_pool`, including loading and finalization; proposal RNG remains sequential.

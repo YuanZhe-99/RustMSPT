@@ -291,3 +291,11 @@ volume.in_domain_solid = volume.in_domain − void_overlap_volume_in_domain
   局限与嵌套环行为。
 - [packing-target-diameter-distribution.md](packing-target-diameter-distribution.md) —— 原引擎的
   直方图导向，那是针对另一个问题的另一套设计。
+
+### CPU worker budget (PERF-02)
+
+每次 `run_placement` 调用将整个运行安装到专用 Rayon 线程池，覆盖体素标签生成与嵌套并行几何调用。
+报告在池内读取实际 worker 数。随机数消费、接受顺序和浮点累计仍保持串行。
+回归测试在 1、2、8 个 worker 下逐字节比较记录、STL、CSV、相位及粒子 ID TIFF 和体素头文件。
+
+Label generation now uses 1024-voxel tiles, sorted spatial candidates and cached per-particle parity queries. It preserves void precedence and first-particle ownership; full phase/id arrays are still resident.

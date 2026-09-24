@@ -1,3 +1,6 @@
+use crate::compute::render_memory::{
+    SceneRenderMemory, LINE_VERTEX_BYTES, SCENE_UNIFORM_BYTES, SCENE_VERTEX_BYTES,
+};
 use crate::geometry::render::{RenderCamera, RenderProjection};
 use crate::geometry::scene_render::SceneRenderSettings;
 use crate::meshgen::render_scene::RenderScene;
@@ -36,6 +39,10 @@ struct SceneUniforms {
     clip_plane: [f32; 4],
     params: [f32; 4],
 }
+
+const _: () = assert!(std::mem::size_of::<SceneVertex>() as u64 == SCENE_VERTEX_BYTES);
+const _: () = assert!(std::mem::size_of::<LineVertex>() as u64 == LINE_VERTEX_BYTES);
+const _: () = assert!(std::mem::size_of::<SceneUniforms>() as u64 == SCENE_UNIFORM_BYTES);
 
 // AI-FUNC-SUMMARY:
 // Purpose: Optional half-space clip for the GPU preview: fragments on the positive side of the plane are discarded.
@@ -107,8 +114,8 @@ fn color4(c: [u8; 3]) -> [f32; 4] {
 // Side effects: None.
 // Notes: Fully transparent triangles (alpha 0) are dropped so the opaque preview does not paint
 //   geometry the CPU reference would have shown straight through.
-fn build_triangle_vertices(scene: &RenderScene) -> Vec<SceneVertex> {
-    let mut out = Vec::with_capacity(scene.tris.len() * 3);
+fn build_triangle_vertices(scene: &RenderScene, capacity: usize) -> Vec<SceneVertex> {
+    let mut out = Vec::with_capacity(capacity);
     for t in &scene.tris {
         if t.alpha <= 0.0 {
             continue;
@@ -139,8 +146,12 @@ fn build_triangle_vertices(scene: &RenderScene) -> Vec<SceneVertex> {
 // Side effects: None.
 // Notes: Markers become three world-space axis arms sized from the scene bbox, because a
 //   screen-space cross (what the CPU renderer draws) is not expressible in this pipeline.
-fn build_line_vertices(scene: &RenderScene, options: &GpuSceneOptions) -> Vec<LineVertex> {
-    let mut out = Vec::new();
+fn build_line_vertices(
+    scene: &RenderScene,
+    options: &GpuSceneOptions,
+    capacity: usize,
+) -> Vec<LineVertex> {
+    let mut out = Vec::with_capacity(capacity);
     let mut push = |a: Vec3, b: Vec3, c: [u8; 3]| {
         let color = color4(c);
         for p in [a, b] {
@@ -187,141 +198,144 @@ impl GpuScenePipeline {
     pub fn new() -> Result<Self, String> {
         let (device, queue) = super::context::request_adapter_device("rustmspt scene device")?;
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("scene_render"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/scene_render.wgsl").into()),
-        });
+        super::runtime::scoped(&device.clone(), || {
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("scene_render"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/scene_render.wgsl").into()),
+            });
 
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("scene_bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("scene_pl"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
+            let bind_group_layout =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("scene_bgl"),
+                    entries: &[wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    }],
+                });
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("scene_pl"),
+                bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
-        // Scene extraction uploads Volume boundaries first and tagged Face cells
-        // second. LessEqual lets a coincident Face win, matching the CPU
-        // renderer's explicit Face-over-Volume deduplication rule.
-        let depth_stencil = Some(wgpu::DepthStencilState {
-            format: DEPTH_FORMAT,
-            depth_write_enabled: true,
-            depth_compare: wgpu::CompareFunction::LessEqual,
-            stencil: wgpu::StencilState::default(),
-            bias: wgpu::DepthBiasState::default(),
-        });
-        let targets = [Some(wgpu::ColorTargetState {
-            format: COLOR_FORMAT,
-            blend: None,
-            write_mask: wgpu::ColorWrites::ALL,
-        })];
+            // Scene extraction uploads Volume boundaries first and tagged Face cells
+            // second. LessEqual lets a coincident Face win, matching the CPU
+            // renderer's explicit Face-over-Volume deduplication rule.
+            let depth_stencil = Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            });
+            let targets = [Some(wgpu::ColorTargetState {
+                format: COLOR_FORMAT,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })];
 
-        let tri_layout = wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<SceneVertex>() as u64,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: 0,
-                    shader_location: 0,
+            let tri_layout = wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<SceneVertex>() as u64,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &[
+                    wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32x3,
+                        offset: 0,
+                        shader_location: 0,
+                    },
+                    wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32x3,
+                        offset: 12,
+                        shader_location: 1,
+                    },
+                    wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32x4,
+                        offset: 24,
+                        shader_location: 2,
+                    },
+                ],
+            };
+            let tri_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("scene_tri_pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_tri"),
+                    compilation_options: Default::default(),
+                    buffers: &[tri_layout],
                 },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: 12,
-                    shader_location: 1,
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_tri"),
+                    compilation_options: Default::default(),
+                    targets: &targets,
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
                 },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x4,
-                    offset: 24,
-                    shader_location: 2,
-                },
-            ],
-        };
-        let tri_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("scene_tri_pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_tri"),
-                compilation_options: Default::default(),
-                buffers: &[tri_layout],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_tri"),
-                compilation_options: Default::default(),
-                targets: &targets,
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: depth_stencil.clone(),
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+                depth_stencil: depth_stencil.clone(),
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
 
-        let line_layout = wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<LineVertex>() as u64,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: 0,
-                    shader_location: 0,
+            let line_layout = wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<LineVertex>() as u64,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &[
+                    wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32x3,
+                        offset: 0,
+                        shader_location: 0,
+                    },
+                    wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32x4,
+                        offset: 16,
+                        shader_location: 1,
+                    },
+                ],
+            };
+            let line_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("scene_line_pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_line"),
+                    compilation_options: Default::default(),
+                    buffers: &[line_layout],
                 },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x4,
-                    offset: 16,
-                    shader_location: 1,
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_line"),
+                    compilation_options: Default::default(),
+                    targets: &targets,
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::LineList,
+                    cull_mode: None,
+                    ..Default::default()
                 },
-            ],
-        };
-        let line_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("scene_line_pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_line"),
-                compilation_options: Default::default(),
-                buffers: &[line_layout],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_line"),
-                compilation_options: Default::default(),
-                targets: &targets,
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::LineList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+                depth_stencil,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
 
-        Ok(Self {
-            device,
-            queue,
-            tri_pipeline,
-            line_pipeline,
-            bind_group_layout,
+            Ok(Self {
+                device,
+                queue,
+                tri_pipeline,
+                line_pipeline,
+                bind_group_layout,
+            })
         })
     }
 
@@ -356,8 +370,8 @@ impl GpuScenePipeline {
     // Returns: Ok(one RenderedImage per camera, in order) or Err(message).
     // Side effects: Allocates GPU resources; blocks on staging-buffer readback once per view.
     // Notes: The geometry buffers are built and uploaded **once** and reused across every view —
-    //   only the uniform buffer and the render targets are per-view. That is the whole point of the
-    //   batch path: a diagnostic sheet of 10 named views costs one upload, not ten.
+    //   render_views_to reuses the uniform buffer and render targets; this wrapper collects owned
+    //   images for callers that explicitly need the complete batch.
     pub fn render_views(
         &mut self,
         scene: &RenderScene,
@@ -367,44 +381,96 @@ impl GpuScenePipeline {
         settings: &SceneRenderSettings,
         options: &GpuSceneOptions,
     ) -> Result<Vec<RenderedImage>, String> {
+        let mut images = Vec::with_capacity(cameras.len());
+        self.render_views_to(
+            scene,
+            cameras,
+            width,
+            height,
+            settings,
+            options,
+            |_, image| {
+                images.push(image);
+                Ok(())
+            },
+        )?;
+        Ok(images)
+    }
+
+    // AI-FUNC-SUMMARY: Upload geometry once, reuse one target/staging set, and deliver each owned image in order; stop on rendering or consumer error.
+    pub fn render_views_to(
+        &mut self,
+        scene: &RenderScene,
+        cameras: &[RenderCamera],
+        width: usize,
+        height: usize,
+        settings: &SceneRenderSettings,
+        options: &GpuSceneOptions,
+        mut consume: impl FnMut(usize, RenderedImage) -> Result<(), String>,
+    ) -> Result<(), String> {
         if width == 0 || height == 0 {
             return Err("render resolution must be positive".to_string());
         }
-        let background = settings.background;
-        let tri_vertices = build_triangle_vertices(scene);
-        let line_vertices = build_line_vertices(scene, options);
-        if tri_vertices.is_empty() && line_vertices.is_empty() {
-            return Ok(cameras
-                .iter()
-                .map(|_| RenderedImage::filled(width, height, background))
-                .collect());
+        let limits = self.device.limits();
+        if width > limits.max_texture_dimension_2d as usize
+            || height > limits.max_texture_dimension_2d as usize
+        {
+            return Err("scene resolution exceeds GPU texture limits".into());
         }
+        let plan = SceneRenderMemory::plan(
+            scene.tris.iter().filter(|t| !(t.alpha <= 0.0)).count(),
+            if options.show_segments {
+                scene.segments.len()
+            } else {
+                0
+            },
+            if options.show_markers {
+                scene.markers.len()
+            } else {
+                0
+            },
+            width,
+            height,
+        )?;
+        plan.check_buffers(limits.max_buffer_size)?;
+        let padded = usize::try_from(plan.padded_row_bytes)
+            .map_err(|_| "scene row exceeds host address range")?;
+        usize::try_from(plan.staging_bytes)
+            .map_err(|_| "scene staging exceeds host address range")?;
+        super::runtime::scoped(&self.device.clone(), || {
+            let background = settings.background;
+            let tri_vertices = build_triangle_vertices(scene, plan.triangle_vertices as usize);
+            let line_vertices = build_line_vertices(scene, options, plan.line_vertices as usize);
+            debug_assert_eq!(tri_vertices.len() as u64, plan.triangle_vertices);
+            debug_assert_eq!(line_vertices.len() as u64, plan.line_vertices);
+            if tri_vertices.is_empty() && line_vertices.is_empty() {
+                for index in 0..cameras.len() {
+                    consume(index, RenderedImage::filled(width, height, background))?;
+                }
+                return Ok(());
+            }
 
-        let tri_buffer =
-            self.upload_vertices("scene_tri_vertices", bytemuck::cast_slice(&tri_vertices));
-        let line_buffer =
-            self.upload_vertices("scene_line_vertices", bytemuck::cast_slice(&line_vertices));
+            let tri_buffer =
+                self.upload_vertices("scene_tri_vertices", bytemuck::cast_slice(&tri_vertices));
+            let line_buffer =
+                self.upload_vertices("scene_line_vertices", bytemuck::cast_slice(&line_vertices));
+            drop(tri_vertices);
+            drop(line_vertices);
 
-        let extent = wgpu::Extent3d {
-            width: width as u32,
-            height: height as u32,
-            depth_or_array_layers: 1,
-        };
-        let unpadded_bpr = width * 4;
-        let padded_bpr = unpadded_bpr.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize)
-            * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
+            let extent = wgpu::Extent3d {
+                width: width as u32,
+                height: height as u32,
+                depth_or_array_layers: 1,
+            };
+            let unpadded_bpr = width * 4;
+            let padded_bpr = padded;
 
-        let mut images = Vec::with_capacity(cameras.len());
-        for camera in cameras {
-            let uniforms = self.build_uniforms(camera, settings, options);
             let uniform_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("scene_uniforms"),
                 size: std::mem::size_of::<SceneUniforms>() as u64,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            self.queue
-                .write_buffer(&uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
             let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("scene_bg"),
                 layout: &self.bind_group_layout,
@@ -437,90 +503,102 @@ impl GpuScenePipeline {
             });
             let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-            let mut encoder = self
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("scene_enc"),
-                });
-            {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("scene_pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &color_view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color {
-                                r: background[0] as f64 / 255.0,
-                                g: background[1] as f64 / 255.0,
-                                b: background[2] as f64 / 255.0,
-                                a: background[3] as f64 / 255.0,
-                            }),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &depth_view,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(1.0),
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
-                    }),
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-                pass.set_bind_group(0, &bind_group, &[]);
-                if let Some(buffer) = &tri_buffer {
-                    pass.set_pipeline(&self.tri_pipeline);
-                    pass.set_vertex_buffer(0, buffer.slice(..));
-                    pass.draw(0..tri_vertices.len() as u32, 0..1);
-                }
-                if let Some(buffer) = &line_buffer {
-                    pass.set_pipeline(&self.line_pipeline);
-                    pass.set_vertex_buffer(0, buffer.slice(..));
-                    pass.draw(0..line_vertices.len() as u32, 0..1);
-                }
-            }
-
             let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("scene_readback"),
                 size: (padded_bpr * height) as u64,
                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            encoder.copy_texture_to_buffer(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &color_texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::TexelCopyBufferInfo {
-                    buffer: &readback,
-                    layout: wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(padded_bpr as u32),
-                        rows_per_image: Some(height as u32),
-                    },
-                },
-                extent,
-            );
-            self.queue.submit(Some(encoder.finish()));
+            for (index, camera) in cameras.iter().enumerate() {
+                let uniforms = self.build_uniforms(camera, settings, options);
+                self.queue
+                    .write_buffer(&uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+                let mut encoder =
+                    self.device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("scene_enc"),
+                        });
+                {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("scene_pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &color_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color {
+                                    r: background[0] as f64 / 255.0,
+                                    g: background[1] as f64 / 255.0,
+                                    b: background[2] as f64 / 255.0,
+                                    a: background[3] as f64 / 255.0,
+                                }),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                            view: &depth_view,
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(1.0),
+                                store: wgpu::StoreOp::Store,
+                            }),
+                            stencil_ops: None,
+                        }),
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                    pass.set_bind_group(0, &bind_group, &[]);
+                    if let Some(buffer) = &tri_buffer {
+                        pass.set_pipeline(&self.tri_pipeline);
+                        pass.set_vertex_buffer(0, buffer.slice(..));
+                        pass.draw(0..plan.triangle_vertices as u32, 0..1);
+                    }
+                    if let Some(buffer) = &line_buffer {
+                        pass.set_pipeline(&self.line_pipeline);
+                        pass.set_vertex_buffer(0, buffer.slice(..));
+                        pass.draw(0..plan.line_vertices as u32, 0..1);
+                    }
+                }
 
-            let slice = readback.slice(..);
-            slice.map_async(wgpu::MapMode::Read, |_| {});
-            self.device.poll(wgpu::Maintain::Wait);
-            let data = slice.get_mapped_range();
-            let mut rgba = vec![0u8; unpadded_bpr * height];
-            for row in 0..height {
-                let src = &data[row * padded_bpr..row * padded_bpr + unpadded_bpr];
-                rgba[row * unpadded_bpr..(row + 1) * unpadded_bpr].copy_from_slice(src);
+                encoder.copy_texture_to_buffer(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &color_texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::TexelCopyBufferInfo {
+                        buffer: &readback,
+                        layout: wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(padded_bpr as u32),
+                            rows_per_image: Some(height as u32),
+                        },
+                    },
+                    extent,
+                );
+                self.queue.submit(Some(encoder.finish()));
+
+                let slice = readback.slice(..);
+                let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+                slice.map_async(wgpu::MapMode::Read, move |result| {
+                    let _ = sender.send(result);
+                });
+                self.device.poll(wgpu::Maintain::Wait);
+                receiver
+                    .recv()
+                    .map_err(|e| format!("scene map callback unavailable: {e}"))?
+                    .map_err(|e| format!("scene readback failed: {e}"))?;
+                let data = slice.get_mapped_range();
+                let mut rgba = vec![0u8; unpadded_bpr * height];
+                for row in 0..height {
+                    let src = &data[row * padded_bpr..row * padded_bpr + unpadded_bpr];
+                    rgba[row * unpadded_bpr..(row + 1) * unpadded_bpr].copy_from_slice(src);
+                }
+                drop(data);
+                readback.unmap();
+                consume(index, RenderedImage::new(width, height, rgba))?;
             }
-            drop(data);
-            readback.unmap();
-            images.push(RenderedImage::new(width, height, rgba));
-        }
-        Ok(images)
+            Ok(())
+        })
     }
 
     // AI-FUNC-SUMMARY: Upload a vertex slice, or None when empty; returns Option<wgpu::Buffer>; side effects: allocates and writes a GPU buffer.

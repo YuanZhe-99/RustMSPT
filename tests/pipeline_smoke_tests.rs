@@ -331,6 +331,7 @@ fn split_filter_pipeline_smoke() {
 
     let pipeline = SplitFilterPipeline {
         config: SplitFilterConfig {
+                cpu_max: None,
             input: InputPath {
                 path: input.to_string_lossy().to_string(),
             },
@@ -457,6 +458,8 @@ fn crop_pipeline_smoke() {
     let output_tiff = tmp.path().join("cropped.tiff");
     let pipeline = CropPipeline {
         config: CropConfig {
+            acceleration: Default::default(),
+            cpu_max: None,
             input: CropInput {
                 r#type: "raw".to_string(),
                 path: raw_dir.to_string_lossy().to_string(),

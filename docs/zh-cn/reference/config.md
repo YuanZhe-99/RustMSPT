@@ -57,16 +57,16 @@
 `AccelerationConfig` 还实现了 `Default`（镜像与 `#[serde(default = ...)]` 函数相同的默认值），因此它可以在 YAML 中完全省略。
 
 #### default_backend
-`fn default_backend() -> String` — `src/config/acceleration.rs:21`。`backend` 的 serde 默认值函数：返回 `"wgpu"`。无副作用。
+`fn default_backend() -> String` — `src/config/acceleration.rs:23`。`backend` 的 serde 默认值函数：返回 `"wgpu"`。无副作用。
 
 #### default_true
-`fn default_true() -> bool` — `src/config/acceleration.rs:25`。`cpu_fallback` 的 serde 默认值函数：返回 `true`。无副作用。
+`fn default_true() -> bool` — `src/config/acceleration.rs:27`。`cpu_fallback` 的 serde 默认值函数：返回 `true`。无副作用。
 
 #### default_gpu_min_voxels
-`fn default_gpu_min_voxels() -> usize` — `src/config/acceleration.rs:29`。`gpu_min_voxels` 的 serde 默认值函数：返回 `250_000`。无副作用。
+`fn default_gpu_min_voxels() -> usize` — `src/config/acceleration.rs:31`。`gpu_min_voxels` 的 serde 默认值函数：返回 `250_000`。无副作用。
 
 #### default_gpu_precision
-`fn default_gpu_precision() -> String` — `src/config/acceleration.rs:33`。`gpu_precision` 的 serde 默认值函数：返回 `"f32"`。无副作用。
+`fn default_gpu_precision() -> String` — `src/config/acceleration.rs:40`。`gpu_precision` 的 serde 默认值函数：返回 `"f32"`。无副作用。
 
 #### AccelerationConfig::default
 - **签名：** `fn default() -> Self`（`impl Default for AccelerationConfig`）
@@ -115,6 +115,9 @@
 | `output` | `CropOutput` | `output` | — | 输出目标描述。 |
 | `interpolation` | `Option<String>` | `interpolation` | — | 裁剪时重采样所用的插值方法（如有）。 |
 | `edge_trim` | `Option<i32>` | `edge_trim` | — | 裁剪后从每条边裁去的体素/像素数。 |
+
+| `acceleration` | `AccelerationConfig` | `acceleration` | default auto | Backend, threshold, device budget and fallback policy. |
+| `cpu_max` | `Option<i32>` | `cpu_max` | available cores | Whole-pipeline worker limit; -1 uses available cores. |
 
 ## `deserialize.rs` — 灵活解析辅助函数
 
@@ -405,17 +408,17 @@ map 缓冲，`deny_unknown_fields` 在该路径上不会触发——`{kind: logn
 
 | 函数 | 源码位置 | 摘要 |
 |---|---|---|
-| `load_yaml` | `src/config/mod.rs:47` | 读取一个文件，并将其反序列化为 YAML，得到一个类型化的配置结构体。 |
-| `parse_box_dimensions` | `src/config/mod.rs:58` | 将一个 3 或 6 元素的维度切片转换为一个 `BoundingBox`。 |
+| `load_yaml` | `src/config/mod.rs:52` | 读取一个文件，并将其反序列化为 YAML，得到一个类型化的配置结构体。 |
+| `parse_box_dimensions` | `src/config/mod.rs:63` | 将一个 3 或 6 元素的维度切片转换为一个 `BoundingBox`。 |
 | `parse_usize_like` | `src/config/deserialize.rs:4` | 从字符串解析出一个 `usize`，同时剥离下划线分隔符。 |
 | `deserialize_usize_flexible` | `src/config/deserialize.rs:17` | Serde `deserialize_with` 辅助函数：接受 YAML 数字或数值字符串，解析为 `usize`。 |
 | `deserialize_option_usize_flexible` | `src/config/deserialize.rs:39` | Serde `deserialize_with` 辅助函数：接受 YAML 数字/字符串/null，解析为 `Option<usize>`。 |
 | `parse_i32_like` | `src/config/deserialize.rs:61` | 从字符串解析出一个 `i32`，同时剥离下划线分隔符。 |
 | `deserialize_option_i32_flexible` | `src/config/deserialize.rs:73` | Serde `deserialize_with` 辅助函数：接受 YAML 数字/字符串/null，解析为 `Option<i32>`。 |
-| `default_backend` | `src/config/acceleration.rs:21` | `backend` 的 serde 默认值函数：`"wgpu"`。 |
-| `default_true` | `src/config/acceleration.rs:25` | `cpu_fallback` 的 serde 默认值函数：`true`。 |
-| `default_gpu_min_voxels` | `src/config/acceleration.rs:29` | `gpu_min_voxels` 的 serde 默认值函数：`250_000`。 |
-| `default_gpu_precision` | `src/config/acceleration.rs:33` | `gpu_precision` 的 serde 默认值函数：`"f32"`。 |
+| `default_backend` | `src/config/acceleration.rs:23` | `backend` 的 serde 默认值函数：`"wgpu"`。 |
+| `default_true` | `src/config/acceleration.rs:27` | `cpu_fallback` 的 serde 默认值函数：`true`。 |
+| `default_gpu_min_voxels` | `src/config/acceleration.rs:31` | `gpu_min_voxels` 的 serde 默认值函数：`250_000`。 |
+| `default_gpu_precision` | `src/config/acceleration.rs:40` | `gpu_precision` 的 serde 默认值函数：`"f32"`。 |
 | `AccelerationConfig::default` | `src/config/acceleration.rs:38` | 与 serde 默认值一致的 Rust 层 `Default` 实现。 |
 
 ## 函数
@@ -423,7 +426,7 @@ map 缓冲，`deny_unknown_fields` 在该路径上不会触发——`{kind: logn
 #### load_yaml
 
 - **签名：** `pub fn load_yaml<T: for<'de> serde::Deserialize<'de>>(path: &Path) -> Result<T>`
-- **源码位置：** `src/config/mod.rs:47`
+- **源码位置：** `src/config/mod.rs:52`
 - **用途：** 从磁盘读取一个文件，并将其内容反序列化为 YAML，得到任何实现了 `Deserialize` 的类型。
 - **参数：**
   - `path` — YAML 配置文件的文件系统路径。
@@ -434,7 +437,7 @@ map 缓冲，`deny_unknown_fields` 在该路径上不会触发——`{kind: logn
 #### parse_box_dimensions
 
 - **签名：** `pub fn parse_box_dimensions(dimensions: &[f64]) -> Result<crate::types::BoundingBox>`
-- **源码位置：** `src/config/mod.rs:58`
+- **源码位置：** `src/config/mod.rs:63`
 - **用途：** 将 `BoxConfig` 中的扁平维度数组转换为 `BoundingBox`。
 - **参数：**
   - `dimensions` — `f64` 切片；要么是 3 个元素（`[size_x, size_y, size_z]`，通过 `BoundingBox::from_size` 将包围盒置于原点），要么是 6 个元素（`[min_x, min_y, min_z, max_x, max_y, max_z]`，显式的最小/最大角点）。
@@ -482,3 +485,20 @@ map 缓冲，`deny_unknown_fields` 在该路径上不会触发——`{kind: logn
 - **返回值：** `Result<Option<i32>, D::Error>`。
 - **副作用：** 无。
 - **说明：** 内部反序列化为一个无标签的 `enum Value { Num(i64), Str(String) }`，因此与 usize 版本不同，它接受负数（用于 `CropInput` 中的 `slice_start`/`slice_end`，以及 measurement/optimization/packing 中的 `cpu_max` 等字段，此时负值可能带有流水线特定的含义，例如“使用除 N 个核心外的全部核心”）。
+
+## Optimize acceleration execution (PERF-01/02)
+
+在 `optimize` 中，`RUSTMSPT_ACCELERATION=cpu|gpu|auto` 一次覆盖 YAML，非法值报错。
+CPU 和小任务 auto 不探测设备；小任务 auto 在禁止回退时仍可正常选择 CPU。GPU 不支持的体素方法保留其 CPU 定义，
+禁止回退则报错。可进入 GPU 的 mesh MC 对不支持的后端、精度、功耗选项报错；显式 GPU 内存上限在工作集预算实现前使用 CPU。
+支持 `backend: wgpu`、`gpu_precision: f32`、`gpu_prefer_power: false`。这些规则目前针对 optimize，
+容量与初始化行为见 [pipeline-optimize.md](pipeline-optimize.md)。全部岛共享 `cpu_max` worker 预算，多余岛排队。
+
+
+Split-filter also accepts top-level `cpu_max: <integer>` (including flexible string integers); absent or -1 uses available cores, other values clamp to 1..available. This bounds its complete execution pool.
+
+### 独立 mesh-render 执行预算
+
+MeshRenderConfig 新增与 mesh_render 同级的可选 cpu_max，使用灵活有符号整数解析。缺省/-1 为可用 CPU，其余夹取 1..available；整次运行及 CPU 回退共享一个线程池。环境覆盖规则见 mesh-render-and-vtu.md。
+
+独立 mesh_render 还接受可选 gpu_memory_limit_mb、gpu_min_pixels（缺省 0），策略见 mesh-render-and-vtu.md。

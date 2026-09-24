@@ -248,3 +248,7 @@ directly in the run's own output.
 - [geometry-analysis.md](../reference/geometry-analysis.md) — the underlying metric functions:
   [`mesh_metrics`](../reference/geometry-analysis.md#mesh_metrics),
   [`scale_mesh_to_equivalent_diameter`](../reference/geometry-analysis.md#scale_mesh_to_equivalent_diameter).
+
+### Legacy pack cache update
+
+The earlier full-scan description above records the original implementation. Pack now caches accepted particle/periodic-image bbox and TriMesh data and incrementally indexes them. Small populations use a cached direct scan; larger populations use spatial candidates. Positive clearance uses one cached solid-distance predicate instead of separate collision/minimum-distance scans. No accepted geometry or ghosts are cloned per proposal. Candidate order, steering and clipped-volume acceptance remain unchanged.
