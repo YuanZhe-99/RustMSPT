@@ -423,7 +423,7 @@ map 缓冲，`deny_unknown_fields` 在该路径上不会触发——`{kind: logn
 | `default_true` | `src/config/acceleration.rs:27` | `cpu_fallback` 的 serde 默认值函数：`true`。 |
 | `default_gpu_min_voxels` | `src/config/acceleration.rs:31` | `gpu_min_voxels` 的 serde 默认值函数：`250_000`。 |
 | `default_gpu_precision` | `src/config/acceleration.rs:40` | `gpu_precision` 的 serde 默认值函数：`"f32"`。 |
-| `AccelerationConfig::default` | `src/config/acceleration.rs:38` | 与 serde 默认值一致的 Rust 层 `Default` 实现。 |
+| `AccelerationConfig::default` | `src/config/acceleration.rs:45` | 与 serde 默认值一致的 Rust 层 `Default` 实现。 |
 
 ## 函数
 

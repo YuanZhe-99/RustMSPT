@@ -439,7 +439,7 @@ that path -- `{kind: lognormal, mediann: 12}` would be accepted with `median` si
 | `default_true` | `src/config/acceleration.rs:27` | Serde default for `cpu_fallback`: `true`. |
 | `default_gpu_min_voxels` | `src/config/acceleration.rs:31` | Serde default for `gpu_min_voxels`: `250_000`. |
 | `default_gpu_precision` | `src/config/acceleration.rs:40` | Serde default for `gpu_precision`: `"f32"`. |
-| `AccelerationConfig::default` | `src/config/acceleration.rs:38` | Rust-level `Default` impl matching the serde defaults. |
+| `AccelerationConfig::default` | `src/config/acceleration.rs:45` | Rust-level `Default` impl matching the serde defaults. |
 
 ## Functions
 

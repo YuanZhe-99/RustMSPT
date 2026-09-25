@@ -7,12 +7,12 @@ mean-sphericity steering engine (`src/pipeline/pack_targets.rs`).
 
 | Item | Location | Summary |
 |---|---|---|
-| `TARGET_BIN_PROBES` | `src/pipeline/pack.rs:27` | Max consecutive placement failures tolerated for a chosen bin before it is excluded from this round's re-selection. |
-| `PackPipeline` | `src/pipeline/pack.rs:95` | Pipeline struct wrapping a `PackingConfig`; implements `Pipeline`. |
-| `CandidateProposal` | `src/pipeline/pack.rs:34` | One drawn candidate mesh plus its optional precomputed `MeshMetrics`. |
-| `validate_sphericity_target` | `src/pipeline/pack.rs:110` | Validates `target_mean_sphericity`/`mean_sphericity_tolerance` config before packing starts. |
-| `check_geometry_filters` | `src/pipeline/pack.rs:141` | Applies configured `min_volume`, `max_aspect_ratio`, `max_sharpness_ratio` filters to a candidate mesh. |
-| `PackPipeline::run` | `src/pipeline/pack.rs:124` | Core sequential random packing loop with optional target-diameter-distribution and mean-sphericity steering. |
+| `TARGET_BIN_PROBES` | `src/pipeline/pack.rs:316` | Max consecutive placement failures tolerated for a chosen bin before it is excluded from this round's re-selection. |
+| `PackPipeline` | `src/pipeline/pack.rs:318` | Pipeline struct wrapping a `PackingConfig`; implements `Pipeline`. |
+| `CandidateProposal` | `src/pipeline/pack.rs:323` | One drawn candidate mesh plus its optional precomputed `MeshMetrics`. |
+| `validate_sphericity_target` | `src/pipeline/pack.rs:333` | Validates `target_mean_sphericity`/`mean_sphericity_tolerance` config before packing starts. |
+| `check_geometry_filters` | `src/pipeline/pack.rs:364` | Applies configured `min_volume`, `max_aspect_ratio`, `max_sharpness_ratio` filters to a candidate mesh. |
+| `PackPipeline::run` | `src/pipeline/pack.rs:413` | Core sequential random packing loop with optional target-diameter-distribution and mean-sphericity steering. |
 | `DiameterBin` | `src/pipeline/pack_targets.rs:8` | Half-open (closed at the final bin) diameter interval with a target frequency. |
 | `DiameterBin::midpoint` | `src/pipeline/pack_targets.rs:16` | Arithmetic midpoint of the interval. |
 | `TargetDistribution` | `src/pipeline/pack_targets.rs:22` | Parsed, normalized target diameter distribution (ordered, non-overlapping bins). |
@@ -37,19 +37,19 @@ mean-sphericity steering engine (`src/pipeline/pack_targets.rs`).
 | `PackCollider` | `src/pipeline/pack.rs:59` | Cached collider bbox and shape. |
 | `PackCollider::new` | `src/pipeline/pack.rs:66` | Prepare collision shape once. |
 | `PackCollider::blocks` | `src/pipeline/pack.rs:74` | Cached overlap or clearance predicate. |
-| `bbox_may_block` | `src/pipeline/pack.rs:103` | The exact predicate's own bbox rejection, on optional boxes. |
-| `periodic_image_shifts` | `src/pipeline/pack.rs:114` | Periodic shifts and shifted bboxes in `generate_periodic_ghosts` order. |
-| `PackImage` | `src/pipeline/pack.rs:148` | Accepted particle or `(particle_id, shift)` image with a lazily built collider. |
-| `PackScene` | `src/pipeline/pack.rs:155` | Image store, incremental grid, bbox-less list and ghost-build counter. |
-| `PackScene::new` | `src/pipeline/pack.rs:164` | Empty store with the domain/8 grid. |
-| `PackScene::build_ghost` | `src/pipeline/pack.rs:175` | Translate one image and prepare it (counted). |
-| `PackScene::collider` | `src/pipeline/pack.rs:183` | Thread-safe lazy image collider. |
-| `PackScene::reachable` | `src/pipeline/pack.rs:192` | Images whose bbox can block a query at the gap. |
-| `PackScene::blocks_any` | `src/pipeline/pack.rs:219` | Serial/parallel any() over reachable images. |
-| `PackScene::candidate_images` | `src/pipeline/pack.rs:244` | Full legacy feasibility with lazy candidate and accepted images. |
-| `PackScene::insert` | `src/pipeline/pack.rs:276` | Record an accepted particle and its image descriptors. |
-| `PackScene::image_stats` | `src/pipeline/pack.rs:300` | Stored images, instantiated ghosts, ghost builds. |
-| `PackPipeline::run_in_pool` | `src/pipeline/pack.rs:442` | Packing work under configured pool. |
+| `bbox_may_block` | `src/pipeline/pack.rs:105` | The exact predicate's own bbox rejection, on optional boxes. |
+| `periodic_image_shifts` | `src/pipeline/pack.rs:116` | Periodic shifts and shifted bboxes in `generate_periodic_ghosts` order. |
+| `PackImage` | `src/pipeline/pack.rs:150` | Accepted particle or `(particle_id, shift)` image with a lazily built collider. |
+| `PackScene` | `src/pipeline/pack.rs:157` | Image store, incremental grid, bbox-less list and ghost-build counter. |
+| `PackScene::new` | `src/pipeline/pack.rs:166` | Empty store with the domain/8 grid. |
+| `PackScene::build_ghost` | `src/pipeline/pack.rs:177` | Translate one image and prepare it (counted). |
+| `PackScene::collider` | `src/pipeline/pack.rs:185` | Thread-safe lazy image collider. |
+| `PackScene::reachable` | `src/pipeline/pack.rs:194` | Images whose bbox can block a query at the gap. |
+| `PackScene::blocks_any` | `src/pipeline/pack.rs:221` | Serial/parallel any() over reachable images. |
+| `PackScene::candidate_images` | `src/pipeline/pack.rs:246` | Full legacy feasibility with lazy candidate and accepted images. |
+| `PackScene::insert` | `src/pipeline/pack.rs:278` | Record an accepted particle and its image descriptors. |
+| `PackScene::image_stats` | `src/pipeline/pack.rs:302` | Stored images, instantiated ghosts, ghost builds. |
+| `PackPipeline::run_in_pool` | `src/pipeline/pack.rs:444` | Packing work under configured pool. |
 
 **See also:** [geometry-analysis.md](geometry-analysis.md) for `MeshMetrics` and `scale_mesh_to_equivalent_diameter`, used throughout this pipeline.
 

@@ -61,6 +61,8 @@ pub struct GpuSceneOptions {
     pub clip_plane: Option<GpuClipPlane>,
     pub show_segments: bool,
     pub show_markers: bool,
+    /// Rows per horizontal strip; None or a value >= the image height renders the image in one pass.
+    pub strip_rows: Option<usize>,
 }
 
 impl GpuSceneOptions {
@@ -70,6 +72,7 @@ impl GpuSceneOptions {
             clip_plane: None,
             show_segments: true,
             show_markers: true,
+            strip_rows: None,
         }
     }
 }
@@ -435,8 +438,9 @@ impl GpuScenePipeline {
                 0
             },
             width,
-            height,
+            options.strip_rows.unwrap_or(height).clamp(1, height),
         )?;
+        let strip_rows = options.strip_rows.unwrap_or(height).clamp(1, height);
         plan.check_buffers(limits.max_buffer_size)?;
         let padded = usize::try_from(plan.padded_row_bytes)
             .map_err(|_| "scene row exceeds host address range")?;
@@ -464,7 +468,7 @@ impl GpuScenePipeline {
 
             let extent = wgpu::Extent3d {
                 width: width as u32,
-                height: height as u32,
+                height: strip_rows as u32,
                 depth_or_array_layers: 1,
             };
             let unpadded_bpr = width * 4;
@@ -510,98 +514,119 @@ impl GpuScenePipeline {
 
             let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("scene_readback"),
-                size: (padded_bpr * height) as u64,
+                size: (padded_bpr * strip_rows) as u64,
                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             for (index, camera) in cameras.iter().enumerate() {
-                let uniforms = self.build_uniforms(camera, settings, options);
-                self.queue
-                    .write_counted(&uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
-                let mut encoder =
-                    self.device
-                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                            label: Some("scene_enc"),
-                        });
-                {
-                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("scene_pass"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: &color_view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color {
-                                    r: background[0] as f64 / 255.0,
-                                    g: background[1] as f64 / 255.0,
-                                    b: background[2] as f64 / 255.0,
-                                    a: background[3] as f64 / 255.0,
-                                }),
-                                store: wgpu::StoreOp::Store,
-                            },
-                        })],
-                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                            view: &depth_view,
-                            depth_ops: Some(wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(1.0),
-                                store: wgpu::StoreOp::Store,
-                            }),
-                            stencil_ops: None,
-                        }),
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                    });
-                    pass.set_bind_group(0, &bind_group, &[]);
-                    if let Some(buffer) = &tri_buffer {
-                        pass.set_pipeline(&self.tri_pipeline);
-                        pass.set_vertex_buffer(0, buffer.slice(..));
-                        pass.draw(0..plan.triangle_vertices as u32, 0..1);
-                    }
-                    if let Some(buffer) = &line_buffer {
-                        pass.set_pipeline(&self.line_pipeline);
-                        pass.set_vertex_buffer(0, buffer.slice(..));
-                        pass.draw(0..plan.line_vertices as u32, 0..1);
-                    }
-                }
-
-                encoder.copy_texture_to_buffer(
-                    wgpu::TexelCopyTextureInfo {
-                        texture: &color_texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    wgpu::TexelCopyBufferInfo {
-                        buffer: &readback,
-                        layout: wgpu::TexelCopyBufferLayout {
-                            offset: 0,
-                            bytes_per_row: Some(padded_bpr as u32),
-                            rows_per_image: Some(height as u32),
-                        },
-                    },
-                    extent,
-                );
-                self.queue.submit(Some(encoder.finish()));
-
-                let slice = readback.slice(..);
-                let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-                let waited = std::time::Instant::now();
-                slice.map_async(wgpu::MapMode::Read, move |result| {
-                    let _ = sender.send(result);
-                });
-                self.device.poll(wgpu::Maintain::Wait);
-                receiver
-                    .recv()
-                    .map_err(|e| format!("scene map callback unavailable: {e}"))?
-                    .map_err(|e| format!("scene readback failed: {e}"))?;
-                super::runtime::record_readback(readback.size(), waited.elapsed());
-                let data = slice.get_mapped_range();
                 let mut rgba = vec![0u8; unpadded_bpr * height];
-                for row in 0..height {
-                    let src = &data[row * padded_bpr..row * padded_bpr + unpadded_bpr];
-                    rgba[row * unpadded_bpr..(row + 1) * unpadded_bpr].copy_from_slice(src);
+                let mut first_row = 0usize;
+                while first_row < height {
+                    let rows = strip_rows.min(height - first_row);
+                    let uniforms = self.build_uniforms(
+                        camera,
+                        settings,
+                        options,
+                        (strip_rows < height).then_some((first_row, rows, height)),
+                    );
+                    self.queue
+                        .write_counted(&uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+                    let mut encoder =
+                        self.device
+                            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                                label: Some("scene_enc"),
+                            });
+                    {
+                        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("scene_pass"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                view: &color_view,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                                        r: background[0] as f64 / 255.0,
+                                        g: background[1] as f64 / 255.0,
+                                        b: background[2] as f64 / 255.0,
+                                        a: background[3] as f64 / 255.0,
+                                    }),
+                                    store: wgpu::StoreOp::Store,
+                                },
+                            })],
+                            depth_stencil_attachment: Some(
+                                wgpu::RenderPassDepthStencilAttachment {
+                                    view: &depth_view,
+                                    depth_ops: Some(wgpu::Operations {
+                                        load: wgpu::LoadOp::Clear(1.0),
+                                        store: wgpu::StoreOp::Store,
+                                    }),
+                                    stencil_ops: None,
+                                },
+                            ),
+                            timestamp_writes: None,
+                            occlusion_query_set: None,
+                        });
+                        // A short final strip keeps its own pixel scale: the viewport and
+                        // the strip transform both use `rows`, not the texture height.
+                        pass.set_viewport(0.0, 0.0, width as f32, rows as f32, 0.0, 1.0);
+                        pass.set_bind_group(0, &bind_group, &[]);
+                        if let Some(buffer) = &tri_buffer {
+                            pass.set_pipeline(&self.tri_pipeline);
+                            pass.set_vertex_buffer(0, buffer.slice(..));
+                            pass.draw(0..plan.triangle_vertices as u32, 0..1);
+                        }
+                        if let Some(buffer) = &line_buffer {
+                            pass.set_pipeline(&self.line_pipeline);
+                            pass.set_vertex_buffer(0, buffer.slice(..));
+                            pass.draw(0..plan.line_vertices as u32, 0..1);
+                        }
+                    }
+
+                    encoder.copy_texture_to_buffer(
+                        wgpu::TexelCopyTextureInfo {
+                            texture: &color_texture,
+                            mip_level: 0,
+                            origin: wgpu::Origin3d::ZERO,
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        wgpu::TexelCopyBufferInfo {
+                            buffer: &readback,
+                            layout: wgpu::TexelCopyBufferLayout {
+                                offset: 0,
+                                bytes_per_row: Some(padded_bpr as u32),
+                                rows_per_image: Some(rows as u32),
+                            },
+                        },
+                        wgpu::Extent3d {
+                            width: width as u32,
+                            height: rows as u32,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                    self.queue.submit(Some(encoder.finish()));
+
+                    let used = (padded_bpr * rows) as u64;
+                    let slice = readback.slice(..used);
+                    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+                    let waited = std::time::Instant::now();
+                    slice.map_async(wgpu::MapMode::Read, move |result| {
+                        let _ = sender.send(result);
+                    });
+                    self.device.poll(wgpu::Maintain::Wait);
+                    receiver
+                        .recv()
+                        .map_err(|e| format!("scene map callback unavailable: {e}"))?
+                        .map_err(|e| format!("scene readback failed: {e}"))?;
+                    super::runtime::record_readback(used, waited.elapsed());
+                    let data = slice.get_mapped_range();
+                    for row in 0..rows {
+                        let src = &data[row * padded_bpr..row * padded_bpr + unpadded_bpr];
+                        let dst = (first_row + row) * unpadded_bpr;
+                        rgba[dst..dst + unpadded_bpr].copy_from_slice(src);
+                    }
+                    drop(data);
+                    readback.unmap();
+                    first_row += rows;
                 }
-                drop(data);
-                readback.unmap();
                 consume(index, RenderedImage::new(width, height, rgba))?;
             }
             Ok(())
@@ -623,13 +648,26 @@ impl GpuScenePipeline {
         Some(buffer)
     }
 
-    // AI-FUNC-SUMMARY: Pack the per-view uniform block (matrix, camera, clip plane, shading params); returns SceneUniforms; side effects: none.
+    // AI-FUNC-SUMMARY: Pack the per-view uniform block (matrix, camera, clip plane, shading params), optionally re-targeting clip-space y to one horizontal strip; returns SceneUniforms; side effects: none.
+    // Notes: `strip = (first_row, rows, height)` maps the full image's rows first_row..first_row+rows onto the
+    //   strip's own [-1, 1] NDC range (y' = s*(y - c*w), s = height/rows, c = the strip centre's full-image NDC y),
+    //   composed in f64 before the f32 conversion. Only the y row changes, so depth and w are bit-identical to an
+    //   unstripped render; y rounding can move triangle edges by a pixel. None leaves the matrix untouched.
     fn build_uniforms(
         &self,
         camera: &RenderCamera,
         settings: &SceneRenderSettings,
         options: &GpuSceneOptions,
+        strip: Option<(usize, usize, usize)>,
     ) -> SceneUniforms {
+        let mut view_proj = camera.view_proj_matrix();
+        if let Some((first_row, rows, height)) = strip {
+            let scale = height as f64 / rows as f64;
+            let centre = 1.0 - 2.0 * (first_row as f64 + rows as f64 / 2.0) / height as f64;
+            for col in 0..4 {
+                view_proj[1][col] = scale * (view_proj[1][col] - centre * view_proj[3][col]);
+            }
+        }
         let is_perspective = camera.projection == RenderProjection::Perspective;
         let (clip_plane, clip_on) = match options.clip_plane {
             Some(p) => {
@@ -648,7 +686,7 @@ impl GpuScenePipeline {
             None => ([0.0; 4], 0.0),
         };
         SceneUniforms {
-            mvp: to_wgsl_mat4(&camera.view_proj_matrix()),
+            mvp: to_wgsl_mat4(&view_proj),
             camera_forward: [
                 camera.forward.x as f32,
                 camera.forward.y as f32,

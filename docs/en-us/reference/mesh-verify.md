@@ -14,28 +14,28 @@ shape are frozen: tests assert on them.
 
 | Item | Source | Summary |
 |---|---|---|
-| `orient3d` | `src/meshgen/predicates.rs:698` | Exact-sign tetrahedron orientation `det[b-a, c-a, d-a]`; the **only** place `robust::orient3d`'s opposite sign convention is negated (Rule N10). |
-| `tet_signed_volume` | `src/meshgen/predicates.rs:708` | `orient3d/6`; positive for a positively oriented tet. |
-| `orient3d_sign_test` | `src/meshgen/predicates.rs:713` | Reference case pinning the orientation convention; a unit tet must be positive. |
-| `TetQuality` | `src/meshgen/predicates.rs:729` | Volume, aspect ratio, radius ratio, min/max dihedral (degrees **and** cosine), scaled Jacobian, min altitude. |
-| `tet_quality` | `src/meshgen/predicates.rs:748` | Compute [V4] metrics for one tet; `max_dihedral_cos` lets angle gates stay algebraic (no `acos` in a decision path). |
-| `node_key` | `src/meshgen/predicates.rs:867` | Quantized integer node key on a scale-relative grid; equal keys mean the same node. |
+| `orient3d` | `src/meshgen/predicates.rs:843` | Exact-sign tetrahedron orientation `det[b-a, c-a, d-a]`; the **only** place `robust::orient3d`'s opposite sign convention is negated (Rule N10). |
+| `tet_signed_volume` | `src/meshgen/predicates.rs:853` | `orient3d/6`; positive for a positively oriented tet. |
+| `orient3d_sign_test` | `src/meshgen/predicates.rs:858` | Reference case pinning the orientation convention; a unit tet must be positive. |
+| `TetQuality` | `src/meshgen/predicates.rs:874` | Volume, aspect ratio, radius ratio, min/max dihedral (degrees **and** cosine), scaled Jacobian, min altitude. |
+| `tet_quality` | `src/meshgen/predicates.rs:893` | Compute [V4] metrics for one tet; `max_dihedral_cos` lets angle gates stay algebraic (no `acos` in a decision path). |
+| `node_key` | `src/meshgen/predicates.rs:1012` | Quantized integer node key on a scale-relative grid; equal keys mean the same node. |
 | `Severity` | `src/meshgen/verify.rs:21` | `Info < Warn < Fail`, with the contract spellings used in the log and JSON. |
 | `CheckStatus` | `src/meshgen/verify.rs:40` | Per-section outcome: `PASS`/`WARN`/`FAIL`/`SKIPPED`; a skip always carries a reason. |
 | `VerifyItem` | `src/meshgen/verify.rs:63` | One finding: severity, stable `code`, message, point/cell ids and coordinates (consumed by `mesh-render --highlight-from`). |
 | `VerifySection` | `src/meshgen/verify.rs:88` | One catalog entry with status, named metrics, and a capped item list (`items_truncated`). |
 | `VerifyGates` | `src/meshgen/verify.rs:145` | Configurable thresholds; all length tolerances are fractions of the bbox diagonal, so gates are scale-invariant. |
-| `VerifyReport` | `src/meshgen/verify.rs:179` | Full result plus metadata echo; `passed`, `exit_code`, `fired_codes`, `section` accessors. |
-| `VerifyOptions` | `src/meshgen/verify.rs:410` | Out-of-document verifier inputs; carries `expected_stage` (parsed from a snapshot filename) for the [V12] cross-check. |
-| `verify` | `src/meshgen/verify.rs:430` | Run the catalog over a contract or external VTU; returns one section per entry in contract order. |
-| `verify_with_options` | `src/meshgen/verify.rs:744` | `verify` with out-of-document options; surface stages s00-s03 skip volume-only [V7]/[V8]/[V13]. |
-| `BoundaryFace` | `src/meshgen/verify.rs:3531` | One material-boundary face as [V13] measures it: area, local edge length, mean/max \|distance\| and **signed** offset to the component's surface. |
-| `FidelityAcc` | `src/meshgen/verify.rs:3548` | [V13]'s per-component accumulator; every sum is area-weighted so a coarse face cannot outvote a fine one by being counted once. |
-| `absorb` | `src/meshgen/verify.rs:3561` | Fold one `BoundaryFace` into a `FidelityAcc`. |
-| `check_v13` | `src/meshgen/verify.rs:3603` | [V13] interface fidelity: the material boundary read off the volume (region set vs region set, tags never consulted) and measured against the input surface. |
-| `report_to_json` | `src/meshgen/verify.rs:1510` | Serialize the frozen JSON report (hand-rolled; the project carries no JSON dependency). |
-| `report_to_log` | `src/meshgen/verify.rs:1619` | Sectioned human log with a `[PASS]/[WARN]/[FAIL]/[SKIP]` line per check and a summary. |
-| `annotate` | `src/meshgen/verify.rs:1681` | Copy of the document carrying the quality arrays plus the `verify_flags` bitmask (bit *k* = `[V(k+1)]`). |
+| `VerifyReport` | `src/meshgen/verify.rs:199` | Full result plus metadata echo; `passed`, `exit_code`, `fired_codes`, `section` accessors. |
+| `VerifyOptions` | `src/meshgen/verify.rs:714` | Out-of-document verifier inputs; carries `expected_stage` (parsed from a snapshot filename) for the [V12] cross-check. |
+| `verify` | `src/meshgen/verify.rs:738` | Run the catalog over a contract or external VTU; returns one section per entry in contract order. |
+| `verify_with_options` | `src/meshgen/verify.rs:749` | `verify` with out-of-document options; surface stages s00-s03 skip volume-only [V7]/[V8]/[V13]. |
+| `BoundaryFace` | `src/meshgen/verify.rs:3903` | One material-boundary face as [V13] measures it: area, local edge length, mean/max \|distance\| and **signed** offset to the component's surface. |
+| `FidelityAcc` | `src/meshgen/verify.rs:3935` | [V13]'s per-component accumulator; every sum is area-weighted so a coarse face cannot outvote a fine one by being counted once. |
+| `absorb` | `src/meshgen/verify.rs:3952` | Fold one `BoundaryFace` into a `FidelityAcc`. |
+| `check_v13` | `src/meshgen/verify.rs:4006` | [V13] interface fidelity: the material boundary read off the volume (region set vs region set, tags never consulted) and measured against the input surface. |
+| `report_to_json` | `src/meshgen/verify.rs:2358` | Serialize the frozen JSON report (hand-rolled; the project carries no JSON dependency). |
+| `report_to_log` | `src/meshgen/verify.rs:2467` | Sectioned human log with a `[PASS]/[WARN]/[FAIL]/[SKIP]` line per check and a summary. |
+| `annotate` | `src/meshgen/verify.rs:2529` | Copy of the document carrying the quality arrays plus the `verify_flags` bitmask (bit *k* = `[V(k+1)]`). |
 | `VerifyGateParams`/`MeshVerifyParams`/`MeshVerifyConfig` | `src/config/mesh_verify.rs:8` | The `mesh_verify:` YAML block: input, report/json/annotate destinations, gate overrides. |
 | `gates_from_config` | `src/pipeline/mesh_verify.rs:21` | Overlay YAML overrides onto the contract defaults. |
 | `verify_file` | `src/pipeline/mesh_verify.rs:53` | Load → validate → verify → write log/JSON/annotated VTU; returns the report. |

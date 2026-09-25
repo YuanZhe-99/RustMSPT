@@ -47,60 +47,60 @@ S0、S1 与 G2-1 至 G2-5 已实现。流水线在 S0 前按区域对角线归�
 | `two_sum` / `two_prod` / `DoubleDouble` | `src/meshgen/predicates.rs:111/118/125` | 冻结的无误差原语与仅含加/减/乘的 DD 算术。 |
 | `DeterminantRatio` / `PrecisionTier` / `ConstructionOutcome` | `src/meshgen/predicates.rs:192/229/254` | 精确排序比值及其方法、提交精度溯源与已解析/延迟构造结果。 |
 | `orient3d_value_permanent` / `orient3d_filtered` / `orient3d_dd_value` | `src/meshgen/predicates.rs:266/286/296` | Shewchuk 顺序 f64 值/permanent、带精确回退的认证静态过滤器与 DD 行列式。 |
-| `construct_edge_triangle_intersection` | `src/meshgen/predicates.rs:320` | 冻结 C1 行列式比值构造；f64/DD 升级与 DD 下限路由。 |
+| `construct_edge_triangle_intersection` | `src/meshgen/predicates.rs:434` | 冻结 C1 行列式比值构造；f64/DD 升级与 DD 下限路由。 |
 | `CoplanarSegmentPoint` / `construct_coplanar_segment_intersection` | `src/meshgen/predicates.rs:244/384` | 冻结 C3 仿射线段交点；检查两条定义边的稳定比并保留 DD 排序比值。 |
-| `construct_three_triangle_intersection` | `src/meshgen/predicates.rs:492` | 冻结 C2 局部坐标 Cramer 构造；升级时完全以 DD 重算。 |
+| `construct_three_triangle_intersection` | `src/meshgen/predicates.rs:631` | 冻结 C2 局部坐标 Cramer 构造；升级时完全以 DD 重算。 |
 | `EdgeId` / `EdgeId::new` / `IsectProv` / `SegKey` / `SegKey::new` | `src/meshgen/arrange.rs:29/33/44/52/61` | 规范 `EdgeTri`/`EdgeEdge`/`TriTriTri` 与线段身份。 |
 | `CoincidenceCase` / 策略方法 / `CoincidenceEntity` / `CoincidenceEvent` | `src/meshgen/arrange.rs:73/88/97/105/112` | C1-C10 类型化分类、排序实体/构件与冻结拒绝/警告语义。 |
 | `DegradedReason` / `DegradedNeighborhood` / `ArrangedPointFeature` | `src/meshgen/arrange.rs:120/130/140` | 持久 G2-3 回退记录与焊接 C5/C6 点特征。 |
 | `ArrangeOptions` / `ArrangeOptions::new` / `with_coincidence` | `src/meshgen/arrange.rs:149/159/175` | 区域、epsilon、策略与构件表；构造器默认 `merge`。 |
 | `RegistryVertex` / `RegistrySegment` / `IntersectionRegistry` | `src/meshgen/arrange.rs:183/194/203` | 符号优先全局注册表；一个提交节点保留全部兼容溯源别名。 |
 | `ArrangedCurve` / `ArrangedFace` / `ArrangedSurface` | `src/meshgen/arrange.rs:218/228/256` | 多源/多标签原子面、曲线/径向顺序、点特征、事件、警告与降级记录。 |
-| `ArrangementStats` | `src/meshgen/arrange.rs:240` | 候选、真相交/覆盖/接触、f64/DD/下限、特征与降级计数。 |
-| `arrange_surface` | `src/meshgen/arrange.rs:426` | 纯确定性 CPU G2-1..G2-3 路径；返回已校验诊断复形或策略/不变量错误。 |
-| `arranged_surface_to_doc` | `src/meshgen/arrange.rs:761` | 以集合面标签和 `FaceTagOrientation` 编码诊断复形；流水线暂不打标为 s02。 |
-| `triangulate_parent` | `src/meshgen/arrange.rs:3385` | 受限预注册 Spade CDT；传播插入/拒绝约束错误并校验约束与铺满。 |
+| `ArrangementStats` | `src/meshgen/arrange.rs:243` | 候选、真相交/覆盖/接触、f64/DD/下限、特征与降级计数。 |
+| `arrange_surface` | `src/meshgen/arrange.rs:439` | 纯确定性 CPU G2-1..G2-3 路径；返回已校验诊断复形或策略/不变量错误。 |
+| `arranged_surface_to_doc` | `src/meshgen/arrange.rs:804` | 以集合面标签和 `FaceTagOrientation` 编码诊断复形；流水线暂不打标为 s02。 |
+| `triangulate_parent` | `src/meshgen/arrange.rs:3855` | 受限预注册 Spade CDT；传播插入/拒绝约束错误并校验约束与铺满。 |
 | `SampleKind` / `PairClass` | `src/meshgen/gapfield.rs:48/57` | S3 采样来源（顶点/形心/最近点对/加密）与冻结的配对类别（intra / inter / solid-sheet / sheet-sheet / surface-box）。 |
 | `GapPairing` / `GapSample` / `GapSample::passes_battery` | `src/meshgen/gapfield.rs:68/81/100` | 单条对应关系、单个采样（侧、方向、`t_raw`/`t`/`t_exact`、校验位）与"全部适用检查通过"判据。 |
 | `GapGroup` / `GapFieldStats` / `GapField` | `src/meshgen/gapfield.rs:110/122/137` | 带置信度与 `t_r` 的临时（构件, 侧, 对侧面片）分组、S3 计数器与整体分离场。 |
-| `GapFieldOptions` | `src/meshgen/gapfield.rs:152` | S3 输入：区域、epsilon、引导 h、间隙因子、置信度下限、特征角（顶点聚类）、虚拟壁、加密轮次、平滑次数。 |
+| `GapFieldOptions` | `src/meshgen/gapfield.rs:280` | S3 输入：区域、epsilon、引导 h、间隙因子、置信度下限、特征角（顶点聚类）、虚拟壁、加密轮次、平滑次数。 |
 | `FLAG_MUTUAL` / `FLAG_OPPOSITE_PATCH` / `FLAG_CONTINUITY` / `FLAG_NO_CROSSING` / `FLAG_ORIENTATION` / `FLAGS_ALL` | `src/meshgen/gapfield.rs:28-38` | 五项配对校验位及其并集。 |
-| `compute_gap_field` | `src/meshgen/gapfield.rs:345` | 在裁剪且拓扑重建后的排布面上运行 S3（射线 + 最近点对扫掠 + 校验组 + 置信度）。 |
-| `gapfield_to_doc` | `src/meshgen/gapfield.rs:1655` | 构建 `s03_gapfield` 文档：排布面加 `separation_t` 点场（`-1` 表示无配对）。 |
+| `compute_gap_field` | `src/meshgen/gapfield.rs:495` | 在裁剪且拓扑重建后的排布面上运行 S3（射线 + 最近点对扫掠 + 校验组 + 置信度）。 |
+| `gapfield_to_doc` | `src/meshgen/gapfield.rs:3080` | 构建 `s03_gapfield` 文档：排布面加 `separation_t` 点场（`-1` 表示无配对）。 |
 | `Regime` / `SkipReason` / `MidSurfaceDefect` | `src/meshgen/gapfield.rs:166/177/190` | 三种薄特征状态、`[THIN-SKIP]` 分类与中面校验缺陷。 |
 | `MidSurface` / `MidSurface::is_valid` / `ThinRegion` | `src/meshgen/gapfield.rs:204/216/227` | 带源节点与缺陷的中点面片，以及一个分割后的薄区域（壁 A 面、闭合并入的对侧壁、边缘环、状态、置信度）。 |
-| `validate_mid_surface` | `src/meshgen/gapfield.rs:2436` | 对候选中面执行 §3.4 检查（面积、定向、法向偏差、自交、边缘一致性、欧拉数）。 |
+| `validate_mid_surface` | `src/meshgen/gapfield.rs:2945` | 对候选中面执行 §3.4 检查（面积、定向、法向偏差、自交、边缘一致性、欧拉数）。 |
 | `CouplingOptions` / `LockReason` / `CouplingReport` / `CouplingReport::locked_for` | `src/meshgen/sizing.rs:35/66/80/94` | 耦合循环输入、三种锁定原因、运行报告与按原因查询锁定项。 |
-| `regime_for` | `src/meshgen/sizing.rs:113` | 以 0.9/1.1 滞回死区将单个区域与当前阈值比较分类。 |
-| `couple_gap_and_sizing` | `src/meshgen/sizing.rs:159` | 运行 S3<->S4 不动点；违反 G-8 排序断言时返回错误。 |
+| `regime_for` | `src/meshgen/sizing.rs:143` | 以 0.9/1.1 滞回死区将单个区域与当前阈值比较分类。 |
+| `couple_gap_and_sizing` | `src/meshgen/sizing.rs:189` | 运行 S3<->S4 不动点；违反 G-8 排序断言时返回错误。 |
 | `SizingCriterion` / `SizingSource` | `src/meshgen/sizing.rs:335/351` | 产出该尺寸约束的 §10.6 准则，以及约束本身。 |
 | `SizingOptions` / `beta` / `lfs_floor` | `src/meshgen/sizing.rs:363/410/429` | 尺寸场输入；Lipschitz 常数 `grading - 1`；低于该下限的分离量不算间隙。 |
 | `curvature_sources` / `feature_sources` / `curve_sources` / `collect_geometry_sources` | `src/meshgen/sizing.rs:504/605/677` | 与状态无关的准则，读自条件化输入曲面。 |
-| `gap_sources` | `src/meshgen/sizing.rs:712` | 状态相关的 LFS 源：每个体网格 S3 采样取 `t / gap_cells`。 |
+| `gap_sources` | `src/meshgen/sizing.rs:815` | 状态相关的 LFS 源：每个体网格 S3 采样取 `t / gap_cells`。 |
 | `SizingLookup` / `eval` / `eval_box` | `src/meshgen/sizing.rs:969/1067/1083` | 梯度场；点求值与盒上精确最小值。 |
 | `SizingLeaf` / `SizingStats` / `SizingField` / `locate` / `sample` | `src/meshgen/sizing.rs:1156/1164/1182/1220/1248` | 背景八叉树、构建报告与点定位。 |
-| `build_sizing_field` | `src/meshgen/sizing.rs:1265` | 每层一趟并行细化八叉树，直至每个叶子都解析该场。 |
+| `build_sizing_field` | `src/meshgen/sizing.rs:1416` | 每层一趟并行细化八叉树，直至每个叶子都解析该场。 |
 | `SizingConstraint` / `evaluate` / `binding_region` | `src/meshgen/sizing.rs:1407/1468/1498` | 供耦合驱动的 `C(R)`，以及绑定它的区域与项。 |
-| `sizing_to_doc` | `src/meshgen/sizing.rs:1540` | 将尺寸场编码为 `s04_sizing` 体素预览 VTU。 |
+| `sizing_to_doc` | `src/meshgen/sizing.rs:1699` | 将尺寸场编码为 `s04_sizing` 体素预览 VTU。 |
 | `FREUDENTHAL` / `CellTemplate` | `src/meshgen/lattice.rs:54/493` | 冻结的 6-tet Kuhn 表，以及叶子采用了哪类模板。 |
 | `balance_octree` / `balance_violation` | `src/meshgen/lattice.rs:156/286` | 强（面+边+顶点）2:1 平衡，以及对该性质的直接检验。 |
 | `Lattice` / `LatticeStats` / `LatticeOptions` | `src/meshgen/lattice.rs:520/502/531` | 四面体化晶格、其构建报告与四面体预算。 |
 | `build_lattice` / `build_lattice_with_splits` | `src/meshgen/lattice.rs:611/616` | 以 Freudenthal 与扇形模板对平衡八叉树作四面体化。 |
-| `lattice_to_doc` | `src/meshgen/lattice.rs:833` | 将晶格编码为 `s05_lattice` 快照 VTU。 |
+| `lattice_to_doc` | `src/meshgen/lattice.rs:837` | 将晶格编码为 `s05_lattice` 快照 VTU。 |
 | `Side` / `Provenance` / `OwnershipRecord` | `src/meshgen/classify.rs:60/68/82` | 四面体相对构件的内外侧、条目来源与稀疏记录。 |
-| `resolve` | `src/meshgen/classify.rs:171` | 冻结的标签规则（SPEC_meshgen_geometry §9.1）。 |
-| `RAY_DIRECTIONS` | `src/meshgen/classify.rs:42` | 冻结的重发射序列（ARB-9）。 |
+| `resolve` | `src/meshgen/classify.rs:180` | 冻结的标签规则（SPEC_meshgen_geometry §9.1）。 |
+| `RAY_DIRECTIONS` | `src/meshgen/classify.rs:46` | 冻结的重发射序列（ARB-9）。 |
 | `Classification` / `ClassifyStats` / `ClassifyOptions` | `src/meshgen/classify.rs:140/112/457` | S6 结果及各判定的达成方式。 |
-| `classify_lattice` | `src/meshgen/classify.rs:493` | S6：奇偶分类、记录播种、活跃面片过滤。 |
-| `classified_to_doc` | `src/meshgen/classify.rs:810` | 编码 `s06_classified` 快照 VTU。 |
-| `Stage` | `src/meshgen/snapshot.rs:18` | 冻结的阶段枚举（0..=11）；亦为快照索引。 |
-| `Stage::from_path` | `src/meshgen/snapshot.rs:74` | 从快照文件名的 `sNN` 标记解析阶段（用于 [V12] 交叉校验）。 |
-| `should_emit` | `src/meshgen/snapshot.rs:99` | 在 `none`/`key`/`all` 下是否产出某阶段。 |
-| `snapshot_path` | `src/meshgen/snapshot.rs:118` | `<stem>.debug/<stem>_sNN_<name>.vtu`（Quality 带 `_r<N>`）。 |
-| `SnapshotMeta` | `src/meshgen/snapshot.rs:132` | 打标输入集合（阶段、轮次、配置哈希、区域、确定性、生成器版本）。 |
-| `stamp_metadata` | `src/meshgen/snapshot.rs:166` | 将完整 §2.4 元数据块打标到快照文档。 |
-| `emit_snapshot` | `src/meshgen/snapshot.rs:276` | 打标元数据，然后以普通名写出交付用的仅四面体体网格，并在其旁写出混合单元契约文档 `_contract.vtu`；返回交付文件路径。 |
-| `warn_if_large` | `src/meshgen/snapshot.rs:246` | 尺寸 WARN：`snapshots: all` + 估计 >5 M 四面体。 |
+| `classify_lattice` | `src/meshgen/classify.rs:704` | S6：奇偶分类、记录播种、活跃面片过滤。 |
+| `classified_to_doc` | `src/meshgen/classify.rs:1044` | 编码 `s06_classified` 快照 VTU。 |
+| `Stage` | `src/meshgen/snapshot.rs:22` | 冻结的阶段枚举（0..=11）；亦为快照索引。 |
+| `Stage::from_path` | `src/meshgen/snapshot.rs:102` | 从快照文件名的 `sNN` 标记解析阶段（用于 [V12] 交叉校验）。 |
+| `should_emit` | `src/meshgen/snapshot.rs:120` | 在 `none`/`key`/`all` 下是否产出某阶段。 |
+| `snapshot_path` | `src/meshgen/snapshot.rs:147` | `<stem>.debug/<stem>_sNN_<name>.vtu`（Quality 带 `_r<N>`）。 |
+| `SnapshotMeta` | `src/meshgen/snapshot.rs:195` | 打标输入集合（阶段、轮次、配置哈希、区域、确定性、生成器版本）。 |
+| `stamp_metadata` | `src/meshgen/snapshot.rs:232` | 将完整 §2.4 元数据块打标到快照文档。 |
+| `emit_snapshot` | `src/meshgen/snapshot.rs:295` | 打标元数据，然后以普通名写出交付用的仅四面体体网格，并在其旁写出混合单元契约文档 `_contract.vtu`；返回交付文件路径。 |
+| `warn_if_large` | `src/meshgen/snapshot.rs:348` | 尺寸 WARN：`snapshots: all` + 估计 >5 M 四面体。 |
 
 ## 配置块（PLAN §6.3）
 

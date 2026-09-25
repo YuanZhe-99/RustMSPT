@@ -146,7 +146,7 @@ fn build_filters(specs: &[FilterSpec]) -> Result<Vec<SceneFilter>> {
 
 // AI-FUNC-SUMMARY:
 // Purpose: Render every requested view through the GPU opaque preview in one batch.
-// Inputs: extracted scene, named cameras, resolution, appearance settings.
+// Inputs: extracted scene, named cameras, resolution, rows per GPU strip (from the budget planner; the height when the whole image fits), appearance settings.
 // Returns: Ok after ordered consumption, or the first rendering/consumer error.
 // Side effects: Initializes wgpu on the first call of the process.
 // Notes: Compiled out without the `gpu` feature, where it always reports unavailability so
@@ -157,12 +157,16 @@ fn render_views_gpu(
     cameras: &[(String, crate::geometry::render::RenderCamera)],
     width: usize,
     height: usize,
+    strip_rows: usize,
     settings: &SceneRenderSettings,
     consume: impl FnMut(usize, crate::types::RenderedImage) -> std::result::Result<(), String>,
 ) -> std::result::Result<(), String> {
     let cams: Vec<crate::geometry::render::RenderCamera> =
         cameras.iter().map(|(_, c)| *c).collect();
-    let options = crate::gpu::GpuSceneOptions::with_overlays();
+    let options = crate::gpu::GpuSceneOptions {
+        strip_rows: Some(strip_rows),
+        ..crate::gpu::GpuSceneOptions::with_overlays()
+    };
     crate::gpu::GpuScenePipeline::new()?
         .render_views_to(scene, &cams, width, height, settings, &options, consume)
 }
@@ -173,6 +177,7 @@ fn render_views_gpu(
     _cameras: &[(String, crate::geometry::render::RenderCamera)],
     _width: usize,
     _height: usize,
+    _strip_rows: usize,
     _settings: &SceneRenderSettings,
     _consume: impl FnMut(usize, crate::types::RenderedImage) -> std::result::Result<(), String>,
 ) -> std::result::Result<(), String> {
@@ -390,21 +395,21 @@ impl MeshRenderPipeline {
         }
 
         timer.stage("cameras");
-        let gpu_preflight = || -> std::result::Result<(), String> {
-            let plan = crate::compute::render_memory::SceneRenderMemory::plan(
+        let gpu_preflight = || -> std::result::Result<usize, String> {
+            let (strip_rows, plan) = crate::compute::render_memory::scene_strip_rows(
                 scene.tris.iter().filter(|t| !(t.alpha <= 0.0)).count(),
                 scene.segments.len(),
                 scene.markers.len(),
                 p.width,
                 p.height,
+                p.gpu_memory_limit_mb,
             )?;
             plan.check_buffers(u64::MAX)?;
-            plan.check_budget(p.gpu_memory_limit_mb)?;
             println!(
-                "[mesh-render] GPU planned peak: {} logical bytes, padded row {} bytes",
-                plan.gpu_peak_bytes, plan.padded_row_bytes
+                "[mesh-render] GPU planned peak: {} logical bytes, padded row {} bytes, strip rows {strip_rows} of {}",
+                plan.gpu_peak_bytes, plan.padded_row_bytes, p.height
             );
-            Ok(())
+            Ok(strip_rows)
         };
         let below_threshold = backend == AccelerationMode::Auto
             && p.width
@@ -424,12 +429,13 @@ impl MeshRenderPipeline {
                 let (render_result, output_result) = consume_frames(
                     rayon::current_num_threads() > 1 && cameras.len() > 1,
                     |consume| {
-                        gpu_preflight().and_then(|()| {
+                        gpu_preflight().and_then(|strip_rows| {
                             render_views_gpu(
                                 &scene,
                                 &cameras,
                                 p.width,
                                 p.height,
+                                strip_rows,
                                 &settings,
                                 &mut |index, image| consume((index, image)),
                             )

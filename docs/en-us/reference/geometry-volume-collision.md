@@ -19,8 +19,8 @@ This page documents three `src/geometry/` submodules: `volume.rs` (mesh volume c
 | `clip_mesh_by_plane_with_cap` | `src/geometry/volume.rs:352` | Clips a mesh against one plane and caps the resulting opening. |
 | `clip_mesh_by_bbox` | `src/geometry/volume.rs:403` | Clips a mesh to an axis-aligned box via six successive plane clips. |
 | `particle_volume_in_bbox` | `src/geometry/volume.rs:424` | Volume of a mesh after clipping it to a bounding box. |
-| `volume_fraction_in_bbox` | `src/geometry/volume.rs:434` | Volume fraction of a single mesh within a bounding box. |
-| `volume_fraction_of_meshes_in_bbox` | `src/geometry/volume.rs:444` | Total volume fraction of multiple meshes within a bounding box (parallel). |
+| `volume_fraction_in_bbox` | `src/geometry/volume.rs:437` | Volume fraction of a single mesh within a bounding box. |
+| `volume_fraction_of_meshes_in_bbox` | `src/geometry/volume.rs:450` | Total volume fraction of multiple meshes within a bounding box (parallel). |
 | `to_parry_trimesh` | `src/geometry/collision.rs:29` | Converts a `Mesh` into a parry3d `TriMesh`. |
 | `trimesh_contains_point` | `src/geometry/collision.rs:61` | Ray-parity point-in-solid test over a shape's bounding-volume hierarchy. |
 | `mesh_surfaces_intersect_prepared` | `src/geometry/collision.rs:99` | Bbox-filtered exact test for whether two mesh *surfaces* cross. |

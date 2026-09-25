@@ -8,23 +8,23 @@ Covers the `Pipeline` trait infrastructure and the simpler/support pipelines: `r
 |---|---|---|
 | `RenderPipeline::run_in_pool` | `src/pipeline/render.rs:59` | Execute render stages and fallback within the configured pool. |
 | `Pipeline::run` (trait) | `src/pipeline/mod.rs:17` | Trait method every pipeline struct implements to execute end-to-end. |
-| `create_progress_bar` | `src/pipeline/mod.rs:37` | Builds a tty-aware indicatif progress bar with a given template and fill characters. |
-| `run_in_cpu_pool` | `src/pipeline/mod.rs` | Runs work in a dedicated Rayon pool sized from a `cpu_max` setting (absent/-1: all workers); used by forge and scale so every parallel section shares one budget. |
+| `create_progress_bar` | `src/pipeline/mod.rs:53` | Builds a tty-aware indicatif progress bar with a given template and fill characters. |
+| `run_in_cpu_pool` | `src/pipeline/mod.rs:37` | Runs work in a dedicated Rayon pool sized from a `cpu_max` setting (absent/-1: all workers); used by forge and scale so every parallel section shares one budget. |
 | `RotationMode` (enum) | `src/pipeline/rotation.rs:6` | Represents no rotation, a fixed axis, or a random axis. |
-| `parse_rotation_mode` | `src/pipeline/rotation.rs:18` | Parses `none/x/y/z/vector/any` config strings into a `RotationMode`. |
-| `sample_rotation_axis` | `src/pipeline/rotation.rs:57` | Draws a concrete rotation axis vector for a given `RotationMode`. |
+| `parse_rotation_mode` | `src/pipeline/rotation.rs:17` | Parses `none/x/y/z/vector/any` config strings into a `RotationMode`. |
+| `sample_rotation_axis` | `src/pipeline/rotation.rs:56` | Draws a concrete rotation axis vector for a given `RotationMode`. |
 | `ScalePipeline` (struct) | `src/pipeline/scale.rs:8` | Holds `ScaleConfig` for the scaling pipeline. |
-| `ScalePipeline::run` | `src/pipeline/scale.rs:19` | Loads an STL, applies unit-conversion/factor scaling, optionally fixes orientation, saves output. |
+| `ScalePipeline::run` | `src/pipeline/scale.rs:116` | Loads an STL, applies unit-conversion/factor scaling, optionally fixes orientation, saves output. |
 | `ForgePipeline` (struct) | `src/pipeline/forge.rs:12` | Holds `ForgingConfig` for the FFD forging pipeline. |
 | `ForgePipeline::parse_roi_bbox` | `src/pipeline/forge.rs:18` | Parses an optional 6-element ROI bounding box from config. |
 | `ForgePipeline::parse_compression_axis` | `src/pipeline/forge.rs:37` | Parses the compression axis string (`x`/`y`/`z`) into an index and label. |
-| `ForgePipeline::run` | `src/pipeline/forge.rs:58` | Runs FFD-based compression/forging, tracks ROI, writes forged STL and a text report. |
+| `ForgePipeline::run` | `src/pipeline/forge.rs:259` | Runs FFD-based compression/forging, tracks ROI, writes forged STL and a text report. |
 | `MeasurePipeline` (struct) | `src/pipeline/measure.rs:12` | Holds `MeasurementConfig` for the S2/volume-fraction measurement pipeline. |
 | `MeasurePipeline::parse_optional_bbox` | `src/pipeline/measure.rs:18` | Parses an optional bounding box (3-element size or 6-element min/max) from config. |
 | `MeasurePipeline::l2_error` | `src/pipeline/measure.rs:27` | Computes the L2 distance between two S2 value vectors over their common prefix length. |
-| `MeasurePipeline::run` | `src/pipeline/measure.rs:53` | Loads an STL, computes volume fraction and S2 correlation (exact/MC/both, CPU or GPU), writes a report. |
-| `RenderPipeline` | `src/pipeline/render.rs` | Holds `RenderConfig`. |
-| `RenderPipeline::run` | `src/pipeline/render.rs` | Loads STL, builds camera, selects CPU/GPU, and writes PNG. |
+| `MeasurePipeline::run` | `src/pipeline/measure.rs:49` | Loads an STL, computes volume fraction and S2 correlation (exact/MC/both, CPU or GPU), writes a report. |
+| `RenderPipeline` | `src/pipeline/render.rs:14` | Holds `RenderConfig`. |
+| `RenderPipeline::run` | `src/pipeline/render.rs:28` | Loads STL, builds camera, selects CPU/GPU, and writes PNG. |
 | `MeasurePipeline::run_in_pool` | `src/pipeline/measure.rs:83` | Method-specific measurement in configured pool. |
 
 ---

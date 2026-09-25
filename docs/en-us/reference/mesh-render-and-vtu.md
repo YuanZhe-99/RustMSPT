@@ -20,23 +20,23 @@ subcommand (`src/pipeline/mesh_render.rs`, `src/config/mesh_render.rs`).
 | `load_vtu` | `src/io/vtu.rs:479` | Read the contract subset (ascii + appended-raw, UInt32/UInt64 headers); rejects compressed/base64 files with a named error. |
 | `SetKind` | `src/meshgen/render_scene.rs:8` | Render-set membership (`Volume` boundary faces vs tagged `Face` cells); Face wins coincident-hit dedup. |
 | `SceneTri`/`SceneSegment`/`SceneMarker` | `src/meshgen/render_scene.rs:15` | World-space primitives with color/opacity emitted by extraction. |
-| `RenderScene` | `src/meshgen/render_scene.rs:43` | Extraction result: triangles, overlay segments, markers, full-document framing bbox. |
-| `SceneFilter` | `src/meshgen/render_scene.rs:52` | AND-composed filters: cell_kind, component, region_key, partition, regime, background, array_range, bbox, clip_plane (crinkle). |
-| `ColorMode` | `src/meshgen/render_scene.rs:67` | Uniform / categorical (integer arrays) / scalar-viridis (float arrays) coloring; a named **point** array colours a cell by the mean of its non-sentinel point values. |
-| `point_array_cell_value` | `src/meshgen/render_scene.rs:273` | Reduce a point array to one value per cell (mean of non-sentinel point values) for coloring. |
-| `SceneSpec` | `src/meshgen/render_scene.rs:77` | Full extraction spec: filters, color mode, per-set opacities + region overrides, overlay toggles, highlight points. |
+| `RenderScene` | `src/meshgen/render_scene.rs:46` | Extraction result: triangles, overlay segments, markers, full-document framing bbox. |
+| `SceneFilter` | `src/meshgen/render_scene.rs:57` | AND-composed filters: cell_kind, component, region_key, partition, regime, background, array_range, bbox, clip_plane (crinkle). |
+| `ColorMode` | `src/meshgen/render_scene.rs:72` | Uniform / categorical (integer arrays) / scalar-viridis (float arrays) coloring; a named **point** array colours a cell by the mean of its non-sentinel point values. |
+| `point_array_cell_value` | `src/meshgen/render_scene.rs:281` | Reduce a point array to one value per cell (mean of non-sentinel point values) for coloring. |
+| `SceneSpec` | `src/meshgen/render_scene.rs:88` | Full extraction spec: filters, color mode, per-set opacities + region overrides, overlay toggles, highlight points. |
 | `categorical_color` / `scalar_color` | `src/meshgen/render_scene.rs:132` | 12-color categorical palette (sentinel → grey) and compact viridis ramp. |
-| `build_scene` | `src/meshgen/render_scene.rs:358` | VtuDoc + SceneSpec → RenderScene: filter chain, deterministic boundary-face/wireframe emission, tagged faces, curve segments, markers. Missing-array errors name the array. |
+| `build_scene` | `src/meshgen/render_scene.rs:437` | VtuDoc + SceneSpec → RenderScene: filter chain, deterministic boundary-face/wireframe emission, tagged faces, curve segments, markers. Missing-array errors name the array. |
 | `SceneRenderSettings` | `src/geometry/scene_render.rs:12` | Scene appearance; background is RGBA (alpha 0 = transparent PNG). |
-| `render_scene_cpu` | `src/geometry/scene_render.rs:95` | CPU reference renderer: all-hits QBVH traversal per pixel ray, front-to-back alpha compositing, coincident-hit dedup (Face > Volume), depth-tested line overlay, markers. |
-| `named_view` | `src/geometry/scene_render.rs:287` | Resolve front/back/left/right/top/bottom/iso_ne/iso_nw/iso_se/iso_sw to (view_direction, up). |
+| `render_scene_cpu` | `src/geometry/scene_render.rs:116` | CPU reference renderer: all-hits QBVH traversal per pixel ray, front-to-back alpha compositing, coincident-hit dedup (Face > Volume), depth-tested line overlay, markers. |
+| `named_view` | `src/geometry/scene_render.rs:343` | Resolve front/back/left/right/top/bottom/iso_ne/iso_nw/iso_se/iso_sw to (view_direction, up). |
 | `ViewSpec`/`FilterSpec` | `src/config/mesh_render.rs:7` | YAML forms of views (named preset or custom camera block) and kind-tagged filters. |
 | `MeshRenderParams`/`MeshRenderConfig` | `src/config/mesh_render.rs:38` | `mesh_render:` YAML block (input VTU, output_dir, views, image, coloring, opacities, filters, overlays, camera). |
-| `GpuClipPlane` | `src/gpu/scene_render.rs:45` | Optional half-space clip for the GPU preview (smooth cut, independent of the crinkle-clip filter). |
-| `GpuSceneOptions` | `src/gpu/scene_render.rs:52` | GPU-only toggles: clip plane, overlay segments, markers. |
-| `GpuScenePipeline` | `src/gpu/scene_render.rs:74` | Offscreen GPU preview: TriangleList with per-vertex colour + LineList overlay, both with clip-plane discard. |
-| `GpuScenePipeline::render_views` | `src/gpu/scene_render.rs:361` | Batch path: one geometry upload reused across every camera; one image per view. |
-| `MeshRenderPipeline` | `src/pipeline/mesh_render.rs:18` | The `mesh-render` subcommand: load VTU → build scene → one PNG per view (`<stem>_<view>.png`). |
+| `GpuClipPlane` | `src/gpu/scene_render.rs:53` | Optional half-space clip for the GPU preview (smooth cut, independent of the crinkle-clip filter). |
+| `GpuSceneOptions` | `src/gpu/scene_render.rs:60` | GPU-only toggles: clip plane, overlay segments, markers, and `strip_rows` (rows per horizontal strip; `None` renders in one pass). |
+| `GpuScenePipeline` | `src/gpu/scene_render.rs:85` | Offscreen GPU preview: TriangleList with per-vertex colour + LineList overlay, both with clip-plane discard. |
+| `GpuScenePipeline::render_views` | `src/gpu/scene_render.rs:383` | Batch path: one geometry upload reused across every camera; one image per view. |
+| `MeshRenderPipeline` | `src/pipeline/mesh_render.rs:20` | The `mesh-render` subcommand: load VTU → build scene → one PNG per view (`<stem>_<view>.png`). |
 
 ## GPU preview path (GA-3c)
 
@@ -163,9 +163,9 @@ semantics. Adapter-unavailable skips are not hardware validation.
 
 Optional top-level `cpu_max` (beside `mesh_render`) accepts an integer or integer string. Absent/-1 uses available CPUs; other values clamp to 1..available. The complete pipeline installs one Rayon pool, including scene preparation, all CPU views and GPU-to-CPU fallback. Logs distinguish requested and actual workers, and the CPU rendering entry reports its pool index. `backend: gpu` remains strict and opaque; `auto` can fall back to the CPU transparency reference. A CPU fallback does not create another pool.
 
-| `MeshRenderPipeline::with_worker_pool` | `src/pipeline/mesh_render.rs:193` | Execute scene preparation, rendering and fallback within the worker budget. |
+| `MeshRenderPipeline::with_worker_pool` | `src/pipeline/mesh_render.rs:201` | Execute scene preparation, rendering and fallback within the worker budget. |
 
-| `MeshRenderPipeline::run_in_pool` | `src/pipeline/mesh_render.rs:218` | Execute scene preparation, rendering and fallback within the worker budget. |
+| `MeshRenderPipeline::run_in_pool` | `src/pipeline/mesh_render.rs:226` | Execute scene preparation, rendering and fallback within the worker budget. |
 
 `RUSTMSPT_ACCELERATION=cpu|gpu|auto` overrides the validated YAML backend before input loading. Invalid environment values are errors. The effective `gpu` mode remains strict; `auto` permits fallback, and `cpu` does not initialize GPU. This does not apply STL render’s pixel threshold to the legacy mesh preview.
 
@@ -186,6 +186,8 @@ For multiple GPU views with more than one configured worker, `consume_frames` mo
 ### Overlapped CPU PNG writing (PERF-17, 2026-09-25)
 
 **Build and residency counters (PERF-17, 2026-09-25).** The CPU path prints `[mesh-render] cpu scene_qbvh_builds=<n> views=<n> max_live_images=<n>`. `scene_qbvh_builds` is the difference of the process-wide `geometry::scene_render::scene_qbvh_build_count()` (incremented once per `PreparedScene` with geometry) across preparation, so it reads 1 however many views are rendered; `max_live_images` is returned by `render_and_write_overlapped` (1 for a single view, 2 once a write overlaps a render). `mesh_render_cli_worker_budget_and_fallback` asserts `scene_qbvh_builds=1 views=2 max_live_images=2` at 1/2/8 workers. The GPU path uploads once per `GpuScenePipeline` and its host frames are bounded by the rendezvous writer (at most two, §56).
+
+**GPU strips under a small budget (2026-09-25).** When `gpu_memory_limit_mb` cannot hold the whole image's color/depth targets and staging, the preflight no longer refuses: `scene_strip_rows` picks the tallest horizontal strip whose working set fits (exact boundary by binary search), the log reports `strip rows <n> of <height>`, and `GpuScenePipeline` renders each view strip by strip into a strip-sized target set. Each strip re-targets clip-space y onto its own NDC range (`y' = s*(y - c*w)`, composed in f64 before the f32 conversion) and a short final strip sets its viewport to its own rows; x, z and w are untouched, so depth is bit-identical and only y rounding could move an edge by a pixel. Geometry is still uploaded whole, so a budget below one row plus the geometry is still refused (auto falls back, gpu errors). On llvmpipe strip renders of 1/7/16/60 rows equal the one-pass render exactly for both projections (`gpu_strip_rendering_matches_one_pass`, which allows 2 % edge pixels for hardware); `mesh_render_gpu_budget_renders_in_strips` renders 1024x1024 under 1 MiB on the GPU with no CPU fallback and compares it with the unbudgeted image.
 
 CPU views now go through `render_and_write_overlapped`: view *i* renders (with its nested pixel parallelism) inside `rayon::join` while view *i-1* is PNG-encoded and written on another worker of the same pool, so at most two finished-or-rendering frames exist and writes stay in view order. A write error is returned as soon as the concurrently started render finishes; no later view is rendered or written, and CPU writing never triggers any fallback. With one worker `join` runs render then write inline, which is the former sequential loop. Tests compare PNG bytes and order against a sequential loop at 1/2/4 workers for 0/1/2/7 views, check first/middle/last write errors (and that at most one extra view is rendered), and prove the next render starts before the previous write completes. The GPU writer keeps `consume_frames`: its producer is callback-driven (`render_views_to` pushes frames), so a per-frame `rayon::join` would need a pull-based GPU API, and a rayon scope with a blocking hand-off would park a pool worker on a channel; its blocking/drain/fallback order is covered by its existing tests and was not changed. The ignored release benchmark `cpu_overlap_benchmark` (8 views of a level-5 icosphere, 5 samples after warm-up, shared 4-core machine under concurrent builds) found no reliable difference: median overlapped/sequential ratios 0.95-1.23 across 256²/1024²/2048² and 1/2/4 workers, with sample spreads larger than the differences, because PNG encoding is a small fraction of CPU ray-cast time. Auto backend selection: STL `render` already applies `acceleration.gpu_min_pixels` (default 250,000) through `resolve_execution`; `mesh-render` keeps `gpu_min_pixels: 0` by default because switching small `auto` renders to CPU changes the image (CPU is the transparency reference, GPU the opaque preview), not only its cost.
 

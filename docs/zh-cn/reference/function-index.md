@@ -6,30 +6,30 @@
 
 | 条目 | 模块 | 源码位置 | 概述 |
 |---|---|---|---|
-| `GpuVoxelPipeline::resize_grid_buffers` | GPU | `src/gpu/voxel.rs:251` | Manage retained output/readback capacity without rebuilding the pipeline. |
-| `GpuVoxelPipeline::release_grid_capacity` | GPU | `src/gpu/voxel.rs:265` | Manage retained output/readback capacity without rebuilding the pipeline. |
-| `GpuVolumeTransformPipeline::resize_output_buffers` | GPU | `src/gpu/volume_transform.rs:269` | Manage retained output/readback capacity without rebuilding the pipeline. |
-| `GpuVolumeTransformPipeline::release_output_capacity` | GPU | `src/gpu/volume_transform.rs:284` | Manage retained output/readback capacity without rebuilding the pipeline. |
-| `read_u32_prefix` | GPU | `src/gpu/runtime.rs:34` | Validate and read only the live staging-buffer prefix. |
-| `GpuS2Pipeline::resize_output_buffers` | GPU | `src/gpu/s2.rs:309` | Replace MC output and staging capacity together. |
-| `GpuS2Pipeline::release_output_capacity` | GPU | `src/gpu/s2.rs:338` | Release retained MC output/readback peak capacity. |
-| `shared_instance` | GPU | `src/gpu/context.rs:84` | Retain one backend instance for non-GL selection. |
-| `select_adapter` | GPU | `src/gpu/context.rs:99` | Serialize selection and isolate selected GL adapters. |
-| `select_from_instance` | GPU | `src/gpu/context.rs:118` | Apply name/index/default selection within an instance. |
-| `request_device` | GPU | `src/gpu/context.rs:69` | Request a fresh logical device without memoizing failure. |
+| `GpuVoxelPipeline::resize_grid_buffers` | GPU | `src/gpu/voxel.rs:634` | Manage retained output/readback capacity without rebuilding the pipeline. |
+| `GpuVoxelPipeline::release_grid_capacity` | GPU | `src/gpu/voxel.rs:650` | Manage retained output/readback capacity without rebuilding the pipeline. |
+| `GpuVolumeTransformPipeline::resize_output_buffers` | GPU | `src/gpu/volume_transform.rs:399` | Manage retained output/readback capacity without rebuilding the pipeline. |
+| `GpuVolumeTransformPipeline::release_output_capacity` | GPU | `src/gpu/volume_transform.rs:416` | Manage retained output/readback capacity without rebuilding the pipeline. |
+| `read_u32_prefix` | GPU | `src/gpu/runtime.rs:142` | Validate and read only the live staging-buffer prefix. |
+| `GpuS2Pipeline::resize_output_buffers` | GPU | `src/gpu/s2.rs:582` | Replace MC output and staging capacity together. |
+| `GpuS2Pipeline::release_output_capacity` | GPU | `src/gpu/s2.rs:611` | Release retained MC output/readback peak capacity. |
+| `shared_instance` | GPU | `src/gpu/context.rs:270` | Retain one backend instance for non-GL selection. |
+| `select_adapter` | GPU | `src/gpu/context.rs:279` | Serialize selection and isolate selected GL adapters. |
+| `select_from_instance` | GPU | `src/gpu/context.rs:298` | Apply name/index/default selection within an instance. |
+| `request_device` | GPU | `src/gpu/context.rs:255` | Request a fresh logical device without memoizing failure. |
 | `request_adapter` | GPU | `src/gpu/context.rs:90` | Shared name/index/default adapter selection. |
-| `foreground_blocks` | Pipeline | `src/pipeline/crop.rs:422` | Fixed-block foreground scan with ordered partial results. |
-| `ParticleMetrics` | Pipeline | `src/pipeline/split_filter.rs:305` | Cached component volume/aspect/area. |
-| `prepare_particle_metrics` | Pipeline | `src/pipeline/split_filter.rs:312` | Prepare requested metrics in stable component order. |
-| `SplitFilterPipeline::run_in_pool` | Pipeline | `src/pipeline/split_filter.rs:349` | Execute split-filter inside the configured pool. |
-| `GpuScenePipeline::render_views_to` | GPU | `src/gpu/scene_render.rs:387` | Stream owned views in order while reusing scene and target resources. |
-| `PreparedScene` | Geometry | `src/geometry/scene_render.rs:108` | Immutable CPU scene accelerator shared across cameras. |
-| `PreparedScene::new` | Geometry | `src/geometry/scene_render.rs:115` | Prepare QBVH and materials once. |
-| `PreparedScene::render` | Geometry | `src/geometry/scene_render.rs:120` | Render a view with retained preparation and per-task hit scratch. |
-| `scene_qbvh_build_count` | Geometry | `src/geometry/scene_render.rs` | 进程级场景 QBVH 构建计数（每个含几何的 PreparedScene 一次）。 |
+| `foreground_blocks` | Pipeline | `src/pipeline/crop.rs:620` | Fixed-block foreground scan with ordered partial results. |
+| `ParticleMetrics` | Pipeline | `src/pipeline/split_filter.rs:309` | Cached component volume/aspect/area. |
+| `prepare_particle_metrics` | Pipeline | `src/pipeline/split_filter.rs:316` | Prepare requested metrics in stable component order. |
+| `SplitFilterPipeline::run_in_pool` | Pipeline | `src/pipeline/split_filter.rs:353` | Execute split-filter inside the configured pool. |
+| `GpuScenePipeline::render_views_to` | GPU | `src/gpu/scene_render.rs:409` | Stream owned views in order while reusing scene and target resources. |
+| `PreparedScene` | Geometry | `src/geometry/scene_render.rs:135` | Immutable CPU scene accelerator shared across cameras. |
+| `PreparedScene::new` | Geometry | `src/geometry/scene_render.rs:142` | Prepare QBVH and materials once. |
+| `PreparedScene::render` | Geometry | `src/geometry/scene_render.rs:147` | Render a view with retained preparation and per-task hit scratch. |
+| `scene_qbvh_build_count` | Geometry | `src/geometry/scene_render.rs:130` | 进程级场景 QBVH 构建计数（每个含几何的 PreparedScene 一次）。 |
 | `RenderPipeline::run_in_pool` | Pipeline | `src/pipeline/render.rs:59` | Execute render stages and fallback within the configured pool. |
 | `gpu_crop_values_supported` | Pipeline | `src/pipeline/crop.rs:25` | Check exact integer representation for GPU interpolation. |
-| `CropPipeline::run_in_pool` | Pipeline | `src/pipeline/crop.rs:621` | Execute crop stages within the configured pool and report completed-stage wall times. |
+| `CropPipeline::run_in_pool` | Pipeline | `src/pipeline/crop.rs:1359` | Execute crop stages within the configured pool and report completed-stage wall times. |
 | `PlacementParams` | Config | `src/config/placement.rs:22` | YAML 中书写的 `placement:` 块，尚未校验。 |
 | `PlacementParams::validate` | Config | `src/config/placement.rs:584` | 施加所有跨字段规则并解析所有路径，得到 `ResolvedPlacement`。 |
 | `ResolvedPlacement` | Config | `src/config/placement.rs:386` | 已校验的放置块：路径已解析，且不再留有可选项。 |
@@ -53,11 +53,11 @@
 | `default_true` | Config | `src/config/acceleration.rs:27` | `cpu_fallback` 的 serde 默认值：`true`。 |
 | `default_gpu_min_voxels` | Config | `src/config/acceleration.rs:31` | `gpu_min_voxels` 的 serde 默认值：`250_000`。 |
 | `default_gpu_precision` | Config | `src/config/acceleration.rs:40` | `gpu_precision` 的 serde 默认值：`"f32"`。 |
-| `AccelerationConfig::default` | Config | `src/config/acceleration.rs:38` | 与 serde 默认值相匹配的 Rust 层 `Default` 实现。 |
+| `AccelerationConfig::default` | Config | `src/config/acceleration.rs:45` | 与 serde 默认值相匹配的 Rust 层 `Default` 实现。 |
 | `RustMsptError` | Core & Compute | `src/error.rs:4` | 覆盖 I/O、YAML、TIFF、配置、网格和 GPU 失败情形的全局错误枚举。 |
-| `Result` | Core & Compute | `src/error.rs:27` | 在整个 crate 中使用的类型别名 `Result<T> = std::result::Result<T, RustMsptError>`。 |
+| `Result` | Core & Compute | `src/error.rs:30` | 在整个 crate 中使用的类型别名 `Result<T> = std::result::Result<T, RustMsptError>`。 |
 | `cli_path_as_config_relative` | Core & Compute | `src/main.rs:157` | 改写命令行路径，使配置相对解析仍保持其原意。 |
-| `BoundingBox::intersects_domain` | Core & Compute | `src/types.rs:128` | 两个包围盒是否相接；相切也算。 |
+| `BoundingBox::intersects_domain` | Core & Compute | `src/types.rs:96` | 两个包围盒是否相接；相切也算。 |
 | `BuildIdentity` | Core & Compute | `src/version.rs:18` | 该二进制的身份：版本、git 提交、工作树是否有改动、启用的特性、构建平台。 |
 | `build_identity` | Core & Compute | `src/version.rs:36` | 返回编译期写入的构建身份；工具身份的唯一来源。 |
 | `BuildIdentity::version_detail` | Core & Compute | `src/version.rs:64` | 不含程序名的单行身份，供 clap 的 `--version` 使用。 |
@@ -110,40 +110,40 @@
 | `mesh_is_closed` | Geometry — Analysis | `src/geometry/metrics.rs:23` | 验证网格是否为流形、朝向一致、体积非零的壳体（或壳体集合）。 |
 | `mesh_metrics` | Geometry — Analysis | `src/geometry/metrics.rs:149` | 为一个封闭网格计算体积、表面积、等体积直径和球形度。 |
 | `scale_mesh_to_equivalent_diameter` | Geometry — Analysis | `src/geometry/metrics.rs:182` | 就地缩放网格，使其等体积直径匹配目标值。 |
-| `RAY_DIR_GPU` | Geometry — Analysis | `src/geometry/s2.rs:13` | 固定的非轴对齐单位射线方向常量，与 GPU 光线投射内核共享。 |
-| `index_3d_to_flat` | Geometry — Analysis | `src/geometry/s2.rs:16` | 将三维体素索引转换为扁平数组索引（y/z 主序跨步）。 |
-| `ray_intersects_triangle` | Geometry — Analysis | `src/geometry/s2.rs:26` | Möller–Trumbore 光线-三角形相交测试。 |
-| `point_inside_mesh` | Geometry — Analysis | `src/geometry/s2.rs:63` | 光线投射的点-网格包含测试（奇数命中规则）。 |
-| `build_bbox_occupancy` | Geometry — Analysis | `src/geometry/s2.rs:112` | 将网格并行体素化为一个布尔占用网格。 |
-| `occupancy_dims` | Geometry — Analysis | `src/geometry/s2.rs` | 给定域和体素尺寸的占据网格维度。 |
-| `part_voxel_ranges` | Geometry — Analysis | `src/geometry/s2.rs` | 每个连通分量的预备查询及截断后的体素范围；全量与增量体素化共用。 |
-| `particle_voxel_coverage` | Geometry — Analysis | `src/geometry/s2.rs` | 体素中心位于某颗粒内部的扁平索引，每个包含它的连通分量各记一次。 |
-| `voxel_mc_rng` | Geometry — Analysis | `src/geometry/s2.rs` | 为单个体素 MC 半径新建的无种子 Xoshiro256++（`SmallRng`），种子取自 `thread_rng`；不得用于带种子的路径。 |
-| `cached_mc_shells` | Geometry — Analysis | `src/geometry/s2.rs` | 半径 1..=r_max 的壳层偏移，相同 `(r_max, pitch)` 键时复用。 |
-| `voxel_mc_radii` | Geometry — Analysis | `src/geometry/s2.rs` | 逐半径的体素 MC 命中比例；仅在要求时按半径并行，两种方式估计量相同。 |
-| `VOXEL_MC_PARALLEL_MIN_SAMPLES` | Geometry — Analysis | `src/geometry/s2.rs` | MC 总样本数低于 65,536 时各半径串行（实测确定）。 |
-| `particle_voxel_coverage_in` | Geometry — Analysis | `src/geometry/s2.rs` | 对预处理分量范围做包含查询；按 x 列并行或串行，输出顺序相同。 |
-| `COVERAGE_PARALLEL_MIN_VOXELS` | Geometry — Analysis | `src/geometry/s2.rs` | 单颗粒候选体素少于 1,024 时覆盖查询串行（实测确定）。 |
-| `VoxelCoverage` | Geometry — Analysis | `src/geometry/s2.rs` | SA 用的逐体素覆盖计数及对应占据场；计数 > 0 即占据。 |
-| `VoxelCoverage::new` | Geometry — Analysis | `src/geometry/s2.rs` | 为整个粒子群建立计数；网格等于对合并网格调用 VoxelS2::new。 |
-| `VoxelCoverage::replace` | Geometry — Analysis | `src/geometry/s2.rs` | 只重新查询被移动的颗粒，替换其列表并返回旧列表用于回滚。 |
-| `VoxelCoverage::restore` | Geometry — Analysis | `src/geometry/s2.rs` | 拒绝后恢复旧列表，不做包含查询。 |
-| `VoxelCoverage::grid` | Geometry — Analysis | `src/geometry/s2.rs` | 以可求值的 VoxelS2 借出维护中的占据场。 |
-| `shell_offsets_for_distance` | Geometry — Analysis | `src/geometry/s2.rs:184` | 枚举位于一个球壳环带内的整数体素偏移量。 |
-| `fill_missing_s2_with_smooth_interpolation` | Geometry — Analysis | `src/geometry/s2.rs:217` | 通过线性或三次样条插值填补不受支持的 S2 半径值。 |
-| `fft_index_3d` | Geometry — Analysis | `src/geometry/s2.rs:328` | 将三维 FFT 网格索引转换为扁平索引（与 `index_3d_to_flat` 逻辑相同）。 |
-| `FftWorkspace::transform` | Geometry — Analysis | `src/geometry/s2.rs:369` | 对复数缓冲区就地执行可分离的三维 FFT/IFFT。 |
-| `autocorrelation_counts_fft` | Geometry — Analysis | `src/geometry/s2.rs:549` | 通过 FFT 卷积计算占用自相关计数。 |
-| `calculate_s2_exact_direct` | Geometry — Analysis | `src/geometry/s2.rs:561` | 按球壳偏移逐对直接枚举计算精确 S2（不使用 FFT）。 |
-| `calculate_s2_exact_fft` | Geometry — Analysis | `src/geometry/s2.rs:651` | 使用基于 FFT 的自相关计算精确 S2。 |
-| `calculate_s2_monte_carlo_mesh` | Geometry — Analysis | `src/geometry/s2.rs:730` | 直接在网格上采样进行蒙特卡洛 S2 估计（不体素化）。 |
-| `calculate_s2` | Geometry — Analysis | `src/geometry/s2.rs:785` | 顶层 S2 调度器；路由到精确法（FFT 或直接法）或体素化蒙特卡洛法。 |
-| `calculate_s2_seeded` | Geometry — Analysis | `src/geometry/s2.rs` | 带可选种子的 `calculate_s2`：网格 MC 走 `calculate_s2_mesh_mc_seeded`，体素 MC 每个半径一条固定随机流；`None` 与 `calculate_s2` 完全相同。 |
-| `VoxelS2::calculate_seeded` | Geometry — Analysis | `src/geometry/s2.rs` | 带可选蒙特卡洛种子的 `VoxelS2::calculate`。 |
-| `approximate_s2` | Geometry — Analysis | `src/geometry/s2.rs:924` | 采用默认体素间距进行蒙特卡洛 S2 估计的便捷封装。 |
-| `l2_norm` | Geometry — Analysis | `src/geometry/s2.rs:929` | 两个 S2 向量在其共同长度前缀上的欧几里得距离。 |
-| `calculate_s2_with_gpu` | Geometry — Analysis | `src/geometry/s2.rs:948` | 针对蒙特卡洛/"both" 方法的 GPU 加速 S2，带 CPU 回退。*（特性 `gpu`）* |
-| `calculate_s2_gpu_exact` | Geometry — Analysis | `src/geometry/s2.rs:984` | GPU 加速的精确 S2（GPU 体素化 + GPU 球壳配对计数）。*（特性 `gpu`）* |
+| `RAY_DIR_GPU` | Geometry — Analysis | `src/geometry/s2.rs:14` | 固定的非轴对齐单位射线方向常量，与 GPU 光线投射内核共享。 |
+| `index_3d_to_flat` | Geometry — Analysis | `src/geometry/s2.rs:17` | 将三维体素索引转换为扁平数组索引（y/z 主序跨步）。 |
+| `ray_intersects_triangle` | Geometry — Analysis | `src/geometry/s2.rs:27` | Möller–Trumbore 光线-三角形相交测试。 |
+| `point_inside_mesh` | Geometry — Analysis | `src/geometry/s2.rs:64` | 光线投射的点-网格包含测试（奇数命中规则）。 |
+| `build_bbox_occupancy` | Geometry — Analysis | `src/geometry/s2.rs:160` | 将网格并行体素化为一个布尔占用网格。 |
+| `occupancy_dims` | Geometry — Analysis | `src/geometry/s2.rs:110` | 给定域和体素尺寸的占据网格维度。 |
+| `part_voxel_ranges` | Geometry — Analysis | `src/geometry/s2.rs:126` | 每个连通分量的预备查询及截断后的体素范围；全量与增量体素化共用。 |
+| `particle_voxel_coverage` | Geometry — Analysis | `src/geometry/s2.rs:212` | 体素中心位于某颗粒内部的扁平索引，每个包含它的连通分量各记一次。 |
+| `voxel_mc_rng` | Geometry — Analysis | `src/geometry/s2.rs:1374` | 为单个体素 MC 半径新建的无种子 Xoshiro256++（`SmallRng`），种子取自 `thread_rng`；不得用于带种子的路径。 |
+| `cached_mc_shells` | Geometry — Analysis | `src/geometry/s2.rs:1295` | 半径 1..=r_max 的壳层偏移，相同 `(r_max, pitch)` 键时复用。 |
+| `voxel_mc_radii` | Geometry — Analysis | `src/geometry/s2.rs:1318` | 逐半径的体素 MC 命中比例；仅在要求时按半径并行，两种方式估计量相同。 |
+| `VOXEL_MC_PARALLEL_MIN_SAMPLES` | Geometry — Analysis | `src/geometry/s2.rs:1287` | MC 总样本数低于 65,536 时各半径串行（实测确定）。 |
+| `particle_voxel_coverage_in` | Geometry — Analysis | `src/geometry/s2.rs:231` | 对预处理分量范围做包含查询；按 x 列并行或串行，输出顺序相同。 |
+| `COVERAGE_PARALLEL_MIN_VOXELS` | Geometry — Analysis | `src/geometry/s2.rs:228` | 单颗粒候选体素少于 1,024 时覆盖查询串行（实测确定）。 |
+| `VoxelCoverage` | Geometry — Analysis | `src/geometry/s2.rs:266` | SA 用的逐体素覆盖计数及对应占据场；计数 > 0 即占据。 |
+| `VoxelCoverage::new` | Geometry — Analysis | `src/geometry/s2.rs:276` | 为整个粒子群建立计数；网格等于对合并网格调用 VoxelS2::new。 |
+| `VoxelCoverage::replace` | Geometry — Analysis | `src/geometry/s2.rs:314` | 只重新查询被移动的颗粒，替换其列表并返回旧列表用于回滚。 |
+| `VoxelCoverage::restore` | Geometry — Analysis | `src/geometry/s2.rs:320` | 拒绝后恢复旧列表，不做包含查询。 |
+| `VoxelCoverage::grid` | Geometry — Analysis | `src/geometry/s2.rs:325` | 以可求值的 VoxelS2 借出维护中的占据场。 |
+| `shell_offsets_for_distance` | Geometry — Analysis | `src/geometry/s2.rs:336` | 枚举位于一个球壳环带内的整数体素偏移量。 |
+| `fill_missing_s2_with_smooth_interpolation` | Geometry — Analysis | `src/geometry/s2.rs:393` | 通过线性或三次样条插值填补不受支持的 S2 半径值。 |
+| `fft_index_3d` | Geometry — Analysis | `src/geometry/s2.rs:504` | 将三维 FFT 网格索引转换为扁平索引（与 `index_3d_to_flat` 逻辑相同）。 |
+| `FftWorkspace::transform` | Geometry — Analysis | `src/geometry/s2.rs:824` | 对复数缓冲区就地执行可分离的三维 FFT/IFFT。 |
+| `autocorrelation_counts_fft` | Geometry — Analysis | `src/geometry/s2.rs:1020` | 通过 FFT 卷积计算占用自相关计数。 |
+| `calculate_s2_exact_direct` | Geometry — Analysis | `src/geometry/s2.rs:1082` | 按球壳偏移逐对直接枚举计算精确 S2（不使用 FFT）。 |
+| `calculate_s2_exact_fft` | Geometry — Analysis | `src/geometry/s2.rs:1125` | 使用基于 FFT 的自相关计算精确 S2。 |
+| `calculate_s2_monte_carlo_mesh` | Geometry — Analysis | `src/geometry/s2.rs:1175` | 直接在网格上采样进行蒙特卡洛 S2 估计（不体素化）。 |
+| `calculate_s2` | Geometry — Analysis | `src/geometry/s2.rs:1234` | 顶层 S2 调度器；路由到精确法（FFT 或直接法）或体素化蒙特卡洛法。 |
+| `calculate_s2_seeded` | Geometry — Analysis | `src/geometry/s2.rs:1248` | 带可选种子的 `calculate_s2`：网格 MC 走 `calculate_s2_mesh_mc_seeded`，体素 MC 每个半径一条固定随机流；`None` 与 `calculate_s2` 完全相同。 |
+| `VoxelS2::calculate_seeded` | Geometry — Analysis | `src/geometry/s2.rs:1409` | 带可选蒙特卡洛种子的 `VoxelS2::calculate`。 |
+| `approximate_s2` | Geometry — Analysis | `src/geometry/s2.rs:1450` | 采用默认体素间距进行蒙特卡洛 S2 估计的便捷封装。 |
+| `l2_norm` | Geometry — Analysis | `src/geometry/s2.rs:1455` | 两个 S2 向量在其共同长度前缀上的欧几里得距离。 |
+| `calculate_s2_with_gpu` | Geometry — Analysis | `src/geometry/s2.rs:1474` | 针对蒙特卡洛/"both" 方法的 GPU 加速 S2，带 CPU 回退。*（特性 `gpu`）* |
+| `calculate_s2_gpu_exact` | Geometry — Analysis | `src/geometry/s2.rs:1510` | GPU 加速的精确 S2（GPU 体素化 + GPU 球壳配对计数）。*（特性 `gpu`）* |
 | `UnitQuat` | Geometry — Core | `src/geometry/quaternion.rs:17` | 标量在前的单位四元数 `[w, x, y, z]`，规范化为 `w >= 0`。 |
 | `UnitQuat::identity` | Geometry — Core | `src/geometry/quaternion.rs:26` | 单位旋转。 |
 | `UnitQuat::new` | Geometry — Core | `src/geometry/quaternion.rs:42` | 对原始分量做归一化与符号规范化。 |
@@ -153,30 +153,30 @@
 | `UnitQuat::to_matrix` | Geometry — Core | `src/geometry/quaternion.rs:89` | 由四元数导出的行主序 3x3 旋转矩阵。 |
 | `sample_uniform_quaternion` | Geometry — Core | `src/geometry/quaternion.rs:123` | Shoemake 方法：恰好三个均匀数给出 Haar 均匀旋转。 |
 | `transform_shell` | Geometry — Core | `src/geometry/quaternion.rs:148` | 缩放、绕质心旋转、再平移这一变换的唯一定义。 |
-| `icosphere_mesh` | Geometry — Core | `src/geometry/mesh_ops.rs:261` | 细分二十面体得到的闭合、外向球面网格。 |
+| `icosphere_mesh` | Geometry — Core | `src/geometry/mesh_ops.rs:374` | 细分二十面体得到的闭合、外向球面网格。 |
 | `mesh_bbox` | Geometry — Core | `src/geometry/bbox.rs:8` | 网格的轴对齐包围盒。 |
 | `bbox_overlaps` | Geometry — Core | `src/geometry/bbox.rs:28` | 两个包围盒之间的严格重叠测试。 |
 | `bbox_distance` | Geometry — Core | `src/geometry/bbox.rs:38` | 两个包围盒之间的最小欧几里得距离。 |
 | `check_boundary_constraints_mode` | Geometry — Core | `src/geometry/bbox.rs:72` | 根据堆积边界模式规则校验网格的放置位置。 |
-| `mesh_centroid` | Geometry — Core | `src/geometry/mesh_ops.rs:5` | 网格顶点的算术质心。 |
-| `vec_norm` | Geometry — Core | `src/geometry/mesh_ops.rs:19` | 向量的欧几里得长度。 |
-| `merge_meshes` | Geometry — Core | `src/geometry/mesh_ops.rs:24` | 将多个网格合并为一个，并重新映射面索引。 |
-| `split_mesh_into_granules` | Geometry — Core | `src/geometry/mesh_ops.rs:47` | 将网格拆分为连通分量（在共享顶点上做 BFS）。 |
-| `translate_mesh` | Geometry — Core | `src/geometry/mesh_ops.rs:120` | 就地按增量向量平移所有网格顶点。 |
-| `move_mesh_to_target_center` | Geometry — Core | `src/geometry/mesh_ops.rs:125` | 移动网格使其质心与目标位置一致。 |
-| `wrap_mesh_centroid_to_box` | Geometry — Core | `src/geometry/mesh_ops.rs:136` | 在周期边界条件下，将网格质心环绕映射到包围盒内。 |
-| `scale_mesh` | Geometry — Core | `src/geometry/mesh_ops.rs:157` | 就地围绕原点均匀缩放网格顶点。 |
-| `mesh_surface_area` | Geometry — Core | `src/geometry/mesh_ops.rs:176` | 网格总表面积（各三角形面积之和）。 |
-| `rotate_mesh_around_center` | Geometry — Core | `src/geometry/mesh_ops.rs:195` | 使用罗德里格斯旋转公式绕网格质心旋转网格。 |
-| `box_mesh` | Geometry — Core | `src/geometry/mesh_ops.rs:216` | 从 `BoundingBox` 构建一个三角化的立方体网格。 |
-| `SpatialGrid::new` | Geometry — Core | `src/geometry/spatial.rs:22` | 用给定单元大小在一个包围盒上构造一个空的均匀网格。 |
-| `SpatialGrid::insert` | Geometry — Core | `src/geometry/spatial.rs:40` | 将某项的索引插入其包围盒重叠的每个单元格中。 |
-| `SpatialGrid::build` | Geometry — Core | `src/geometry/spatial.rs:80` | 从一批 (index, bbox) 对构造并填充一个网格。 |
-| `SpatialGrid::query_neighbors` | Geometry — Core | `src/geometry/spatial.rs:89` | 查找与查询包围盒重叠的候选邻居索引。 |
-| `SpatialGrid::query_neighbors_with_margin` | Geometry — Core | `src/geometry/spatial.rs:99` | 按余量扩展查询，保留首次遇见顺序，自适应使用线性/哈希去重。 |
-| `SpatialGrid::point_to_cell_clamped` | Geometry — Core | `src/geometry/spatial.rs:157` | 将一个点映射到网格单元坐标，并夹紧到网格边界内。 |
-| `SpatialGrid::point_to_cell` | Geometry — Core | `src/geometry/spatial.rs:167` | 将一个点映射到网格单元坐标，不做夹紧处理。 |
-| `estimate_cell_size` | Geometry — Core | `src/geometry/spatial.rs:176` | 根据一组包围盒启发式地选取 `SpatialGrid` 的单元大小。 |
+| `mesh_centroid` | Geometry — Core | `src/geometry/mesh_ops.rs:6` | 网格顶点的算术质心。 |
+| `vec_norm` | Geometry — Core | `src/geometry/mesh_ops.rs:20` | 向量的欧几里得长度。 |
+| `merge_meshes` | Geometry — Core | `src/geometry/mesh_ops.rs:25` | 将多个网格合并为一个，并重新映射面索引。 |
+| `split_mesh_into_granules` | Geometry — Core | `src/geometry/mesh_ops.rs:48` | 将网格拆分为连通分量（在共享顶点上做 BFS）。 |
+| `translate_mesh` | Geometry — Core | `src/geometry/mesh_ops.rs:209` | 就地按增量向量平移所有网格顶点。 |
+| `move_mesh_to_target_center` | Geometry — Core | `src/geometry/mesh_ops.rs:214` | 移动网格使其质心与目标位置一致。 |
+| `wrap_mesh_centroid_to_box` | Geometry — Core | `src/geometry/mesh_ops.rs:225` | 在周期边界条件下，将网格质心环绕映射到包围盒内。 |
+| `scale_mesh` | Geometry — Core | `src/geometry/mesh_ops.rs:246` | 就地围绕原点均匀缩放网格顶点。 |
+| `mesh_surface_area` | Geometry — Core | `src/geometry/mesh_ops.rs:289` | 网格总表面积（各三角形面积之和）。 |
+| `rotate_mesh_around_center` | Geometry — Core | `src/geometry/mesh_ops.rs:308` | 使用罗德里格斯旋转公式绕网格质心旋转网格。 |
+| `box_mesh` | Geometry — Core | `src/geometry/mesh_ops.rs:329` | 从 `BoundingBox` 构建一个三角化的立方体网格。 |
+| `SpatialGrid::new` | Geometry — Core | `src/geometry/spatial.rs:47` | 用给定单元大小在一个包围盒上构造一个空的均匀网格。 |
+| `SpatialGrid::insert` | Geometry — Core | `src/geometry/spatial.rs:65` | 将某项的索引插入其包围盒重叠的每个单元格中。 |
+| `SpatialGrid::build` | Geometry — Core | `src/geometry/spatial.rs:105` | 从一批 (index, bbox) 对构造并填充一个网格。 |
+| `SpatialGrid::query_neighbors` | Geometry — Core | `src/geometry/spatial.rs:114` | 查找与查询包围盒重叠的候选邻居索引。 |
+| `SpatialGrid::query_neighbors_with_margin` | Geometry — Core | `src/geometry/spatial.rs:124` | 按余量扩展查询，保留首次遇见顺序，自适应使用线性/哈希去重。 |
+| `SpatialGrid::point_to_cell_clamped` | Geometry — Core | `src/geometry/spatial.rs:203` | 将一个点映射到网格单元坐标，并夹紧到网格边界内。 |
+| `SpatialGrid::point_to_cell` | Geometry — Core | `src/geometry/spatial.rs:213` | 将一个点映射到网格单元坐标，不做夹紧处理。 |
+| `estimate_cell_size` | Geometry — Core | `src/geometry/spatial.rs:222` | 根据一组包围盒启发式地选取 `SpatialGrid` 的单元大小。 |
 | `VoidVolumeMethod` | Geometry — Volume & Collision | `src/geometry/void_index.rs:18` | 给出孔隙域内体积的计算方法。 |
 | `VoidIndex` | Geometry — Volume & Collision | `src/geometry/void_index.rs:32` | 冻结孔隙，为放置运行的各类查询建立索引。 |
 | `VoidIndex::build` | Geometry — Volume & Collision | `src/geometry/void_index.rs:56` | 校验孔隙网格并建立索引；朝向不一致时拒绝。 |
@@ -195,13 +195,13 @@
 | `VoidIndex::sample_surface_point` | Geometry — Volume & Collision | `src/geometry/void_index.rs:288` | 按面积加权在孔面上取点，并给出外法向。 |
 | `VoidIndex::overlap_volume` | Geometry — Volume & Collision | `src/geometry/void_index.rs:330` | 以域锚定的体素计数给出颗粒落在孔隙内的体积。 |
 | `point_inside_mesh_local` | Geometry — Volume & Collision | `src/geometry/void_index.rs:375` | 对无层次结构的小网格做射线奇偶判定。 |
-| `DOMAIN_FACE_NAMES` | Geometry — Volume & Collision | `src/geometry/volume.rs:454` | 六个域面名称，按裁剪平面顺序排列。 |
-| `mesh_volume_centroid` | Geometry — Volume & Collision | `src/geometry/volume.rs:467` | 闭合网格的体积质心（不是顶点均值）。 |
-| `shell_signed_volumes` | Geometry — Volume & Collision | `src/geometry/volume.rs:498` | 逐壳有符号体积，用于暴露各壳的朝向。 |
-| `plane_signed_distance` | Geometry — Volume & Collision | `src/geometry/volume.rs:506` | 点到平面的有符号距离。 |
-| `clip_tagged_polygon` | Geometry — Volume & Collision | `src/geometry/volume.rs:520` | 带标记的 Sutherland-Hodgman 裁剪，标出裁剪新建的边。 |
-| `mesh_volume_in_bbox_exact` | Geometry — Volume & Collision | `src/geometry/volume.rs:574` | 逐平面封盖，给出精确的域内体积与被切的面。 |
-| `cut_face_names` | Geometry — Volume & Collision | `src/geometry/volume.rs:689` | 给出真正被裁剪切到的域面名称。 |
+| `DOMAIN_FACE_NAMES` | Geometry — Volume & Collision | `src/geometry/volume.rs:480` | 六个域面名称，按裁剪平面顺序排列。 |
+| `mesh_volume_centroid` | Geometry — Volume & Collision | `src/geometry/volume.rs:493` | 闭合网格的体积质心（不是顶点均值）。 |
+| `shell_signed_volumes` | Geometry — Volume & Collision | `src/geometry/volume.rs:524` | 逐壳有符号体积，用于暴露各壳的朝向。 |
+| `plane_signed_distance` | Geometry — Volume & Collision | `src/geometry/volume.rs:532` | 点到平面的有符号距离。 |
+| `clip_tagged_polygon` | Geometry — Volume & Collision | `src/geometry/volume.rs:546` | 带标记的 Sutherland-Hodgman 裁剪，标出裁剪新建的边。 |
+| `mesh_volume_in_bbox_exact` | Geometry — Volume & Collision | `src/geometry/volume.rs:600` | 逐平面封盖，给出精确的域内体积与被切的面。 |
+| `cut_face_names` | Geometry — Volume & Collision | `src/geometry/volume.rs:715` | 给出真正被裁剪切到的域面名称。 |
 | `mesh_volume` | Geometry — Volume & Collision | `src/geometry/volume.rs:6` | 通过散度定理计算封闭网格的绝对体积。 |
 | `mesh_signed_volume` | Geometry — Volume & Collision | `src/geometry/volume.rs:18` | 封闭网格的带符号体积（符号反映面片缠绕方向）。 |
 | `orient_components_to_positive_volume` | Geometry — Volume & Collision | `src/geometry/volume.rs:35` | 翻转任何带符号体积为负的连通分量的缠绕方向。 |
@@ -213,10 +213,10 @@
 | `plane_basis` | Geometry — Volume & Collision | `src/geometry/volume.rs:175` | 在垂直于某法向量的平面内构建一个正交归一的 (u, v) 基。 |
 | `triangulate_cap_from_segments` | Geometry — Volume & Collision | `src/geometry/volume.rs:211` | 从穿越平面的边线段三角化出一个平面封顶（环查找 + 扇形三角化）。 |
 | `clip_mesh_by_plane_with_cap` | Geometry — Volume & Collision | `src/geometry/volume.rs:352` | 用一个平面裁剪网格，并对产生的开口进行封顶。 |
-| `clip_mesh_by_bbox` | Geometry — Volume & Collision | `src/geometry/volume.rs:390` | 通过六次连续的平面裁剪，将网格裁剪到一个轴对齐包围盒内。 |
-| `particle_volume_in_bbox` | Geometry — Volume & Collision | `src/geometry/volume.rs:411` | 网格裁剪到一个包围盒后的体积。 |
-| `volume_fraction_in_bbox` | Geometry — Volume & Collision | `src/geometry/volume.rs:417` | 单个网格在一个包围盒内的体积分数。 |
-| `volume_fraction_of_meshes_in_bbox` | Geometry — Volume & Collision | `src/geometry/volume.rs:427` | 多个网格在一个包围盒内的总体积分数（并行计算）。 |
+| `clip_mesh_by_bbox` | Geometry — Volume & Collision | `src/geometry/volume.rs:403` | 通过六次连续的平面裁剪，将网格裁剪到一个轴对齐包围盒内。 |
+| `particle_volume_in_bbox` | Geometry — Volume & Collision | `src/geometry/volume.rs:424` | 网格裁剪到一个包围盒后的体积。 |
+| `volume_fraction_in_bbox` | Geometry — Volume & Collision | `src/geometry/volume.rs:437` | 单个网格在一个包围盒内的体积分数。 |
+| `volume_fraction_of_meshes_in_bbox` | Geometry — Volume & Collision | `src/geometry/volume.rs:450` | 多个网格在一个包围盒内的总体积分数（并行计算）。 |
 | `to_parry_trimesh` | Geometry — Volume & Collision | `src/geometry/collision.rs:29` | 将一个 `Mesh` 转换为 parry3d 的 `TriMesh`。 |
 | `trimesh_contains_point` | Geometry — Volume & Collision | `src/geometry/collision.rs:61` | 借助形状的层次包围体，以射线奇偶判定点是否位于实体内部。 |
 | `mesh_surfaces_intersect_prepared` | Geometry — Volume & Collision | `src/geometry/collision.rs:99` | 给定预先构建的包围盒/形状，精确判定两个网格表面是否相交。 |
@@ -229,25 +229,25 @@
 | `generate_periodic_ghosts` | Geometry — Volume & Collision | `src/geometry/collision.rs:425` | 为周期边界碰撞生成一个网格经平移的镜像副本。 |
 | `simulate_forging_ffd` | Geometry — Volume & Collision | `src/geometry/forging.rs:10` | 带侧向鼓凸的简单 Z 轴自由变形压缩。 |
 | `simulate_forging_ffd_with_tracking` | Geometry — Volume & Collision | `src/geometry/forging.rs:43` | 带孔隙致密化和感兴趣区域包围盒跟踪、轴向可配置的自由变形锻造。 |
-| `GpuContext` | GPU | `src/gpu/context.rs:3` | GPU 初始化成功后持有适配器名称与缓冲区大小能力信息。 |
-| `GpuContext::caps` | GPU | `src/gpu/context.rs:11` | 返回描述该 GPU 上下文的 `BackendCaps`。 |
-| `GpuInitError` | GPU | `src/gpu/context.rs:22` | 包装 GPU 初始化失败信息的错误类型。 |
+| `GpuContext` | GPU | `src/gpu/context.rs:42` | GPU 初始化成功后持有适配器名称与缓冲区大小能力信息。 |
+| `GpuContext::caps` | GPU | `src/gpu/context.rs:62` | 返回描述该 GPU 上下文的 `BackendCaps`。 |
+| `GpuInitError` | GPU | `src/gpu/context.rs:73` | 包装 GPU 初始化失败信息的错误类型。 |
 | `GpuInitError`（`Display` 实现） | GPU | `src/gpu/context.rs:22` | 格式化错误信息。 |
-| `try_init_gpu` | GPU | `src/gpu/context.rs:38` | 探测一个 wgpu 适配器/设备并返回一个 `GpuContext`；供 `compute::policy::select_backend` 使用。 |
-| `GpuS2Pipeline` | GPU | `src/gpu/s2.rs:10` | 用于蒙特卡洛 S2 两点相关函数的 GPU 流水线状态。 |
+| `try_init_gpu` | GPU | `src/gpu/context.rs:238` | 探测一个 wgpu 适配器/设备并返回一个 `GpuContext`；供 `compute::policy::select_backend` 使用。 |
+| `GpuS2Pipeline` | GPU | `src/gpu/s2.rs:25` | 用于蒙特卡洛 S2 两点相关函数的 GPU 流水线状态。 |
 | `build_triangle_buffer`（s2.rs） | GPU | `src/gpu/s2.rs:29` | 为 S2 蒙特卡洛流水线构建归一化的 `f32` 三角形位置缓冲区。 |
-| `pack_params` | GPU | `src/gpu/s2.rs:50` | 将蒙特卡洛 S2 着色器参数打包为与 WGSL `Params` 布局匹配的字节缓冲区。 |
-| `dispatch_plan` | GPU | `src/gpu/s2.rs:101` | Validate logical MC ids, partial buffers and two-dimensional dispatch. |
-| `check_buffer_size` | GPU | `src/gpu/s2.rs:115` | Check single-buffer and storage limits. |
-| `check_mesh_capacity` | GPU | `src/gpu/s2.rs:125` | Check triangle count and upload capacity. |
-| `scoped` | GPU | `src/gpu/runtime.rs:2` | Capture scoped GPU errors and balance all scopes. |
-| `read_u32` | GPU | `src/gpu/runtime.rs:29` | Check mapping completion before copying and unmapping u32 readback. |
-| `GpuS2Pipeline::new` | GPU | `src/gpu/s2.rs:141` | 初始化 wgpu 设备和蒙特卡洛 S2 计算流水线。 |
-| `GpuS2Pipeline::update_mesh` | GPU | `src/gpu/s2.rs:277` | 为新网格重新上传三角形数据，而无需重建流水线。 |
-| `GpuS2Pipeline::ensure_output_capacity` | GPU | `src/gpu/s2.rs:302` | 若调用次数超过当前容量，则扩容输出缓冲区。 |
-| `GpuS2Pipeline::calculate_s2_gpu` | GPU | `src/gpu/s2.rs:351` | 为所有半径分派蒙特卡洛 S2 内核并回读结果。 |
-| `GpuS2Pipeline::calculate_s2_gpu_seeded` | GPU | `src/gpu/s2.rs` | 带可选种子（折叠为内核 32 位种子）的 `calculate_s2_gpu`。 |
-| `OffsetEntry` | GPU | `src/gpu/s2_shell.rs:6` | 与 WGSL 布局相匹配的打包 `(radius_idx, dx, dy, dz)` 球壳偏移记录。 |
+| `pack_params` | GPU | `src/gpu/s2.rs:94` | 将蒙特卡洛 S2 着色器参数打包为与 WGSL `Params` 布局匹配的字节缓冲区。 |
+| `dispatch_plan` | GPU | `src/gpu/s2.rs:144` | Validate logical MC ids, partial buffers and two-dimensional dispatch. |
+| `check_buffer_size` | GPU | `src/gpu/s2.rs:168` | Check single-buffer and storage limits. |
+| `check_mesh_capacity` | GPU | `src/gpu/s2.rs:178` | Check triangle count and upload capacity. |
+| `scoped` | GPU | `src/gpu/runtime.rs:102` | Capture scoped GPU errors and balance all scopes. |
+| `read_u32` | GPU | `src/gpu/runtime.rs:137` | Check mapping completion before copying and unmapping u32 readback. |
+| `GpuS2Pipeline::new` | GPU | `src/gpu/s2.rs:236` | 初始化 wgpu 设备和蒙特卡洛 S2 计算流水线。 |
+| `GpuS2Pipeline::update_mesh` | GPU | `src/gpu/s2.rs:480` | 为新网格重新上传三角形数据，而无需重建流水线。 |
+| `GpuS2Pipeline::ensure_output_capacity` | GPU | `src/gpu/s2.rs:575` | 若调用次数超过当前容量，则扩容输出缓冲区。 |
+| `GpuS2Pipeline::calculate_s2_gpu` | GPU | `src/gpu/s2.rs:630` | 为所有半径分派蒙特卡洛 S2 内核并回读结果。 |
+| `GpuS2Pipeline::calculate_s2_gpu_seeded` | GPU | `src/gpu/s2.rs:640` | 带可选种子（折叠为内核 32 位种子）的 `calculate_s2_gpu`。 |
+| `OffsetEntry` | GPU | `src/gpu/s2_shell.rs:8` | 与 WGSL 布局相匹配的打包 `(radius_idx, dx, dy, dz)` 球壳偏移记录。 |
 | `point_inside` (s2_monte_carlo.wgsl) | GPU | `src/gpu/shaders/s2_monte_carlo.wgsl` | 认证奇偶性，返回 0/1/不确定（精确 bbox 排除、证明互异命中）。 |
 | `point_inside_overflow` (s2_monte_carlo.wgsl) | GPU | `src/gpu/shaders/s2_monte_carlo.wgsl` | 认证的超 64 命中恢复，证明每个间隔超过 CPU 去重带。 |
 | `point_inside` (voxelize.wgsl) | GPU | `src/gpu/shaders/voxelize.wgsl` | 认证奇偶性，返回 0/1/不确定（精确 bbox 排除、证明互异命中）。 |
@@ -257,83 +257,83 @@
 | `AdapterClass` / `classify_adapter` | GPU | `src/gpu/context.rs` | 区分软件适配器（CPU 设备类型或已知软件光栅化器名：llvmpipe、lavapipe、SwiftShader、softpipe、Microsoft Basic Render）与硬件适配器。 |
 | `GpuContext::adapter_class` / `GpuContext::describe` | GPU | `src/gpu/context.rs` | 探测到的适配器类别与一行 `name= backend= class=` 描述。 |
 | `GpuTransferStats` / `gpu_transfer_stats` | GPU | `src/gpu/runtime.rs` | 进程级上传字节/次数、回读字节/次数、阻塞等待回读的时间（执行加传输，不是内核时间）与设备初始化时间；`describe()` 即 `main` 在任何 GPU 运行后打印的 `[Timing] gpu ...` 行。 |
-| `CountedWrite::write_counted` | GPU | `src/gpu/runtime.rs` | 会计数的 `queue.write_buffer`；crate 内所有 GPU 上传都经过它。 |
+| `CountedWrite::write_counted` | GPU | `src/gpu/runtime.rs:72` | 会计数的 `queue.write_buffer`；crate 内所有 GPU 上传都经过它。 |
 | `GpuCertificationStats`（含 `recompute_ratio`、`describe`、`accumulate`） | GPU | `src/gpu/certify.rs` | 累计认证计数与 CPU 重算比例。 |
 | `CertReference`（含 `new`、`params_tail`、`classify`） | GPU | `src/gpu/certify.rs` | 原点平移的 f64 CPU 参考与精确 f32 提前排除界。 |
 | `f32_at_least` / `f32_at_most` | GPU | `src/gpu/certify.rs` | 定向 f64→f32 舍入。 |
 | `triangle_constants` / `TRI_CONST_FLOATS` | GPU | `src/gpu/certify.rs` | 主机预计算的、与查询无关的认证测试项，每个三角形 16 个 f32（`a, m, e1, es, e2, eps_det, h, det`），对应固定射线方向。 |
-| `GpuS2Pipeline::certification_stats` | GPU | `src/gpu/s2.rs` | MC 累计认证计数。 |
-| `GpuS2Pipeline::dispatch_batch` | GPU | `src/gpu/s2.rs` | dispatch 一个半径批次并读取不确定计数器。 |
-| `GpuS2Pipeline::resolve_uncertain` | GPU | `src/gpu/s2.rs` | 在精确 GPU 点上 CPU 重算不确定样本。 |
+| `GpuS2Pipeline::certification_stats` | GPU | `src/gpu/s2.rs:566` | MC 累计认证计数。 |
+| `GpuS2Pipeline::dispatch_batch` | GPU | `src/gpu/s2.rs:852` | dispatch 一个半径批次并读取不确定计数器。 |
+| `GpuS2Pipeline::resolve_uncertain` | GPU | `src/gpu/s2.rs:923` | 在精确 GPU 点上 CPU 重算不确定样本。 |
 | `uncertain_buffers` (s2.rs) | GPU | `src/gpu/s2.rs` | 分配 MC 不确定列表及 staging。 |
-| `GpuVoxelPipeline::certification_stats` | GPU | `src/gpu/voxel.rs` | 体素累计认证计数。 |
-| `GpuVoxelPipeline::dispatch_voxels` | GPU | `src/gpu/voxel.rs` | dispatch 体素化（及归约）并读取不确定计数器。 |
-| `GpuVoxelPipeline::new_with_shader` | GPU | `src/gpu/voxel.rs` | 由给定 WGSL 构造。 |
+| `GpuVoxelPipeline::certification_stats` | GPU | `src/gpu/voxel.rs:629` | 体素累计认证计数。 |
+| `GpuVoxelPipeline::dispatch_voxels` | GPU | `src/gpu/voxel.rs:521` | dispatch 体素化（及归约）并读取不确定计数器。 |
+| `GpuVoxelPipeline::new_with_shader` | GPU | `src/gpu/voxel.rs:117` | 由给定 WGSL 构造。 |
 | `voxel_center` / `voxel_uncertain_buffers` / `occupancy_usage` | GPU | `src/gpu/voxel.rs` | 精确 f32 单元中心、体素列表分配、可修补占据场用途。 |
-| `mc_uncertain_bytes` | Compute | `src/compute/mc_memory.rs` | MC 不确定列表字节数。 |
+| `mc_uncertain_bytes` | Compute | `src/compute/mc_memory.rs:13` | MC 不确定列表字节数。 |
 | `voxel_uncertain_entries` / `exact_cert_bytes` | Compute | `src/compute/exact_memory.rs` | 规划体素不确定列表容量及逻辑字节。 |
-| `OptimizeS2::gpu_certification_summary` | Pipeline | `src/pipeline/optimize_execution.rs` | 描述共享 GPU MC 认证计数。 |
-| `GpuShellS2Pipeline` | GPU | `src/gpu/s2_shell.rs:13` | 用于精确球壳配对 S2 计算的 GPU 流水线状态。 |
-| `build_offset_buffer` | GPU | `src/gpu/s2_shell.rs:30` | 将 `(radius_idx, [dx,dy,dz])` 元组转换为 `OffsetEntry` 记录。 |
-| `GpuShellS2Pipeline::new` | GPU | `src/gpu/s2_shell.rs:48` | 初始化 wgpu 设备和球壳 S2 计算流水线。 |
-| `GpuShellS2Pipeline::compute_s2_shell` | GPU | `src/gpu/s2_shell.rs:181` | 在一个占用网格上分派精确的球壳配对计数并回读 S2(r)。 |
-| `GpuVoxelPipeline` | GPU | `src/gpu/voxel.rs:5` | 用于网格体素化的 GPU 流水线状态。 |
+| `OptimizeS2::gpu_certification_summary` | Pipeline | `src/pipeline/optimize_execution.rs:236` | 描述共享 GPU MC 认证计数。 |
+| `GpuShellS2Pipeline` | GPU | `src/gpu/s2_shell.rs:22` | 用于精确球壳配对 S2 计算的 GPU 流水线状态。 |
+| `build_offset_buffer` | GPU | `src/gpu/s2_shell.rs:48` | 将 `(radius_idx, [dx,dy,dz])` 元组转换为 `OffsetEntry` 记录。 |
+| `GpuShellS2Pipeline::new` | GPU | `src/gpu/s2_shell.rs:74` | 初始化 wgpu 设备和球壳 S2 计算流水线。 |
+| `GpuShellS2Pipeline::compute_s2_shell` | GPU | `src/gpu/s2_shell.rs:382` | 在一个占用网格上分派精确的球壳配对计数并回读 S2(r)。 |
+| `GpuVoxelPipeline` | GPU | `src/gpu/voxel.rs:7` | 用于网格体素化的 GPU 流水线状态。 |
 | `build_triangle_buffer`（voxel.rs） | GPU | `src/gpu/voxel.rs:17` | 为体素化流水线构建归一化的 `f32` 三角形位置缓冲区（与 `s2.rs` 中的是独立副本）。 |
 | `pack_params`（voxel.rs） | GPU | `src/gpu/voxel.rs` | 序列化 80 字节 voxel 参数：射线从字节 32 开始，认证尾部从字节 48 开始。 |
-| `GpuVoxelPipeline::new` | GPU | `src/gpu/voxel.rs:57` | 初始化 wgpu 设备和体素化计算流水线。 |
-| `GpuVoxelPipeline::voxelize` | GPU | `src/gpu/voxel.rs:168` | 分派光线投射体素化并回读占用网格。 |
-| `GpuVolumeTransformPipeline` | GPU | `src/gpu/volume_transform.rs:5` | 用于体数据旋转裁剪的 GPU 流水线状态。 |
-| `GpuVolumeTransformPipeline::new` | GPU | `src/gpu/volume_transform.rs:23` | 初始化 wgpu 设备和体数据变换计算流水线。 |
-| `GpuVolumeTransformPipeline::rotate_and_crop` | GPU | `src/gpu/volume_transform.rs:123` | 分派旋转/裁剪/重采样内核并回读变换后的体数据。 |
+| `GpuVoxelPipeline::new` | GPU | `src/gpu/voxel.rs:112` | 初始化 wgpu 设备和体素化计算流水线。 |
+| `GpuVoxelPipeline::voxelize` | GPU | `src/gpu/voxel.rs:285` | 分派光线投射体素化并回读占用网格。 |
+| `GpuVolumeTransformPipeline` | GPU | `src/gpu/volume_transform.rs:20` | 用于体数据旋转裁剪的 GPU 流水线状态。 |
+| `GpuVolumeTransformPipeline::new` | GPU | `src/gpu/volume_transform.rs:40` | 初始化 wgpu 设备和体数据变换计算流水线。 |
+| `GpuVolumeTransformPipeline::rotate_and_crop` | GPU | `src/gpu/volume_transform.rs:170` | 分派旋转/裁剪/重采样内核并回读变换后的体数据。 |
 | `sha256_bytes` | I/O | `src/io/hash.rs:13` | 字节切片的 SHA-256，返回小写十六进制。 |
 | `sha256_file` | I/O | `src/io/hash.rs:25` | 流式计算文件的 SHA-256，返回十六进制摘要与字节数。 |
 | `hex_digest` | I/O | `src/io/hash.rs:42` | 将摘要渲染为小写十六进制。 |
-| `parse_ascii_vertex` | I/O | `src/io/stl.rs:9` | 将一行 ASCII STL 的 `vertex x y z` 解析为一个 `Vec3`。 |
-| `quantize_key` | I/O | `src/io/stl.rs:21` | 将一个顶点量化为固定精度的整数键，用于容差去重。 |
+| `parse_ascii_vertex` | I/O | `src/io/stl.rs:43` | 将一行 ASCII STL 的 `vertex x y z` 解析为一个 `Vec3`。 |
+| `quantize_key` | I/O | `src/io/stl.rs:55` | 将一个顶点量化为固定精度的整数键，用于容差去重。 |
 | `WeldMap` | I/O | `src/io/stl.rs:10` | 顶点焊接表类型（量化键到首个索引），使用非 SipHash 的快速哈希；从不迭代。 |
 | `WeldHasher` | I/O | `src/io/stl.rs:15` | 用于量化顶点键的乘法-异或哈希，带 64 位终结混合。 |
 | `dedup_vertex` | I/O | `src/io/stl.rs:65` | 通过量化键查找，对某个顶点与已有列表进行去重比对。 |
-| `parse_f32_le` | I/O | `src/io/stl.rs:93` | 解析小端序的 `f32` 字节并向上转换为 `f64`。 |
-| `parse_binary_stl` | I/O | `src/io/stl.rs:104` | 将二进制 STL 字节解析为一个顶点已去重的 `Mesh`。 |
-| `looks_ascii_stl` | I/O | `src/io/stl.rs:151` | 启发式地检测字节内容是否为 ASCII STL。 |
-| `load_stl` | I/O | `src/io/stl.rs:170` | 加载一个 STL 文件，自动检测 ASCII/二进制格式。 |
-| `load_folder_stls` | I/O | `src/io/stl.rs:206` | 加载一个文件夹中的所有 STL 文件。 |
-| `load_stl_or_merge_folder` | I/O | `src/io/stl.rs:233` | 加载单个 STL 文件，或将目录中所有 STL 合并为一个网格。 |
-| `save_stl` | I/O | `src/io/stl.rs:262` | 将一个网格保存为二进制 STL 文件。 |
-| `collect_sorted_files` | I/O | `src/io/volume.rs:50` | 收集文件夹中的常规文件，按名称排序，可选按扩展名过滤。 |
-| `resolve_slice_range` | I/O | `src/io/volume.rs:78` | 从起止索引解析出一个闭区间切片范围，将 `-1` 视为“从起始处”/“到结尾处”。 |
-| `decode_raw_slice` | I/O | `src/io/volume.rs:107` | 根据位深度、符号和字节序，将一个原始图像切片解码为 `i64` 值。 |
+| `parse_f32_le` | I/O | `src/io/stl.rs:141` | 解析小端序的 `f32` 字节并向上转换为 `f64`。 |
+| `parse_binary_stl` | I/O | `src/io/stl.rs:152` | 将二进制 STL 字节解析为一个顶点已去重的 `Mesh`。 |
+| `looks_ascii_stl` | I/O | `src/io/stl.rs:202` | 启发式地检测字节内容是否为 ASCII STL。 |
+| `load_stl` | I/O | `src/io/stl.rs:221` | 加载一个 STL 文件，自动检测 ASCII/二进制格式。 |
+| `load_folder_stls` | I/O | `src/io/stl.rs:255` | 加载一个文件夹中的所有 STL 文件。 |
+| `load_stl_or_merge_folder` | I/O | `src/io/stl.rs:282` | 加载单个 STL 文件，或将目录中所有 STL 合并为一个网格。 |
+| `save_stl` | I/O | `src/io/stl.rs:311` | 将一个网格保存为二进制 STL 文件。 |
+| `collect_sorted_files` | I/O | `src/io/volume.rs:72` | 收集文件夹中的常规文件，按名称排序，可选按扩展名过滤。 |
+| `resolve_slice_range` | I/O | `src/io/volume.rs:100` | 从起止索引解析出一个闭区间切片范围，将 `-1` 视为“从起始处”/“到结尾处”。 |
+| `decode_raw_slice` | I/O | `src/io/volume.rs:129` | 根据位深度、符号和字节序，将一个原始图像切片解码为 `i64` 值。 |
 | `load_raw_folder` | I/O | `src/io/volume.rs:227` | 按序加载 RAW 切片，检查尺寸、有界解码并一次预留最终输出容量。 |
-| `tiff_decoding_to_i64` | I/O | `src/io/volume.rs:266` | 将一个 TIFF `DecodingResult` 转换为 `Vec<i64>` 缓冲区及其数值类型。 |
-| `load_tiff_file_with_range` | I/O | `src/io/volume.rs:286` | 在一个闭区间页范围内，将多页 TIFF 文件加载为 `Volume3D`。 |
-| `load_tiff_file` | I/O | `src/io/volume.rs:354` | 将一个 TIFF 文件（所有页）加载为 `Volume3D`。 |
-| `is_tiff_path` | I/O | `src/io/volume.rs:359` | 检查一个路径是否具有 `.tif`/`.tiff` 扩展名。 |
-| `load_tiff_or_folder` | I/O | `src/io/volume.rs:369` | 从一个文件或文件夹（所有页/切片）加载 TIFF 体数据。 |
-| `load_tiff_or_folder_with_range` | I/O | `src/io/volume.rs:379` | 在一个闭区间切片范围内，从文件或文件夹加载 TIFF 体数据。 |
-| `write_tiff_slice` | I/O | `src/io/volume.rs:446` | 将体数据的一个 z 切片写入 TIFF 编码器的一页中。 |
-| `save_tiff_or_folder_with_ext` | I/O | `src/io/volume.rs:524` | 将 `Volume3D` 保存为一个多页 TIFF 文件或一个逐切片 TIFF 文件夹，并可配置扩展名。 |
-| `save_tiff_or_folder` | I/O | `src/io/volume.rs:586` | 使用默认的 `.tiff` 扩展名，将 `Volume3D` 保存为 TIFF 文件或切片序列文件夹。 |
+| `tiff_decoding_to_i64` | I/O | `src/io/volume.rs:299` | 将一个 TIFF `DecodingResult` 转换为 `Vec<i64>` 缓冲区及其数值类型。 |
+| `load_tiff_file_with_range` | I/O | `src/io/volume.rs:319` | 在一个闭区间页范围内，将多页 TIFF 文件加载为 `Volume3D`。 |
+| `load_tiff_file` | I/O | `src/io/volume.rs:387` | 将一个 TIFF 文件（所有页）加载为 `Volume3D`。 |
+| `is_tiff_path` | I/O | `src/io/volume.rs:392` | 检查一个路径是否具有 `.tif`/`.tiff` 扩展名。 |
+| `load_tiff_or_folder` | I/O | `src/io/volume.rs:402` | 从一个文件或文件夹（所有页/切片）加载 TIFF 体数据。 |
+| `load_tiff_or_folder_with_range` | I/O | `src/io/volume.rs:412` | 在一个闭区间切片范围内，从文件或文件夹加载 TIFF 体数据。 |
+| `write_tiff_slice` | I/O | `src/io/volume.rs:479` | 将体数据的一个 z 切片写入 TIFF 编码器的一页中。 |
+| `save_tiff_or_folder_with_ext` | I/O | `src/io/volume.rs:630` | 将 `Volume3D` 保存为一个多页 TIFF 文件或一个逐切片 TIFF 文件夹，并可配置扩展名。 |
+| `save_tiff_or_folder` | I/O | `src/io/volume.rs:695` | 使用默认的 `.tiff` 扩展名，将 `Volume3D` 保存为 TIFF 文件或切片序列文件夹。 |
 | `Pipeline::run`（trait） | Pipeline — Core | `src/pipeline/mod.rs:17` | 每个流水线结构体实现的 trait 方法，用于端到端执行。 |
 | `PlacementPipeline` | Pipeline — Core | `src/pipeline/placement.rs:39` | 持有已校验 `ResolvedPlacement` 的流水线结构体。 |
 | `seeded_rng` | Pipeline — Core | `src/pipeline/rng.rs:13` | 构建带种子运行所使用的 ChaCha12 随机流。 |
 | `u01` | Pipeline — Core | `src/pipeline/rng.rs:32` | 唯一的均匀分布原语：一次抽取，落在 `[0, 1)`。 |
 | `uniform_range` | Pipeline — Core | `src/pipeline/rng.rs:45` | 在 `[lo, hi)` 上抽取一个均匀值；退化区间返回 `lo`。 |
 | `uniform_index` | Pipeline — Core | `src/pipeline/rng.rs:62` | 从 `0..n` 中均匀抽取一个下标。 |
-| `create_progress_bar` | Pipeline — Core | `src/pipeline/mod.rs:37` | 用给定的模板和填充字符构建一个感知 tty 的 indicatif 进度条。 |
-| `run_in_cpu_pool` | Pipeline — Core | `src/pipeline/mod.rs` | 在按 `cpu_max`（缺省/-1：全部 worker）确定大小的专用 Rayon 池中运行；forge 与 scale 使用，使所有并行段共享一个预算。 |
+| `create_progress_bar` | Pipeline — Core | `src/pipeline/mod.rs:53` | 用给定的模板和填充字符构建一个感知 tty 的 indicatif 进度条。 |
+| `run_in_cpu_pool` | Pipeline — Core | `src/pipeline/mod.rs:37` | 在按 `cpu_max`（缺省/-1：全部 worker）确定大小的专用 Rayon 池中运行；forge 与 scale 使用，使所有并行段共享一个预算。 |
 | `RotationMode`（枚举） | Pipeline — Core | `src/pipeline/rotation.rs:6` | 表示不旋转、固定轴或随机轴。 |
-| `parse_rotation_mode` | Pipeline — Core | `src/pipeline/rotation.rs:18` | 将 `none/x/y/z/vector/any` 配置字符串解析为一个 `RotationMode`。 |
-| `sample_rotation_axis` | Pipeline — Core | `src/pipeline/rotation.rs:57` | 为给定的 `RotationMode` 抽取一个具体的旋转轴向量。 |
+| `parse_rotation_mode` | Pipeline — Core | `src/pipeline/rotation.rs:17` | 将 `none/x/y/z/vector/any` 配置字符串解析为一个 `RotationMode`。 |
+| `sample_rotation_axis` | Pipeline — Core | `src/pipeline/rotation.rs:56` | 为给定的 `RotationMode` 抽取一个具体的旋转轴向量。 |
 | `ScalePipeline`（结构体） | Pipeline — Core | `src/pipeline/scale.rs:8` | 持有缩放流水线所需的 `ScaleConfig`。 |
-| `ScalePipeline::run` | Pipeline — Core | `src/pipeline/scale.rs:19` | 加载一个 STL，应用单位换算/系数缩放，可选修正朝向，保存输出。 |
+| `ScalePipeline::run` | Pipeline — Core | `src/pipeline/scale.rs:116` | 加载一个 STL，应用单位换算/系数缩放，可选修正朝向，保存输出。 |
 | `ForgePipeline`（结构体） | Pipeline — Core | `src/pipeline/forge.rs:12` | 持有自由变形锻造流水线所需的 `ForgingConfig`。 |
 | `ForgePipeline::parse_roi_bbox` | Pipeline — Core | `src/pipeline/forge.rs:18` | 从配置中解析一个可选的 6 元素感兴趣区域包围盒。 |
 | `ForgePipeline::parse_compression_axis` | Pipeline — Core | `src/pipeline/forge.rs:37` | 将压缩轴字符串（`x`/`y`/`z`）解析为一个索引和标签。 |
-| `ForgePipeline::run` | Pipeline — Core | `src/pipeline/forge.rs:58` | 运行基于自由变形的压缩/锻造，跟踪感兴趣区域，写出锻造后的 STL 和一份文本报告。 |
+| `ForgePipeline::run` | Pipeline — Core | `src/pipeline/forge.rs:259` | 运行基于自由变形的压缩/锻造，跟踪感兴趣区域，写出锻造后的 STL 和一份文本报告。 |
 | `MeasurePipeline`（结构体） | Pipeline — Core | `src/pipeline/measure.rs:12` | 持有 S2/体积分数测量流水线所需的 `MeasurementConfig`。 |
 | `MeasurePipeline::parse_optional_bbox` | Pipeline — Core | `src/pipeline/measure.rs:18` | 从配置中解析一个可选的包围盒（3 元素尺寸或 6 元素 min/max）。 |
 | `MeasurePipeline::l2_error` | Pipeline — Core | `src/pipeline/measure.rs:27` | 计算两个 S2 值向量在其公共前缀长度上的 L2 距离。 |
-| `MeasurePipeline::run` | Pipeline — Core | `src/pipeline/measure.rs:53` | 加载一个 STL，计算体积分数和 S2 相关函数（精确法/蒙特卡洛法/both，CPU 或 GPU），写出一份报告。 |
+| `MeasurePipeline::run` | Pipeline — Core | `src/pipeline/measure.rs:49` | 加载一个 STL，计算体积分数和 S2 相关函数（精确法/蒙特卡洛法/both，CPU 或 GPU），写出一份报告。 |
 | `CropPipeline`（结构体） | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:14` | 持有裁剪流水线所需的 `CropConfig`。 |
 | `InterpolationMode`（枚举） | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:19` | 旋转+裁剪过程中使用的最近邻 vs. 三线性重采样模式。 |
 | `parse_byte_order` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:34` | 将 `little`/`big`（或 `le`/`be`）解析为一个 `ByteOrder`。 |
@@ -349,112 +349,112 @@
 | `infer_trim_pixels` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:242` | 根据边界伪影强度启发式地推断 0/1/2 像素的边缘裁剪量。 |
 | `resolve_trim_pixels` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:260` | 从配置中解析出有效的边缘裁剪像素数，支持 `-1` 表示自动。 |
 | `trim_volume_border` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:287` | 从体数据的 XY 面裁去固定数量的边界体素。 |
-| `detect_background_mode` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:317` | 将体数据边界上的众数体素值检测为背景值。 |
-| `estimate_pca_bbox` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:351` | 计算 PCA 旋转、质心以及旋转坐标系下的前景包围盒。 |
-| `MomentState` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 运行中的计数、均值与中心化二阶矩。 |
-| `MomentState::from_row` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 单个前景行段的精确矩。 |
-| `MomentState::merge` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 矩状态的 Chan 并行合并。 |
-| `pca_frame` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 排序、定号、右手系且近重根特征空间取规范基的 PCA 坐标系。 |
-| `projected_bounds` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 固定分块求旋转坐标系前景边界。 |
-| `foreground_row_blocks` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 按连续行段的固定分块扫描。 |
-| `estimate_pca_bbox_three_pass` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 仅测试使用的原三遍 PCA oracle。 |
-| `rotate_and_crop` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:459` | CPU 上基于 rayon 并行的体数据旋转裁剪，输出为轴对齐结果。 |
-| `rotate_and_crop_gpu` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 按预算规划、按输出分块的 GPU 旋转裁剪（`gpu` 特性）。 |
-| `CropSourceBlock` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 单个输出块可读取的已裁剪源子块。 |
-| `CropTilePlan` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 块形状、块数、保留最大值与 GPU 峰值字节。 |
-| `CropTilePlanError` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 规划拒绝原因及所需字节的可选下界。 |
-| `crop_tile_source_block` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 块角点的源 AABB，加插值 halo 与 f32 余量。 |
-| `crop_gpu_peak_bytes` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 保留块/输出、上传、staging、参数和守卫的逻辑 GPU 峰值。 |
-| `for_each_crop_tile` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 按 z、y、x 顺序遍历输出块。 |
-| `evaluate_crop_tiling` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 检查某块形状是否满足预算与设备缓冲上限。 |
-| `plan_crop_gpu_tiles` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 满足预算与上限的最大 z 板/行/x 段分块。 |
-| `TransformTile` | GPU | `src/gpu/volume_transform.rs` | 输出块及其上传源子块的描述。 |
-| `GpuVolumeTransformPipeline::device_limits` | GPU | `src/gpu/volume_transform.rs` | 限制每块缓冲的设备上限。 |
-| `GpuVolumeTransformPipeline::reserve_capacity` | GPU | `src/gpu/volume_transform.rs` | 把源和输出/staging 缓冲预留到计划最大值。 |
-| `GpuVolumeTransformPipeline::transform_tile` | GPU | `src/gpu/volume_transform.rs` | 用 halo 源子块按单次 dispatch 算术变换一个输出块，并带 halo 守卫。 |
-| `GpuVolumeTransformPipeline::resize_source_buffer` | GPU | `src/gpu/volume_transform.rs` | 替换保留的源子块缓冲。 |
-| `CropPipeline::run` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:598` | 编排加载 → 背景检测 → PCA 包围盒 → 旋转+裁剪（GPU 或 CPU） → 边缘裁剪 → 保存 TIFF 的整个流程。 |
+| `detect_background_mode` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:338` | 将体数据边界上的众数体素值检测为背景值。 |
+| `estimate_pca_bbox` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:385` | 计算 PCA 旋转、质心以及旋转坐标系下的前景包围盒。 |
+| `MomentState` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:423` | 运行中的计数、均值与中心化二阶矩。 |
+| `MomentState::from_row` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:438` | 单个前景行段的精确矩。 |
+| `MomentState::merge` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:448` | 矩状态的 Chan 并行合并。 |
+| `pca_frame` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:477` | 排序、定号、右手系且近重根特征空间取规范基的 PCA 坐标系。 |
+| `projected_bounds` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:549` | 固定分块求旋转坐标系前景边界。 |
+| `foreground_row_blocks` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:590` | 按连续行段的固定分块扫描。 |
+| `estimate_pca_bbox_three_pass` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:564` | 仅测试使用的原三遍 PCA oracle。 |
+| `rotate_and_crop` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:737` | CPU 上基于 rayon 并行的体数据旋转裁剪，输出为轴对齐结果。 |
+| `rotate_and_crop_gpu` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:1131` | 按预算规划、按输出分块的 GPU 旋转裁剪（`gpu` 特性）。 |
+| `CropSourceBlock` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:818` | 单个输出块可读取的已裁剪源子块。 |
+| `CropTilePlan` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:847` | 块形状、块数、保留最大值与 GPU 峰值字节。 |
+| `CropTilePlanError` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:859` | 规划拒绝原因及所需字节的可选下界。 |
+| `crop_tile_source_block` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:871` | 块角点的源 AABB，加插值 halo 与 f32 余量。 |
+| `crop_gpu_peak_bytes` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:920` | 保留块/输出、上传、staging、参数和守卫的逻辑 GPU 峰值。 |
+| `for_each_crop_tile` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:930` | 按 z、y、x 顺序遍历输出块。 |
+| `evaluate_crop_tiling` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:957` | 检查某块形状是否满足预算与设备缓冲上限。 |
+| `plan_crop_gpu_tiles` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:1023` | 满足预算与上限的最大 z 板/行/x 段分块。 |
+| `TransformTile` | GPU | `src/gpu/volume_transform.rs:11` | 输出块及其上传源子块的描述。 |
+| `GpuVolumeTransformPipeline::device_limits` | GPU | `src/gpu/volume_transform.rs:197` | 限制每块缓冲的设备上限。 |
+| `GpuVolumeTransformPipeline::reserve_capacity` | GPU | `src/gpu/volume_transform.rs:207` | 把源和输出/staging 缓冲预留到计划最大值。 |
+| `GpuVolumeTransformPipeline::transform_tile` | GPU | `src/gpu/volume_transform.rs:229` | 用 halo 源子块按单次 dispatch 算术变换一个输出块，并带 halo 守卫。 |
+| `GpuVolumeTransformPipeline::resize_source_buffer` | GPU | `src/gpu/volume_transform.rs:388` | 替换保留的源子块缓冲。 |
+| `CropPipeline::run` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:1339` | 编排加载 → 背景检测 → PCA 包围盒 → 旋转+裁剪（GPU 或 CPU） → 边缘裁剪 → 保存 TIFF 的整个流程。 |
 | `SplitFilterPipeline`（结构体） | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:13` | 持有拆分过滤流水线所需的 `SplitFilterConfig`。 |
 | `VolumeStats`（结构体） | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:18` | 保留颗粒体积的最小/最大/均值/中位数摘要。 |
-| `volume_stats_for_kept` | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:26` | 对 `keep` 标志为 true 的颗粒计算 `VolumeStats`。 |
-| `count_kept` | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:54` | 统计一个 `keep` 布尔切片中 `true` 项的数量。 |
-| `report_step` | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:59` | 为某个过滤步骤追加一行前/后/移除数量的摘要。 |
-| `append_volume_histogram` | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:71` | 追加一份体积值的单一文本直方图。 |
-| `append_volume_histogram_comparison` | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:119` | 追加一份体积值前/后并排对比的文本直方图。 |
-| `normal_cdf` | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:202` | 标准正态分布 CDF，通过 `erf_approx` 计算。 |
-| `erf_approx` | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:208` | Abramowitz & Stegun 7.1.26 误差函数近似公式。 |
-| `apply_lognormal_rebalance` | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:225` | 相对于拟合的对数正态分布，从过度代表的对数体积分箱中剔除多余颗粒。 |
-| `SplitFilterPipeline::run` | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:300` | 编排拆分 → 长宽比/锐度/体积过滤 → 保存 STL → 生成报告的整个流程。 |
-| `OptimizePipeline` | Pipeline — Optimize | `src/pipeline/optimize.rs:27` | 管线配置与有界执行入口。 |
-| `ParticlePrepared` | Pipeline — Optimize | `src/pipeline/optimize.rs:32` | 缓存网格、包围盒与碰撞形状。 |
-| `IslandResult` | Pipeline — Optimize | `src/pipeline/optimize.rs:39` | 最佳几何/loss/S2 快照与候选阶段计时。 |
+| `volume_stats_for_kept` | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:31` | 对 `keep` 标志为 true 的颗粒计算 `VolumeStats`。 |
+| `count_kept` | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:59` | 统计一个 `keep` 布尔切片中 `true` 项的数量。 |
+| `report_step` | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:64` | 为某个过滤步骤追加一行前/后/移除数量的摘要。 |
+| `append_volume_histogram` | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:76` | 追加一份体积值的单一文本直方图。 |
+| `append_volume_histogram_comparison` | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:124` | 追加一份体积值前/后并排对比的文本直方图。 |
+| `normal_cdf` | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:207` | 标准正态分布 CDF，通过 `erf_approx` 计算。 |
+| `erf_approx` | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:213` | Abramowitz & Stegun 7.1.26 误差函数近似公式。 |
+| `apply_lognormal_rebalance` | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:230` | 相对于拟合的对数正态分布，从过度代表的对数体积分箱中剔除多余颗粒。 |
+| `SplitFilterPipeline::run` | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:341` | 编排拆分 → 长宽比/锐度/体积过滤 → 保存 STL → 生成报告的整个流程。 |
+| `OptimizePipeline` | Pipeline — Optimize | `src/pipeline/optimize.rs:29` | 管线配置与有界执行入口。 |
+| `ParticlePrepared` | Pipeline — Optimize | `src/pipeline/optimize.rs:34` | 缓存网格、包围盒与碰撞形状。 |
+| `IslandResult` | Pipeline — Optimize | `src/pipeline/optimize.rs:41` | 最佳几何/loss/S2 快照与候选阶段计时。 |
 | `GlobalBest` | Pipeline — Optimize | `src/pipeline/optimize.rs:47` | 由互斥锁保护的完整几何/loss/S2 迁移快照。 |
-| `prepare_particle` | Pipeline — Optimize | `src/pipeline/optimize.rs:54` | 为单个颗粒准备碰撞查询结构。 |
-| `format_s2_series` | Pipeline — Optimize | `src/pipeline/optimize.rs:61` | 将曲线格式化为六位小数。 |
-| `push_history_s2` | Pipeline — Optimize | `src/pipeline/optimize.rs:86` | 向历史记录追加带标签的曲线。 |
-| `prune_progress_message` | Pipeline — Optimize | `src/pipeline/optimize.rs:91` | 格式化剪枝 loss、VF 与颗粒数。 |
-| `selective_prune_to_target_vf` | Pipeline — Optimize | `src/pipeline/optimize.rs:103` | 在当前线程池内使用统一 S2 定义进行剪枝。 |
-| `run_sa_island` | Pipeline — Optimize | `src/pipeline/optimize.rs:296` | 用固定求值器和完整迁移快照运行单岛 SA。 |
+| `prepare_particle` | Pipeline — Optimize | `src/pipeline/optimize.rs:70` | 为单个颗粒准备碰撞查询结构。 |
+| `format_s2_series` | Pipeline — Optimize | `src/pipeline/optimize.rs:139` | 将曲线格式化为六位小数。 |
+| `push_history_s2` | Pipeline — Optimize | `src/pipeline/optimize.rs:148` | 向历史记录追加带标签的曲线。 |
+| `prune_progress_message` | Pipeline — Optimize | `src/pipeline/optimize.rs:153` | 格式化剪枝 loss、VF 与颗粒数。 |
+| `selective_prune_to_target_vf` | Pipeline — Optimize | `src/pipeline/optimize.rs:165` | 在当前线程池内使用统一 S2 定义进行剪枝。 |
+| `run_sa_island` | Pipeline — Optimize | `src/pipeline/optimize.rs:359` | 用固定求值器和完整迁移快照运行单岛 SA。 |
 | `stage_rng` / `fixed_eval_seed` | Pipeline — Optimize | `src/pipeline/optimize.rs` | 由（`optimization.seed`，阶段）固定、或由 `thread_rng` 播种的逐阶段 ChaCha12 随机流；target/input/final 的一次性 S2 种子。 |
-| `OptimizePipeline::run` | Pipeline — Optimize | `src/pipeline/optimize.rs:741` | 将全部 optimize 阶段安装到一个按配置创建的 Rayon 池。 |
-| `OptimizePipeline::run_in_pool` | Pipeline — Optimize | `src/pipeline/optimize.rs:768` | 解析执行策略、加载准备、剪枝、分批运行岛并复核保存最佳结果。 |
-| `S2Method` | Pipeline — Optimize | `src/pipeline/optimize_execution.rs:12` | 内部 voxel_exact、voxel_mc 与 mesh_mc 三种定义。 |
-| `S2Method::resolve` | Pipeline — Optimize | `src/pipeline/optimize_execution.rs:20` | 保留现有 exact/非 exact 与 pitch 路由语义。 |
-| `S2Method::name` | Pipeline — Optimize | `src/pipeline/optimize_execution.rs:31` | 返回诊断使用的实际方法名。 |
-| `resolve_mode` | Pipeline — Optimize | `src/pipeline/optimize_execution.rs:41` | 环境变量覆盖 YAML，拒绝非法值。 |
-| `select_s2_backend` | Pipeline — Optimize | `src/pipeline/optimize_execution.rs:57` | GPU 探测前检查方法、CPU/auto 与容量条件，并执行回退策略。 |
-| `OptimizeS2` | Pipeline — Optimize | `src/pipeline/optimize_execution.rs:130` | 每次运行固定的方法、pitch 与可选共享 GPU 求值器。 |
-| `OptimizeS2::new` | Pipeline — Optimize | `src/pipeline/optimize_execution.rs:144` | 一次解析执行策略，最多初始化一个持久 GPU MC 实例。 |
-| `OptimizeS2::evaluate` | Pipeline — Optimize | `src/pipeline/optimize_execution.rs:220` | 一致地计算各阶段 S2；串行使用 GPU 缓冲，VF 计算前释放锁。 |
-| `run_island_batches` | Pipeline — Optimize | `src/pipeline/optimize_execution.rs:275` | 按当前 Rayon worker 数限制分批执行，保留岛顺序。 |
-| `PHASE_MATRIX` | Pipeline — Packing | `src/pipeline/placement_labels.rs:13` | 标签场中相编码 0。 |
-| `VoxelLabelsHeader` | Pipeline — Packing | `src/pipeline/placement_labels.rs:22` | 标签体数据的说明：间距、原点、排布与相表。 |
-| `PhaseLabel` | Pipeline — Packing | `src/pipeline/placement_labels.rs:39` | 一个相编码及其名称。 |
+| `OptimizePipeline::run` | Pipeline — Optimize | `src/pipeline/optimize.rs:842` | 将全部 optimize 阶段安装到一个按配置创建的 Rayon 池。 |
+| `OptimizePipeline::run_in_pool` | Pipeline — Optimize | `src/pipeline/optimize.rs:872` | 解析执行策略、加载准备、剪枝、分批运行岛并复核保存最佳结果。 |
+| `S2Method` | Pipeline — Optimize | `src/pipeline/optimize_execution.rs:13` | 内部 voxel_exact、voxel_mc 与 mesh_mc 三种定义。 |
+| `S2Method::resolve` | Pipeline — Optimize | `src/pipeline/optimize_execution.rs:21` | 保留现有 exact/非 exact 与 pitch 路由语义。 |
+| `S2Method::name` | Pipeline — Optimize | `src/pipeline/optimize_execution.rs:32` | 返回诊断使用的实际方法名。 |
+| `resolve_mode` | Pipeline — Optimize | `src/pipeline/optimize_execution.rs:42` | 环境变量覆盖 YAML，拒绝非法值。 |
+| `select_s2_backend` | Pipeline — Optimize | `src/pipeline/optimize_execution.rs:58` | GPU 探测前检查方法、CPU/auto 与容量条件，并执行回退策略。 |
+| `OptimizeS2` | Pipeline — Optimize | `src/pipeline/optimize_execution.rs:142` | 每次运行固定的方法、pitch 与可选共享 GPU 求值器。 |
+| `OptimizeS2::new` | Pipeline — Optimize | `src/pipeline/optimize_execution.rs:158` | 一次解析执行策略，最多初始化一个持久 GPU MC 实例。 |
+| `OptimizeS2::evaluate` | Pipeline — Optimize | `src/pipeline/optimize_execution.rs:248` | 一致地计算各阶段 S2；串行使用 GPU 缓冲，VF 计算前释放锁。 |
+| `run_island_batches` | Pipeline — Optimize | `src/pipeline/optimize_execution.rs:346` | 按当前 Rayon worker 数限制分批执行，保留岛顺序。 |
+| `PHASE_MATRIX` | Pipeline — Packing | `src/pipeline/placement_labels.rs:15` | 标签场中相编码 0。 |
+| `VoxelLabelsHeader` | Pipeline — Packing | `src/pipeline/placement_labels.rs:24` | 标签体数据的说明：间距、原点、排布与相表。 |
+| `PhaseLabel` | Pipeline — Packing | `src/pipeline/placement_labels.rs:41` | 一个相编码及其名称。 |
 | `write_voxel_labels` | Pipeline — Packing | `src/pipeline/placement_labels.rs:60` | 写出三相标签场与逐体素颗粒标识场。 |
-| `particle_at` | Pipeline — Packing | `src/pipeline/placement_labels.rs:233` | 查找包含某点的已放置颗粒。 |
-| `point_in_particle` | Pipeline — Packing | `src/pipeline/placement_labels.rs:245` | 对单个颗粒网格做射线奇偶包含判定。 |
+| `particle_at` | Pipeline — Packing | `src/pipeline/placement_labels.rs:306` | 查找包含某点的已放置颗粒。 |
+| `point_in_particle` | Pipeline — Packing | `src/pipeline/placement_labels.rs:318` | 对单个颗粒网格做射线奇偶包含判定。 |
 | `VoidReport` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:278` | 运行如何处理冻结孔隙，以及如何度量它。 |
-| `build_void_report` | Pipeline — Packing | `src/pipeline/placement.rs:1309` | 为报告描述冻结孔隙，含其体积计算方法。 |
+| `build_void_report` | Pipeline — Packing | `src/pipeline/placement.rs:1327` | 为报告描述冻结孔隙，含其体积计算方法。 |
 | `PlacementPipeline` | Pipeline — Packing | `src/pipeline/placement.rs:39` | 持有已校验 `ResolvedPlacement` 的流水线结构体。 |
 | `PlacementOutcome` | Pipeline — Packing | `src/pipeline/placement.rs:62` | 一次完整运行的产出，供进程内调用方使用。 |
 | `run_placement` | Pipeline — Packing | `src/pipeline/placement.rs:77` | 在按配置创建的专用 Rayon 线程池中运行引擎并写出全部输出。 |
 | `with_placement_pool` | Pipeline — Packing | `src/pipeline/placement.rs:82` | 为一次操作创建并安装专用 Rayon 线程池，传播创建及执行错误。 |
 | `run_placement_in_pool` | Pipeline — Packing | `src/pipeline/placement.rs:91` | 在当前线程池内执行所有 placement 阶段，并记录实际 worker 数。 |
-| `resolve_threads` | Pipeline — Packing | `src/pipeline/placement.rs:276` | 把线程设置换算为至少为 1 的工作线程数。 |
-| `EngineState` | Pipeline — Packing | `src/pipeline/placement.rs:288` | 放置循环累积的全部状态。 |
-| `place_all` | Pipeline — Packing | `src/pipeline/placement.rs:370` | 按顺序尝试每个已规划尺寸，接受放得下的。 |
-| `try_place_one` | Pipeline — Packing | `src/pipeline/placement.rs:608` | 在单颗粒尝试预算内尝试放置一个尺寸。 |
-| `Proposal` | Pipeline — Packing | `src/pipeline/placement.rs:415` | 一次尝试的随机变量及其后的流位置。 |
-| `Evaluation` | Pipeline — Packing | `src/pipeline/placement.rs:434` | 候选的检查结果：拒绝原因，或被接受的候选及其检查结果。 |
-| `draw_proposal` | Pipeline — Packing | `src/pipeline/placement.rs:447` | 按固定消费顺序抽取一次尝试的随机变量，并记录流位置。 |
-| `evaluate_proposal` | Pipeline — Packing | `src/pipeline/placement.rs:531` | 对未改变的已放置集合运行一个候选的全部检查；只读。 |
+| `resolve_threads` | Pipeline — Packing | `src/pipeline/placement.rs:282` | 把线程设置换算为至少为 1 的工作线程数。 |
+| `EngineState` | Pipeline — Packing | `src/pipeline/placement.rs:294` | 放置循环累积的全部状态。 |
+| `place_all` | Pipeline — Packing | `src/pipeline/placement.rs:382` | 按顺序尝试每个已规划尺寸，接受放得下的。 |
+| `try_place_one` | Pipeline — Packing | `src/pipeline/placement.rs:625` | 在单颗粒尝试预算内尝试放置一个尺寸。 |
+| `Proposal` | Pipeline — Packing | `src/pipeline/placement.rs:427` | 一次尝试的随机变量及其后的流位置。 |
+| `Evaluation` | Pipeline — Packing | `src/pipeline/placement.rs:446` | 候选的检查结果：拒绝原因，或被接受的候选及其检查结果。 |
+| `draw_proposal` | Pipeline — Packing | `src/pipeline/placement.rs:459` | 按固定消费顺序抽取一次尝试的随机变量，并记录流位置。 |
+| `evaluate_proposal` | Pipeline — Packing | `src/pipeline/placement.rs:543` | 对未改变的已放置集合运行一个候选的全部检查；只读。 |
 | `SPECULATIVE_BATCH_PER_WORKER` / `SERIAL_ATTEMPTS_BEFORE_BATCHING` | Pipeline — Packing | `src/pipeline/placement.rs:407` | 投机批次上限（每 worker 8 个）与开始批处理前的串行尝试数（4），均为实测确定。 |
-| `accept` | Pipeline — Packing | `src/pipeline/placement.rs:697` | 把已接受的候选提交进几何与记录。 |
-| `run_top_up` | Pipeline — Packing | `src/pipeline/placement.rs:758` | 仅因裁剪而未达标时补抽新批次。 |
-| `decide_stop` | Pipeline — Packing | `src/pipeline/placement.rs:825` | 判定运行以四种停止原因中的哪一种结束。 |
-| `write_outputs` | Pipeline — Packing | `src/pipeline/placement.rs:941` | 写出几何、逐颗粒记录与尺寸 CSV。 |
-| `entity_id` | Pipeline — Packing | `src/pipeline/placement.rs:1086` | 已放置颗粒的稳定标识。 |
-| `particle_record` | Pipeline — Packing | `src/pipeline/placement.rs:1091` | 把一个已放置颗粒转为其记录条目。 |
-| `size_class_rows` | Pipeline — Packing | `src/pipeline/placement.rs:1139` | 构造逐分组的目标与实际对照行。 |
-| `blank_report` | Pipeline — Packing | `src/pipeline/placement.rs:1165` | 放置开始之前的报告初始形态。 |
-| `describe_input` | Pipeline — Packing | `src/pipeline/placement.rs:1344` | 为报告描述输入文件及其摘要。 |
-| `finish_report` | Pipeline — Packing | `src/pipeline/placement.rs:1363` | 填入运行结束后已知的全部内容。 |
+| `accept` | Pipeline — Packing | `src/pipeline/placement.rs:715` | 把已接受的候选提交进几何与记录。 |
+| `run_top_up` | Pipeline — Packing | `src/pipeline/placement.rs:776` | 仅因裁剪而未达标时补抽新批次。 |
+| `decide_stop` | Pipeline — Packing | `src/pipeline/placement.rs:843` | 判定运行以四种停止原因中的哪一种结束。 |
+| `write_outputs` | Pipeline — Packing | `src/pipeline/placement.rs:959` | 写出几何、逐颗粒记录与尺寸 CSV。 |
+| `entity_id` | Pipeline — Packing | `src/pipeline/placement.rs:1104` | 已放置颗粒的稳定标识。 |
+| `particle_record` | Pipeline — Packing | `src/pipeline/placement.rs:1109` | 把一个已放置颗粒转为其记录条目。 |
+| `size_class_rows` | Pipeline — Packing | `src/pipeline/placement.rs:1157` | 构造逐分组的目标与实际对照行。 |
+| `blank_report` | Pipeline — Packing | `src/pipeline/placement.rs:1183` | 放置开始之前的报告初始形态。 |
+| `describe_input` | Pipeline — Packing | `src/pipeline/placement.rs:1362` | 为报告描述输入文件及其摘要。 |
+| `finish_report` | Pipeline — Packing | `src/pipeline/placement.rs:1381` | 填入运行结束后已知的全部内容。 |
 | `summary` (placement.rs) | Pipeline — Packing | `src/pipeline/placement.rs:1427` | 构造供人阅读的 stdout 摘要。 |
-| `read_record` | Pipeline — Packing | `src/pipeline/placement.rs:1488` | 读回已写出的逐颗粒记录。 |
-| `read_report` | Pipeline — Packing | `src/pipeline/placement.rs:1496` | 读回已写出的运行报告。 |
-| `RejectReason` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:17` | 候选放置未被接受的原因；即报告中的键。 |
-| `RejectReason::as_str` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:44` | 拒绝原因在报告中的稳定键名。 |
-| `PlacedParticle` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:76` | 通过全部检查的颗粒，附带缓存的形状。 |
-| `PlacedParticle::volume_in_domain_solid` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:106` | 计入固相的颗粒体积。 |
-| `FeasibilityContext` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:112` | 可行性检查所读取的全部内容。 |
-| `Candidate` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:132` | 候选放置，附带已预先算好的廉价量。 |
-| `Accepted` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:146` | 通过检查过程中顺带算出的结果。 |
-| `check_placement` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:171` | 按序运行全部可行性规则，返回拦下它的那一条。 |
-| `PAIR_PARALLEL_MIN` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:15` | 需要精确距离的颗粒对达到该数量时，placement 并行计算这些距离；经端到端测量默认为 usize::MAX（串行）。 |
-| `pair_needs_exact_test` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs` | 中心球与包围盒测试，决定邻居是否需要精确颗粒对测试。 |
-| `first_pair_rejection` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs` | 串行相交/嵌套扫描，再对首个失败之前的颗粒对有序并行计算距离；返回值与串行完全一致。 |
-| `solid_pair_rejection` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs` | 单个候选-邻居对的相交检查，其后是嵌套检查。 |
-| `retained_depth` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:382` | 跨界颗粒仍伸入域内的深度。 |
+| `read_record` | Pipeline — Packing | `src/pipeline/placement.rs:1506` | 读回已写出的逐颗粒记录。 |
+| `read_report` | Pipeline — Packing | `src/pipeline/placement.rs:1514` | 读回已写出的运行报告。 |
+| `RejectReason` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:28` | 候选放置未被接受的原因；即报告中的键。 |
+| `RejectReason::as_str` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:55` | 拒绝原因在报告中的稳定键名。 |
+| `PlacedParticle` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:87` | 通过全部检查的颗粒，附带缓存的形状。 |
+| `PlacedParticle::volume_in_domain_solid` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:117` | 计入固相的颗粒体积。 |
+| `FeasibilityContext` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:123` | 可行性检查所读取的全部内容。 |
+| `Candidate` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:147` | 候选放置，附带已预先算好的廉价量。 |
+| `Accepted` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:161` | 通过检查过程中顺带算出的结果。 |
+| `check_placement` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:192` | 按序运行全部可行性规则，返回拦下它的那一条。 |
+| `PAIR_PARALLEL_MIN` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:20` | 需要精确距离的颗粒对达到该数量时，placement 并行计算这些距离；经端到端测量默认为 usize::MAX（串行）。 |
+| `pair_needs_exact_test` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:368` | 中心球与包围盒测试，决定邻居是否需要精确颗粒对测试。 |
+| `first_pair_rejection` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:396` | 串行相交/嵌套扫描，再对首个失败之前的颗粒对有序并行计算距离；返回值与串行完全一致。 |
+| `solid_pair_rejection` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:435` | 单个候选-邻居对的相交检查，其后是嵌套检查。 |
+| `retained_depth` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:470` | 跨界颗粒仍伸入域内的深度。 |
 | `ToolRecord` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:15` | 记录与报告中出现的构建身份。 |
 | `StopReason` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:53` | 运行可用的四词固定停止原因词表。 |
 | `ParticleRecord` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:133` | 记录文件中单个已放置颗粒的条目。 |
@@ -482,19 +482,19 @@
 | `SizePlan` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:449` | 运行打算放置的尺寸集合，在任何放置之前抽定。 |
 | `plan_size_multiset` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:473` | 抽取整个尺寸集合，停在离目标更近的那个数量上。 |
 | `order_for_placement` | Pipeline — Packing | `src/pipeline/placement_sizes.rs:534` | 把尺寸集合按从大到小排序，或还原为抽取顺序。 |
-| `ShapeShell` | Pipeline — Packing | `src/pipeline/placement_library.rs:13` | 一个闭合壳：已度量、已居中、已计算摘要。 |
-| `ShapeSource` | Pipeline — Packing | `src/pipeline/placement_library.rs:41` | 构成形状库的源文件，附带摘要与壳数统计。 |
-| `RejectedShell` | Pipeline — Packing | `src/pipeline/placement_library.rs:53` | 读入但未保留的壳，以及未保留的原因。 |
-| `ShapeLibrary` | Pipeline — Packing | `src/pipeline/placement_library.rs:61` | 运行可抽取的全部形状，以及读入但未保留的部分。 |
+| `ShapeShell` | Pipeline — Packing | `src/pipeline/placement_library.rs:14` | 一个闭合壳：已度量、已居中、已计算摘要。 |
+| `ShapeSource` | Pipeline — Packing | `src/pipeline/placement_library.rs:42` | 构成形状库的源文件，附带摘要与壳数统计。 |
+| `RejectedShell` | Pipeline — Packing | `src/pipeline/placement_library.rs:54` | 读入但未保留的壳，以及未保留的原因。 |
+| `ShapeLibrary` | Pipeline — Packing | `src/pipeline/placement_library.rs:62` | 运行可抽取的全部形状，以及读入但未保留的部分。 |
 | `load_shape_library` | Pipeline — Packing | `src/pipeline/placement_library.rs:95` | 加载、拆分、度量并过滤形状文件。壳层数不少于 32（`LIBRARY_PARALLEL_MIN_SHELLS`）的文件并行准备各壳层，写入按序索引的缓冲后按壳层顺序遍历，因此顺序、拒绝与首个报告的缺陷都与串行扫描相同（§79）。 |
-| `filter_reason` | Pipeline — Packing | `src/pipeline/placement_library.rs:234` | 指出某个壳未通过哪条形状库过滤规则。 |
-| `shell_geometry_sha256` | Pipeline — Packing | `src/pipeline/placement_library.rs:274` | 对壳的几何计算摘要，使文件重排可被察觉。 |
-| `TARGET_BIN_PROBES` | Pipeline — Packing | `src/pipeline/pack.rs:27` | 某个选定分箱在被排除出本轮重新选择之前，可容忍的最大连续放置失败次数。 |
-| `PackPipeline` | Pipeline — Packing | `src/pipeline/pack.rs:95` | 包装一个 `PackingConfig` 的流水线结构体；实现了 `Pipeline`。 |
-| `CandidateProposal` | Pipeline — Packing | `src/pipeline/pack.rs:34` | 一个抽取出的候选网格及其可选的预计算 `MeshMetrics`。 |
-| `validate_sphericity_target` | Pipeline — Packing | `src/pipeline/pack.rs:110` | 在堆积开始前校验 `target_mean_sphericity`/`mean_sphericity_tolerance` 配置。 |
-| `check_geometry_filters` | Pipeline — Packing | `src/pipeline/pack.rs:141` | 对候选网格应用已配置的 `min_volume`、`max_aspect_ratio`、`max_sharpness_ratio` 过滤条件。 |
-| `PackPipeline::run` | Pipeline — Packing | `src/pipeline/pack.rs:124` | 核心的顺序随机堆积循环，可选带有目标粒径分布和平均球形度导向控制。 |
+| `filter_reason` | Pipeline — Packing | `src/pipeline/placement_library.rs:259` | 指出某个壳未通过哪条形状库过滤规则。 |
+| `shell_geometry_sha256` | Pipeline — Packing | `src/pipeline/placement_library.rs:299` | 对壳的几何计算摘要，使文件重排可被察觉。 |
+| `TARGET_BIN_PROBES` | Pipeline — Packing | `src/pipeline/pack.rs:316` | 某个选定分箱在被排除出本轮重新选择之前，可容忍的最大连续放置失败次数。 |
+| `PackPipeline` | Pipeline — Packing | `src/pipeline/pack.rs:318` | 包装一个 `PackingConfig` 的流水线结构体；实现了 `Pipeline`。 |
+| `CandidateProposal` | Pipeline — Packing | `src/pipeline/pack.rs:323` | 一个抽取出的候选网格及其可选的预计算 `MeshMetrics`。 |
+| `validate_sphericity_target` | Pipeline — Packing | `src/pipeline/pack.rs:333` | 在堆积开始前校验 `target_mean_sphericity`/`mean_sphericity_tolerance` 配置。 |
+| `check_geometry_filters` | Pipeline — Packing | `src/pipeline/pack.rs:364` | 对候选网格应用已配置的 `min_volume`、`max_aspect_ratio`、`max_sharpness_ratio` 过滤条件。 |
+| `PackPipeline::run` | Pipeline — Packing | `src/pipeline/pack.rs:413` | 核心的顺序随机堆积循环，可选带有目标粒径分布和平均球形度导向控制。 |
 | `DiameterBin` | Pipeline — Packing | `src/pipeline/pack_targets.rs:8` | 带目标频次的半开（末端分箱为闭）粒径区间。 |
 | `DiameterBin::midpoint` | Pipeline — Packing | `src/pipeline/pack_targets.rs:16` | 区间的算术中点。 |
 | `TargetDistribution` | Pipeline — Packing | `src/pipeline/pack_targets.rs:22` | 已解析、归一化的目标粒径分布（有序、不重叠的分箱）。 |
@@ -522,16 +522,16 @@
 | `DoubleDouble` 及算术方法 | 网格工具 | `src/meshgen/predicates.rs:125-172` | 仅加/减/乘的 DD 值；精确提升、取负、折叠与零测试。 |
 | `DeterminantRatio` 及排序方法 | 网格工具 | `src/meshgen/predicates.rs:192-224` | 用于源边排序的规范 DD 分子/分母比值。 |
 | `PrecisionTier` / `EdgeTriPoint` / `CoplanarSegmentPoint` / `ConstructionOutcome` | 网格工具 | `src/meshgen/predicates.rs:229/236/244/254` | 构造精度溯源、C1/C3 结果与已解析/延迟结果枚举。 |
-| `orient3d_value_permanent` | 网格工具 | `src/meshgen/predicates.rs:266` | Shewchuk 顺序 f64 行列式及匹配 permanent。 |
-| `orient3d_filtered` | 网格工具 | `src/meshgen/predicates.rs:286` | 带精确 robust 回退的认证静态过滤符号。 |
-| `orient3d_dd_value` | 网格工具 | `src/meshgen/predicates.rs:296` | 项目符号约定下的 DD orient3d 行列式。 |
-| `construct_edge_triangle_intersection` | 网格工具 | `src/meshgen/predicates.rs:320` | 冻结 C1 行列式比值构造，含 f64/DD 升级与 DD 下限延迟。 |
-| `construct_coplanar_segment_intersection` | 网格工具 | `src/meshgen/predicates.rs:384` | 冻结 C3 仿射构造；检查并保留两条定义边的 DD 排序比值。 |
-| `construct_three_triangle_intersection` | 网格工具 | `src/meshgen/predicates.rs:492` | 冻结局部坐标 C2 Cramer 构造，升级时以 DD 完整重建。 |
-| `orient3d` | 网格工具 | `src/meshgen/predicates.rs:698` | 符号精确四面体定向；全项目唯一对 robust 相反约定取负之处。 |
+| `orient3d_value_permanent` | 网格工具 | `src/meshgen/predicates.rs:287` | Shewchuk 顺序 f64 行列式及匹配 permanent。 |
+| `orient3d_filtered` | 网格工具 | `src/meshgen/predicates.rs:307` | 带精确 robust 回退的认证静态过滤符号。 |
+| `orient3d_dd_value` | 网格工具 | `src/meshgen/predicates.rs:372` | 项目符号约定下的 DD orient3d 行列式。 |
+| `construct_edge_triangle_intersection` | 网格工具 | `src/meshgen/predicates.rs:434` | 冻结 C1 行列式比值构造，含 f64/DD 升级与 DD 下限延迟。 |
+| `construct_coplanar_segment_intersection` | 网格工具 | `src/meshgen/predicates.rs:507` | 冻结 C3 仿射构造；检查并保留两条定义边的 DD 排序比值。 |
+| `construct_three_triangle_intersection` | 网格工具 | `src/meshgen/predicates.rs:631` | 冻结局部坐标 C2 Cramer 构造，升级时以 DD 完整重建。 |
+| `orient3d` | 网格工具 | `src/meshgen/predicates.rs:843` | 符号精确四面体定向；全项目唯一对 robust 相反约定取负之处。 |
 | `tet_signed_volume` / `orient3d_sign_test` | 网格工具 | `src/meshgen/predicates.rs:708/713` | 有符号四面体体积与单位四面体约定夹具。 |
 | `TetQuality` / `tet_quality` | 网格工具 | `src/meshgen/predicates.rs:729/748` | [V4] 体积、纵横比/半径比、二面角、缩放雅可比与高度指标。 |
-| `node_key` | 网格工具 | `src/meshgen/predicates.rs:867` | 量化整数节点键；键相同代表一个网格尺度节点。 |
+| `node_key` | 网格工具 | `src/meshgen/predicates.rs:1012` | 量化整数节点键；键相同代表一个网格尺度节点。 |
 | `RepairActionType` | 网格工具 | `src/meshgen/surface.rs:18` | S0 修复动作类型（焊接、退化丢弃、重复合并、针孔、定向、补洞）。 |
 | `RepairAction` / `RepairLog` | 网格工具 | `src/meshgen/surface.rs:43/55` | 结构化修复记录与有序 [V12] 回显日志。 |
 | `ConditionedSurface` / `ConditionStats` | 网格工具 | `src/meshgen/surface.rs:88/116` | 带持久源 ID、临时构件、修复日志与计数的 S0 几何。 |
@@ -550,10 +550,10 @@
 | `RegistryVertex` / `RegistrySegment` / `IntersectionRegistry` | 网格工具 | `src/meshgen/arrange.rs:183/195/204` | 符号优先注册实体；提交顶点保留全部兼容溯源别名。 |
 | `ArrangedCurveKind` / `ArrangedCurve` | 网格工具 | `src/meshgen/arrange.rs:211/219` | 带构件关联和循环子面顺序的锐边/边缘/相交曲线。 |
 | `ArrangedFace` / `ArrangementStats` / `ArrangedSurface` | 网格工具 | `src/meshgen/arrange.rs:228/240/256` | 原子多源/多标签面、接触、事件、警告、降级路由与诊断。 |
-| `arrange_surface` | 网格工具 | `src/meshgen/arrange.rs:426` | 确定性 CPU G2-1..G2-3 注册/CDT/覆盖/策略/回退/校验路径。 |
-| `arranged_surface_to_doc` | 网格工具 | `src/meshgen/arrange.rs:761` | 含集合标签与 FaceTagOrientation 的诊断 schema-v1 编码；尚非 live s02。 |
-| `triangulate_parent` | 网格工具 | `src/meshgen/arrange.rs:3385` | 受限预注册 Spade CDT，传播插入/约束错误并校验铺满。 |
-| `clip_arranged_to_box` | 网格工具 | `src/meshgen/arrange.rs:4634` | G2-5b 盒裁剪：对 6 个域平面进行 Sutherland-Hodgman；实体封顶（box 标签）、片体开放、曲线裁剪。 |
+| `arrange_surface` | 网格工具 | `src/meshgen/arrange.rs:439` | 确定性 CPU G2-1..G2-3 注册/CDT/覆盖/策略/回退/校验路径。 |
+| `arranged_surface_to_doc` | 网格工具 | `src/meshgen/arrange.rs:804` | 含集合标签与 FaceTagOrientation 的诊断 schema-v1 编码；尚非 live s02。 |
+| `triangulate_parent` | 网格工具 | `src/meshgen/arrange.rs:3855` | 受限预注册 Spade CDT，传播插入/约束错误并校验铺满。 |
+| `clip_arranged_to_box` | 网格工具 | `src/meshgen/arrange.rs:4789` | G2-5b 盒裁剪：对 6 个域平面进行 Sutherland-Hodgman；实体封顶（box 标签）、片体开放、曲线裁剪。 |
 | `ComponentClassification` / `ClosureDefect` / `RebuiltTopology` | 网格工具 | `src/meshgen/topo.rs:13/21/31` | G2-4 裁剪后拓扑重建结果类型：构件分类、缺陷报告与完整重建输出。 |
 | `rebuild_topology` | 网格工具 | `src/meshgen/topo.rs:43` | 从裁剪后排布面重新推导构件、闭合状态与 GWN 回退。 |
 | `generalized_winding_number` / `gwn_margin_band` | 网格工具 | `src/meshgen/topo.rs:233/255` | 查询点处的 GWN（两两归约、S 累积）与 f32 边际带证书。 |
@@ -562,19 +562,19 @@
 | `VerifyItem` | 网格工具 | `src/meshgen/verify.rs:63` | 单条发现：稳定代码、消息、点/单元编号与坐标。 |
 | `VerifySection` | 网格工具 | `src/meshgen/verify.rs:88` | 单个目录条目：状态、指标、限长条目列表。 |
 | `VerifyGates` | 网格工具 | `src/meshgen/verify.rs:145` | 目录的可配置、与尺度无关的门限。 |
-| `VerifyReport` | 网格工具 | `src/meshgen/verify.rs:179` | 完整验证结果；passed、exit_code、fired_codes、section。 |
-| `verify` | 网格工具 | `src/meshgen/verify.rs:430` | 对契约 VTU 或外部 VTU 运行检查目录。 |
-| `report_to_json` | 网格工具 | `src/meshgen/verify.rs:1510` | 序列化冻结的 JSON 报告（手写，无 JSON 依赖）。 |
-| `report_to_log` | 网格工具 | `src/meshgen/verify.rs:1619` | 分节人读报告，每项检查一行状态。 |
-| `annotate` | 网格工具 | `src/meshgen/verify.rs:1681` | 附带质量数组与 verify_flags 位掩码的网格副本。 |
+| `VerifyReport` | 网格工具 | `src/meshgen/verify.rs:199` | 完整验证结果；passed、exit_code、fired_codes、section。 |
+| `verify` | 网格工具 | `src/meshgen/verify.rs:738` | 对契约 VTU 或外部 VTU 运行检查目录。 |
+| `report_to_json` | 网格工具 | `src/meshgen/verify.rs:2358` | 序列化冻结的 JSON 报告（手写，无 JSON 依赖）。 |
+| `report_to_log` | 网格工具 | `src/meshgen/verify.rs:2467` | 分节人读报告，每项检查一行状态。 |
+| `annotate` | 网格工具 | `src/meshgen/verify.rs:2529` | 附带质量数组与 verify_flags 位掩码的网格副本。 |
 | `VerifyGateParams` | 网格工具 | `src/config/mesh_verify.rs:8` | 验证目录的 YAML 门限覆盖。 |
 | `MeshVerifyParams` | 网格工具 | `src/config/mesh_verify.rs:78` | mesh_verify: YAML 块（输入、report/json/annotate、门限）。 |
-| `MeshVerifySurface` | 网格工具 | `src/config/mesh_verify.rs` | 单个 [V5] 输入曲面：裸路径，或在网格以显式优先级生成时使用 `{stl, priority}`。 |
-| `MeshVerifySurface::resolved_priority` | 网格工具 | `src/config/mesh_verify.rs` | [V5] 曲面的有效优先级：显式取值，否则为 0——必须与生成该网格时 `meshgen.inputs` 的优先级一致。 |
+| `MeshVerifySurface` | 网格工具 | `src/config/mesh_verify.rs:46` | 单个 [V5] 输入曲面：裸路径，或在网格以显式优先级生成时使用 `{stl, priority}`。 |
+| `MeshVerifySurface::resolved_priority` | 网格工具 | `src/config/mesh_verify.rs:65` | [V5] 曲面的有效优先级：显式取值，否则为 0——必须与生成该网格时 `meshgen.inputs` 的优先级一致。 |
 | `MeshVerifyConfig` | 网格工具 | `src/config/mesh_verify.rs:100` | mesh-verify 子命令的顶层 YAML 文档。 |
 | `gates_from_config` | 网格工具 | `src/pipeline/mesh_verify.rs:21` | 将 YAML 覆盖项叠加到契约默认门限。 |
 | `verify_file` | 网格工具 | `src/pipeline/mesh_verify.rs:53` | 加载、校验、验证并写出日志/JSON/带注解 VTU。 |
-| `MeshVerifyPipeline::run` | 网格工具 | `src/pipeline/mesh_verify.rs:12` | mesh-verify 子命令；门限不通过时退出码非零。 |
+| `MeshVerifyPipeline::run` | 网格工具 | `src/pipeline/mesh_verify.rs:135` | mesh-verify 子命令；门限不通过时退出码非零。 |
 | `InputKind` | 网格工具 | `src/config/meshgen.rs:10` | 单个输入的面角色覆盖：auto / solid / sheet。 |
 | `RepairLevel` | 网格工具 | `src/config/meshgen.rs:20` | S0 修复激进度：strict / conservative / permissive。 |
 | `CoincidencePolicy` | 网格工具 | `src/config/meshgen.rs:30` | G2-2 重合面策略：merge / reject / warn。 |
@@ -595,57 +595,57 @@
 | `MeshGenInput::resolved_priority` | 网格工具 | `src/config/meshgen.rs:265` | 有效优先级（显式覆盖或文件索引）。 |
 | `MeshGenParams::validate` | 网格工具 | `src/config/meshgen.rs:279` | 强制 PLAN §6.3 解析期拒绝；Ok 或 InvalidConfig。 |
 | `deserialize_component_map` | 网格工具 | `src/config/meshgen.rs:509` | 将 by_component 反序列化为保留重复键的有序对列表。 |
-| `MeshGenPipeline::run` | 网格工具 | `src/pipeline/meshgen.rs:158` | S0 前归一化，运行 S0/S1/G2-1..G2-3，扣留部分 s02，并对 G2-4/G2-5 及后续阶段返回 NotAvailable。 |
+| `MeshGenPipeline::run` | 网格工具 | `src/pipeline/meshgen.rs:198` | S0 前归一化，运行 S0/S1/G2-1..G2-3，扣留部分 s02，并对 G2-4/G2-5 及后续阶段返回 NotAvailable。 |
 | `SampleKind` / `PairClass` | 网格生成 | `src/meshgen/gapfield.rs:48/57` | S3 采样来源与冻结的配对类别（intra / inter / solid-sheet / sheet-sheet / surface-box）。 |
 | `GapPairing` / `GapSample` / `GapSample::passes_battery` | 网格生成 | `src/meshgen/gapfield.rs:68/81/100` | 单条 S3 对应关系、单个采样（侧、方向、t_raw/t/t_exact、校验位）与"全部适用检查通过"判据。 |
 | `GapGroup` / `GapFieldStats` / `GapField` | 网格生成 | `src/meshgen/gapfield.rs:110/122/137` | 带置信度与 t_r 的临时（构件, 侧, 对侧面片）分组、S3 计数器与整体分离场。 |
-| `GapFieldOptions` | 网格生成 | `src/meshgen/gapfield.rs:152` | S3 输入：区域、epsilon、引导 h、间隙因子、置信度下限、虚拟壁、加密、平滑。 |
+| `GapFieldOptions` | 网格生成 | `src/meshgen/gapfield.rs:280` | S3 输入：区域、epsilon、引导 h、间隙因子、置信度下限、虚拟壁、加密、平滑。 |
 | `FLAG_MUTUAL` / `FLAG_OPPOSITE_PATCH` / `FLAG_CONTINUITY` / `FLAG_NO_CROSSING` / `FLAG_ORIENTATION` / `FLAGS_ALL` | 网格生成 | `src/meshgen/gapfield.rs:28-38` | 五项配对校验位及其并集。 |
-| `compute_gap_field` | 网格生成 | `src/meshgen/gapfield.rs:345` | 在裁剪且拓扑重建后的排布面上运行 S3（射线 + 最近点对扫掠 + 校验组 + 置信度）。 |
-| `gapfield_to_doc` | 网格生成 | `src/meshgen/gapfield.rs:1655` | 构建 s03_gapfield 文档：排布面加 separation_t 点场（-1 表示无配对）。 |
-| `point_array_cell_value` | 网格工具 | `src/meshgen/render_scene.rs:273` | 将点数组归约为每单元一个值（非哨兵点值的均值）以供着色。 |
+| `compute_gap_field` | 网格生成 | `src/meshgen/gapfield.rs:495` | 在裁剪且拓扑重建后的排布面上运行 S3（射线 + 最近点对扫掠 + 校验组 + 置信度）。 |
+| `gapfield_to_doc` | 网格生成 | `src/meshgen/gapfield.rs:3080` | 构建 s03_gapfield 文档：排布面加 separation_t 点场（-1 表示无配对）。 |
+| `point_array_cell_value` | 网格工具 | `src/meshgen/render_scene.rs:281` | 将点数组归约为每单元一个值（非哨兵点值的均值）以供着色。 |
 | `Regime` / `SkipReason` / `MidSurfaceDefect` | 网格生成 | `src/meshgen/gapfield.rs:166/177/190` | 三种薄特征状态、[THIN-SKIP] 分类与中面校验缺陷。 |
 | `MidSurface` / `MidSurface::is_valid` / `ThinRegion` | 网格生成 | `src/meshgen/gapfield.rs:204/216/227` | 带源节点与缺陷的中点面片，以及一个分割后的薄区域。 |
-| `validate_mid_surface` | 网格生成 | `src/meshgen/gapfield.rs:2436` | 对候选中面执行 the reference thin-feature design §3.4 检查并记录全部缺陷。 |
+| `validate_mid_surface` | 网格生成 | `src/meshgen/gapfield.rs:2945` | 对候选中面执行 the reference thin-feature design §3.4 检查并记录全部缺陷。 |
 | `CouplingOptions` / `LockReason` / `CouplingReport` / `CouplingReport::locked_for` | 网格生成 | `src/meshgen/sizing.rs:35/66/80/94` | S3<->S4 耦合输入、锁定原因、运行报告与按原因查询。 |
-| `regime_for` | 网格生成 | `src/meshgen/sizing.rs:113` | 以 0.9/1.1 滞回死区分类单个区域。 |
-| `couple_gap_and_sizing` | 网格生成 | `src/meshgen/sizing.rs:159` | 运行 S3<->S4 不动点；违反 G-8 排序断言时返回错误。 |
+| `regime_for` | 网格生成 | `src/meshgen/sizing.rs:143` | 以 0.9/1.1 滞回死区分类单个区域。 |
+| `couple_gap_and_sizing` | 网格生成 | `src/meshgen/sizing.rs:189` | 运行 S3<->S4 不动点；违反 G-8 排序断言时返回错误。 |
 | `SizingCriterion` / `SizingSource` | 网格生成 | `src/meshgen/sizing.rs:335/351` | 产出该尺寸约束的 §10.6 准则，以及约束本身（位置 + 允许的最大单元）。 |
 | `SizingOptions` / `SizingOptions::beta` / `SizingOptions::lfs_floor` | 网格生成 | `src/meshgen/sizing.rs:363/410/429` | 尺寸场输入；Lipschitz 常数 `grading - 1`；低于该分离量的间隙归薄特征机制而非尺寸场。 |
-| `curvature_sources` | 网格生成 | `src/meshgen/sizing.rs:504` | 在条件化输入曲面的光滑内部边上产出弦差曲率源。 |
-| `feature_sources` | 网格生成 | `src/meshgen/sizing.rs:605` | 特征曲线转折源，外加每个 S1 角点/交汇点一个（最短关联段）。 |
-| `collect_geometry_sources` | 网格生成 | `src/meshgen/sizing.rs:677` | 曲率源与特征源合为一个规范有序列表。 |
-| `gap_sources` | 网格生成 | `src/meshgen/sizing.rs:712` | 状态相关的局部特征尺寸源：对每个保持体网格的 S3 采样取 `t / gap_cells`。 |
+| `curvature_sources` | 网格生成 | `src/meshgen/sizing.rs:523` | 在条件化输入曲面的光滑内部边上产出弦差曲率源。 |
+| `feature_sources` | 网格生成 | `src/meshgen/sizing.rs:632` | 特征曲线转折源，外加每个 S1 角点/交汇点一个（最短关联段）。 |
+| `collect_geometry_sources` | 网格生成 | `src/meshgen/sizing.rs:777` | 曲率源与特征源合为一个规范有序列表。 |
+| `gap_sources` | 网格生成 | `src/meshgen/sizing.rs:815` | 状态相关的局部特征尺寸源：对每个保持体网格的 S3 采样取 `t / gap_cells`。 |
 | `SizingLookup` / `SizingLookup::build` / `eval` / `eval_box` | 网格生成 | `src/meshgen/sizing.rs:969/987/1067/1083` | 由构造即 Lipschitz 的梯度场 `min_s (h_s + beta*dist)`；点求值与盒上精确最小值。 |
 | `SizingLeaf` / `SizingStats` / `SizingField` | 网格生成 | `src/meshgen/sizing.rs:1156/1164/1182` | 单个八叉树叶子、构建的预算/范围报告，以及背景八叉树本身。 |
 | `SizingField::locate` / `SizingField::sample` | 网格生成 | `src/meshgen/sizing.rs:1220/1248` | 定位包含某点的叶子（每层一次二分查找）并读取其尺寸。 |
-| `build_sizing_field` | 网格生成 | `src/meshgen/sizing.rs:1265` | 每层一趟并行细化背景八叉树，直至每个叶子都解析其内部的场。 |
+| `build_sizing_field` | 网格生成 | `src/meshgen/sizing.rs:1416` | 每层一趟并行细化背景八叉树，直至每个叶子都解析其内部的场。 |
 | `SizingConstraint` / `SizingConstraint::new` / `evaluate` / `binding_region` | 网格生成 | `src/meshgen/sizing.rs:1407/1421/1468/1498` | 供耦合驱动使用的 `C(R)`，以及绑定它的区域与项。 |
-| `sizing_to_doc` | 网格生成 | `src/meshgen/sizing.rs:1540` | 将尺寸场编码为携带 `sizing_h` 点数组的 `s04_sizing` 体素预览 VTU。 |
+| `sizing_to_doc` | 网格生成 | `src/meshgen/sizing.rs:1699` | 将尺寸场编码为携带 `sizing_h` 点数组的 `s04_sizing` 体素预览 VTU。 |
 | `FREUDENTHAL` / `CellTemplate` | 网格生成 | `src/meshgen/lattice.rs:54/493` | 冻结的 6-tet Kuhn 表，以及叶子采用了哪类模板。 |
 | `balance_octree` / `balance_violation` | 网格生成 | `src/meshgen/lattice.rs:156/286` | 将八叉树细化到强（面+边+顶点）2:1 平衡；并可直接检验该性质。 |
 | `Lattice` / `LatticeStats` / `LatticeOptions` | 网格生成 | `src/meshgen/lattice.rs:520/502/531` | 四面体化的背景晶格、其构建报告与四面体预算。 |
 | `build_lattice` / `build_lattice_with_splits` | 网格生成 | `src/meshgen/lattice.rs:611/616` | 以 Freudenthal 与形心扇形模板对平衡八叉树作四面体化。 |
-| `lattice_to_doc` | 网格生成 | `src/meshgen/lattice.rs:833` | 将晶格编码为 `s05_lattice` 快照 VTU（四面体而非体素——见修订说明）。 |
+| `lattice_to_doc` | 网格生成 | `src/meshgen/lattice.rs:837` | 将晶格编码为 `s05_lattice` 快照 VTU（四面体而非体素——见修订说明）。 |
 | `Side` / `Provenance` / `OwnershipRecord` | 网格生成 | `src/meshgen/classify.rs:60/68/82` | 四面体相对构件的内外侧（缺省即外部，`Ambiguous` 表示由切割裁定）、条目来源，以及稀疏记录本身。 |
-| `resolve` | 网格生成 | `src/meshgen/classify.rs:171` | 冻结的标签规则：内部集合取优先级最小者；集合为空时为 `{0}`。 |
-| `RAY_DIRECTIONS` | 网格生成 | `src/meshgen/classify.rs:42` | 射线恰好穿过边或顶点时的冻结重发射序列（ARB-9）。 |
+| `resolve` | 网格生成 | `src/meshgen/classify.rs:180` | 冻结的标签规则：内部集合取优先级最小者；集合为空时为 `{0}`。 |
+| `RAY_DIRECTIONS` | 网格生成 | `src/meshgen/classify.rs:46` | 射线恰好穿过边或顶点时的冻结重发射序列（ARB-9）。 |
 | `Classification` / `ClassifyStats` / `ClassifyOptions` | 网格生成 | `src/meshgen/classify.rs:140/112/457` | 逐顶点归属、播种记录、区域键、活跃面片掩码，以及各判定的达成方式。 |
-| `classify_lattice` | 网格生成 | `src/meshgen/classify.rs:493` | S6：按晶格顶点 x 实体构件的精确奇偶分类、记录播种与活跃面片过滤。 |
-| `classified_to_doc` | 网格生成 | `src/meshgen/classify.rs:810` | 将分类后的晶格编码为 `s06_classified` 快照 VTU。 |
+| `classify_lattice` | 网格生成 | `src/meshgen/classify.rs:704` | S6：按晶格顶点 x 实体构件的精确奇偶分类、记录播种与活跃面片过滤。 |
+| `classified_to_doc` | 网格生成 | `src/meshgen/classify.rs:1044` | 将分类后的晶格编码为 `s06_classified` 快照 VTU。 |
 | `SNAP_MOTION_CAP` / `SNAP_RECHECK_LOW` / `SNAP_RECHECK_HIGH` | 网格生成 | `src/meshgen/snap.rs:43/48/50` | 30% 位移上限（ARB-11），以及 97.5/2.5% 复核带——近端点交点改为提升端点而非切割。 |
 | `WEIGHT_CORNER` / `WEIGHT_CURVE` / `WEIGHT_SURFACE` | 网格生成 | `src/meshgen/snap.rs:58/60/62` | `1e7`/`1e4`/`1e0`——冻结的吸附目标优先级的数值写法。 |
 | `ALTERNATING_PROJECTION_PASSES` | 网格生成 | `src/meshgen/snap.rs:54` | 退化排布邻域曲线目标的固定交替投影趟数（ARB-2）。 |
 | `TargetKind` | 网格生成 | `src/meshgen/snap.rs:68` | 节点被约束到何处，采用契约的 `constraint_kind` 编码：自由/曲面/折线/角点/盒面。 |
 | `EdgeCrossing` | 网格生成 | `src/meshgen/snap.rs:90` | 一个精确的边—面片交点：边、面、构件、参数与构造点——S8 将在此切割。 |
 | `Snapped` / `SnapStats` / `SnapOptions` | 网格生成 | `src/meshgen/snap.rs:138/105/161` | S7 移动后的节点、逐节点约束、交点与在切面上的节点集；其诊断；以及域盒与焊接容差。 |
-| `snap_lattice` | 网格生成 | `src/meshgen/snap.rs` | S7：捕获角点与特征曲线、提升近端点交点、复核，并给出最终交点表。 |
-| `unique_edges` | 网格生成 | `src/meshgen/snap.rs` | 晶格的去重边集合，每条以升序节点对表示。 |
-| `move_preserves_orientation` | 网格生成 | `src/meshgen/snap.rs` | ARB-10 的精确判据：移动某节点后其所有相邻四面体是否仍为正定向。 |
-| `snapped_to_doc` | 网格生成 | `src/meshgen/snap.rs` | 将吸附后的晶格编码为 `s07_snapped` 快照 VTU。 |
+| `snap_lattice` | 网格生成 | `src/meshgen/snap.rs:1485` | S7：捕获角点与特征曲线、提升近端点交点、复核，并给出最终交点表。 |
+| `unique_edges` | 网格生成 | `src/meshgen/snap.rs:887` | 晶格的去重边集合，每条以升序节点对表示。 |
+| `move_preserves_orientation` | 网格生成 | `src/meshgen/snap.rs:957` | ARB-10 的精确判据：移动某节点后其所有相邻四面体是否仍为正定向。 |
+| `snapped_to_doc` | 网格生成 | `src/meshgen/snap.rs:1841` | 将吸附后的晶格编码为 `s07_snapped` 快照 VTU。 |
 | `CUT_VOLUME_TOLERANCE` / `CUT_MIN_DIHEDRAL_DEG` | 网格生成 | `src/meshgen/cut.rs:33/36` | 受保护试运行的 1% 体积容差，以及 §4.4 运行期 8 度二面角下限。 |
 | `NodeSide` / `Escalation` | 网格生成 | `src/meshgen/cut.rs:43/54` | 母节点相对面片的位置，以及单元无法走 §6 路径的原因。 |
-| `InterfaceFace` | 网格生成 | `src/meshgen/cut.rs:70` | 一个带标签的切割三角形及其 `(内侧, 外侧)` 单元对——预留的导出契约。 |
+| `InterfaceFace` | 网格生成 | `src/meshgen/cut.rs:107` | 一个带标签的切割三角形及其 `(内侧, 外侧)` 单元对——预留的导出契约。 |
 | `CutMesh` / `CutStats` / `CutOptions` | 网格生成 | `src/meshgen/cut.rs` | S8 的节点、四面体、记录、界面与升级清单；其诊断；其容差。 |
 | `snk_split_quad` / `snk_diagonal_is_02` | 网格生成 | `src/meshgen/cut.rs` | SNK 规则（§4.1）：四边形的对角线取过其最小 `NodeKey` 顶点的那条。 |
 | `prism_tets` / `prism_tets_with_diagonals` | 网格生成 | `src/meshgen/cut.rs` | 冻结的六模式棱柱表（§4.3）；仅对定理 T2 判为不可达的两组循环对角线返回 `None`。 |
@@ -655,25 +655,25 @@
 | `cut_lattice` / `cut_to_doc` | 网格生成 | `src/meshgen/cut.rs` | S8：切割所有被穿越单元、派生界面索引、升级其余单元；并编码 `s08_cut`。 |
 | `FaceMesh` / `face_mesh` / `loop_fan` / `face_centroid` | 网格生成 | `src/meshgen/junction.rs` | 升级单元的面如何三角化——冻结表适用处用表，否则用面质心扇形。 |
 | `FannedCell` / `fan_cell` / `cell_centroid` / `TET_FACES` | 网格生成 | `src/meshgen/junction.rs` | 重新划分升级单元的协调质心扇形（G6-0 采纳的回退方案）。 |
-| `Stage` | 网格工具 | `src/meshgen/snapshot.rs:18` | 冻结的阶段枚举（0..=11）；亦为快照索引。 |
-| `Stage::from_path` | 网格工具 | `src/meshgen/snapshot.rs:74` | 从快照文件名的 sNN 标记解析阶段。 |
-| `should_emit` | 网格工具 | `src/meshgen/snapshot.rs:99` | 在 none/key/all 下是否产出某阶段。 |
-| `snapshot_path` | 网格工具 | `src/meshgen/snapshot.rs:118` | <stem>.debug/<stem>_sNN_<name>.vtu 路径（Quality 带 _r<N>）。 |
-| `SnapshotMeta` | 网格工具 | `src/meshgen/snapshot.rs:132` | stamp_metadata/emit_snapshot 的打标输入集合。 |
-| `stamp_metadata` | 网格工具 | `src/meshgen/snapshot.rs:166` | 将完整 §2.4 元数据块打标到快照文档。 |
-| `emit_snapshot` | 网格工具 | `src/meshgen/snapshot.rs:276` | 打标元数据，然后写出 R4 定义的一对文件：以普通名交付的仅四面体体网格，以及紧邻其旁的混合单元契约文档。返回交付文件的路径。 |
-| `warn_if_large` | 网格工具 | `src/meshgen/snapshot.rs:246` | 尺寸 WARN：snapshots=all + 估计 >5 M 四面体。 |
-| `VerifyOptions` | 网格工具 | `src/meshgen/verify.rs:410` | 文档之外的验证器输入（expected_stage 用于 [V12] 交叉校验）。 |
-| `verify_with_options` | 网格工具 | `src/meshgen/verify.rs:744` | 带阶段上下文的验证；s00-s03 跳过仅体网格 [V7]/[V8]/[V13]。 |
-| `BoundaryFace` | 网格工具 | `src/meshgen/verify.rs:3531` | [V13] 眼中的一个材料边界面：面积、局部边长、距离与带符号偏移。 |
-| `FidelityAcc` | 网格工具 | `src/meshgen/verify.rs:3548` | [V13] 按面积加权的逐分量累加器。 |
-| `absorb` | 网格工具 | `src/meshgen/verify.rs:3561` | 将一个边界面折叠进 [V13] 累加器。 |
-| `check_v13` | 网格工具 | `src/meshgen/verify.rs:3603` | [V13] 界面保真度：从体网格读出材料边界并与输入曲面比对（计划中的 P3）。 |
-| `GpuClipPlane` | 网格工具 | `src/gpu/scene_render.rs:45` | GPU 场景预览的可选半空间裁剪（平滑切割）。 |
-| `GpuSceneOptions` | 网格工具 | `src/gpu/scene_render.rs:52` | GPU 专用开关：裁剪平面、叠加线段、标记。 |
-| `GpuScenePipeline` | 网格工具 | `src/gpu/scene_render.rs:74` | 离屏 GPU 场景预览：带颜色的 TriangleList + LineList 叠加，均支持裁剪平面丢弃。 |
-| `GpuScenePipeline::render` | 网格工具 | `src/gpu/scene_render.rs:333` | 以不透明预览方式渲染单相机单场景。 |
-| `GpuScenePipeline::render_views` | 网格工具 | `src/gpu/scene_render.rs:361` | 批量视图：几何数据仅上传一次，供所有相机复用。 |
+| `Stage` | 网格工具 | `src/meshgen/snapshot.rs:22` | 冻结的阶段枚举（0..=11）；亦为快照索引。 |
+| `Stage::from_path` | 网格工具 | `src/meshgen/snapshot.rs:102` | 从快照文件名的 sNN 标记解析阶段。 |
+| `should_emit` | 网格工具 | `src/meshgen/snapshot.rs:120` | 在 none/key/all 下是否产出某阶段。 |
+| `snapshot_path` | 网格工具 | `src/meshgen/snapshot.rs:147` | <stem>.debug/<stem>_sNN_<name>.vtu 路径（Quality 带 _r<N>）。 |
+| `SnapshotMeta` | 网格工具 | `src/meshgen/snapshot.rs:195` | stamp_metadata/emit_snapshot 的打标输入集合。 |
+| `stamp_metadata` | 网格工具 | `src/meshgen/snapshot.rs:232` | 将完整 §2.4 元数据块打标到快照文档。 |
+| `emit_snapshot` | 网格工具 | `src/meshgen/snapshot.rs:295` | 打标元数据，然后写出 R4 定义的一对文件：以普通名交付的仅四面体体网格，以及紧邻其旁的混合单元契约文档。返回交付文件的路径。 |
+| `warn_if_large` | 网格工具 | `src/meshgen/snapshot.rs:348` | 尺寸 WARN：snapshots=all + 估计 >5 M 四面体。 |
+| `VerifyOptions` | 网格工具 | `src/meshgen/verify.rs:714` | 文档之外的验证器输入（expected_stage 用于 [V12] 交叉校验）。 |
+| `verify_with_options` | 网格工具 | `src/meshgen/verify.rs:749` | 带阶段上下文的验证；s00-s03 跳过仅体网格 [V7]/[V8]/[V13]。 |
+| `BoundaryFace` | 网格工具 | `src/meshgen/verify.rs:3903` | [V13] 眼中的一个材料边界面：面积、局部边长、距离与带符号偏移。 |
+| `FidelityAcc` | 网格工具 | `src/meshgen/verify.rs:3935` | [V13] 按面积加权的逐分量累加器。 |
+| `absorb` | 网格工具 | `src/meshgen/verify.rs:3952` | 将一个边界面折叠进 [V13] 累加器。 |
+| `check_v13` | 网格工具 | `src/meshgen/verify.rs:4006` | [V13] 界面保真度：从体网格读出材料边界并与输入曲面比对（计划中的 P3）。 |
+| `GpuClipPlane` | 网格工具 | `src/gpu/scene_render.rs:53` | GPU 场景预览的可选半空间裁剪（平滑切割）。 |
+| `GpuSceneOptions` | 网格工具 | `src/gpu/scene_render.rs:60` | GPU 专用开关：裁剪平面、叠加线段、标记。 |
+| `GpuScenePipeline` | 网格工具 | `src/gpu/scene_render.rs:85` | 离屏 GPU 场景预览：带颜色的 TriangleList + LineList 叠加，均支持裁剪平面丢弃。 |
+| `GpuScenePipeline::render` | 网格工具 | `src/gpu/scene_render.rs:355` | 以不透明预览方式渲染单相机单场景。 |
+| `GpuScenePipeline::render_views` | 网格工具 | `src/gpu/scene_render.rs:383` | 批量视图：几何数据仅上传一次，供所有相机复用。 |
 
 **总计：358 个已记录行**（函数、方法、结构体、枚举、常量以及紧密相关 API 组合行）。
 
@@ -701,85 +701,85 @@
 
 ## 另请参阅
 
-| `BandPair` | 网格生成 | `src/meshgen/thin.rs:71` | 一对匹配的壁面顶点，塌缩后携带其边缘节点（SPEC §8.1 不变式 B1）。 |
-| `BandTemplate` | 网格生成 | `src/meshgen/thin.rs:102` | 单元取用了冻结 §8.2 条带表的哪一行，以及其 `regime` 单元数组编码。 |
-| `BandFailure` | 网格生成 | `src/meshgen/thin.rs:138` | 条带单元无法按其表行剖分的原因。 |
-| `BandCellMesh` | 网格生成 | `src/meshgen/thin.rs:155` | 一个已剖分的条带单元：四面体、模板、阶梯级别、质量与体积误差。 |
-| `snk_cell_diagonals` | 网格生成 | `src/meshgen/thin.rs` | Rule SNK 在条带单元三条对边四边形上的对角线选择。 |
-| `band_cell_boundary` | 网格生成 | `src/meshgen/thin.rs` | 条带单元的闭合边界三角化——所有模板的推导来源。 |
-| `enclosed_volume` | 网格生成 | `src/meshgen/thin.rs` | 一致定向闭合三角化所围的体积（条带试运行的比较目标）。 |
-| `band_cell_table` | 网格生成 | `src/meshgen/thin.rs` | 冻结的 SPEC §8.2 条带表，以塌缩点对数为索引。 |
-| `mesh_band_cell` | 网格生成 | `src/meshgen/thin.rs` | 在给定对角线下按表剖分一个条带单元，并做定向、二面角与体积校验。 |
-| `steiner_band_cell` | 网格生成 | `src/meshgen/thin.rs` | §4.4 阶梯的末级：把单元自身边界锥化到 Steiner 顶点。 |
-| `band_cell_centroid` | 网格生成 | `src/meshgen/thin.rs` | 条带回退所锥化的 Steiner 点——单元形心。 |
-| `mesh_band_layer` | 网格生成 | `src/meshgen/thin.rs` | 剖分整个条带层：先查表，再成对协商翻转，再 Steiner，最后区域降级。 |
-| `predict_band_quality` | 网格生成 | `src/meshgen/thin.rs` | 剖分之前，用 SPEC §8.2 标称单元预测条带的单元质量。 |
-| `band_ladder` | 网格生成 | `src/meshgen/thin.rs` | 针对单个薄区域的 PLAN §10.11 五级 FEM 感知阶梯。 |
-| `ThinOptions` | 网格生成 | `src/meshgen/thin.rs` | S8b 的可调项：二面角与长宽比门限、FEM 剖面、高度下限与降级占比。 |
-| `MeshGenThin` | 网格工具 | `src/config/meshgen.rs` | `meshgen.thin` 配置块：条带门限、高度下限、降级占比与体元回退策略。 |
+| `BandPair` | 网格生成 | `src/meshgen/thin.rs:73` | 一对匹配的壁面顶点，塌缩后携带其边缘节点（SPEC §8.1 不变式 B1）。 |
+| `BandTemplate` | 网格生成 | `src/meshgen/thin.rs:104` | 单元取用了冻结 §8.2 条带表的哪一行，以及其 `regime` 单元数组编码。 |
+| `BandFailure` | 网格生成 | `src/meshgen/thin.rs:140` | 条带单元无法按其表行剖分的原因。 |
+| `BandCellMesh` | 网格生成 | `src/meshgen/thin.rs:157` | 一个已剖分的条带单元：四面体、模板、阶梯级别、质量与体积误差。 |
+| `snk_cell_diagonals` | 网格生成 | `src/meshgen/thin.rs:200` | Rule SNK 在条带单元三条对边四边形上的对角线选择。 |
+| `band_cell_boundary` | 网格生成 | `src/meshgen/thin.rs:242` | 条带单元的闭合边界三角化——所有模板的推导来源。 |
+| `enclosed_volume` | 网格生成 | `src/meshgen/thin.rs:274` | 一致定向闭合三角化所围的体积（条带试运行的比较目标）。 |
+| `band_cell_table` | 网格生成 | `src/meshgen/thin.rs:304` | 冻结的 SPEC §8.2 条带表，以塌缩点对数为索引。 |
+| `mesh_band_cell` | 网格生成 | `src/meshgen/thin.rs:424` | 在给定对角线下按表剖分一个条带单元，并做定向、二面角与体积校验。 |
+| `steiner_band_cell` | 网格生成 | `src/meshgen/thin.rs:470` | §4.4 阶梯的末级：把单元自身边界锥化到 Steiner 顶点。 |
+| `band_cell_centroid` | 网格生成 | `src/meshgen/thin.rs:809` | 条带回退所锥化的 Steiner 点——单元形心。 |
+| `mesh_band_layer` | 网格生成 | `src/meshgen/thin.rs:968` | 剖分整个条带层：先查表，再成对协商翻转，再 Steiner，最后区域降级。 |
+| `predict_band_quality` | 网格生成 | `src/meshgen/thin.rs:581` | 剖分之前，用 SPEC §8.2 标称单元预测条带的单元质量。 |
+| `band_ladder` | 网格生成 | `src/meshgen/thin.rs:750` | 针对单个薄区域的 PLAN §10.11 五级 FEM 感知阶梯。 |
+| `ThinOptions` | 网格生成 | `src/meshgen/thin.rs:659` | S8b 的可调项：二面角与长宽比门限、FEM 剖面、高度下限与降级占比。 |
+| `MeshGenThin` | 网格工具 | `src/config/meshgen.rs:157` | `meshgen.thin` 配置块：条带门限、高度下限、降级占比与体元回退策略。 |
 
-| `Slab` | 网格生成 | `src/meshgen/thin.rs` | 条带单元的边界三角形属于哪一层：近侧、间隙、远侧。 |
-| `BandDecline` | 网格生成 | `src/meshgen/thin.rs` | 单元为何不属于双切规则覆盖的夹层情形；逐次运行计数并报告。 |
-| `BandCellPlan` | 网格生成 | `src/meshgen/thin.rs` | 已切分的夹层单元：三个闭合层，以及间隙层的三对匹配点对。 |
-| `band_face_split` | 网格生成 | `src/meshgen/thin.rs` | 双切面剖分规则：把每条被切边带两个切点的面剖分为角部／条带／剩余三部分。 |
-| `close_open_surface` | 网格生成 | `src/meshgen/thin.rs` | 用未配对有向边所构成的环把开放的定向三角化封闭。 |
-| `split_band_cell` | 网格生成 | `src/meshgen/thin.rs` | 把夹层单元切分为三个闭合层，并给出间隙层的匹配点对。 |
+| `Slab` | 网格生成 | `src/meshgen/thin.rs:1154` | 条带单元的边界三角形属于哪一层：近侧、间隙、远侧。 |
+| `BandDecline` | 网格生成 | `src/meshgen/thin.rs:1326` | 单元为何不属于双切规则覆盖的夹层情形；逐次运行计数并报告。 |
+| `BandCellPlan` | 网格生成 | `src/meshgen/thin.rs:1318` | 已切分的夹层单元：三个闭合层，以及间隙层的三对匹配点对。 |
+| `band_face_split` | 网格生成 | `src/meshgen/thin.rs:1189` | 双切面剖分规则：把每条被切边带两个切点的面剖分为角部／条带／剩余三部分。 |
+| `close_open_surface` | 网格生成 | `src/meshgen/thin.rs:1253` | 用未配对有向边所构成的环把开放的定向三角化封闭。 |
+| `split_band_cell` | 网格生成 | `src/meshgen/thin.rs:1357` | 把夹层单元切分为三个闭合层，并给出间隙层的匹配点对。 |
 | `ThinContext` / `ThinRegime` | 网格生成 | `src/meshgen/thin.rs` | S3->S8b 的桥接：按排布面索引的薄区编号、生效薄区制式、配对类别编码、`t_sheet`，以及 `collapse_sheets` 是否开启。 |
-| `thin_context` | 网格生成 | `src/meshgen/gapfield.rs` | 把 S3 的薄区归约为按排布面查表的形式，并映射每个薄区的**两侧**壁面。 |
-| `pair_class_code` | 网格生成 | `src/meshgen/gapfield.rs` | 某个 `PairClass` 对应的 `ThinRegionPairClass` 编码（SPEC contracts §2.3）。 |
+| `thin_context` | 网格生成 | `src/meshgen/gapfield.rs:3128` | 把 S3 的薄区归约为按排布面查表的形式，并映射每个薄区的**两侧**壁面。 |
+| `pair_class_code` | 网格生成 | `src/meshgen/gapfield.rs:3189` | 某个 `PairClass` 对应的 `ThinRegionPairClass` 编码（SPEC contracts §2.3）。 |
 | `FACE_TAG_INTERFACE` / `FACE_TAG_SHEET` / `FACE_TAG_BOX_CAP` | 网格生成 | `src/meshgen/cut.rs` | S8 写出的 `FaceTagKind` 取值；此前切割阶段一直硬编码为 `0`。 |
-| `face_is_single_patch` | 网格生成 | `src/meshgen/cut.rs` | 切割某个面的各组件是否描述同一张曲面（逐边切割节点映射完全相同），从而可套用 §5.2 的表。 |
-| `collapsed_sheet_rim` | 网格生成 | `src/meshgen/cut.rs` | 塌缩薄片的边缘曲线——两端点均位于塌缩区域终止处的边界边。 |
-| `CURVE_KIND_RIM` | 网格生成 | `src/meshgen/cut.rs` | 边缘对应的 `CurveKind` 取值（SPEC contracts §2.3）。 |
-| `nodes_on_rim` | 网格生成 | `src/meshgen/cut.rs` | 位于排布边缘曲线容差范围内的网格节点——开放薄片允许终止的位置。 |
-| `expected_volume` | 网格生成 | `src/meshgen/verify.rs` | 在更高优先级实体取走各自份额后，某组件应得的体积，采用分层采样估计。 |
-| `TriIndex::contains` | 网格生成 | `src/meshgen/verify.rs` | 用广义绕数判定点是否位于三角形集合内部——射线奇偶性在自相交曲面上无定义。 |
-| `connected_shells` | 网格生成 | `src/meshgen/verify.rs` | 按共享顶点位置把三角形集合划分为若干壳，使并集的每个组成部分可以各自定界。 |
-| `sampled_volume` | 网格生成 | `src/meshgen/verify.rs` | 并集正确的体积估计：在每个壳自身的包围盒内采样，并把每个采样点计入第一个包含它的壳。 |
-| `ChildTets` | 网格生成 | `src/meshgen/cut.rs` | 单个单元按 §6 表格行生成的子单元；最大的一行（情形 D）为 8 个。 |
+| `face_is_single_patch` | 网格生成 | `src/meshgen/cut.rs:6747` | 切割某个面的各组件是否描述同一张曲面（逐边切割节点映射完全相同），从而可套用 §5.2 的表。 |
+| `collapsed_sheet_rim` | 网格生成 | `src/meshgen/cut.rs:6765` | 塌缩薄片的边缘曲线——两端点均位于塌缩区域终止处的边界边。 |
+| `CURVE_KIND_RIM` | 网格生成 | `src/meshgen/cut.rs:120` | 边缘对应的 `CurveKind` 取值（SPEC contracts §2.3）。 |
+| `nodes_on_rim` | 网格生成 | `src/meshgen/cut.rs:6720` | 位于排布边缘曲线容差范围内的网格节点——开放薄片允许终止的位置。 |
+| `expected_volume` | 网格生成 | `src/meshgen/verify.rs:3733` | 在更高优先级实体取走各自份额后，某组件应得的体积，采用分层采样估计。 |
+| `TriIndex::contains` | 网格生成 | `src/meshgen/verify.rs:3690` | 用广义绕数判定点是否位于三角形集合内部——射线奇偶性在自相交曲面上无定义。 |
+| `connected_shells` | 网格生成 | `src/meshgen/verify.rs:3844` | 按共享顶点位置把三角形集合划分为若干壳，使并集的每个组成部分可以各自定界。 |
+| `sampled_volume` | 网格生成 | `src/meshgen/verify.rs:3800` | 并集正确的体积估计：在每个壳自身的包围盒内采样，并把每个采样点计入第一个包含它的壳。 |
+| `ChildTets` | 网格生成 | `src/meshgen/cut.rs:1004` | 单个单元按 §6 表格行生成的子单元；最大的一行（情形 D）为 8 个。 |
 | `volume_only` | 输入输出 | `src/io/vtu.rs:785` | 由混合单元文档派生出的**交付**用仅四面体文档：逐单元数组同步筛选，带回共享编号的 `GlobalPointId`，并重述 `Counts` 以免派生文件自我描述失真。 |
-| `ArrayData::select_tuples` | 输入输出 | `src/io/vtu.rs` | 仅保留索引通过保留掩码的元组，生成新数组。 |
+| `ArrayData::select_tuples` | 输入输出 | `src/io/vtu.rs:741` | 仅保留索引通过保留掩码的元组，生成新数组。 |
 | `contract_path` | 网格生成 | `src/meshgen/snapshot.rs:333` | 交付体网格旁的辅助混合单元文档路径：`<stem>_contract.vtu`。 |
-| `polygon_soup_centroid` | 网格生成 | `src/meshgen/cut.rs` | 闭合三角形集合的形心——各层扇形锥化所用的顶点。 |
-| `KEY_ORDER_REFINEMENT` | 网格生成 | `src/meshgen/cut.rs` | S8 的排序键比焊接网格细多少（SPEC §1.2 Rule K-O）。 |
-| `REGIME_NORMAL` | 网格生成 | `src/meshgen/cut.rs` | 普通单元的 `regime` 单元数组编码。 |
+| `polygon_soup_centroid` | 网格生成 | `src/meshgen/cut.rs:960` | 闭合三角形集合的形心——各层扇形锥化所用的顶点。 |
+| `KEY_ORDER_REFINEMENT` | 网格生成 | `src/meshgen/cut.rs:68` | S8 的排序键比焊接网格细多少（SPEC §1.2 Rule K-O）。 |
+| `REGIME_NORMAL` | 网格生成 | `src/meshgen/cut.rs:65` | 普通单元的 `regime` 单元数组编码。 |
 
 - [算法文档](../algorithms/) —— 概念性算法说明。
 - [示例文档](../examples/) —— 各流水线走查。
 - [AGENTS.md](../../../AGENTS.md) —— `AI-FUNC-SUMMARY` 与文档同步规则。
 
-| `PointClassifier` | `src/meshgen/classify.rs:487` | S6 用于判定的逐实体分量几何，与 S8 共享，使得在晶格没有顶点的位置也能对碎片采样（SPEC §7.5）。 |
-| `classify_lattice_with` | `src/meshgen/classify.rs:680` | 针对调用方已构建的 `PointClassifier` 运行 `classify_lattice`，投影网格只构建一次。 |
-| `seed_record` | `src/meshgen/cut.rs:1452` | 以内部采样确定升级单元碎片的归属，而非继承父单元尚未裁决的记录。 |
-| `curve_sources` | `src/meshgen/sizing.rs:699` | 沿每条锁定曲线加密，使单元至多跨越一条曲线；这是两条弦高准则无法表达的邻近性准则。 |
-| `curve_coverage` | `src/meshgen/snap.rs` | 有多少锁定曲线线段真正被网格边链覆盖；`[SNAP-CURVE]` 背后的测量。 |
-| `split_soup_by_surface` | `src/meshgen/junction.rs` | 按单张曲面划分升级单元的边界三角汤，并报告它留下的**每一个**封盖环（SPEC §7.6）；三个角点全部落在曲面上的三角形交由调用方的形心判别。 |
-| `open_boundary_loops` | `src/meshgen/junction.rs` | 将三角汤中只被使用一次的边按孔洞串成环；对夹断或分叉的孔洞予以拒绝。按无向计数，因为三角汤没有一致的绕向。 |
-| `split_soup_components` | `src/meshgen/junction.rs` | 将三角汤拆分为按边连通的各块，并以最小节点号排序——两道壁面会把外侧留成两块互不相连的实体。 |
-| `curve_pierce_points` | `src/meshgen/cut.rs` | 门 G6-0：按晶格面给出锁定曲线刺穿该面的位置，以该面自身角点为键。 |
-| `curve_mesh_edges` | `src/meshgen/cut.rs` | 按锁定曲线给出沿其分布的网格棱——两端点与中点都须落在曲线上；每条棱只发一个单元。 |
-| `nodes_on_curve` | `src/meshgen/cut.rs` | 门 G6-0：已经落在锁定曲线上的网格节点——严格取内部的刺穿判定对这种情形不会报告任何结果。 |
-| `fan_from_walk_node` | `src/meshgen/cut.rs` | 以边界走线自身的某个节点为扇心三角化该面；任一三角形退化时返回 None。 |
-| `segment_pierces_triangle` | `src/meshgen/cut.rs` | 线段严格穿过三角形内部的位置——排除仅触及边界与共面的情形。 |
-| `curve_segments` | `src/pipeline/meshgen.rs` | 门 G6-0 的输入：排布中全部锁定曲线的折线段。 |
-| `locked_curves` | `src/pipeline/meshgen.rs` | 同一批曲线的完整形式——种类、分量集合、径向面片数与折线——供 VTU 曲线表与 `[V9]` 使用。 |
-| `soup_volume` | `src/meshgen/cut.rs` | 闭合三角汤所围体积，对任意形状均精确：先以广度优先遍历定向，再作带符号求和。 |
-| `fan_is_sound` | `src/meshgen/cut.rs` | 三角汤的每个三角形与其自身形心是否构成非退化四面体——即 `orient_positively` 丢弃时所问的精确问题。 |
-| `cell_fan_is_conforming` | `src/meshgen/cut.rs` | §7.6 各碎片扇形化后得到的四面体彼此之间是否协调——即在单元提交之前先对它自己提出 `[V3]` 的两项检查。 |
-| `fan_is_simple` | `src/meshgen/cut.rs` | 多边形的扇形化是否恰好覆盖它一次：每个三角形非退化且绕向一致。 |
-| `fan_cap` | `src/meshgen/cut.rs` | 从盖多边形自身顶点中选一个能干净三角剖分的作扇形化；若无则返回 None。 |
-| `fan_swallows_vertex` | `src/meshgen/cut.rs` | 扇形化的任一条边是否穿过了不属于该三角形的多边形顶点。 |
-| `split_escalated_cell` | `src/meshgen/cut.rs` | 对每个穿越分量施加 §7.6，由孔洞拓扑与扇形体积检查守护；失败时回退到整体扇形。 |
-| `crossed_face` | `src/meshgen/cut.rs` | 描述被面片穿过的面：每两个切割节点给出一条弦，同一分量留下四个节点时给出两条嵌套弦，两条弦互相穿插时给出相遇点。 |
-| `ACTIVE_FACE_PROBE` | `src/meshgen/classify.rs` | 判断某个面是否埋在其自身自相交分量内部时，向两侧偏移的探测距离。 |
-| `crossed_face_mesh` | `src/meshgen/junction.rs` | 以两条弦为边三角化该面：相交时分四个扇区，不相交时分三块多边形。 |
-| `chord_meeting_point` | `src/meshgen/junction.rs` | 一个面上两条弦的相遇点——S2 交线穿刺该面之处。 |
-| `fan_polygon` | `src/meshgen/junction.rs` | 从最小键顶点扇形化面的一个凸子多边形。 |
-| `fan_volume` | `src/meshgen/cut.rs` | 闭合多边形三角汤所围的体积，以内部锥点上的无符号和计算。 |
-| `declare_contact_components` | `src/meshgen/cut.rs` | 为落在重合排布面片上的每个网格面声明该面片所属的全部分量。 |
-| `point_on_triangle` | `src/meshgen/cut.rs` | 判断一点是否落在三角形的 `eps` 之内（平面距离加重心坐标包含性）。 |
-| `contact_patches` | `src/pipeline/meshgen.rs` | S2 的多标记排布面，作为三角形与其分量集合的配对——排布阶段的重合信息进入 S8 的唯一通道。 |
-| `DEFAULT_MAX_WIREFRAME_EDGES` | `src/meshgen/render_scene.rs` | 输出线框线段数的默认上限；超出后按步长细化，绝不截断。 |
+| `PointClassifier` | `src/meshgen/classify.rs:502` | S6 用于判定的逐实体分量几何，与 S8 共享，使得在晶格没有顶点的位置也能对碎片采样（SPEC §7.5）。 |
+| `classify_lattice_with` | `src/meshgen/classify.rs:721` | 针对调用方已构建的 `PointClassifier` 运行 `classify_lattice`，投影网格只构建一次。 |
+| `seed_record` | `src/meshgen/cut.rs:5613` | 以内部采样确定升级单元碎片的归属，而非继承父单元尚未裁决的记录。 |
+| `curve_sources` | `src/meshgen/sizing.rs:724` | 沿每条锁定曲线加密，使单元至多跨越一条曲线；这是两条弦高准则无法表达的邻近性准则。 |
+| `curve_coverage` | `src/meshgen/snap.rs:714` | 有多少锁定曲线线段真正被网格边链覆盖；`[SNAP-CURVE]` 背后的测量。 |
+| `split_soup_by_surface` | `src/meshgen/junction.rs:347` | 按单张曲面划分升级单元的边界三角汤，并报告它留下的**每一个**封盖环（SPEC §7.6）；三个角点全部落在曲面上的三角形交由调用方的形心判别。 |
+| `open_boundary_loops` | `src/meshgen/junction.rs:188` | 将三角汤中只被使用一次的边按孔洞串成环；对夹断或分叉的孔洞予以拒绝。按无向计数，因为三角汤没有一致的绕向。 |
+| `split_soup_components` | `src/meshgen/junction.rs:280` | 将三角汤拆分为按边连通的各块，并以最小节点号排序——两道壁面会把外侧留成两块互不相连的实体。 |
+| `curve_pierce_points` | `src/meshgen/cut.rs:9330` | 门 G6-0：按晶格面给出锁定曲线刺穿该面的位置，以该面自身角点为键。 |
+| `curve_mesh_edges` | `src/meshgen/cut.rs:9408` | 按锁定曲线给出沿其分布的网格棱——两端点与中点都须落在曲线上；每条棱只发一个单元。 |
+| `nodes_on_curve` | `src/meshgen/cut.rs:9482` | 门 G6-0：已经落在锁定曲线上的网格节点——严格取内部的刺穿判定对这种情形不会报告任何结果。 |
+| `fan_from_walk_node` | `src/meshgen/cut.rs:9532` | 以边界走线自身的某个节点为扇心三角化该面；任一三角形退化时返回 None。 |
+| `segment_pierces_triangle` | `src/meshgen/cut.rs:9568` | 线段严格穿过三角形内部的位置——排除仅触及边界与共面的情形。 |
+| `curve_segments` | `src/pipeline/meshgen.rs:1444` | 门 G6-0 的输入：排布中全部锁定曲线的折线段。 |
+| `locked_curves` | `src/pipeline/meshgen.rs:1468` | 同一批曲线的完整形式——种类、分量集合、径向面片数与折线——供 VTU 曲线表与 `[V9]` 使用。 |
+| `soup_volume` | `src/meshgen/cut.rs:9675` | 闭合三角汤所围体积，对任意形状均精确：先以广度优先遍历定向，再作带符号求和。 |
+| `fan_is_sound` | `src/meshgen/cut.rs:9647` | 三角汤的每个三角形与其自身形心是否构成非退化四面体——即 `orient_positively` 丢弃时所问的精确问题。 |
+| `cell_fan_is_conforming` | `src/meshgen/cut.rs:9756` | §7.6 各碎片扇形化后得到的四面体彼此之间是否协调——即在单元提交之前先对它自己提出 `[V3]` 的两项检查。 |
+| `fan_is_simple` | `src/meshgen/cut.rs:9611` | 多边形的扇形化是否恰好覆盖它一次：每个三角形非退化且绕向一致。 |
+| `fan_cap` | `src/meshgen/cut.rs:9210` | 从盖多边形自身顶点中选一个能干净三角剖分的作扇形化；若无则返回 None。 |
+| `fan_swallows_vertex` | `src/meshgen/cut.rs:9290` | 扇形化的任一条边是否穿过了不属于该三角形的多边形顶点。 |
+| `split_escalated_cell` | `src/meshgen/cut.rs:8345` | 对每个穿越分量施加 §7.6，由孔洞拓扑与扇形体积检查守护；失败时回退到整体扇形。 |
+| `crossed_face` | `src/meshgen/cut.rs:6505` | 描述被面片穿过的面：每两个切割节点给出一条弦，同一分量留下四个节点时给出两条嵌套弦，两条弦互相穿插时给出相遇点。 |
+| `ACTIVE_FACE_PROBE` | `src/meshgen/classify.rs:60` | 判断某个面是否埋在其自身自相交分量内部时，向两侧偏移的探测距离。 |
+| `crossed_face_mesh` | `src/meshgen/junction.rs:560` | 以两条弦为边三角化该面：相交时分四个扇区，不相交时分三块多边形。 |
+| `chord_meeting_point` | `src/meshgen/junction.rs:479` | 一个面上两条弦的相遇点——S2 交线穿刺该面之处。 |
+| `fan_polygon` | `src/meshgen/junction.rs:526` | 从最小键顶点扇形化面的一个凸子多边形。 |
+| `fan_volume` | `src/meshgen/cut.rs:9857` | 闭合多边形三角汤所围的体积，以内部锥点上的无符号和计算。 |
+| `declare_contact_components` | `src/meshgen/cut.rs:7110` | 为落在重合排布面片上的每个网格面声明该面片所属的全部分量。 |
+| `point_on_triangle` | `src/meshgen/cut.rs:7073` | 判断一点是否落在三角形的 `eps` 之内（平面距离加重心坐标包含性）。 |
+| `contact_patches` | `src/pipeline/meshgen.rs:1519` | S2 的多标记排布面，作为三角形与其分量集合的配对——排布阶段的重合信息进入 S8 的唯一通道。 |
+| `DEFAULT_MAX_WIREFRAME_EDGES` | `src/meshgen/render_scene.rs:121` | 输出线框线段数的默认上限；超出后按步长细化，绝不截断。 |
 
 | `PreparedMeshQuery` | Geometry Analysis | `src/geometry/mesh_query.rs:20` | Immutable cached CPU parity query. |
 | `PreparedMeshQuery::new` | Geometry Analysis | `src/geometry/mesh_query.rs:29` | Prepare bbox and triangle BVH. |
@@ -788,42 +788,42 @@
 | `MeshQueryScratch` | Geometry Analysis | `src/geometry/mesh_query.rs:7` | Reusable hits and triangle-test counter. |
 | `build_nodes` | Geometry Analysis | `src/geometry/mesh_query.rs:144` | Build median BVH with preorder escape links. |
 | `ray_reaches_box` | Geometry Analysis | `src/geometry/mesh_query.rs:195` | Conservative positive-ray slab test. |
-| `VoxelS2` | Geometry Analysis | `src/geometry/s2.rs:810` | Owned reusable occupancy grid. |
-| `VoxelS2::new` | Geometry Analysis | `src/geometry/s2.rs:818` | Prepare CPU occupancy once. |
-| `VoxelS2::calculate` | Geometry Analysis | `src/geometry/s2.rs:825` | Compute exact or voxel MC on shared grid. |
-| `calculate_s2_mesh_mc_seeded` | Geometry Analysis | `src/geometry/s2.rs:735` | Reproducible sample-block mesh MC. |
-| `try_calculate_s2_gpu_exact` | Geometry Analysis | `src/geometry/s2.rs:996` | Fallible GPU exact with checked dimensions. |
+| `VoxelS2` | Geometry Analysis | `src/geometry/s2.rs:1277` | Owned reusable occupancy grid. |
+| `VoxelS2::new` | Geometry Analysis | `src/geometry/s2.rs:1381` | Prepare CPU occupancy once. |
+| `VoxelS2::calculate` | Geometry Analysis | `src/geometry/s2.rs:1404` | Compute exact or voxel MC on shared grid. |
+| `calculate_s2_mesh_mc_seeded` | Geometry Analysis | `src/geometry/s2.rs:1180` | Reproducible sample-block mesh MC. |
+| `try_calculate_s2_gpu_exact` | Geometry Analysis | `src/geometry/s2.rs:1522` | Fallible GPU exact with checked dimensions. |
 
-| `SpatialGrid::remove` | Geometry Core | `src/geometry/spatial.rs:59` | Remove all item cell references. |
-| `SpatialGrid::update` | Geometry Core | `src/geometry/spatial.rs:72` | Replace one item membership. |
+| `SpatialGrid::remove` | Geometry Core | `src/geometry/spatial.rs:84` | Remove all item cell references. |
+| `SpatialGrid::update` | Geometry Core | `src/geometry/spatial.rs:97` | Replace one item membership. |
 | `SpatialQueryScratch` | Geometry Core | `src/geometry/spatial.rs:5` | Retained neighbors and membership storage. |
 | `SpatialGrid::query_into` | Geometry Core | `src/geometry/spatial.rs:136` | Fill reusable query scratch. |
 
 | `PackCollider` | Pipeline Packing | `src/pipeline/pack.rs:59` | 缓存的碰撞体 bbox 与形状。 |
 | `PackCollider::new` | Pipeline Packing | `src/pipeline/pack.rs:66` | 只准备一次碰撞形状。 |
 | `PackCollider::blocks` | Pipeline Packing | `src/pipeline/pack.rs:74` | 缓存的重叠或间隙判定；更新 PackQueryStats 计数。 |
-| `bbox_may_block` | Pipeline Packing | `src/pipeline/pack.rs:103` | 精确判定自身的 bbox 拒绝（可选 bbox）。 |
-| `periodic_image_shifts` | Pipeline Packing | `src/pipeline/pack.rs:114` | 按 `generate_periodic_ghosts` 顺序给出周期平移及平移后 bbox。 |
-| `PackImage` | Pipeline Packing | `src/pipeline/pack.rs:148` | 已接受颗粒或 `(particle_id, shift)` 镜像，碰撞体按需构建。 |
-| `PackScene` | Pipeline Packing | `src/pipeline/pack.rs:155` | 镜像存储、增量网格、无 bbox 列表与 ghost 构建计数。 |
-| `PackScene::new` | Pipeline Packing | `src/pipeline/pack.rs:164` | 创建使用 domain/8 网格的空存储。 |
-| `PackScene::build_ghost` | Pipeline Packing | `src/pipeline/pack.rs:175` | 平移并准备一个镜像（计数）。 |
-| `PackScene::collider` | Pipeline Packing | `src/pipeline/pack.rs:183` | 线程安全的惰性镜像碰撞体。 |
-| `PackScene::reachable` | Pipeline Packing | `src/pipeline/pack.rs:192` | bbox 在 gap 下可能阻挡查询的镜像；在 PackQueryStats 中计数。 |
-| `PackScene::blocks_any` | Pipeline Packing | `src/pipeline/pack.rs:219` | 对可达镜像串行/并行 any()。 |
-| `PackScene::candidate_images` | Pipeline Packing | `src/pipeline/pack.rs:244` | 完整旧版可行性判定，候选及已接受镜像均惰性实例化。 |
-| `PackScene::insert` | Pipeline Packing | `src/pipeline/pack.rs:276` | 记录已接受颗粒及其镜像描述。 |
-| `PackScene::image_stats` | Pipeline Packing | `src/pipeline/pack.rs:300` | 存储镜像数、已实例化 ghost 数、ghost 构建数。 |
-| `PackPipeline::run_in_pool` | Pipeline Packing | `src/pipeline/pack.rs:442` | Packing work under configured pool. |
+| `bbox_may_block` | Pipeline Packing | `src/pipeline/pack.rs:105` | 精确判定自身的 bbox 拒绝（可选 bbox）。 |
+| `periodic_image_shifts` | Pipeline Packing | `src/pipeline/pack.rs:116` | 按 `generate_periodic_ghosts` 顺序给出周期平移及平移后 bbox。 |
+| `PackImage` | Pipeline Packing | `src/pipeline/pack.rs:150` | 已接受颗粒或 `(particle_id, shift)` 镜像，碰撞体按需构建。 |
+| `PackScene` | Pipeline Packing | `src/pipeline/pack.rs:157` | 镜像存储、增量网格、无 bbox 列表与 ghost 构建计数。 |
+| `PackScene::new` | Pipeline Packing | `src/pipeline/pack.rs:166` | 创建使用 domain/8 网格的空存储。 |
+| `PackScene::build_ghost` | Pipeline Packing | `src/pipeline/pack.rs:177` | 平移并准备一个镜像（计数）。 |
+| `PackScene::collider` | Pipeline Packing | `src/pipeline/pack.rs:185` | 线程安全的惰性镜像碰撞体。 |
+| `PackScene::reachable` | Pipeline Packing | `src/pipeline/pack.rs:194` | bbox 在 gap 下可能阻挡查询的镜像；在 PackQueryStats 中计数。 |
+| `PackScene::blocks_any` | Pipeline Packing | `src/pipeline/pack.rs:221` | 对可达镜像串行/并行 any()。 |
+| `PackScene::candidate_images` | Pipeline Packing | `src/pipeline/pack.rs:246` | 完整旧版可行性判定，候选及已接受镜像均惰性实例化。 |
+| `PackScene::insert` | Pipeline Packing | `src/pipeline/pack.rs:278` | 记录已接受颗粒及其镜像描述。 |
+| `PackScene::image_stats` | Pipeline Packing | `src/pipeline/pack.rs:302` | 存储镜像数、已实例化 ghost 数、ghost 构建数。 |
+| `PackPipeline::run_in_pool` | Pipeline Packing | `src/pipeline/pack.rs:444` | Packing work under configured pool. |
 
 | `MeasurePipeline::run_in_pool` | Pipeline Core | `src/pipeline/measure.rs:83` | Method-specific measurement in configured pool. |
 
-| `configured_mode` | Core & Compute | `src/compute/policy.rs:142` | Resolve strict environment override. |
-| `resolve_execution` | Core & Compute | `src/compute/policy.rs:162` | Resolve method support, workload budget and fallback. |
+| `configured_mode` | Core & Compute | `src/compute/policy.rs:138` | Resolve strict environment override. |
+| `resolve_execution` | Core & Compute | `src/compute/policy.rs:158` | Resolve method support, workload budget and fallback. |
 
-| `GridPlan` | GPU | `src/gpu/runtime.rs:60` | Checked two-dimensional grid dispatch. |
-| `grid_plan` | GPU | `src/gpu/runtime.rs:67` | Validate product, buffer and dispatch limits. |
-| `GpuVoxelPipeline::voxelize_limited` | GPU | `src/gpu/voxel.rs:179` | Fallible voxel execution with bounded dispatch. |
+| `GridPlan` | GPU | `src/gpu/runtime.rs:170` | Checked two-dimensional grid dispatch. |
+| `grid_plan` | GPU | `src/gpu/runtime.rs:177` | Validate product, buffer and dispatch limits. |
+| `GpuVoxelPipeline::voxelize_limited` | GPU | `src/gpu/voxel.rs:357` | Fallible voxel execution with bounded dispatch. |
 
 | `particle_at_prepared` | Pipeline Placement | `src/pipeline/placement_labels.rs:326` | First particle in ordered cached candidates. |
 | `LABEL_SLAB_VOXELS` | Pipeline Placement | `src/pipeline/placement_labels.rs:46` | 每个标签切片块的目标体素数（4,194,304）。 |
@@ -834,130 +834,131 @@
 | `LabelQuery::fill_slab` | Pipeline Placement | `src/pipeline/placement_labels.rs:184` | 将一个 z 切片块分类写入 phase/id 缓冲。 |
 | `write_label_stacks` | Pipeline Placement | `src/pipeline/placement_labels.rs:257` | 按切片块流式写出两个标签 TIFF。 |
 
-| `map_vertices` | Geometry Core | `src/geometry/mesh_ops.rs:162` | Serial or parallel independent vertex mapping. |
+| `map_vertices` | Geometry Core | `src/geometry/mesh_ops.rs:251` | Serial or parallel independent vertex mapping. |
 
 | `forge_owned` | Geometry Volume/Collision | `src/geometry/forging.rs:66` | Ownership-consuming FFD and ROI transform. |
 
-| `load_stl_from_reader` | I/O | `src/io/stl.rs:192` | Forward-reader STL: streamed ASCII lines and bounded binary records. |
-| `AsciiStlBuilder` | I/O | `src/io/stl.rs:47` | ASCII STL 增量状态：顶点、面、待组面顶点、去重表。 |
-| `AsciiStlBuilder::push_line` | I/O | `src/io/stl.rs:56` | 按原 lossy/trim/vertex 规则处理一行原始字节。 |
-| `parse_ascii_stream_or_binary` | I/O | `src/io/stl.rs:78` | 逐行流式解析 ASCII STL，未得到三角形时对保留字节回退 binary。 |
+| `load_stl_from_reader` | I/O | `src/io/stl.rs:229` | Forward-reader STL: streamed ASCII lines and bounded binary records. |
+| `AsciiStlBuilder` | I/O | `src/io/stl.rs:81` | ASCII STL 增量状态：顶点、面、待组面顶点、去重表。 |
+| `AsciiStlBuilder::push_line` | I/O | `src/io/stl.rs:90` | 按原 lossy/trim/vertex 规则处理一行原始字节。 |
+| `parse_ascii_stream_or_binary` | I/O | `src/io/stl.rs:112` | 逐行流式解析 ASCII STL，未得到三角形时对保留字节回退 binary。 |
 | `TiffPageEncoder` | I/O | `src/io/volume.rs:552` | 基于借用可 seek writer 的增量多页 TIFF 编码器。 |
 | `TiffPageEncoder::new` | I/O | `src/io/volume.rs:562` | 写入 TIFF 头并固定页尺寸与类型。 |
 | `TiffPageEncoder::write_slices` | I/O | `src/io/volume.rs:590` | 以连续页追加完整 z 切片。 |
-| `load_stl_hashed` | I/O | `src/io/stl.rs:193` | Single-pass STL parsing and raw digest. |
-| `parse_binary_reader` | I/O | `src/io/stl.rs:109` | Read binary triangle records with incremental deduplication. |
-| `read_stl_record` | I/O | `src/io/stl.rs:140` | Read complete record or report truncation. |
+| `load_stl_hashed` | I/O | `src/io/stl.rs:242` | Single-pass STL parsing and raw digest. |
+| `parse_binary_reader` | I/O | `src/io/stl.rs:157` | Read binary triangle records with incremental deduplication. |
+| `read_stl_record` | I/O | `src/io/stl.rs:191` | Read complete record or report truncation. |
 | `HashingReader` | I/O | `src/io/hash.rs:50` | Incremental digest over delivered bytes. |
 | `HashingReader::new` | I/O | `src/io/hash.rs:58` | Wrap forward reader for hashing. |
 | `HashingReader::finish` | I/O | `src/io/hash.rs:67` | Return digest and consumed byte count. |
 
-| `stl_paths` | I/O | `src/io/stl.rs:218` | List STL paths in existing directory order. |
+| `stl_paths` | I/O | `src/io/stl.rs:267` | List STL paths in existing directory order. |
 
-| `merge_prepared_particles` | Pipeline Optimize | `src/pipeline/optimize.rs:61` | Merge geometry and assign stable particle vertex ranges. |
+| `merge_prepared_particles` | Pipeline Optimize | `src/pipeline/optimize.rs:123` | Merge geometry and assign stable particle vertex ranges. |
 
-| `FftWorkspace` | Geometry Analysis | `src/geometry/s2.rs:334` | Reusable FFT plans and complex arrays. |
-| `FftWorkspace::new` | Geometry Analysis | `src/geometry/s2.rs:348` | Construct dimension-specific FFT workspace. |
-| `FftWorkspace::array_bytes` | Geometry Analysis | `src/geometry/s2.rs:363` | Report retained complex-array capacities. |
-| `with_fft_correlation` | Geometry Analysis | `src/geometry/s2.rs:489` | Evaluate occupancy FFT with bounded cache retention. |
+| `FftWorkspace` | Geometry Analysis | `src/geometry/s2.rs:789` | Reusable FFT plans and complex arrays. |
+| `FftWorkspace::new` | Geometry Analysis | `src/geometry/s2.rs:803` | Construct dimension-specific FFT workspace. |
+| `FftWorkspace::array_bytes` | Geometry Analysis | `src/geometry/s2.rs:818` | Report retained complex-array capacities. |
+| `with_fft_correlation` | Geometry Analysis | `src/geometry/s2.rs:964` | Evaluate occupancy FFT with bounded cache retention. |
 
-| `FFT_RETAIN_BYTES` | Geometry Analysis | `src/geometry/s2.rs:332` | Maximum retained FFT array bytes per calling thread. |
-| `smooth_fft_length` | Geometry Analysis | `src/geometry/s2.rs` | 不小于给定值的最小 2,3,5-平滑长度。 |
-| `padded_fft_dims` | Geometry Analysis | `src/geometry/s2.rs` | 各轴 >= 2N-1 的平滑填充。 |
-| `ExactCpuMethod` | Geometry Analysis | `src/geometry/s2.rs` | CPU exact 内核选择（Fft/Direct）。 |
-| `ExactCpuPlan` | Geometry Analysis | `src/geometry/s2.rs` | 模型成本、工作集与所选 CPU exact 内核。 |
-| `ExactCpuPlan::selected_bytes` | Geometry Analysis | `src/geometry/s2.rs` | 所选内核的工作集。 |
-| `ExactCpuPlan::fits_budget` | Geometry Analysis | `src/geometry/s2.rs` | 所选内核是否满足预算。 |
-| `ExactCpuPlan::describe` | Geometry Analysis | `src/geometry/s2.rs` | 单行可观测计划描述。 |
-| `exact_shell_work` | Geometry Analysis | `src/geometry/s2.rs` | 域内偏移数、精确直接配对工作量、最大壳。 |
-| `fft_working_set_bytes` | Geometry Analysis | `src/geometry/s2.rs` | checked FFT 峰值字节估计。 |
-| `direct_working_set_bytes` | Geometry Analysis | `src/geometry/s2.rs` | checked 直接法峰值字节估计。 |
-| `plan_exact_cpu` | Geometry Analysis | `src/geometry/s2.rs` | 按成本模型/预算在 FFT 与直接法间选择。 |
-| `cached_exact_plan` | Geometry Analysis | `src/geometry/s2.rs` | 每个键复用并记录一次 exact 计划。 |
-| `offset_in_domain` | Geometry Analysis | `src/geometry/s2.rs` | 位移是否留下合法体素对。 |
-| `direct_pair_counts` | Geometry Analysis | `src/geometry/s2.rs` | 按 z 段统计单个位移的整数 (hits, valid)。 |
-| `finish_exact_curve` | Geometry Analysis | `src/geometry/s2.rs` | 汇总、插值并固定 S2(0)。 |
-| `VoxelS2::calculate_exact_with` | Geometry Analysis | `src/geometry/s2.rs` | 指定 CPU 内核计算 exact S2。 |
-| `DEFAULT_CPU_EXACT_BUDGET_BYTES` | Geometry Analysis | `src/geometry/s2.rs` | 默认 CPU exact 工作集预算（768 MiB）。 |
-| `NS_PER_FFT_UNIT` | Geometry Analysis | `src/geometry/s2.rs` | 校准的每 P*log2(P) 单位 FFT 成本（ns）。 |
-| `FFT_PARALLEL_EFFICIENCY` | Geometry Analysis | `src/geometry/s2.rs` | FFT 并行效率模型参数。 |
-| `NS_PER_DIRECT_PAIR` | Geometry Analysis | `src/geometry/s2.rs` | 校准的每访问配对直接法成本（ns）。 |
-| `DIRECT_PARALLEL_EFFICIENCY` | Geometry Analysis | `src/geometry/s2.rs` | 直接法并行效率模型参数。 |
+| `FFT_RETAIN_BYTES` | Geometry Analysis | `src/geometry/s2.rs:508` | Maximum retained FFT array bytes per calling thread. |
+| `smooth_fft_length` | Geometry Analysis | `src/geometry/s2.rs:519` | 不小于给定值的最小 2,3,5-平滑长度。 |
+| `padded_fft_dims` | Geometry Analysis | `src/geometry/s2.rs:556` | 各轴 >= 2N-1 的平滑填充。 |
+| `ExactCpuMethod` | Geometry Analysis | `src/geometry/s2.rs:566` | CPU exact 内核选择（Fft/Direct）。 |
+| `ExactCpuPlan` | Geometry Analysis | `src/geometry/s2.rs:573` | 模型成本、工作集与所选 CPU exact 内核。 |
+| `ExactCpuPlan::selected_bytes` | Geometry Analysis | `src/geometry/s2.rs:588` | 所选内核的工作集。 |
+| `ExactCpuPlan::fits_budget` | Geometry Analysis | `src/geometry/s2.rs:596` | 所选内核是否满足预算。 |
+| `ExactCpuPlan::describe` | Geometry Analysis | `src/geometry/s2.rs:601` | 单行可观测计划描述。 |
+| `exact_shell_work` | Geometry Analysis | `src/geometry/s2.rs:623` | 域内偏移数、精确直接配对工作量、最大壳。 |
+| `fft_working_set_bytes` | Geometry Analysis | `src/geometry/s2.rs:695` | checked FFT 峰值字节估计。 |
+| `direct_working_set_bytes` | Geometry Analysis | `src/geometry/s2.rs:717` | checked 直接法峰值字节估计。 |
+| `plan_exact_cpu` | Geometry Analysis | `src/geometry/s2.rs:732` | 按成本模型/预算在 FFT 与直接法间选择。 |
+| `cached_exact_plan` | Geometry Analysis | `src/geometry/s2.rs:772` | 每个键复用并记录一次 exact 计划。 |
+| `offset_in_domain` | Geometry Analysis | `src/geometry/s2.rs:1027` | 位移是否留下合法体素对。 |
+| `direct_pair_counts` | Geometry Analysis | `src/geometry/s2.rs:1032` | 按 z 段统计单个位移的整数 (hits, valid)。 |
+| `finish_exact_curve` | Geometry Analysis | `src/geometry/s2.rs:1064` | 汇总、插值并固定 S2(0)。 |
+| `VoxelS2::calculate_exact_with` | Geometry Analysis | `src/geometry/s2.rs:1388` | 指定 CPU 内核计算 exact S2。 |
+| `DEFAULT_CPU_EXACT_BUDGET_BYTES` | Geometry Analysis | `src/geometry/s2.rs:512` | 默认 CPU exact 工作集预算（768 MiB）。 |
+| `NS_PER_FFT_UNIT` | Geometry Analysis | `src/geometry/s2.rs:513` | 校准的每 P*log2(P) 单位 FFT 成本（ns）。 |
+| `FFT_PARALLEL_EFFICIENCY` | Geometry Analysis | `src/geometry/s2.rs:514` | FFT 并行效率模型参数。 |
+| `NS_PER_DIRECT_PAIR` | Geometry Analysis | `src/geometry/s2.rs:515` | 校准的每访问配对直接法成本（ns）。 |
+| `DIRECT_PARALLEL_EFFICIENCY` | Geometry Analysis | `src/geometry/s2.rs:516` | 直接法并行效率模型参数。 |
 
-| `GpuShellS2Pipeline::resize_batch_buffers` | `src/gpu/s2_shell.rs:193` | Shell batch buffer capacity management; occupancy retained. |
+| `GpuShellS2Pipeline::resize_batch_buffers` | `src/gpu/s2_shell.rs:320` | Shell batch buffer capacity management; occupancy retained. |
 
-| `GpuShellS2Pipeline::release_batch_capacity` | `src/gpu/s2_shell.rs:230` | Shell batch buffer capacity management; occupancy retained. |
+| `GpuShellS2Pipeline::release_batch_capacity` | `src/gpu/s2_shell.rs:357` | Shell batch buffer capacity management; occupancy retained. |
 
-| `MeshRenderPipeline::with_worker_pool` | `src/pipeline/mesh_render.rs:193` | Execute scene preparation, rendering and fallback within the worker budget. |
+| `MeshRenderPipeline::with_worker_pool` | `src/pipeline/mesh_render.rs:201` | Execute scene preparation, rendering and fallback within the worker budget. |
 
-| `MeshRenderPipeline::run_in_pool` | `src/pipeline/mesh_render.rs:218` | Execute scene preparation, rendering and fallback within the worker budget. |
+| `MeshRenderPipeline::run_in_pool` | `src/pipeline/mesh_render.rs:226` | Execute scene preparation, rendering and fallback within the worker budget. |
 
 | `SceneRenderMemory::plan` | `src/compute/render_memory.rs:20` | Checked scene preview workset, budget and buffer planning without allocation. |
+| `scene_strip_rows` | `src/compute/render_memory.rs:114` | 选出场景预览工作集能放进可选 MiB 预算的最高水平条带（二分得到精确边界）；整图放得下时返回整图高度，一行都放不下时报错。 |
 
 | `SceneRenderMemory::check_budget` | `src/compute/render_memory.rs:77` | Checked scene preview workset, budget and buffer planning without allocation. |
 
 | `SceneRenderMemory::check_buffers` | `src/compute/render_memory.rs:93` | Checked scene preview workset, budget and buffer planning without allocation. |
 
-| `mc_evaluation_peak` | `src/compute/mc_memory.rs:4` | Check logical MC peak including retained capacity and pending uploads. |
-| `mc_evaluation_peak_batched` | `src/compute/mc_memory.rs:4` | `src/compute/mc_memory.rs` | 以半径批大小（每次派发的半径数）为参数的 `mc_evaluation_peak`。 |
-| `mc_largest_batch` | `src/compute/mc_memory.rs:4` | `src/compute/mc_memory.rs` | MC 峰值在 MiB 上限内的最大半径批（1..=128）；只有每次派发一个半径仍放不下时才报错。 |
+| `mc_evaluation_peak` | `src/compute/mc_memory.rs:21` | Check logical MC peak including retained capacity and pending uploads. |
+| `mc_evaluation_peak_batched` | `src/compute/mc_memory.rs:35` | `src/compute/mc_memory.rs` | 以半径批大小（每次派发的半径数）为参数的 `mc_evaluation_peak`。 |
+| `mc_largest_batch` | `src/compute/mc_memory.rs:97` | `src/compute/mc_memory.rs` | MC 峰值在 MiB 上限内的最大半径批（1..=128）；只有每次派发一个半径仍放不下时才报错。 |
 
-| `check_mc_budget` | `src/compute/mc_memory.rs:44` | Check logical MC peak including retained capacity and pending uploads. |
+| `check_mc_budget` | `src/compute/mc_memory.rs:131` | Check logical MC peak including retained capacity and pending uploads. |
 
-| `GpuS2Pipeline::check_evaluation_budget` | `src/gpu/s2.rs:275` | Check logical MC peak including retained capacity and pending uploads. |
-| `GpuS2Pipeline::set_memory_limit_mb` | `src/gpu/s2.rs:275` | `src/gpu/s2.rs` | Store the logical budget that uncertain-list regrowth must respect. |
+| `GpuS2Pipeline::check_evaluation_budget` | `src/gpu/s2.rs:451` | Check logical MC peak including retained capacity and pending uploads. |
+| `GpuS2Pipeline::set_memory_limit_mb` | `src/gpu/s2.rs:446` | `src/gpu/s2.rs` | Store the logical budget that uncertain-list regrowth must respect. |
 | `mc_regrowth_peak` | `src/gpu/s2.rs:275` | `src/compute/mc_memory.rs` | Retained peak plus a regrown uncertain list and its staging. |
 | `GpuVoxelPipeline::set_regrowth_headroom` | `src/gpu/s2.rs:275` | `src/gpu/voxel.rs` | Bytes a voxel uncertain-list regrowth may add beyond the planned list. |
 
-| `exchange_best_snapshot` | `src/pipeline/optimize.rs:52` | Exchange immutable best Arc snapshots; release retired payload outside the lock. |
+| `exchange_best_snapshot` | `src/pipeline/optimize.rs:54` | Exchange immutable best Arc snapshots; release retired payload outside the lock. |
 
 | `cpu_render_tile_pixels` | `src/geometry/render.rs:381` | Bounded CPU pixel-task scheduling with an explicit row reference. |
 
-| `render_mesh_cpu_with_tiles` | `src/geometry/render.rs:390` | Bounded CPU pixel-task scheduling with an explicit row reference. |
+| `render_mesh_cpu_with_tiles` | `src/geometry/render.rs:392` | Bounded CPU pixel-task scheduling with an explicit row reference. |
 
-| `GpuS2Pipeline::new_with_shader` | `src/gpu/s2.rs:154` | GPU MC partial-count execution and fixed-seed reference validation. |
+| `GpuS2Pipeline::new_with_shader` | `src/gpu/s2.rs:241` | GPU MC partial-count execution and fixed-seed reference validation. |
 
-| `GpuS2Pipeline::calculate_s2_gpu_counts` | `src/gpu/s2.rs:420` | GPU MC partial-count execution and fixed-seed reference validation. |
-
-| Function | Source | Contract |
-|---|---|---|
-| `GpuShellS2Pipeline::new_with_shader` | `src/gpu/s2_shell.rs:55` | Private constructor taking shader source; returns initialized resources or a GPU error. Production uses the analytic shader; tests can use the frozen enumerated-count fixture. |
+| `GpuS2Pipeline::calculate_s2_gpu_counts` | `src/gpu/s2.rs:672` | GPU MC partial-count execution and fixed-seed reference validation. |
 
 | Function | Source | Contract |
 |---|---|---|
-| `GpuShellS2Pipeline::ensure_reduction` | `src/gpu/s2_shell.rs:211` | Lazily compile the device tile reducer and grow its final buffers under the caller error scope. |
+| `GpuShellS2Pipeline::new_with_shader` | `src/gpu/s2_shell.rs:82` | Private constructor taking shader source; returns initialized resources or a GPU error. Production uses the analytic shader; tests can use the frozen enumerated-count fixture. |
 
 | Function | Source | Contract |
 |---|---|---|
-| `offset_has_overlap` | `src/gpu/s2_shell.rs:57` | Check all unsigned displacement magnitudes against grid dimensions without signed overflow. |
+| `GpuShellS2Pipeline::ensure_reduction` | `src/gpu/s2_shell.rs:263` | Lazily compile the device tile reducer and grow its final buffers under the caller error scope. |
 
 | Function | Source | Contract |
 |---|---|---|
-| `GpuShellS2Pipeline::with_device` | `src/gpu/s2_shell.rs:84` | Build production shell resources on supplied device/queue; no new device. |
-| `GpuShellS2Pipeline::build_on_device` | `src/gpu/s2_shell.rs:96` | Compile shell resources on supplied handles with balanced GPU error scopes. |
-| `GpuShellS2Pipeline::compute_s2_shell_resident` | `src/gpu/s2_shell.rs:385` | Read a same-device occupancy buffer directly; caller serializes producer and consumer. |
-| `GpuShellS2Pipeline::compute_shell_input` | `src/gpu/s2_shell.rs:410` | Shared execution for host-uploaded or resident occupancy with identical offset semantics. |
-| `GpuVoxelPipeline::occupancy_buffer` | `src/gpu/voxel.rs:54` | Clone completed occupancy storage handle; producer must not overwrite while consumed. |
+| `offset_has_overlap` | `src/gpu/s2_shell.rs:61` | Check all unsigned displacement magnitudes against grid dimensions without signed overflow. |
 
 | Function | Source | Contract |
 |---|---|---|
-| `GpuVoxelPipeline::voxelize_count` | `src/gpu/voxel.rs:199` | Voxelize and return only the occupied-cell count; retain the device field. |
-| `GpuVoxelPipeline::ensure_counter` | `src/gpu/voxel.rs:218` | Lazily construct the integer counter and four-byte output under caller error scope. |
-| `GpuVoxelPipeline::voxelize_impl` | `src/gpu/voxel.rs:267` | Checked common voxel execution with full-grid or count-only readback. |
+| `GpuShellS2Pipeline::with_device` | `src/gpu/s2_shell.rs:87` | Build production shell resources on supplied device/queue; no new device. |
+| `GpuShellS2Pipeline::build_on_device` | `src/gpu/s2_shell.rs:100` | Compile shell resources on supplied handles with balanced GPU error scopes. |
+| `GpuShellS2Pipeline::compute_s2_shell_resident` | `src/gpu/s2_shell.rs:407` | Read a same-device occupancy buffer directly; caller serializes producer and consumer. |
+| `GpuShellS2Pipeline::compute_shell_input` | `src/gpu/s2_shell.rs:455` | Shared execution for host-uploaded or resident occupancy with identical offset semantics. |
+| `GpuVoxelPipeline::occupancy_buffer` | `src/gpu/voxel.rs:98` | Clone completed occupancy storage handle; producer must not overwrite while consumed. |
 
 | Function | Source | Contract |
 |---|---|---|
-| `GpuShellS2Pipeline::compute_s2_shell_resident_stream` | `src/gpu/s2_shell.rs:410` | Consume ordered offsets lazily in bounded batches on a resident grid; preserve per-offset ratios. |
+| `GpuVoxelPipeline::voxelize_count` | `src/gpu/voxel.rs:296` | Voxelize and return only the occupied-cell count; retain the device field. |
+| `GpuVoxelPipeline::ensure_counter` | `src/gpu/voxel.rs:315` | Lazily construct the integer counter and four-byte output under caller error scope. |
+| `GpuVoxelPipeline::voxelize_impl` | `src/gpu/voxel.rs:374` | Checked common voxel execution with full-grid or count-only readback. |
 
 | Function | Source | Contract |
 |---|---|---|
-| `shell_offset_iter` | `src/geometry/s2.rs:213` | Lazy ordered shell enumeration with constant cursor storage; GPU exact streaming, both CPU exact kernels, and tests. |
+| `GpuShellS2Pipeline::compute_s2_shell_resident_stream` | `src/gpu/s2_shell.rs:432` | Consume ordered offsets lazily in bounded batches on a resident grid; preserve per-offset ratios. |
+
+| Function | Source | Contract |
+|---|---|---|
+| `shell_offset_iter` | `src/geometry/s2.rs:364` | Lazy ordered shell enumeration with constant cursor storage; GPU exact streaming, both CPU exact kernels, and tests. |
 
 | Symbol | Source | Contract |
 |---|---|---|
-| `ExactMemoryPlan` | `src/compute/exact_memory.rs:5` | Fresh resident exact logical GPU peak and budget-selected partial batch. |
-| `ExactMemoryPlan::new` | `src/compute/exact_memory.rs:12` | Checked resource arithmetic and batch selection; may still require check_budget for infeasible minima. |
-| `ExactMemoryPlan::check_budget` | `src/compute/exact_memory.rs:52` | Enforce configured MiB cap before initialization. |
+| `ExactMemoryPlan` | `src/compute/exact_memory.rs:20` | Fresh resident exact logical GPU peak and budget-selected partial batch. |
+| `ExactMemoryPlan::new` | `src/compute/exact_memory.rs:27` | Checked resource arithmetic and batch selection; may still require check_budget for infeasible minima. |
+| `ExactMemoryPlan::check_budget` | `src/compute/exact_memory.rs:69` | Enforce configured MiB cap before initialization. |
 
 | Function | Source | Contract |
 |---|---|---|
@@ -966,21 +967,21 @@
 | `IslandVolumes::replace` | `src/pipeline/optimize_volume.rs:33` | Update one particle and return prior entries for rollback. |
 | `IslandVolumes::restore` | `src/pipeline/optimize_volume.rs:41` | Restore entries after rejection. |
 | `IslandVolumes::fraction` | `src/pipeline/optimize_volume.rs:46` | Sum cached scalars in merged component order, then clamp. |
-| `OptimizeS2::voxel_coverage` | `src/pipeline/optimize_execution.rs` | 为 voxel 方法按解析后的 pitch 建立岛内增量覆盖；mesh MC 返回 None。 |
-| `OptimizeS2::evaluate_voxel_grid` | `src/pipeline/optimize_execution.rs` | 在维护的网格上计算固定的 voxel S2 定义；mesh MC 报错。 |
-| `INCREMENTAL_VOXEL_OCCUPANCY` | `src/pipeline/optimize_execution.rs` | 启用 SA 增量体素占据（默认开启；按构造精确）。 |
-| `island_s2` | `src/pipeline/optimize.rs` | SA 阶段求值：有覆盖时用覆盖，否则用合并网格及可选缓存 VF。 |
-| `COVERAGE_REFRESH_INTERVAL` | `src/pipeline/optimize.rs` | 两次完整重建覆盖之间的候选求值次数（64）。 |
-| `OptimizeS2::evaluate_with_vf` | `src/pipeline/optimize_execution.rs:242` | Evaluate mesh MC with optional validated VF; reject geometric cache for voxel methods. |
-| `calculate_s2_mesh_mc_seeded_with_vf` | `src/geometry/s2.rs:765` | Preserve fixed-seed mesh MC samples while using caller-provided VF. |
+| `OptimizeS2::voxel_coverage` | `src/pipeline/optimize_execution.rs:319` | 为 voxel 方法按解析后的 pitch 建立岛内增量覆盖；mesh MC 返回 None。 |
+| `OptimizeS2::evaluate_voxel_grid` | `src/pipeline/optimize_execution.rs:326` | 在维护的网格上计算固定的 voxel S2 定义；mesh MC 报错。 |
+| `INCREMENTAL_VOXEL_OCCUPANCY` | `src/pipeline/optimize_execution.rs:140` | 启用 SA 增量体素占据（默认开启；按构造精确）。 |
+| `island_s2` | `src/pipeline/optimize.rs:105` | SA 阶段求值：有覆盖时用覆盖，否则用合并网格及可选缓存 VF。 |
+| `COVERAGE_REFRESH_INTERVAL` | `src/pipeline/optimize.rs:78` | 两次完整重建覆盖之间的候选求值次数（64）。 |
+| `OptimizeS2::evaluate_with_vf` | `src/pipeline/optimize_execution.rs:262` | Evaluate mesh MC with optional validated VF; reject geometric cache for voxel methods. |
+| `calculate_s2_mesh_mc_seeded_with_vf` | `src/geometry/s2.rs:1185` | Preserve fixed-seed mesh MC samples while using caller-provided VF. |
 
 | 函数 | 位置 | 契约 |
 |---|---|---|
 | `consume_frames` | `src/pipeline/mesh_render.rs:25` | 有序有界 PNG writer；回退前等待结束，保留写出错误，单 worker/视图顺序执行。 |
 | `render_and_write_overlapped` | `src/pipeline/mesh_render.rs:73` | 通过 rayon::join 有序重叠 CPU 渲染与 PNG 写出；最多一帧在写；写错后停止后续视图。 |
-| `collect_opaque_hits` | `src/geometry/scene_render.rs:96` | 最近距离限定的命中组，保持 Face 优先及覆盖线深度。 |
+| `collect_opaque_hits` | `src/geometry/scene_render.rs:97` | 最近距离限定的命中组，保持 Face 优先及覆盖线深度。 |
 | `consume_file_batches` | `src/io/volume.rs:47` | 当前池最多解码两文件，按源顺序消费/验证，失败后不启动后续批次。 |
-| `write_tiff_pages` | `src/io/volume.rs:552` | 借用 writer 顺序编码 TIFF，显式最终刷新并传播错误。 |
+| `write_tiff_pages` | `src/io/volume.rs:606` | 借用 writer 顺序编码 TIFF，显式最终刷新并传播错误。 |
 | `for_each_boundary_value` | `src/pipeline/crop.rs:313` | 按 z 主序访问边界体素一次，供专用背景计数器使用。 |
 
 | `StageTimer` | Pipeline Core | `src/pipeline/timing.rs:3` | 每条流水线的总时钟与阶段时钟。 |
@@ -1002,13 +1003,13 @@
 | `split_mesh_into_granules_reference` | Geometry Core | `src/geometry/mesh_ops.rs:136` | 仅测试用的原颗粒拆分 oracle。 |
 | `PackQueryStats` | Pipeline Packing | `src/pipeline/pack.rs:32` | relaxed 原子碰撞计数。 |
 | `PackQueryStats::summary_line` | Pipeline Packing | `src/pipeline/pack.rs:44` | 格式化 pack 查询计数。 |
-| `SharedGpuDevice` | GPU | `src/gpu/context.rs` | 按选择器共享的进程级设备/队列/适配器信息与已编译管线缓存。 |
-| `SharedGpuDevice::cached_pipeline` | GPU | `src/gpu/context.rs` | 每个 (kind, WGSL 源) 在设备上只编译一次；失败不缓存。 |
+| `SharedGpuDevice` | GPU | `src/gpu/context.rs:89` | 按选择器共享的进程级设备/队列/适配器信息与已编译管线缓存。 |
+| `SharedGpuDevice::cached_pipeline` | GPU | `src/gpu/context.rs:125` | 每个 (kind, WGSL 源) 在设备上只编译一次；失败不缓存。 |
 | `shared_gpu_device` / `shared_device` / `shared_device_for` / `device_cache` | GPU | `src/gpu/context.rs` | 惰性创建并返回 `RUSTMSPT_GPU_DEVICE` 对应的共享设备；剔除已丢失设备。 |
-| `release_shared_gpu_devices` | GPU | `src/gpu/context.rs` | 释放缓存设备；CLI 入口结束时调用。 |
+| `release_shared_gpu_devices` | GPU | `src/gpu/context.rs:182` | 释放缓存设备；CLI 入口结束时调用。 |
 | `gpu_device_creation_count` / `gpu_pipeline_build_count` | GPU | `src/gpu/context.rs` | 设备创建数与管线编译数计数器。 |
 | `ScopeDepth` (`Drop` impl) | GPU | `src/gpu/runtime.rs` | 递减线程局部错误作用域嵌套深度（含 unwind）。 |
 | `GpuS2Pipeline::upload_stats` / `GpuUploadStats` | GPU | `src/gpu/s2.rs` | 整体/局部/未变化上传次数与字节。 |
 | `changed_face_runs` / `triangle_usage` | GPU | `src/gpu/s2.rs` | 驻留与新三角形逐位比较得到合并面区间；三角形缓冲用途标志。 |
-| `run_cli` | CLI | `src/main.rs` | 解析 CLI 并运行所选管线；`main` 随后释放共享 GPU 设备。 |
+| `run_cli` | CLI | `src/main.rs:207` | 解析 CLI 并运行所选管线；`main` 随后释放共享 GPU 设备。 |
 | `sample_counts` (s2_monte_carlo.wgsl) | GPU | `src/gpu/shaders/s2_monte_carlo.wgsl` | 以批内半径槽评估一个全局逻辑样本编号。 |

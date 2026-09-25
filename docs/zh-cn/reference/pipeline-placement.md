@@ -36,54 +36,54 @@
 | `VoidIndex::overlap_volume` | `src/geometry/void_index.rs:330` | 以域锚定的体素计数给出颗粒落在孔隙内的体积。 |
 | `point_inside_mesh_local` | `src/geometry/void_index.rs:375` | 对无层次结构的小网格做射线奇偶判定。 |
 | `PlacementPipeline` | `src/pipeline/placement.rs:39` | 持有已校验 `ResolvedPlacement` 的流水线结构体。 |
-| `PHASE_MATRIX` | `src/pipeline/placement_labels.rs:13` | 标签场中相编码 0。 |
-| `VoxelLabelsHeader` | `src/pipeline/placement_labels.rs:22` | 标签体数据的说明：间距、原点、排布与相表。 |
-| `PhaseLabel` | `src/pipeline/placement_labels.rs:39` | 一个相编码及其名称。 |
+| `PHASE_MATRIX` | `src/pipeline/placement_labels.rs:15` | 标签场中相编码 0。 |
+| `VoxelLabelsHeader` | `src/pipeline/placement_labels.rs:24` | 标签体数据的说明：间距、原点、排布与相表。 |
+| `PhaseLabel` | `src/pipeline/placement_labels.rs:41` | 一个相编码及其名称。 |
 | `write_voxel_labels` | `src/pipeline/placement_labels.rs:60` | 写出三相标签场与逐体素颗粒标识场。 |
 | `particle_at` | `src/pipeline/placement_labels.rs:306` | 查找包含某点的已放置颗粒。 |
 | `point_in_particle` | `src/pipeline/placement_labels.rs:318` | 对单个颗粒网格做射线奇偶包含判定。 |
 | `VoidReport` | `src/pipeline/placement_outputs.rs:278` | 运行如何处理冻结孔隙，以及如何度量它。 |
-| `build_void_report` | `src/pipeline/placement.rs:1309` | 为报告描述冻结孔隙，含其体积计算方法。 |
+| `build_void_report` | `src/pipeline/placement.rs:1327` | 为报告描述冻结孔隙，含其体积计算方法。 |
 | `PlacementPipeline` | `src/pipeline/placement.rs:39` | 持有已校验 `ResolvedPlacement` 的流水线结构体。 |
 | `PlacementOutcome` | `src/pipeline/placement.rs:62` | 一次完整运行的产出，供进程内调用方使用。 |
 | `run_placement` | `src/pipeline/placement.rs:77` | 在按配置创建的专用 Rayon 线程池中运行引擎并写出全部输出。 |
 | `with_placement_pool` | `src/pipeline/placement.rs:82` | 为一次操作创建并安装专用 Rayon 线程池，传播创建及执行错误。 |
 | `run_placement_in_pool` | `src/pipeline/placement.rs:91` | 在当前线程池内执行所有 placement 阶段，并记录实际 worker 数。 |
-| `resolve_threads` | `src/pipeline/placement.rs:276` | 把线程设置换算为至少为 1 的工作线程数。 |
-| `EngineState` | `src/pipeline/placement.rs:288` | 放置循环累积的全部状态。 |
-| `place_all` | `src/pipeline/placement.rs:370` | 按顺序尝试每个已规划尺寸，接受放得下的。 |
-| `try_place_one` | `src/pipeline/placement.rs:608` | 在单颗粒尝试预算内尝试放置一个尺寸。 |
-| `Proposal` | `src/pipeline/placement.rs:415` | 一次尝试的随机变量及其后的流位置。 |
-| `Evaluation` | `src/pipeline/placement.rs:434` | 候选的检查结果：拒绝原因，或被接受的候选及其检查结果。 |
-| `draw_proposal` | `src/pipeline/placement.rs:447` | 按固定消费顺序抽取一次尝试的随机变量，并记录流位置。 |
-| `evaluate_proposal` | `src/pipeline/placement.rs:531` | 对未改变的已放置集合运行一个候选的全部检查；只读。 |
+| `resolve_threads` | `src/pipeline/placement.rs:282` | 把线程设置换算为至少为 1 的工作线程数。 |
+| `EngineState` | `src/pipeline/placement.rs:294` | 放置循环累积的全部状态。 |
+| `place_all` | `src/pipeline/placement.rs:382` | 按顺序尝试每个已规划尺寸，接受放得下的。 |
+| `try_place_one` | `src/pipeline/placement.rs:625` | 在单颗粒尝试预算内尝试放置一个尺寸。 |
+| `Proposal` | `src/pipeline/placement.rs:427` | 一次尝试的随机变量及其后的流位置。 |
+| `Evaluation` | `src/pipeline/placement.rs:446` | 候选的检查结果：拒绝原因，或被接受的候选及其检查结果。 |
+| `draw_proposal` | `src/pipeline/placement.rs:459` | 按固定消费顺序抽取一次尝试的随机变量，并记录流位置。 |
+| `evaluate_proposal` | `src/pipeline/placement.rs:543` | 对未改变的已放置集合运行一个候选的全部检查；只读。 |
 | `SPECULATIVE_BATCH_PER_WORKER` / `SERIAL_ATTEMPTS_BEFORE_BATCHING` | `src/pipeline/placement.rs:407` | 投机批次上限（每 worker 8 个）与开始批处理前的串行尝试数（4），均为实测确定。 |
-| `accept` | `src/pipeline/placement.rs:697` | 把已接受的候选提交进几何与记录。 |
-| `run_top_up` | `src/pipeline/placement.rs:758` | 仅因裁剪而未达标时补抽新批次。 |
-| `decide_stop` | `src/pipeline/placement.rs:825` | 判定运行以四种停止原因中的哪一种结束。 |
-| `write_outputs` | `src/pipeline/placement.rs:941` | 写出几何、逐颗粒记录与尺寸 CSV。 |
-| `entity_id` | `src/pipeline/placement.rs:1086` | 已放置颗粒的稳定标识。 |
-| `particle_record` | `src/pipeline/placement.rs:1091` | 把一个已放置颗粒转为其记录条目。 |
-| `size_class_rows` | `src/pipeline/placement.rs:1139` | 构造逐分组的目标与实际对照行。 |
-| `blank_report` | `src/pipeline/placement.rs:1165` | 放置开始之前的报告初始形态。 |
-| `describe_input` | `src/pipeline/placement.rs:1344` | 为报告描述输入文件及其摘要。 |
-| `finish_report` | `src/pipeline/placement.rs:1363` | 填入运行结束后已知的全部内容。 |
+| `accept` | `src/pipeline/placement.rs:715` | 把已接受的候选提交进几何与记录。 |
+| `run_top_up` | `src/pipeline/placement.rs:776` | 仅因裁剪而未达标时补抽新批次。 |
+| `decide_stop` | `src/pipeline/placement.rs:843` | 判定运行以四种停止原因中的哪一种结束。 |
+| `write_outputs` | `src/pipeline/placement.rs:959` | 写出几何、逐颗粒记录与尺寸 CSV。 |
+| `entity_id` | `src/pipeline/placement.rs:1104` | 已放置颗粒的稳定标识。 |
+| `particle_record` | `src/pipeline/placement.rs:1109` | 把一个已放置颗粒转为其记录条目。 |
+| `size_class_rows` | `src/pipeline/placement.rs:1157` | 构造逐分组的目标与实际对照行。 |
+| `blank_report` | `src/pipeline/placement.rs:1183` | 放置开始之前的报告初始形态。 |
+| `describe_input` | `src/pipeline/placement.rs:1362` | 为报告描述输入文件及其摘要。 |
+| `finish_report` | `src/pipeline/placement.rs:1381` | 填入运行结束后已知的全部内容。 |
 | `summary` (placement.rs) | `src/pipeline/placement.rs:1427` | 构造供人阅读的 stdout 摘要。 |
-| `read_record` | `src/pipeline/placement.rs:1488` | 读回已写出的逐颗粒记录。 |
-| `read_report` | `src/pipeline/placement.rs:1496` | 读回已写出的运行报告。 |
-| `RejectReason` | `src/pipeline/placement_feasibility.rs:17` | 候选放置未被接受的原因；即报告中的键。 |
-| `RejectReason::as_str` | `src/pipeline/placement_feasibility.rs:44` | 拒绝原因在报告中的稳定键名。 |
-| `PlacedParticle` | `src/pipeline/placement_feasibility.rs:76` | 通过全部检查的颗粒，附带缓存的形状。 |
-| `PlacedParticle::volume_in_domain_solid` | `src/pipeline/placement_feasibility.rs:106` | 计入固相的颗粒体积。 |
-| `FeasibilityContext` | `src/pipeline/placement_feasibility.rs:112` | 可行性检查所读取的全部内容。 |
-| `Candidate` | `src/pipeline/placement_feasibility.rs:132` | 候选放置，附带已预先算好的廉价量。 |
-| `Accepted` | `src/pipeline/placement_feasibility.rs:146` | 通过检查过程中顺带算出的结果。 |
-| `check_placement` | `src/pipeline/placement_feasibility.rs:171` | 按序运行全部可行性规则，返回拦下它的那一条。 |
-| `PAIR_PARALLEL_MIN` | `src/pipeline/placement_feasibility.rs:15` | 需要精确距离的颗粒对达到该数量时并行计算距离；默认 `usize::MAX`（串行），因为高密度端到端运行未见收益（共享 4 核主机上慢 0～10%），尽管 `pair_threshold_benchmark` 在两个以上无碰撞颗粒对时显示 1.4～2 倍。 |
-| `pair_needs_exact_test` | `src/pipeline/placement_feasibility.rs` | 单个邻居的中心球与包围盒分离测试；需要精确测试时返回 true。 |
-| `first_pair_rejection` | `src/pipeline/placement_feasibility.rs` | 先串行做相交/嵌套检查直到第一个失败对，再对其之前的颗粒对按序（`find_map_first`）并行计算距离；返回值与串行完全相同。 |
-| `solid_pair_rejection` | `src/pipeline/placement_feasibility.rs` | 单个颗粒对的相交检查，其后是嵌套检查。 |
-| `retained_depth` | `src/pipeline/placement_feasibility.rs:382` | 跨界颗粒仍伸入域内的深度。 |
+| `read_record` | `src/pipeline/placement.rs:1506` | 读回已写出的逐颗粒记录。 |
+| `read_report` | `src/pipeline/placement.rs:1514` | 读回已写出的运行报告。 |
+| `RejectReason` | `src/pipeline/placement_feasibility.rs:28` | 候选放置未被接受的原因；即报告中的键。 |
+| `RejectReason::as_str` | `src/pipeline/placement_feasibility.rs:55` | 拒绝原因在报告中的稳定键名。 |
+| `PlacedParticle` | `src/pipeline/placement_feasibility.rs:87` | 通过全部检查的颗粒，附带缓存的形状。 |
+| `PlacedParticle::volume_in_domain_solid` | `src/pipeline/placement_feasibility.rs:117` | 计入固相的颗粒体积。 |
+| `FeasibilityContext` | `src/pipeline/placement_feasibility.rs:123` | 可行性检查所读取的全部内容。 |
+| `Candidate` | `src/pipeline/placement_feasibility.rs:147` | 候选放置，附带已预先算好的廉价量。 |
+| `Accepted` | `src/pipeline/placement_feasibility.rs:161` | 通过检查过程中顺带算出的结果。 |
+| `check_placement` | `src/pipeline/placement_feasibility.rs:192` | 按序运行全部可行性规则，返回拦下它的那一条。 |
+| `PAIR_PARALLEL_MIN` | `src/pipeline/placement_feasibility.rs:20` | 需要精确距离的颗粒对达到该数量时并行计算距离；默认 `usize::MAX`（串行），因为高密度端到端运行未见收益（共享 4 核主机上慢 0～10%），尽管 `pair_threshold_benchmark` 在两个以上无碰撞颗粒对时显示 1.4～2 倍。 |
+| `pair_needs_exact_test` | `src/pipeline/placement_feasibility.rs:368` | 单个邻居的中心球与包围盒分离测试；需要精确测试时返回 true。 |
+| `first_pair_rejection` | `src/pipeline/placement_feasibility.rs:396` | 先串行做相交/嵌套检查直到第一个失败对，再对其之前的颗粒对按序（`find_map_first`）并行计算距离；返回值与串行完全相同。 |
+| `solid_pair_rejection` | `src/pipeline/placement_feasibility.rs:435` | 单个颗粒对的相交检查，其后是嵌套检查。 |
+| `retained_depth` | `src/pipeline/placement_feasibility.rs:470` | 跨界颗粒仍伸入域内的深度。 |
 | `ToolRecord` | `src/pipeline/placement_outputs.rs:15` | 记录与报告中出现的构建身份。 |
 | `StopReason` | `src/pipeline/placement_outputs.rs:53` | 运行可用的四词固定停止原因词表。 |
 | `ParticleRecord` | `src/pipeline/placement_outputs.rs:133` | 记录文件中单个已放置颗粒的条目。 |
@@ -111,13 +111,13 @@
 | `SizePlan` | `src/pipeline/placement_sizes.rs:449` | 运行打算放置的尺寸集合，在任何放置之前抽定。 |
 | `plan_size_multiset` | `src/pipeline/placement_sizes.rs:473` | 抽取整个尺寸集合，停在离目标更近的那个数量上。 |
 | `order_for_placement` | `src/pipeline/placement_sizes.rs:534` | 把尺寸集合按从大到小排序，或还原为抽取顺序。 |
-| `ShapeShell` | `src/pipeline/placement_library.rs:13` | 一个闭合壳：已度量、已居中、已计算摘要。 |
-| `ShapeSource` | `src/pipeline/placement_library.rs:41` | 构成形状库的源文件，附带摘要与壳数统计。 |
-| `RejectedShell` | `src/pipeline/placement_library.rs:53` | 读入但未保留的壳，以及未保留的原因。 |
-| `ShapeLibrary` | `src/pipeline/placement_library.rs:61` | 运行可抽取的全部形状，以及读入但未保留的部分。 |
+| `ShapeShell` | `src/pipeline/placement_library.rs:14` | 一个闭合壳：已度量、已居中、已计算摘要。 |
+| `ShapeSource` | `src/pipeline/placement_library.rs:42` | 构成形状库的源文件，附带摘要与壳数统计。 |
+| `RejectedShell` | `src/pipeline/placement_library.rs:54` | 读入但未保留的壳，以及未保留的原因。 |
+| `ShapeLibrary` | `src/pipeline/placement_library.rs:62` | 运行可抽取的全部形状，以及读入但未保留的部分。 |
 | `load_shape_library` | `src/pipeline/placement_library.rs:95` | 加载、拆分、度量并过滤形状文件。壳层数不少于 32（`LIBRARY_PARALLEL_MIN_SHELLS`）的文件并行准备各壳层，写入按序索引的缓冲后按壳层顺序遍历，因此顺序、拒绝与首个报告的缺陷都与串行扫描相同（§79）。 |
-| `filter_reason` | `src/pipeline/placement_library.rs:234` | 指出某个壳未通过哪条形状库过滤规则。 |
-| `shell_geometry_sha256` | `src/pipeline/placement_library.rs:274` | 对壳的几何计算摘要，使文件重排可被察觉。 |
+| `filter_reason` | `src/pipeline/placement_library.rs:259` | 指出某个壳未通过哪条形状库过滤规则。 |
+| `shell_geometry_sha256` | `src/pipeline/placement_library.rs:299` | 对壳的几何计算摘要，使文件重排可被察觉。 |
 | `particle_at_prepared` | `src/pipeline/placement_labels.rs:326` | First particle in ordered cached candidates. |
 | `LABEL_SLAB_VOXELS` | `src/pipeline/placement_labels.rs:46` | 每个标签切片块的目标体素数（4,194,304）。 |
 | `label_dims` | `src/pipeline/placement_labels.rs:111` | 标签网格尺寸，含溢出检查。 |

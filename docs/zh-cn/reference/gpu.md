@@ -12,25 +12,25 @@
 
 | 条目 | 位置 | 摘要 |
 |---|---|---|
-| `GpuContext` | `src/gpu/context.rs:3` | 成功完成 GPU 初始化后，持有适配器名称与缓冲区大小能力信息。 |
-| `GpuContext::caps` | `src/gpu/context.rs:11` | 返回描述此 GPU 上下文的 `BackendCaps`。 |
-| `GpuInitError` | `src/gpu/context.rs:22` | 包装 GPU 初始化失败消息的错误类型。 |
+| `GpuContext` | `src/gpu/context.rs:42` | 成功完成 GPU 初始化后，持有适配器名称与缓冲区大小能力信息。 |
+| `GpuContext::caps` | `src/gpu/context.rs:62` | 返回描述此 GPU 上下文的 `BackendCaps`。 |
+| `GpuInitError` | `src/gpu/context.rs:73` | 包装 GPU 初始化失败消息的错误类型。 |
 | `GpuInitError`（`Display` 实现） | `src/gpu/context.rs:22` | 格式化错误消息。 |
-| `try_init_gpu` | `src/gpu/context.rs:38` | 探测 wgpu 适配器/设备并返回 `GpuContext`；供 `compute::policy::select_backend` 使用。 |
-| `GpuS2Pipeline` | `src/gpu/s2.rs:10` | 蒙特卡洛 S2 两点相关函数的 GPU 流水线状态。 |
+| `try_init_gpu` | `src/gpu/context.rs:238` | 探测 wgpu 适配器/设备并返回 `GpuContext`；供 `compute::policy::select_backend` 使用。 |
+| `GpuS2Pipeline` | `src/gpu/s2.rs:25` | 蒙特卡洛 S2 两点相关函数的 GPU 流水线状态。 |
 | `build_triangle_buffer`（s2.rs） | `src/gpu/s2.rs:29` | 为 S2 蒙特卡洛流水线构建归一化的 `f32` 三角形位置缓冲区。 |
-| `pack_params` | `src/gpu/s2.rs:50` | 将蒙特卡洛 S2 着色器参数打包为与 WGSL `Params` 布局匹配的字节缓冲区。 |
-| `dispatch_plan` | `src/gpu/s2.rs:101` | Validate logical MC ids, partial buffers and two-dimensional dispatch. |
-| `check_buffer_size` | `src/gpu/s2.rs:115` | Check single-buffer and storage limits. |
-| `check_mesh_capacity` | `src/gpu/s2.rs:125` | Check triangle count and upload capacity. |
-| `scoped` | `src/gpu/runtime.rs:2` | Capture scoped GPU errors and balance all scopes. |
-| `read_u32` | `src/gpu/runtime.rs:29` | Check mapping completion before copying and unmapping u32 readback. |
-| `GpuS2Pipeline::new` | `src/gpu/s2.rs:141` | 初始化 wgpu 设备与蒙特卡洛 S2 计算流水线。 |
-| `GpuS2Pipeline::update_mesh` | `src/gpu/s2.rs:277` | 无需重建流水线即可为新网格重新上传三角形数据。 |
-| `GpuS2Pipeline::ensure_output_capacity` | `src/gpu/s2.rs:302` | 若调用次数超出当前容量，则扩容输出缓冲区。 |
-| `GpuS2Pipeline::calculate_s2_gpu` | `src/gpu/s2.rs:351` | 针对所有半径分派蒙特卡洛 S2 内核并回读结果。 |
-| `GpuS2Pipeline::calculate_s2_gpu_seeded` | `src/gpu/s2.rs` | 带可选种子（折叠为内核 32 位种子）的 `calculate_s2_gpu`。 |
-| `OffsetEntry` | `src/gpu/s2_shell.rs:6` | 与 WGSL 布局匹配的打包 `(radius_idx, dx, dy, dz)` 壳层偏移记录。 |
+| `pack_params` | `src/gpu/s2.rs:94` | 将蒙特卡洛 S2 着色器参数打包为与 WGSL `Params` 布局匹配的字节缓冲区。 |
+| `dispatch_plan` | `src/gpu/s2.rs:144` | Validate logical MC ids, partial buffers and two-dimensional dispatch. |
+| `check_buffer_size` | `src/gpu/s2.rs:168` | Check single-buffer and storage limits. |
+| `check_mesh_capacity` | `src/gpu/s2.rs:178` | Check triangle count and upload capacity. |
+| `scoped` | `src/gpu/runtime.rs:102` | Capture scoped GPU errors and balance all scopes. |
+| `read_u32` | `src/gpu/runtime.rs:137` | Check mapping completion before copying and unmapping u32 readback. |
+| `GpuS2Pipeline::new` | `src/gpu/s2.rs:236` | 初始化 wgpu 设备与蒙特卡洛 S2 计算流水线。 |
+| `GpuS2Pipeline::update_mesh` | `src/gpu/s2.rs:480` | 无需重建流水线即可为新网格重新上传三角形数据。 |
+| `GpuS2Pipeline::ensure_output_capacity` | `src/gpu/s2.rs:575` | 若调用次数超出当前容量，则扩容输出缓冲区。 |
+| `GpuS2Pipeline::calculate_s2_gpu` | `src/gpu/s2.rs:630` | 针对所有半径分派蒙特卡洛 S2 内核并回读结果。 |
+| `GpuS2Pipeline::calculate_s2_gpu_seeded` | `src/gpu/s2.rs:640` | 带可选种子（折叠为内核 32 位种子）的 `calculate_s2_gpu`。 |
+| `OffsetEntry` | `src/gpu/s2_shell.rs:8` | 与 WGSL 布局匹配的打包 `(radius_idx, dx, dy, dz)` 壳层偏移记录。 |
 | `point_inside` (s2_monte_carlo.wgsl) | `src/gpu/shaders/s2_monte_carlo.wgsl` | 认证奇偶性：精确 bbox 排除、认证命中、证明互异的 64 命中路径；返回 0/1/不确定。 |
 | `point_inside_overflow` (s2_monte_carlo.wgsl) | `src/gpu/shaders/s2_monte_carlo.wgsl` | 认证的超 64 命中恢复，证明每个相邻间隔超过 CPU 去重带。 |
 | `point_inside` (voxelize.wgsl) | `src/gpu/shaders/voxelize.wgsl` | 认证奇偶性：精确 bbox 排除、认证命中、证明互异的 64 命中路径；返回 0/1/不确定。 |
@@ -40,38 +40,38 @@
 | `AdapterClass` / `classify_adapter` | `src/gpu/context.rs` | 区分软件适配器（CPU 设备类型或已知软件光栅化器名：llvmpipe、lavapipe、SwiftShader、softpipe、Microsoft Basic Render）与硬件适配器。 |
 | `GpuContext::adapter_class` / `GpuContext::describe` | `src/gpu/context.rs` | 探测到的适配器类别与一行 `name= backend= class=` 描述。 |
 | `GpuTransferStats` / `gpu_transfer_stats` | `src/gpu/runtime.rs` | 进程级上传字节/次数、回读字节/次数、阻塞等待回读的时间（执行加传输，不是内核时间）与设备初始化时间；`describe()` 即 `main` 在任何 GPU 运行后打印的 `[Timing] gpu ...` 行。 |
-| `CountedWrite::write_counted` | `src/gpu/runtime.rs` | 会计数的 `queue.write_buffer`；crate 内所有 GPU 上传都经过它。 |
+| `CountedWrite::write_counted` | `src/gpu/runtime.rs:72` | 会计数的 `queue.write_buffer`；crate 内所有 GPU 上传都经过它。 |
 | `GpuCertificationStats`（含 `recompute_ratio`、`describe`、`accumulate`） | `src/gpu/certify.rs` | 累计认证计数与 CPU 重算比例。 |
 | `CertReference`（含 `new`、`params_tail`、`classify`、仅测试的 `mesh`） | `src/gpu/certify.rs` | 原点平移的 f64 CPU 参考与精确 f32 提前排除界。 |
 | `f32_at_least` / `f32_at_most` | `src/gpu/certify.rs` | 定向 f64→f32 舍入，使 f32 比较等价于 f64 比较。 |
 | `triangle_constants` / `TRI_CONST_FLOATS` | `src/gpu/certify.rs` | 主机预计算的、与查询无关的认证测试项，每个三角形 16 个 f32（`a, m, e1, es, e2, eps_det, h, det`），对应固定射线方向。 |
-| `GpuS2Pipeline::certification_stats` | `src/gpu/s2.rs` | MC 累计认证计数。 |
-| `GpuS2Pipeline::dispatch_batch` | `src/gpu/s2.rs` | 清零不确定计数器、dispatch 一个半径批次、复制结果与列表并读取计数器。 |
-| `GpuS2Pipeline::resolve_uncertain` | `src/gpu/s2.rs` | 在精确 GPU 点上用 CPU 判定重算不确定样本。 |
+| `GpuS2Pipeline::certification_stats` | `src/gpu/s2.rs:566` | MC 累计认证计数。 |
+| `GpuS2Pipeline::dispatch_batch` | `src/gpu/s2.rs:852` | 清零不确定计数器、dispatch 一个半径批次、复制结果与列表并读取计数器。 |
+| `GpuS2Pipeline::resolve_uncertain` | `src/gpu/s2.rs:923` | 在精确 GPU 点上用 CPU 判定重算不确定样本。 |
 | `uncertain_buffers` (s2.rs) | `src/gpu/s2.rs` | 分配 MC 不确定列表及 staging。 |
-| `GpuVoxelPipeline::certification_stats` | `src/gpu/voxel.rs` | 体素累计认证计数。 |
-| `GpuVoxelPipeline::dispatch_voxels` | `src/gpu/voxel.rs` | 清零计数器、dispatch 体素化（及归约）、复制结果与列表并读取计数器。 |
-| `GpuVoxelPipeline::new_with_shader` | `src/gpu/voxel.rs` | 由给定 WGSL 构造（测试传入冻结的未认证基线）。 |
+| `GpuVoxelPipeline::certification_stats` | `src/gpu/voxel.rs:629` | 体素累计认证计数。 |
+| `GpuVoxelPipeline::dispatch_voxels` | `src/gpu/voxel.rs:521` | 清零计数器、dispatch 体素化（及归约）、复制结果与列表并读取计数器。 |
+| `GpuVoxelPipeline::new_with_shader` | `src/gpu/voxel.rs:117` | 由给定 WGSL 构造（测试传入冻结的未认证基线）。 |
 | `voxel_center` / `voxel_uncertain_buffers` / `occupancy_usage` | `src/gpu/voxel.rs` | 精确 f32 单元中心、不确定列表分配、可修补占据场用途。 |
-| `GpuShellS2Pipeline` | `src/gpu/s2_shell.rs:13` | 精确壳层对 S2 计算的 GPU 流水线状态。 |
-| `build_offset_buffer` | `src/gpu/s2_shell.rs:30` | 将 `(radius_idx, [dx,dy,dz])` 元组转换为 `OffsetEntry` 记录。 |
-| `GpuShellS2Pipeline::new` | `src/gpu/s2_shell.rs:48` | 初始化 wgpu 设备与壳层 S2 计算流水线。 |
-| `GpuShellS2Pipeline::compute_s2_shell` | `src/gpu/s2_shell.rs:181` | 在占据网格上分派精确壳层对计数并回读 S2(r)。 |
-| `GpuVoxelPipeline` | `src/gpu/voxel.rs:5` | 网格体素化的 GPU 流水线状态。 |
+| `GpuShellS2Pipeline` | `src/gpu/s2_shell.rs:22` | 精确壳层对 S2 计算的 GPU 流水线状态。 |
+| `build_offset_buffer` | `src/gpu/s2_shell.rs:48` | 将 `(radius_idx, [dx,dy,dz])` 元组转换为 `OffsetEntry` 记录。 |
+| `GpuShellS2Pipeline::new` | `src/gpu/s2_shell.rs:74` | 初始化 wgpu 设备与壳层 S2 计算流水线。 |
+| `GpuShellS2Pipeline::compute_s2_shell` | `src/gpu/s2_shell.rs:382` | 在占据网格上分派精确壳层对计数并回读 S2(r)。 |
+| `GpuVoxelPipeline` | `src/gpu/voxel.rs:7` | 网格体素化的 GPU 流水线状态。 |
 | `build_triangle_buffer`（voxel.rs） | `src/gpu/voxel.rs:17` | 为体素化流水线构建归一化的 `f32` 三角形位置缓冲区（与 `s2.rs` 中的实现相互独立）。 |
 | `pack_params`（voxel.rs） | `src/gpu/voxel.rs` | 序列化 80 字节参数：射线方向从字节 32 开始，认证尾部从字节 48 开始。 |
-| `GpuVoxelPipeline::new` | `src/gpu/voxel.rs:57` | 初始化 wgpu 设备与体素化计算流水线。 |
-| `GpuVoxelPipeline::voxelize` | `src/gpu/voxel.rs:168` | 分派光线投射体素化并回读占据网格。 |
-| `GpuVolumeTransformPipeline` | `src/gpu/volume_transform.rs:5` | 体数据旋转裁剪的 GPU 流水线状态。 |
-| `GpuVolumeTransformPipeline::new` | `src/gpu/volume_transform.rs:23` | 初始化 wgpu 设备与体数据变换计算流水线。 |
-| `TransformTile` | `src/gpu/volume_transform.rs` | 输出块及其上传源子块的描述。 |
-| `GpuVolumeTransformPipeline::transform_tile` | `src/gpu/volume_transform.rs` | 用 halo 源子块按单次 dispatch 算术变换一个输出块，并带 halo 守卫。 |
-| `GpuVolumeTransformPipeline::reserve_capacity` | `src/gpu/volume_transform.rs` | 把源和输出/staging 缓冲预留到分块计划最大值。 |
-| `GpuVolumeTransformPipeline::device_limits` | `src/gpu/volume_transform.rs` | 限制每块缓冲的设备上限。 |
-| `GpuVolumeTransformPipeline::rotate_and_crop` | `src/gpu/volume_transform.rs:123` | 分派旋转/裁剪/重采样内核并回读变换后的体数据。 |
-| `GridPlan` | `src/gpu/runtime.rs:60` | Checked two-dimensional grid dispatch. |
-| `grid_plan` | `src/gpu/runtime.rs:67` | Validate product, buffer and dispatch limits. |
-| `GpuVoxelPipeline::voxelize_limited` | `src/gpu/voxel.rs:179` | Fallible voxel execution with bounded dispatch. |
+| `GpuVoxelPipeline::new` | `src/gpu/voxel.rs:112` | 初始化 wgpu 设备与体素化计算流水线。 |
+| `GpuVoxelPipeline::voxelize` | `src/gpu/voxel.rs:285` | 分派光线投射体素化并回读占据网格。 |
+| `GpuVolumeTransformPipeline` | `src/gpu/volume_transform.rs:20` | 体数据旋转裁剪的 GPU 流水线状态。 |
+| `GpuVolumeTransformPipeline::new` | `src/gpu/volume_transform.rs:40` | 初始化 wgpu 设备与体数据变换计算流水线。 |
+| `TransformTile` | `src/gpu/volume_transform.rs:11` | 输出块及其上传源子块的描述。 |
+| `GpuVolumeTransformPipeline::transform_tile` | `src/gpu/volume_transform.rs:229` | 用 halo 源子块按单次 dispatch 算术变换一个输出块，并带 halo 守卫。 |
+| `GpuVolumeTransformPipeline::reserve_capacity` | `src/gpu/volume_transform.rs:207` | 把源和输出/staging 缓冲预留到分块计划最大值。 |
+| `GpuVolumeTransformPipeline::device_limits` | `src/gpu/volume_transform.rs:197` | 限制每块缓冲的设备上限。 |
+| `GpuVolumeTransformPipeline::rotate_and_crop` | `src/gpu/volume_transform.rs:170` | 分派旋转/裁剪/重采样内核并回读变换后的体数据。 |
+| `GridPlan` | `src/gpu/runtime.rs:170` | Checked two-dimensional grid dispatch. |
+| `grid_plan` | `src/gpu/runtime.rs:177` | Validate product, buffer and dispatch limits. |
+| `GpuVoxelPipeline::voxelize_limited` | `src/gpu/voxel.rs:357` | Fallible voxel execution with bounded dispatch. |
 
 ---
 
@@ -600,9 +600,9 @@ Voxel occupancy and transform output buffers now retain matching readback buffer
 
 GpuShellS2Pipeline 按需增长并复用 offset/output/staging，初始一个偏移，读回仅有效前缀。release_batch_capacity() 返回 Result<(), String>，重置 offset 为 16 字节、每个 output/staging 为 4 字节，保留 occupancy 和编译状态。私有 resize_batch_buffers(count) 在调用方错误作用域内执行；200000 批次上限及逐偏移等权归约不变。
 
-| `GpuShellS2Pipeline::resize_batch_buffers` | `src/gpu/s2_shell.rs:193` | Shell batch buffer capacity management; occupancy retained. |
+| `GpuShellS2Pipeline::resize_batch_buffers` | `src/gpu/s2_shell.rs:320` | Shell batch buffer capacity management; occupancy retained. |
 
-| `GpuShellS2Pipeline::release_batch_capacity` | `src/gpu/s2_shell.rs:230` | Shell batch buffer capacity management; occupancy retained. |
+| `GpuShellS2Pipeline::release_batch_capacity` | `src/gpu/s2_shell.rs:357` | Shell batch buffer capacity management; occupancy retained. |
 
 `runtime::read_u32` 仅供测试整缓冲映射；生产调用使用 `read_u32_prefix` 指定有效字节数。
 
@@ -613,6 +613,7 @@ mesh_render.gpu_memory_limit_mb 可选限制逻辑 GPU 工作集；gpu_min_pixel
 checked planner 按可见三角形每面 120、启用 segment 每条 64、marker 每个 192 字节计数；目标 color/depth 为 8×pixels，readback 为按 256 字节对齐的 RGBA 行，uniform 128 字节。保守计入待完成 queue 上传，逻辑峰值 = 2×geometry_bytes+256+8×pixels+staging_bytes。多个视图共用目标。驱动/pipeline 内部及主存场景/PNG 不计入，所以这不是物理 VRAM/RSS 上限。独立 device 限制检查先于 host 顶点展开，上传后即释放临时 host 顶点。构造器返回受作用域保护的 GPU 验证/分配错误；图像分块仍待实现。
 
 | `SceneRenderMemory::plan` | `src/compute/render_memory.rs:20` | Checked scene preview workset, budget and buffer planning without allocation. |
+| `scene_strip_rows` | `src/compute/render_memory.rs:114` | 选出场景预览工作集能放进可选 MiB 预算的最高水平条带（二分得到精确边界）；整图放得下时返回整图高度，一行都放不下时报错。 |
 
 | `SceneRenderMemory::check_budget` | `src/compute/render_memory.rs:77` | Checked scene preview workset, budget and buffer planning without allocation. |
 
@@ -626,16 +627,16 @@ checked planner 按可见三角形每面 120、启用 segment 每条 64、marker
 
 证书列表的扩容现在也纳入预算（PLAN.Performance.md §72）。`GpuS2Pipeline::set_memory_limit_mb` 保存调用方的上限（optimize 与 measure 在 `check_evaluation_budget` 旁设置）；在扩容溢出的不确定列表之前，管线检查 `mc_regrowth_peak(retained_peak, entries)`——保留峰值加上新列表及其 staging（旧的一对此时仍存活）——超出则返回带 `certification list regrowth` 字样的错误，由调用方的回退策略处理。体素管线新增 `GpuVoxelPipeline::set_regrowth_headroom`，exact 路径把它设为预算减去计划峰值；超出计划列表的扩容最多只能增加这么多字节。测试：`mc_uncertain_list_regrowth_respects_the_budget`、`uncertain_list_regrowth_respects_the_budget_headroom`。
 
-| `mc_evaluation_peak` | `src/compute/mc_memory.rs:4` | Check logical MC peak including retained capacity and pending uploads. |
-| `mc_evaluation_peak_batched` | `src/compute/mc_memory.rs` | 以半径批大小（每次派发的半径数）为参数的 `mc_evaluation_peak`。 |
-| `mc_largest_batch` | `src/compute/mc_memory.rs` | MC 峰值在 MiB 上限内的最大半径批（1..=128）；只有每次派发一个半径仍放不下时才报错。 |
+| `mc_evaluation_peak` | `src/compute/mc_memory.rs:21` | Check logical MC peak including retained capacity and pending uploads. |
+| `mc_evaluation_peak_batched` | `src/compute/mc_memory.rs:35` | 以半径批大小（每次派发的半径数）为参数的 `mc_evaluation_peak`。 |
+| `mc_largest_batch` | `src/compute/mc_memory.rs:97` | MC 峰值在 MiB 上限内的最大半径批（1..=128）；只有每次派发一个半径仍放不下时才报错。 |
 
-| `check_mc_budget` | `src/compute/mc_memory.rs:44` | Check logical MC peak including retained capacity and pending uploads. |
+| `check_mc_budget` | `src/compute/mc_memory.rs:131` | Check logical MC peak including retained capacity and pending uploads. |
 
-| `GpuS2Pipeline::check_evaluation_budget` | `src/gpu/s2.rs:275` | Check logical MC peak including retained capacity and pending uploads. |
-| `GpuS2Pipeline::set_memory_limit_mb` | `src/gpu/s2.rs` | Store the logical budget that uncertain-list regrowth must respect. |
-| `mc_regrowth_peak` | `src/compute/mc_memory.rs` | Retained peak plus a regrown uncertain list and its staging. |
-| `GpuVoxelPipeline::set_regrowth_headroom` | `src/gpu/voxel.rs` | Bytes a voxel uncertain-list regrowth may add beyond the planned list. |
+| `GpuS2Pipeline::check_evaluation_budget` | `src/gpu/s2.rs:451` | Check logical MC peak including retained capacity and pending uploads. |
+| `GpuS2Pipeline::set_memory_limit_mb` | `src/gpu/s2.rs:446` | Store the logical budget that uncertain-list regrowth must respect. |
+| `mc_regrowth_peak` | `src/compute/mc_memory.rs:85` | Retained peak plus a regrown uncertain list and its staging. |
+| `GpuVoxelPipeline::set_regrowth_headroom` | `src/gpu/voxel.rs:624` | Bytes a voxel uncertain-list regrowth may add beyond the planned list. |
 
 Measure 连续 MC 同步改用共享冷启动增长 peak planner，计入几何/参数待上传数据，取代早先 16×invocations+triangle_bytes+576 估计；本批 exact 预算不变。
 
@@ -645,9 +646,9 @@ Measure 连续 MC 同步改用共享冷启动增长 peak planner，计入几何/
 
 私有 calculate_s2_gpu_counts 固定 seed 返回整数总数；公开 API 仍抽取一个新随机 seed 并返回曲线。tests/fixtures/s2_monte_carlo_samples.wgsl 冻结归约前 shader，仅供相同 seed 的逐项计数对照，覆盖尾块、128 半径、几何更新。BVH、GPU 半径最终归约和按预算拆样本仍待独立实施；这里未证明 CPU/GPU f64 等价或真实硬件加速。
 
-| `GpuS2Pipeline::new_with_shader` | `src/gpu/s2.rs:154` | GPU MC partial-count execution and fixed-seed reference validation. |
+| `GpuS2Pipeline::new_with_shader` | `src/gpu/s2.rs:241` | GPU MC partial-count execution and fixed-seed reference validation. |
 
-| `GpuS2Pipeline::calculate_s2_gpu_counts` | `src/gpu/s2.rs:420` | GPU MC partial-count execution and fixed-seed reference validation. |
+| `GpuS2Pipeline::calculate_s2_gpu_counts` | `src/gpu/s2.rs:672` | GPU MC partial-count execution and fixed-seed reference validation. |
 
 MC 工作组现沿两个 dispatch 维度展开，以 group.x + group.y × num_workgroups.x 得到块编号。统一分支在 barrier 和写出前排除填充组，即使保留缓冲容量大于本次有效结果也不写入尾部。planner 返回样本数、部分和数量及 [x,y] 调度形状；逻辑样本编号仍受 u32 限制。Optimize 启动检查已移除旧单维调用上限。强制 3×3/4×2 的实测整数计数与冻结逐样本 shader 一致，额外容量哨兵验证尾部未被写入。65,536 组的大任务仅验证规划结果，不代表大任务 GPU 实测。
 
@@ -655,7 +656,7 @@ GPU shell 在排除超出任意轴的位移后，以 (nx−|dx|)×(ny−|dy|)×(
 
 | Function | Source | Contract |
 |---|---|---|
-| `GpuShellS2Pipeline::new_with_shader` | `src/gpu/s2_shell.rs:55` | Private constructor taking shader source; returns initialized resources or a GPU error. Production uses the analytic shader; tests can use the frozen enumerated-count fixture. |
+| `GpuShellS2Pipeline::new_with_shader` | `src/gpu/s2_shell.rs:82` | Private constructor taking shader source; returns initialized resources or a GPU error. Production uses the analytic shader; tests can use the frozen enumerated-count fixture. |
 
 实验 shader s2_shell_cooperative.wgsl 每个偏移分配一个 256-lane 工作组，lane 跨步遍历重叠体积并在共享内存归约整数 hit，valid 保持解析计算。二维工作组展平后在 barrier 前统一拒绝填充组。每个偏移仍输出一对计数，因此尚不是独立调度的多个体素 tile，也未实现 voxel→shell 设备常驻数据流。生产仍选择 direct shader，等待工作量基准决定。new_with_shader(source, offsets_per_workgroup) 将 shader 索引与调度宽度配对：direct 为 256，cooperative 为 1。
 
@@ -665,22 +666,22 @@ GPU shell 在排除超出任意轴的位移后，以 (nx−|dx|)×(ny−|dy|)×(
 
 | Function | Source | Contract |
 |---|---|---|
-| `GpuShellS2Pipeline::ensure_reduction` | `src/gpu/s2_shell.rs:211` | Lazily compile the device tile reducer and grow its final buffers under the caller error scope. |
+| `GpuShellS2Pipeline::ensure_reduction` | `src/gpu/s2_shell.rs:263` | Lazily compile the device tile reducer and grow its final buffers under the caller error scope. |
 
 生产 shell 求值在上传前过滤位移绝对值达到任意轴维度的 offset，以 unsigned_abs 安全处理 isize::MIN。过滤保持输入顺序，复用有界主机批次，不额外保存完整 offset 列表。全部 offset 无支持时直接返回原 VF/零曲线，不上传 occupancy 或分配结果缓冲。测试参考构造器可关闭过滤，继续验证 shader 对无效位移的保护。完整偏移比值及等权平均不变；此过滤尚未移除有效偏移内部的空 tile。
 
 | Function | Source | Contract |
 |---|---|---|
-| `offset_has_overlap` | `src/gpu/s2_shell.rs:57` | Check all unsigned displacement magnitudes against grid dimensions without signed overflow. |
+| `offset_has_overlap` | `src/gpu/s2_shell.rs:61` | Check all unsigned displacement magnitudes against grid dimensions without signed overflow. |
 
 | Function | Source | Contract |
 |---|---|---|
-| `GpuShellS2Pipeline::with_device` | `src/gpu/s2_shell.rs:84` | Build production shell resources on supplied device/queue; no new device. |
-| `GpuShellS2Pipeline::build_on_device` | `src/gpu/s2_shell.rs:96` | Compile shell resources on supplied handles with balanced GPU error scopes. |
-| `GpuShellS2Pipeline::compute_s2_shell_resident` | `src/gpu/s2_shell.rs:385` | Read a same-device occupancy buffer directly; caller serializes producer and consumer. |
-| `GpuShellS2Pipeline::compute_shell_input` | `src/gpu/s2_shell.rs:410` | Shared execution for host-uploaded or resident occupancy with identical offset semantics. |
-| `GpuVoxelPipeline::shared_device` | `src/gpu/voxel.rs` | 为后续阶段共享进程设备句柄（`Arc<SharedGpuDevice>`）；不创建设备。 |
-| `GpuVoxelPipeline::occupancy_buffer` | `src/gpu/voxel.rs:54` | Clone completed occupancy storage handle; producer must not overwrite while consumed. |
+| `GpuShellS2Pipeline::with_device` | `src/gpu/s2_shell.rs:87` | Build production shell resources on supplied device/queue; no new device. |
+| `GpuShellS2Pipeline::build_on_device` | `src/gpu/s2_shell.rs:100` | Compile shell resources on supplied handles with balanced GPU error scopes. |
+| `GpuShellS2Pipeline::compute_s2_shell_resident` | `src/gpu/s2_shell.rs:407` | Read a same-device occupancy buffer directly; caller serializes producer and consumer. |
+| `GpuShellS2Pipeline::compute_shell_input` | `src/gpu/s2_shell.rs:455` | Shared execution for host-uploaded or resident occupancy with identical offset semantics. |
+| `GpuVoxelPipeline::shared_device` | `src/gpu/voxel.rs:103` | 为后续阶段共享进程设备句柄（`Arc<SharedGpuDevice>`）；不创建设备。 |
+| `GpuVoxelPipeline::occupancy_buffer` | `src/gpu/voxel.rs:98` | Clone completed occupancy storage handle; producer must not overwrite while consumed. |
 
 GPU exact 现将 shell 构造在 voxel 的同一 Device/Queue 上，直接绑定其 occupancy 缓冲。shell 不再选择适配器或申请第二个设备，也不再为占据场分配和上传副本。两阶段顺序运行，各自配对错误作用域。Voxel 现于设备端计数，仅为 VF 回读 4 字节；上层 backend 能力探测仍独立计数。独立主机占据场 API 保留上传行为，之后的主机求值不会覆盖借用的 voxel 缓冲。
 
@@ -688,15 +689,15 @@ voxelize_count 在 voxelization 后执行延迟编译的整数占据归约，完
 
 | Function | Source | Contract |
 |---|---|---|
-| `GpuVoxelPipeline::voxelize_count` | `src/gpu/voxel.rs:199` | Voxelize and return only the occupied-cell count; retain the device field. |
-| `GpuVoxelPipeline::ensure_counter` | `src/gpu/voxel.rs:218` | Lazily construct the integer counter and four-byte output under caller error scope. |
-| `GpuVoxelPipeline::voxelize_impl` | `src/gpu/voxel.rs:267` | Checked common voxel execution with full-grid or count-only readback. |
+| `GpuVoxelPipeline::voxelize_count` | `src/gpu/voxel.rs:296` | Voxelize and return only the occupied-cell count; retain the device field. |
+| `GpuVoxelPipeline::ensure_counter` | `src/gpu/voxel.rs:315` | Lazily construct the integer counter and four-byte output under caller error scope. |
+| `GpuVoxelPipeline::voxelize_impl` | `src/gpu/voxel.rs:374` | Checked common voxel execution with full-grid or count-only readback. |
 
 GPU exact 现逐半径延迟生成一个 shell Vec，经 compute_s2_shell_resident_stream 按批消费。批次仍受已有部分结果槽上限约束，可跨半径但保持原偏移顺序。插值支持标志在生成该半径时记录，取消原来的第二遍枚举；成功求值会消费全部偏移，包括末尾无支持偏移。内存范围为一个半径 shell 加一个批次，并非与半径无关的常量；单个大半径 shell 仍会物化。累计生成数量采用 u128，日志不静默饱和截断。
 
 | Function | Source | Contract |
 |---|---|---|
-| `GpuShellS2Pipeline::compute_s2_shell_resident_stream` | `src/gpu/s2_shell.rs:410` | Consume ordered offsets lazily in bounded batches on a resident grid; preserve per-offset ratios. |
+| `GpuShellS2Pipeline::compute_s2_shell_resident_stream` | `src/gpu/s2_shell.rs:432` | Consume ordered offsets lazily in bounded batches on a resident grid; preserve per-offset ratios. |
 
 GPU exact 现使用 shell_offset_iter，单个半径内部也只保留嵌套范围游标；保持原 x/y/z 顺序、原点特殊情况和半开平方距离判定。需要随机访问的公共 Vec API 保持不变。用 peekable 判定该半径是否有支持，生成数量在消费时累计。普通范围沿用原整数范数，更大范数用 u128 避免有符号乘法溢出。仍扫描包围立方体，降低分配并未改变 O(半径³) 搜索复杂度。
 
@@ -722,18 +723,18 @@ wgpu 24 中一个 `Adapter` 只能创建一个逻辑设备，因此缓存位于�
 |---|---|---|
 | `GpuCertificationStats { queries, uncertain, list_regrowths, cpu_recompute_seconds }` | `src/gpu/certify.rs` | 每个管线的累计计数。MC 查询 = 有效样本；体素查询 = 单元。`recompute_ratio()` = uncertain/queries（无查询时为 0），`describe()` 生成一行日志，`accumulate(&other)` 累加计数。以 `rustmspt::gpu::GpuCertificationStats` 重新导出。 |
 | `f32_at_least(x: f64) -> f32` / `f32_at_most(x: f64) -> f32` | `src/gpu/certify.rs` | 不小于 x 的最小 f32 / 不大于 x 的最大 f32。对 f32 点 p，`p < f32_at_least(L)` 当且仅当 `p < L`，`p > f32_at_most(H)` 当且仅当 `p > H`。 |
-| `CertReference::new(mesh, origin)` | `src/gpu/certify.rs` | 在 f64 中将每个顶点平移 `origin`；`mesh_lo`/`mesh_hi` 为 CPU 的 `bb.min - 1e-9`/`bb.max + 1e-9` 向外舍入到 f32（空网格为 +inf/-inf）。 |
-| `CertReference::params_tail(flags) -> Vec<u8>` | `src/gpu/certify.rs` | 32 字节 WGSL 尾部：`mesh_lo`、`flags`（位 0 = 记录全部有效 MC 样本，仅测试）、`mesh_hi`、填充。 |
-| `CertReference::classify(points) -> Vec<bool>` | `src/gpu/certify.rs` | 在平移坐标系中对精确 f32 点做 CPU f64 判定，串行；少于 16 点用 `point_inside_mesh`，否则用预处理 BVH 查询。 |
-| `GpuS2Pipeline::certification_stats()` | `src/gpu/s2.rs` | MC 计数副本。 |
-| `GpuS2Pipeline::dispatch_batch(dispatch, readback) -> Result<u32, String>` | `src/gpu/s2.rs` | 清零列表计数器、dispatch 一个半径批次、复制 hit/valid 部分和及整条列表到 staging，返回报告的不确定数（可能超过容量）。 |
-| `GpuS2Pipeline::resolve_uncertain(entries, spr, radii, out)` | `src/gpu/s2.rs` | 解码 7 字记录、判定 p 与 q，二者都在内时为半径 `id / spr` 加一次命中；记录不在批次内则报错。更新计数。 |
-| `uncertain_buffers(device, entries)` | `src/gpu/s2.rs` | 分配 `4 + 28*entries` 字节的列表（STORAGE/COPY_SRC/COPY_DST）与可映射 staging。 |
-| `GpuVoxelPipeline::certification_stats()` | `src/gpu/voxel.rs` | 体素计数副本。 |
-| `GpuVoxelPipeline::dispatch_voxels(dispatch, bytes, count_only) -> Result<u32, String>` | `src/gpu/voxel.rs` | 清零计数器、dispatch 体素化与（计数模式）归约、复制结果和列表，返回报告的不确定数。 |
+| `CertReference::new(mesh, origin)` | `src/gpu/certify.rs:81` | 在 f64 中将每个顶点平移 `origin`；`mesh_lo`/`mesh_hi` 为 CPU 的 `bb.min - 1e-9`/`bb.max + 1e-9` 向外舍入到 f32（空网格为 +inf/-inf）。 |
+| `CertReference::params_tail(flags) -> Vec<u8>` | `src/gpu/certify.rs:118` | 32 字节 WGSL 尾部：`mesh_lo`、`flags`（位 0 = 记录全部有效 MC 样本，仅测试）、`mesh_hi`、填充。 |
+| `CertReference::classify(points) -> Vec<bool>` | `src/gpu/certify.rs:133` | 在平移坐标系中对精确 f32 点做 CPU f64 判定，串行；少于 16 点用 `point_inside_mesh`，否则用预处理 BVH 查询。 |
+| `GpuS2Pipeline::certification_stats()` | `src/gpu/s2.rs:566` | MC 计数副本。 |
+| `GpuS2Pipeline::dispatch_batch(dispatch, readback) -> Result<u32, String>` | `src/gpu/s2.rs:852` | 清零列表计数器、dispatch 一个半径批次、复制 hit/valid 部分和及整条列表到 staging，返回报告的不确定数（可能超过容量）。 |
+| `GpuS2Pipeline::resolve_uncertain(entries, spr, radii, out)` | `src/gpu/s2.rs:923` | 解码 7 字记录、判定 p 与 q，二者都在内时为半径 `id / spr` 加一次命中；记录不在批次内则报错。更新计数。 |
+| `uncertain_buffers(device, entries)` | `src/gpu/s2.rs:963` | 分配 `4 + 28*entries` 字节的列表（STORAGE/COPY_SRC/COPY_DST）与可映射 staging。 |
+| `GpuVoxelPipeline::certification_stats()` | `src/gpu/voxel.rs:629` | 体素计数副本。 |
+| `GpuVoxelPipeline::dispatch_voxels(dispatch, bytes, count_only) -> Result<u32, String>` | `src/gpu/voxel.rs:521` | 清零计数器、dispatch 体素化与（计数模式）归约、复制结果和列表，返回报告的不确定数。 |
 | `GpuVoxelPipeline::voxelize_impl`（已修改） | `src/gpu/voxel.rs` | 将列表预设为 `voxel_uncertain_entries(cells)`，溢出时扩容并重新 dispatch，判定不确定中心，加入完整结果或计数，并把在内单元写 `1` 到驻留占据场。 |
-| `GpuVoxelPipeline::new_with_shader(mesh, bbox, source)` | `src/gpu/voxel.rs` | 共享构造函数；`new` 传入认证着色器。 |
-| `voxel_center(i, pitch) -> f32` | `src/gpu/voxel.rs` | `(i as f32 + 0.5) * pitch`，与着色器逐位一致。 |
+| `GpuVoxelPipeline::new_with_shader(mesh, bbox, source)` | `src/gpu/voxel.rs:117` | 共享构造函数；`new` 传入认证着色器。 |
+| `voxel_center(i, pitch) -> f32` | `src/gpu/voxel.rs:50` | `(i as f32 + 0.5) * pitch`，与着色器逐位一致。 |
 | `voxel_uncertain_buffers(device, entries)` / `occupancy_usage()` | `src/gpu/voxel.rs` | `4 + 4*entries` 字节的体素列表/staging；占据场用途新增 `COPY_DST` 以便修补。 |
 | `mc_uncertain_bytes(entries)` / `MC_UNCERTAIN_INITIAL` / `MC_PARAMS_BYTES` | `src/compute/mc_memory.rs` | MC 列表字节（初始 1024 条）、608 字节参数。`mc_evaluation_peak` 新增 `uncertain_capacity` 参数。 |
 | `voxel_uncertain_entries(cells)` / `exact_cert_bytes(cells)` | `src/compute/exact_memory.rs` | 规划体素列表 `max(1024, cells/64)` 及其逻辑字节（列表 + staging + 2×32 字节参数尾部）。 |

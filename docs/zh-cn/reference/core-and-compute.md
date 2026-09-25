@@ -9,7 +9,7 @@
 | 条目 | 位置 | 摘要 |
 |---|---|---|
 | `RustMsptError` | `src/error.rs:4` | 覆盖 I/O、YAML、TIFF、配置、网格及 GPU 失败的 crate 级错误枚举。 |
-| `Result` | `src/error.rs:27` | 类型别名 `Result<T> = std::result::Result<T, RustMsptError>`，在整个 crate 中使用。 |
+| `Result` | `src/error.rs:30` | 类型别名 `Result<T> = std::result::Result<T, RustMsptError>`，在整个 crate 中使用。 |
 | `Cli` | `src/main.rs:27` | 顶层 clap CLI 结构体，包装一个 `Commands` 子命令。 |
 | `Commands` | `src/main.rs:33` | 7 个 CLI 子命令（Forge/Measure/Optimize/Pack/Scale/Crop/SplitFilter）的枚举。 |
 | `default_config_path` | `src/main.rs:179` | 在 `data/input/` 下构建默认配置路径。 |
@@ -43,8 +43,8 @@
 | `FallbackReason` | `src/compute/policy.rs:4` | 记录所请求的后端为何无法满足，以及实际改用了什么。 |
 | `BackendSelection` | `src/compute/policy.rs:10` | 后端选择结果：所选 `ComputeBackend` 加上可选的 `FallbackReason`。 |
 | `select_backend` | `src/compute/policy.rs:22` | 计算密集型流水线所使用的中心化 CPU/GPU/Auto 分发策略。 |
-| `configured_mode` | `src/compute/policy.rs:142` | Resolve strict environment override. |
-| `resolve_execution` | `src/compute/policy.rs:162` | Resolve method support, workload budget and fallback. |
+| `configured_mode` | `src/compute/policy.rs:138` | Resolve strict environment override. |
+| `resolve_execution` | `src/compute/policy.rs:158` | Resolve method support, workload budget and fallback. |
 
 ## 模块职责：`lib.rs`
 
@@ -451,6 +451,6 @@
 
 | Symbol | Source | Contract |
 |---|---|---|
-| `ExactMemoryPlan` | `src/compute/exact_memory.rs:5` | Fresh resident exact logical GPU peak and budget-selected partial batch. |
-| `ExactMemoryPlan::new` | `src/compute/exact_memory.rs:12` | Checked resource arithmetic and batch selection; may still require check_budget for infeasible minima. |
-| `ExactMemoryPlan::check_budget` | `src/compute/exact_memory.rs:52` | Enforce configured MiB cap before initialization. |
+| `ExactMemoryPlan` | `src/compute/exact_memory.rs:20` | Fresh resident exact logical GPU peak and budget-selected partial batch. |
+| `ExactMemoryPlan::new` | `src/compute/exact_memory.rs:27` | Checked resource arithmetic and batch selection; may still require check_budget for infeasible minima. |
+| `ExactMemoryPlan::check_budget` | `src/compute/exact_memory.rs:69` | Enforce configured MiB cap before initialization. |

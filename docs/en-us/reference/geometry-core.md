@@ -6,48 +6,48 @@ This page documents the core geometry primitives in `src/geometry/`: axis-aligne
 
 | Function | Location | Summary |
 |---|---|---|
-| `RenderProjection` | `src/geometry/render.rs` | Orthographic or perspective projection. |
-| `RenderCameraSpec` | `src/geometry/render.rs` | User camera/framing inputs. |
-| `RenderCamera` | `src/geometry/render.rs` | Validated camera basis, projection, and clipping data. |
-| `RenderSettings` | `src/geometry/render.rs` | Shared CPU/GPU appearance settings. |
-| `parse_render_vec3` | `src/geometry/render.rs` | Validates a finite three-element config vector. |
-| `parse_render_projection` | `src/geometry/render.rs` | Parses orthographic/perspective projection names. |
-| `build_render_camera` | `src/geometry/render.rs` | Builds and auto-frames a validated camera. |
-| `RenderCamera::ray_for_pixel` | `src/geometry/render.rs` | Generates a world-space pixel-center ray. |
-| `RenderCamera::view_proj_matrix` | `src/geometry/render.rs` | Builds a wgpu-compatible view-projection matrix. |
-| `render_mesh_cpu` | `src/geometry/render.rs` | Rayon-parallel QBVH nearest-hit renderer. |
+| `RenderProjection` | `src/geometry/render.rs:11` | Orthographic or perspective projection. |
+| `RenderCameraSpec` | `src/geometry/render.rs:17` | User camera/framing inputs. |
+| `RenderCamera` | `src/geometry/render.rs:30` | Validated camera basis, projection, and clipping data. |
+| `RenderSettings` | `src/geometry/render.rs:45` | Shared CPU/GPU appearance settings. |
+| `parse_render_vec3` | `src/geometry/render.rs:68` | Validates a finite three-element config vector. |
+| `parse_render_projection` | `src/geometry/render.rs:85` | Parses orthographic/perspective projection names. |
+| `build_render_camera` | `src/geometry/render.rs:133` | Builds and auto-frames a validated camera. |
+| `RenderCamera::ray_for_pixel` | `src/geometry/render.rs:273` | Generates a world-space pixel-center ray. |
+| `RenderCamera::view_proj_matrix` | `src/geometry/render.rs:299` | Builds a wgpu-compatible view-projection matrix. |
+| `render_mesh_cpu` | `src/geometry/render.rs:370` | Rayon-parallel QBVH nearest-hit renderer. |
 | `mesh_bbox` | `src/geometry/bbox.rs:8` | Axis-aligned bounding box of a mesh. |
 | `bbox_overlaps` | `src/geometry/bbox.rs:28` | Strict overlap test between two bounding boxes. |
 | `bbox_distance` | `src/geometry/bbox.rs:38` | Minimum Euclidean distance between two bounding boxes. |
 | `check_boundary_constraints_mode` | `src/geometry/bbox.rs:72` | Validates a mesh's placement against packing boundary mode rules. |
-| `mesh_centroid` | `src/geometry/mesh_ops.rs:5` | Arithmetic centroid of mesh vertices. |
-| `vec_norm` | `src/geometry/mesh_ops.rs:19` | Euclidean length of a vector. |
-| `merge_meshes` | `src/geometry/mesh_ops.rs:24` | Combines multiple meshes into one, remapping face indices. |
-| `split_mesh_into_granules` | `src/geometry/mesh_ops.rs:47` | Splits a mesh into connected components (BFS over shared vertices). |
-| `translate_mesh` | `src/geometry/mesh_ops.rs:120` | Translates all mesh vertices by a delta vector, in place. |
-| `move_mesh_to_target_center` | `src/geometry/mesh_ops.rs:125` | Moves a mesh so its centroid matches a target position. |
-| `wrap_mesh_centroid_to_box` | `src/geometry/mesh_ops.rs:136` | Wraps a mesh's centroid into a box under periodic boundary conditions. |
-| `scale_mesh` | `src/geometry/mesh_ops.rs:157` | Uniformly scales mesh vertices about the origin, in place. |
-| `mesh_surface_area` | `src/geometry/mesh_ops.rs:176` | Total surface area of a mesh (sum of triangle areas). |
-| `rotate_mesh_around_center` | `src/geometry/mesh_ops.rs:195` | Rotates a mesh about its centroid using Rodrigues' rotation formula. |
-| `box_mesh` | `src/geometry/mesh_ops.rs:216` | Builds a triangulated box mesh from a `BoundingBox`. |
-| `SpatialGrid::new` | `src/geometry/spatial.rs:22` | Constructs an empty uniform grid over a box with given cell size. |
-| `SpatialGrid::insert` | `src/geometry/spatial.rs:40` | Inserts an item index into every cell its bbox overlaps. |
-| `SpatialGrid::build` | `src/geometry/spatial.rs:80` | Constructs and populates a grid from a batch of (index, bbox) pairs. |
-| `SpatialGrid::query_neighbors` | `src/geometry/spatial.rs:89` | Finds candidate neighbor indices overlapping a query bbox. |
-| `SpatialGrid::query_neighbors_with_margin` | `src/geometry/spatial.rs:99` | Margin query with first-encounter ordering and adaptive linear/hash deduplication. |
-| `SpatialGrid::point_to_cell_clamped` | `src/geometry/spatial.rs:157` | Maps a point to grid cell coordinates, clamped to grid bounds. |
-| `SpatialGrid::point_to_cell` | `src/geometry/spatial.rs:167` | Maps a point to grid cell coordinates, unclamped. |
-| `estimate_cell_size` | `src/geometry/spatial.rs:176` | Heuristically picks a `SpatialGrid` cell size from a set of bboxes. |
-| `SpatialGrid::remove` | `src/geometry/spatial.rs:59` | Remove all item cell references. |
-| `SpatialGrid::update` | `src/geometry/spatial.rs:72` | Replace one item membership. |
+| `mesh_centroid` | `src/geometry/mesh_ops.rs:6` | Arithmetic centroid of mesh vertices. |
+| `vec_norm` | `src/geometry/mesh_ops.rs:20` | Euclidean length of a vector. |
+| `merge_meshes` | `src/geometry/mesh_ops.rs:25` | Combines multiple meshes into one, remapping face indices. |
+| `split_mesh_into_granules` | `src/geometry/mesh_ops.rs:48` | Splits a mesh into connected components (BFS over shared vertices). |
+| `translate_mesh` | `src/geometry/mesh_ops.rs:209` | Translates all mesh vertices by a delta vector, in place. |
+| `move_mesh_to_target_center` | `src/geometry/mesh_ops.rs:214` | Moves a mesh so its centroid matches a target position. |
+| `wrap_mesh_centroid_to_box` | `src/geometry/mesh_ops.rs:225` | Wraps a mesh's centroid into a box under periodic boundary conditions. |
+| `scale_mesh` | `src/geometry/mesh_ops.rs:246` | Uniformly scales mesh vertices about the origin, in place. |
+| `mesh_surface_area` | `src/geometry/mesh_ops.rs:289` | Total surface area of a mesh (sum of triangle areas). |
+| `rotate_mesh_around_center` | `src/geometry/mesh_ops.rs:308` | Rotates a mesh about its centroid using Rodrigues' rotation formula. |
+| `box_mesh` | `src/geometry/mesh_ops.rs:329` | Builds a triangulated box mesh from a `BoundingBox`. |
+| `SpatialGrid::new` | `src/geometry/spatial.rs:47` | Constructs an empty uniform grid over a box with given cell size. |
+| `SpatialGrid::insert` | `src/geometry/spatial.rs:65` | Inserts an item index into every cell its bbox overlaps. |
+| `SpatialGrid::build` | `src/geometry/spatial.rs:105` | Constructs and populates a grid from a batch of (index, bbox) pairs. |
+| `SpatialGrid::query_neighbors` | `src/geometry/spatial.rs:114` | Finds candidate neighbor indices overlapping a query bbox. |
+| `SpatialGrid::query_neighbors_with_margin` | `src/geometry/spatial.rs:124` | Margin query with first-encounter ordering and adaptive linear/hash deduplication. |
+| `SpatialGrid::point_to_cell_clamped` | `src/geometry/spatial.rs:203` | Maps a point to grid cell coordinates, clamped to grid bounds. |
+| `SpatialGrid::point_to_cell` | `src/geometry/spatial.rs:213` | Maps a point to grid cell coordinates, unclamped. |
+| `estimate_cell_size` | `src/geometry/spatial.rs:222` | Heuristically picks a `SpatialGrid` cell size from a set of bboxes. |
+| `SpatialGrid::remove` | `src/geometry/spatial.rs:84` | Remove all item cell references. |
+| `SpatialGrid::update` | `src/geometry/spatial.rs:97` | Replace one item membership. |
 | `SpatialQueryScratch` | `src/geometry/spatial.rs:5` | Retained neighbors and membership storage. |
 | `SpatialGrid::query_into` | `src/geometry/spatial.rs:136` | Fill reusable query scratch. |
 | `GridStats` | `src/geometry/spatial.rs:11` | Bucket occupancy summary: buckets, non-empty buckets, max/mean occupancy, memberships, items. |
 | `GridStats::summary_line` | `src/geometry/spatial.rs:22` | Format a one-line `[GridStats] <label> ...` log line. |
 | `SpatialGrid::stats` | `src/geometry/spatial.rs:181` | One pass over buckets returning `GridStats`. |
 | `map_vertices_centroid` | `src/geometry/mesh_ops.rs:265` | Vertex map plus post-map centroid, bit-identical to map_vertices + mesh_centroid; serial branch is one fused pass. |
-| `map_vertices` | `src/geometry/mesh_ops.rs:162` | Serial or parallel independent vertex mapping. |
+| `map_vertices` | `src/geometry/mesh_ops.rs:251` | Serial or parallel independent vertex mapping. |
 
 ## Module role: `geometry/mod.rs`
 
@@ -380,7 +380,7 @@ Both nearest-hit STL rendering and prepared transparent scene rendering use disj
 
 | `cpu_render_tile_pixels` | `src/geometry/render.rs:381` | Bounded CPU pixel-task scheduling with an explicit row reference. |
 
-| `render_mesh_cpu_with_tiles` | `src/geometry/render.rs:390` | Bounded CPU pixel-task scheduling with an explicit row reference. |
+| `render_mesh_cpu_with_tiles` | `src/geometry/render.rs:392` | Bounded CPU pixel-task scheduling with an explicit row reference. |
 
 ### Grid occupancy statistics (PERF-13 observability)
 

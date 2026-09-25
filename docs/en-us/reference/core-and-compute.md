@@ -7,7 +7,7 @@ This page documents the crate root and entry points (`src/lib.rs`, `src/main.rs`
 | Item | Location | Summary |
 |---|---|---|
 | `RustMsptError` | `src/error.rs:4` | Crate-wide error enum covering I/O, YAML, TIFF, config, mesh, and GPU failures. |
-| `Result` | `src/error.rs:27` | Type alias `Result<T> = std::result::Result<T, RustMsptError>` used throughout the crate. |
+| `Result` | `src/error.rs:30` | Type alias `Result<T> = std::result::Result<T, RustMsptError>` used throughout the crate. |
 | `Cli` | `src/main.rs:27` | Top-level clap CLI struct wrapping a `Commands` subcommand, carrying the build identity as its `--version` string. |
 | `Commands` | `src/main.rs:33` | Enum of the 12 CLI subcommands, including `version`. |
 | `default_config_path` | `src/main.rs:179` | Builds the default config path under `data/input/`. |
@@ -42,9 +42,9 @@ This page documents the crate root and entry points (`src/lib.rs`, `src/main.rs`
 | `Mesh` | `src/types.rs:121` | Vertex/face container: `vertices: Vec<Vec3>`, `faces: Vec<Triangle>`. |
 | `Mesh::empty` | `src/types.rs:128` | Constructs an empty mesh. |
 | `Mesh::is_empty` | `src/types.rs:136` | True if the mesh has no vertices or no faces. |
-| `RenderedImage` | `src/types.rs` | Top-row-first RGBA8 image buffer. |
-| `RenderedImage::new` | `src/types.rs` | Constructs an RGBA8 image from bytes. |
-| `RenderedImage::filled` | `src/types.rs` | Allocates a solid-color RGBA8 image. |
+| `RenderedImage` | `src/types.rs:142` | Top-row-first RGBA8 image buffer. |
+| `RenderedImage::new` | `src/types.rs:151` | Constructs an RGBA8 image from bytes. |
+| `RenderedImage::filled` | `src/types.rs:161` | Allocates a solid-color RGBA8 image. |
 | `AccelerationMode` | `src/compute/backend.rs:5` | Enum of requested compute modes: `Auto` (default), `Cpu`, `Gpu`. |
 | `AccelerationMode::fmt` (Display) | `src/compute/backend.rs:12` | Formats the mode as `"auto"`/`"cpu"`/`"gpu"`. |
 | `BackendCaps` | `src/compute/backend.rs:23` | Reported capabilities of a selected backend (name, GPU support, buffer size limits). |
@@ -56,9 +56,9 @@ This page documents the crate root and entry points (`src/lib.rs`, `src/main.rs`
 | `FallbackReason` | `src/compute/policy.rs:4` | Records why a requested backend could not be honored and what was requested instead. |
 | `BackendSelection` | `src/compute/policy.rs:10` | Result of backend selection: chosen `ComputeBackend` plus optional `FallbackReason`. |
 | `select_backend` | `src/compute/policy.rs:22` | Central CPU/GPU/Auto dispatch policy used by compute-heavy pipelines. |
-| `select_backend_for_workload` | `src/compute/policy.rs` | Unit-aware backend selection for pixels or other work items. |
-| `configured_mode` | `src/compute/policy.rs:142` | Resolve strict environment override. |
-| `resolve_execution` | `src/compute/policy.rs:162` | Resolve method support, workload budget and fallback. |
+| `select_backend_for_workload` | `src/compute/policy.rs:46` | Unit-aware backend selection for pixels or other work items. |
+| `configured_mode` | `src/compute/policy.rs:138` | Resolve strict environment override. |
+| `resolve_execution` | `src/compute/policy.rs:158` | Resolve method support, workload budget and fallback. |
 
 ## Module role: `lib.rs`
 
@@ -475,6 +475,6 @@ Fresh resident GPU exact evaluations use `ExactMemoryPlan` for both backend sele
 
 | Symbol | Source | Contract |
 |---|---|---|
-| `ExactMemoryPlan` | `src/compute/exact_memory.rs:5` | Fresh resident exact logical GPU peak and budget-selected partial batch. |
-| `ExactMemoryPlan::new` | `src/compute/exact_memory.rs:12` | Checked resource arithmetic and batch selection; may still require check_budget for infeasible minima. |
-| `ExactMemoryPlan::check_budget` | `src/compute/exact_memory.rs:52` | Enforce configured MiB cap before initialization. |
+| `ExactMemoryPlan` | `src/compute/exact_memory.rs:20` | Fresh resident exact logical GPU peak and budget-selected partial batch. |
+| `ExactMemoryPlan::new` | `src/compute/exact_memory.rs:27` | Checked resource arithmetic and batch selection; may still require check_budget for infeasible minima. |
+| `ExactMemoryPlan::check_budget` | `src/compute/exact_memory.rs:69` | Enforce configured MiB cap before initialization. |

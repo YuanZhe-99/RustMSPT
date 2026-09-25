@@ -10,35 +10,35 @@ This module implements wgpu compute pipelines plus offscreen STL rasterization, 
 
 | Item | Location | Summary |
 |---|---|---|
-| `GpuContext` | `src/gpu/context.rs:3` | Holds adapter name and buffer-size capabilities after successful GPU init. |
-| `GpuContext::caps` | `src/gpu/context.rs:11` | Returns `BackendCaps` describing this GPU context. |
-| `GpuInitError` | `src/gpu/context.rs:22` | Error type wrapping a GPU initialization failure message. |
+| `GpuContext` | `src/gpu/context.rs:42` | Holds adapter name and buffer-size capabilities after successful GPU init. |
+| `GpuContext::caps` | `src/gpu/context.rs:62` | Returns `BackendCaps` describing this GPU context. |
+| `GpuInitError` | `src/gpu/context.rs:73` | Error type wrapping a GPU initialization failure message. |
 | `GpuInitError` (`Display` impl) | `src/gpu/context.rs:22` | Formats the error message. |
-| `try_init_gpu` | `src/gpu/context.rs` | Probes the shared device for the current selector and returns a `GpuContext`; used by `compute::policy::select_backend`. |
-| `SharedGpuDevice` | `src/gpu/context.rs` | Process-wide device/queue/adapter info plus the compiled-pipeline cache for one selector. |
-| `SharedGpuDevice::cached_pipeline` | `src/gpu/context.rs` | Compile a pipeline bundle once per (kind, WGSL source) on this device; failures are not cached. |
+| `try_init_gpu` | `src/gpu/context.rs:238` | Probes the shared device for the current selector and returns a `GpuContext`; used by `compute::policy::select_backend`. |
+| `SharedGpuDevice` | `src/gpu/context.rs:89` | Process-wide device/queue/adapter info plus the compiled-pipeline cache for one selector. |
+| `SharedGpuDevice::cached_pipeline` | `src/gpu/context.rs:125` | Compile a pipeline bundle once per (kind, WGSL source) on this device; failures are not cached. |
 | `shared_gpu_device` / `shared_device` | `src/gpu/context.rs` | Return (creating lazily) the shared device for `RUSTMSPT_GPU_DEVICE`; evicts lost devices. |
-| `release_shared_gpu_devices` | `src/gpu/context.rs` | Drop every cached device; called at the end of the CLI entry point. |
+| `release_shared_gpu_devices` | `src/gpu/context.rs:182` | Drop every cached device; called at the end of the CLI entry point. |
 | `gpu_device_creation_count` / `gpu_pipeline_build_count` | `src/gpu/context.rs` | Observable process counters for logical devices created and pipeline bundles compiled. |
-| `GpuRenderPipeline` | `src/gpu/render.rs` | Offscreen STL rasterization pipeline. |
-| `GpuRenderPipeline::new` | `src/gpu/render.rs` | Compiles `render.wgsl` and creates render state. |
-| `GpuRenderPipeline::render` | `src/gpu/render.rs` | Rasterizes and reads back top-row-first RGBA8. |
-| `GpuS2Pipeline` | `src/gpu/s2.rs:10` | GPU pipeline state for Monte Carlo S2 two-point correlation. |
+| `GpuRenderPipeline` | `src/gpu/render.rs:25` | Offscreen STL rasterization pipeline. |
+| `GpuRenderPipeline::new` | `src/gpu/render.rs:90` | Compiles `render.wgsl` and creates render state. |
+| `GpuRenderPipeline::render` | `src/gpu/render.rs:199` | Rasterizes and reads back top-row-first RGBA8. |
+| `GpuS2Pipeline` | `src/gpu/s2.rs:25` | GPU pipeline state for Monte Carlo S2 two-point correlation. |
 | `build_triangle_buffer` (s2.rs) | `src/gpu/s2.rs:29` | Builds a normalized `f32` triangle position buffer for the S2 Monte Carlo pipeline. |
-| `pack_params` | `src/gpu/s2.rs:50` | Packs Monte Carlo S2 shader parameters into a byte buffer matching the WGSL `Params` layout. |
-| `dispatch_plan` | `src/gpu/s2.rs:101` | Validate logical MC ids, partial buffers and two-dimensional dispatch. |
-| `check_buffer_size` | `src/gpu/s2.rs:115` | Check single-buffer and storage limits. |
-| `check_mesh_capacity` | `src/gpu/s2.rs:125` | Check triangle count and upload capacity. |
-| `scoped` | `src/gpu/runtime.rs` | Capture scoped GPU errors and balance all scopes under a process-wide reentrant scope lock. |
-| `read_u32` | `src/gpu/runtime.rs:29` | Check mapping completion before copying and unmapping u32 readback. |
-| `GpuS2Pipeline::new` | `src/gpu/s2.rs:141` | Initializes the wgpu device and Monte Carlo S2 compute pipeline. |
-| `GpuS2Pipeline::update_mesh` | `src/gpu/s2.rs` | Makes the triangle buffer equal to a new mesh, uploading only triangles that differ from the resident copy. |
+| `pack_params` | `src/gpu/s2.rs:94` | Packs Monte Carlo S2 shader parameters into a byte buffer matching the WGSL `Params` layout. |
+| `dispatch_plan` | `src/gpu/s2.rs:144` | Validate logical MC ids, partial buffers and two-dimensional dispatch. |
+| `check_buffer_size` | `src/gpu/s2.rs:168` | Check single-buffer and storage limits. |
+| `check_mesh_capacity` | `src/gpu/s2.rs:178` | Check triangle count and upload capacity. |
+| `scoped` | `src/gpu/runtime.rs:102` | Capture scoped GPU errors and balance all scopes under a process-wide reentrant scope lock. |
+| `read_u32` | `src/gpu/runtime.rs:137` | Check mapping completion before copying and unmapping u32 readback. |
+| `GpuS2Pipeline::new` | `src/gpu/s2.rs:236` | Initializes the wgpu device and Monte Carlo S2 compute pipeline. |
+| `GpuS2Pipeline::update_mesh` | `src/gpu/s2.rs:480` | Makes the triangle buffer equal to a new mesh, uploading only triangles that differ from the resident copy. |
 | `GpuS2Pipeline::upload_stats` / `GpuUploadStats` | `src/gpu/s2.rs` | Observable full/partial/unchanged upload counts and bytes. |
-| `changed_face_runs` | `src/gpu/s2.rs` | Host diff of resident vs new triangle bits into coalesced face runs, or `None` for a full write. |
-| `GpuS2Pipeline::ensure_output_capacity` | `src/gpu/s2.rs:302` | Grows the output buffers if the invocation count exceeds current capacity. |
-| `GpuS2Pipeline::calculate_s2_gpu` | `src/gpu/s2.rs` | Dispatches the Monte Carlo S2 kernel in radius batches of at most 128 and reads back results. |
-| `GpuS2Pipeline::calculate_s2_gpu_seeded` | `src/gpu/s2.rs` | `calculate_s2_gpu` with an optional seed folded to the kernel's 32-bit seed. |
-| `OffsetEntry` | `src/gpu/s2_shell.rs:6` | Packed `(radius_idx, dx, dy, dz)` shell-offset record matching the WGSL layout. |
+| `changed_face_runs` | `src/gpu/s2.rs:200` | Host diff of resident vs new triangle bits into coalesced face runs, or `None` for a full write. |
+| `GpuS2Pipeline::ensure_output_capacity` | `src/gpu/s2.rs:575` | Grows the output buffers if the invocation count exceeds current capacity. |
+| `GpuS2Pipeline::calculate_s2_gpu` | `src/gpu/s2.rs:630` | Dispatches the Monte Carlo S2 kernel in radius batches of at most 128 and reads back results. |
+| `GpuS2Pipeline::calculate_s2_gpu_seeded` | `src/gpu/s2.rs:640` | `calculate_s2_gpu` with an optional seed folded to the kernel's 32-bit seed. |
+| `OffsetEntry` | `src/gpu/s2_shell.rs:8` | Packed `(radius_idx, dx, dy, dz)` shell-offset record matching the WGSL layout. |
 | `point_inside` (s2_monte_carlo.wgsl) | `src/gpu/shaders/s2_monte_carlo.wgsl` | Certified parity: exact bbox early-out, certified hits, proven-distinct 64-hit path; returns 0/1/uncertain. |
 | `point_inside_overflow` (s2_monte_carlo.wgsl) | `src/gpu/shaders/s2_monte_carlo.wgsl` | Certified >64-hit recovery proving every consecutive gap exceeds the CPU dedup band. |
 | `point_inside` (voxelize.wgsl) | `src/gpu/shaders/voxelize.wgsl` | Certified parity: exact bbox early-out, certified hits, proven-distinct 64-hit path; returns 0/1/uncertain. |
@@ -48,38 +48,38 @@ This module implements wgpu compute pipelines plus offscreen STL rasterization, 
 | `AdapterClass` / `classify_adapter` | `src/gpu/context.rs` | Software (CPU device type or a known software rasterizer name: llvmpipe, lavapipe, SwiftShader, softpipe, Microsoft Basic Render) vs hardware adapter. |
 | `GpuContext::adapter_class` / `GpuContext::describe` | `src/gpu/context.rs` | The probed adapter's class and a one-line `name= backend= class=` description. |
 | `GpuTransferStats` / `gpu_transfer_stats` | `src/gpu/runtime.rs` | Process-wide upload bytes/calls, readback bytes/calls, blocked readback wait (execution plus transfer, not kernel time) and device init time; `describe()` is the `[Timing] gpu ...` line `main` prints after any GPU run. |
-| `CountedWrite::write_counted` | `src/gpu/runtime.rs` | `queue.write_buffer` that counts the upload; every GPU upload in the crate uses it. |
+| `CountedWrite::write_counted` | `src/gpu/runtime.rs:72` | `queue.write_buffer` that counts the upload; every GPU upload in the crate uses it. |
 | `GpuCertificationStats` (+ `recompute_ratio`, `describe`, `accumulate`) | `src/gpu/certify.rs` | Cumulative certification counters and CPU recompute ratio. |
 | `CertReference` (+ `new`, `params_tail`, `classify`, test-only `mesh`) | `src/gpu/certify.rs` | Origin-shifted f64 CPU reference and exact f32 early-out bounds. |
 | `f32_at_least` / `f32_at_most` | `src/gpu/certify.rs` | Directed f64-to-f32 rounding making f32 comparisons equal f64 ones. |
 | `triangle_constants` / `TRI_CONST_FLOATS` | `src/gpu/certify.rs` | Host-precomputed query-independent certified-test terms, 16 f32 per triangle (`a, m, e1, es, e2, eps_det, h, det`) for the fixed ray direction. |
-| `GpuS2Pipeline::certification_stats` | `src/gpu/s2.rs` | Cumulative MC certification counters. |
-| `GpuS2Pipeline::dispatch_batch` | `src/gpu/s2.rs` | Clear the uncertain counter, dispatch one radius batch, copy results and list, read the counter. |
-| `GpuS2Pipeline::resolve_uncertain` | `src/gpu/s2.rs` | Re-evaluate uncertain samples at their exact GPU points with the CPU predicate. |
+| `GpuS2Pipeline::certification_stats` | `src/gpu/s2.rs:566` | Cumulative MC certification counters. |
+| `GpuS2Pipeline::dispatch_batch` | `src/gpu/s2.rs:852` | Clear the uncertain counter, dispatch one radius batch, copy results and list, read the counter. |
+| `GpuS2Pipeline::resolve_uncertain` | `src/gpu/s2.rs:923` | Re-evaluate uncertain samples at their exact GPU points with the CPU predicate. |
 | `uncertain_buffers` (s2.rs) | `src/gpu/s2.rs` | Allocate the MC uncertain list and staging. |
-| `GpuVoxelPipeline::certification_stats` | `src/gpu/voxel.rs` | Cumulative voxel certification counters. |
-| `GpuVoxelPipeline::dispatch_voxels` | `src/gpu/voxel.rs` | Clear the counter, dispatch voxelization (and reducer), copy result and list, read the counter. |
-| `GpuVoxelPipeline::new_with_shader` | `src/gpu/voxel.rs` | Construct from supplied WGSL (tests pass the frozen uncertified baseline). |
+| `GpuVoxelPipeline::certification_stats` | `src/gpu/voxel.rs:629` | Cumulative voxel certification counters. |
+| `GpuVoxelPipeline::dispatch_voxels` | `src/gpu/voxel.rs:521` | Clear the counter, dispatch voxelization (and reducer), copy result and list, read the counter. |
+| `GpuVoxelPipeline::new_with_shader` | `src/gpu/voxel.rs:117` | Construct from supplied WGSL (tests pass the frozen uncertified baseline). |
 | `voxel_center` / `voxel_uncertain_buffers` / `occupancy_usage` | `src/gpu/voxel.rs` | Exact f32 cell center, uncertain list allocation, patchable occupancy usage. |
-| `GpuShellS2Pipeline` | `src/gpu/s2_shell.rs:13` | GPU pipeline state for exact shell-pair S2 computation. |
-| `build_offset_buffer` | `src/gpu/s2_shell.rs:30` | Converts `(radius_idx, [dx,dy,dz])` tuples into `OffsetEntry` records. |
-| `GpuShellS2Pipeline::new` | `src/gpu/s2_shell.rs:48` | Initializes the wgpu device and shell S2 compute pipeline. |
-| `GpuShellS2Pipeline::compute_s2_shell` | `src/gpu/s2_shell.rs:181` | Dispatches exact shell-pair counting over an occupancy grid and reads back S2(r). |
-| `GpuVoxelPipeline` | `src/gpu/voxel.rs:5` | GPU pipeline state for mesh voxelization. |
+| `GpuShellS2Pipeline` | `src/gpu/s2_shell.rs:22` | GPU pipeline state for exact shell-pair S2 computation. |
+| `build_offset_buffer` | `src/gpu/s2_shell.rs:48` | Converts `(radius_idx, [dx,dy,dz])` tuples into `OffsetEntry` records. |
+| `GpuShellS2Pipeline::new` | `src/gpu/s2_shell.rs:74` | Initializes the wgpu device and shell S2 compute pipeline. |
+| `GpuShellS2Pipeline::compute_s2_shell` | `src/gpu/s2_shell.rs:382` | Dispatches exact shell-pair counting over an occupancy grid and reads back S2(r). |
+| `GpuVoxelPipeline` | `src/gpu/voxel.rs:7` | GPU pipeline state for mesh voxelization. |
 | `build_triangle_buffer` (voxel.rs) | `src/gpu/voxel.rs:17` | Builds a normalized `f32` triangle position buffer for the voxelization pipeline (separate copy from `s2.rs`). |
 | `pack_params` (voxel.rs) | `src/gpu/voxel.rs` | Serializes the 80-byte voxel parameter layout: ray direction at byte 32, certification tail (mesh_lo, flags, mesh_hi) from byte 48. |
-| `GpuVoxelPipeline::new` | `src/gpu/voxel.rs:57` | Initializes the wgpu device and voxelization compute pipeline. |
-| `GpuVoxelPipeline::voxelize` | `src/gpu/voxel.rs:168` | Dispatches ray-casting voxelization and reads back the occupancy grid. |
-| `GpuVolumeTransformPipeline` | `src/gpu/volume_transform.rs:5` | GPU pipeline state for volume rotate-and-crop. |
-| `GpuVolumeTransformPipeline::new` | `src/gpu/volume_transform.rs:23` | Initializes the wgpu device and volume-transform compute pipeline. |
-| `TransformTile` | `src/gpu/volume_transform.rs` | Output tile plus uploaded source sub-block descriptor. |
-| `GpuVolumeTransformPipeline::transform_tile` | `src/gpu/volume_transform.rs` | Transforms one output tile from a halo source block with single-dispatch arithmetic and a halo guard. |
-| `GpuVolumeTransformPipeline::reserve_capacity` | `src/gpu/volume_transform.rs` | Pre-sizes source and output/staging buffers to a tile plan's maxima. |
-| `GpuVolumeTransformPipeline::device_limits` | `src/gpu/volume_transform.rs` | Device limits bounding per-tile buffers. |
-| `GpuVolumeTransformPipeline::rotate_and_crop` | `src/gpu/volume_transform.rs:123` | Dispatches the rotate/crop/resample kernel and reads back the transformed volume. |
-| `GridPlan` | `src/gpu/runtime.rs:60` | Checked two-dimensional grid dispatch. |
-| `grid_plan` | `src/gpu/runtime.rs:67` | Validate product, buffer and dispatch limits. |
-| `GpuVoxelPipeline::voxelize_limited` | `src/gpu/voxel.rs:179` | Fallible voxel execution with bounded dispatch. |
+| `GpuVoxelPipeline::new` | `src/gpu/voxel.rs:112` | Initializes the wgpu device and voxelization compute pipeline. |
+| `GpuVoxelPipeline::voxelize` | `src/gpu/voxel.rs:285` | Dispatches ray-casting voxelization and reads back the occupancy grid. |
+| `GpuVolumeTransformPipeline` | `src/gpu/volume_transform.rs:20` | GPU pipeline state for volume rotate-and-crop. |
+| `GpuVolumeTransformPipeline::new` | `src/gpu/volume_transform.rs:40` | Initializes the wgpu device and volume-transform compute pipeline. |
+| `TransformTile` | `src/gpu/volume_transform.rs:11` | Output tile plus uploaded source sub-block descriptor. |
+| `GpuVolumeTransformPipeline::transform_tile` | `src/gpu/volume_transform.rs:229` | Transforms one output tile from a halo source block with single-dispatch arithmetic and a halo guard. |
+| `GpuVolumeTransformPipeline::reserve_capacity` | `src/gpu/volume_transform.rs:207` | Pre-sizes source and output/staging buffers to a tile plan's maxima. |
+| `GpuVolumeTransformPipeline::device_limits` | `src/gpu/volume_transform.rs:197` | Device limits bounding per-tile buffers. |
+| `GpuVolumeTransformPipeline::rotate_and_crop` | `src/gpu/volume_transform.rs:170` | Dispatches the rotate/crop/resample kernel and reads back the transformed volume. |
+| `GridPlan` | `src/gpu/runtime.rs:170` | Checked two-dimensional grid dispatch. |
+| `grid_plan` | `src/gpu/runtime.rs:177` | Validate product, buffer and dispatch limits. |
+| `GpuVoxelPipeline::voxelize_limited` | `src/gpu/voxel.rs:357` | Fallible voxel execution with bounded dispatch. |
 
 ---
 
@@ -612,9 +612,9 @@ Voxel occupancy and transform output buffers now retain matching readback buffer
 
 `GpuShellS2Pipeline` retains offset/output/staging buffers across bounded batches and evaluations. It reads only the live prefix, including a shorter final batch. `release_batch_capacity()` returns `Result<(), String>` and resets offsets to 16 bytes and each output/staging buffer to 4 bytes, preserving occupancy and compiled state. `resize_batch_buffers(count)` is private and runs inside the caller’s GPU error scope. Capacity reuse does not change equal per-offset weighting or the 200,000-offset bound.
 
-| `GpuShellS2Pipeline::resize_batch_buffers` | `src/gpu/s2_shell.rs:193` | Shell batch buffer capacity management; occupancy retained. |
+| `GpuShellS2Pipeline::resize_batch_buffers` | `src/gpu/s2_shell.rs:320` | Shell batch buffer capacity management; occupancy retained. |
 
-| `GpuShellS2Pipeline::release_batch_capacity` | `src/gpu/s2_shell.rs:230` | Shell batch buffer capacity management; occupancy retained. |
+| `GpuShellS2Pipeline::release_batch_capacity` | `src/gpu/s2_shell.rs:357` | Shell batch buffer capacity management; occupancy retained. |
 
 `runtime::read_u32` is a test-only whole-buffer mapping wrapper; production callers use `read_u32_prefix` for their live byte count.
 
@@ -625,6 +625,7 @@ Voxel occupancy and transform output buffers now retain matching readback buffer
 The checked planner counts visible triangles at 120 bytes each, enabled segments at 64 bytes and markers at 192 bytes. It includes one color/depth pair (8 bytes/pixel), one readback buffer (256-byte-aligned RGBA rows), and 128 uniform bytes. Pending queue uploads coexist with destination geometry/uniform buffers, giving the conservative logical peak `2 * geometry_bytes + 256 + 8 * pixels + staging_bytes`. Multiple views reuse targets. Driver/pipeline internals and host scene/PNG memory are not included, so this is not a physical VRAM/RSS cap. Device limits are checked independently before host vertex expansion; expanded host arrays are released immediately after upload. The constructor also returns scoped GPU validation/allocation errors. Image tiling remains future work.
 
 | `SceneRenderMemory::plan` | `src/compute/render_memory.rs:20` | Checked scene preview workset, budget and buffer planning without allocation. |
+| `scene_strip_rows` | `src/compute/render_memory.rs:114` | Tallest horizontal strip whose scene preview working set fits an optional MiB budget (exact boundary by binary search); whole image when it fits, error when one row cannot. |
 
 | `SceneRenderMemory::check_budget` | `src/compute/render_memory.rs:77` | Checked scene preview workset, budget and buffer planning without allocation. |
 
@@ -638,16 +639,16 @@ The optimizer starts its shared GPU MC pipeline with empty geometry; each stage 
 
 Certification-list regrowth is budgeted too (PLAN.Performance.md §72). `GpuS2Pipeline::set_memory_limit_mb` stores the caller's limit (optimize and measure set it beside `check_evaluation_budget`); before regrowing an overflowed uncertain list the pipeline checks `mc_regrowth_peak(retained_peak, entries)` - the retained peak plus the new list and its staging, both alive while the old pair still is - and refuses with a named `certification list regrowth` error that the caller's fallback policy then handles. The voxel pipeline gets `GpuVoxelPipeline::set_regrowth_headroom`, set by the exact path to the budget minus the planned peak; a regrowth past the planned list may add at most that many bytes. Tests: `mc_uncertain_list_regrowth_respects_the_budget`, `uncertain_list_regrowth_respects_the_budget_headroom`.
 
-| `mc_evaluation_peak` | `src/compute/mc_memory.rs:4` | Check logical MC peak including retained capacity and pending uploads. |
-| `mc_evaluation_peak_batched` | `src/compute/mc_memory.rs` | `mc_evaluation_peak` with the radius batch (radii per dispatch) as a parameter. |
-| `mc_largest_batch` | `src/compute/mc_memory.rs` | Largest radius batch (1..=128) whose MC peak fits the MiB limit; errors only when one radius per dispatch does not fit. |
+| `mc_evaluation_peak` | `src/compute/mc_memory.rs:21` | Check logical MC peak including retained capacity and pending uploads. |
+| `mc_evaluation_peak_batched` | `src/compute/mc_memory.rs:35` | `mc_evaluation_peak` with the radius batch (radii per dispatch) as a parameter. |
+| `mc_largest_batch` | `src/compute/mc_memory.rs:97` | Largest radius batch (1..=128) whose MC peak fits the MiB limit; errors only when one radius per dispatch does not fit. |
 
-| `check_mc_budget` | `src/compute/mc_memory.rs:44` | Check logical MC peak including retained capacity and pending uploads. |
+| `check_mc_budget` | `src/compute/mc_memory.rs:131` | Check logical MC peak including retained capacity and pending uploads. |
 
-| `GpuS2Pipeline::check_evaluation_budget` | `src/gpu/s2.rs:275` | Check logical MC peak including retained capacity and pending uploads. |
-| `GpuS2Pipeline::set_memory_limit_mb` | `src/gpu/s2.rs` | Store the logical budget that uncertain-list regrowth must respect. |
-| `mc_regrowth_peak` | `src/compute/mc_memory.rs` | Retained peak plus a regrown uncertain list and its staging. |
-| `GpuVoxelPipeline::set_regrowth_headroom` | `src/gpu/voxel.rs` | Bytes a voxel uncertain-list regrowth may add beyond the planned list. |
+| `GpuS2Pipeline::check_evaluation_budget` | `src/gpu/s2.rs:451` | Check logical MC peak including retained capacity and pending uploads. |
+| `GpuS2Pipeline::set_memory_limit_mb` | `src/gpu/s2.rs:446` | Store the logical budget that uncertain-list regrowth must respect. |
+| `mc_regrowth_peak` | `src/compute/mc_memory.rs:85` | Retained peak plus a regrown uncertain list and its staging. |
+| `GpuVoxelPipeline::set_regrowth_headroom` | `src/gpu/voxel.rs:624` | Bytes a voxel uncertain-list regrowth may add beyond the planned list. |
 
 Measure continuous MC now uses the shared cold-growth peak planner, including queued geometry/parameter uploads; this supersedes the earlier `16 * invocations + triangle_bytes + 576` estimate. Exact-method budgeting is unchanged in this batch.
 
@@ -657,9 +658,9 @@ The production MC shader assigns each 256-lane workgroup to one `(radius, sample
 
 `calculate_s2_gpu_counts` is a private fixed-seed path returning integer totals; the public API still draws one fresh random seed and returns the curve. A frozen pre-reduction shader at `tests/fixtures/s2_monte_carlo_samples.wgsl` is used only in tests to compare exact hit/valid totals under identical seeds, including tail blocks, 128 radii, geometry updates and invalid offsets. BVH traversal, per-radius GPU final reduction and budget-dependent sample batching remain separate work. This change establishes reduction/count semantics, not CPU/GPU f64 equivalence or a hardware speedup claim.
 
-| `GpuS2Pipeline::new_with_shader` | `src/gpu/s2.rs:154` | GPU MC partial-count execution and fixed-seed reference validation. |
+| `GpuS2Pipeline::new_with_shader` | `src/gpu/s2.rs:241` | GPU MC partial-count execution and fixed-seed reference validation. |
 
-| `GpuS2Pipeline::calculate_s2_gpu_counts` | `src/gpu/s2.rs:420` | GPU MC partial-count execution and fixed-seed reference validation. |
+| `GpuS2Pipeline::calculate_s2_gpu_counts` | `src/gpu/s2.rs:672` | GPU MC partial-count execution and fixed-seed reference validation. |
 
 MC workgroups now span two dispatch dimensions, with block index `group.x + group.y * num_workgroups.x`. A uniform guard rejects padded groups before any barrier or write, including when retained output capacity exceeds the live result length. The planner returns samples, partial count and `[x,y]` dispatch; logical sample IDs remain bounded by u32. Optimize startup no longer applies the obsolete one-dimensional invocation ceiling. Forced 3×3/4×2 execution matches the frozen per-sample shader at identical seeds; a spare-capacity sentinel checks that padding never writes beyond live partials. The large 65,536-group case is planner-only coverage, not a large GPU execution benchmark.
 
@@ -667,7 +668,7 @@ GPU shell valid-pair counts are computed analytically as `(nx-|dx|)*(ny-|dy|)*(n
 
 | Function | Source | Contract |
 |---|---|---|
-| `GpuShellS2Pipeline::new_with_shader` | `src/gpu/s2_shell.rs:55` | Private constructor taking shader source; returns initialized resources or a GPU error. Production uses the analytic shader; tests can use the frozen enumerated-count fixture. |
+| `GpuShellS2Pipeline::new_with_shader` | `src/gpu/s2_shell.rs:82` | Private constructor taking shader source; returns initialized resources or a GPU error. Production uses the analytic shader; tests can use the frozen enumerated-count fixture. |
 
 The experimental `s2_shell_cooperative.wgsl` assigns one 256-lane workgroup per offset. Lanes stride through the overlap volume, then reduce integer hits in shared memory; valid counts remain analytic. Two-dimensional group flattening rejects padding uniformly before barriers. It retains one output pair per offset, so this is not yet multiple independently scheduled voxel tiles or resident voxel-to-shell dataflow. Production still selects the direct shader pending the workload benchmark. `new_with_shader(source, offsets_per_workgroup)` pairs shader indexing with the dispatch planner: direct uses 256 offsets per group and cooperative uses 1.
 
@@ -677,22 +678,22 @@ The experimental tiled path can also enable a second device pass (`s2_shell_redu
 
 | Function | Source | Contract |
 |---|---|---|
-| `GpuShellS2Pipeline::ensure_reduction` | `src/gpu/s2_shell.rs` | Lazily fetch the cached tile reducer and grow its final buffers under the caller error scope; returns compile errors. |
+| `GpuShellS2Pipeline::ensure_reduction` | `src/gpu/s2_shell.rs:263` | Lazily fetch the cached tile reducer and grow its final buffers under the caller error scope; returns compile errors. |
 
 Production shell evaluation now filters offsets whose unsigned displacement magnitude reaches any grid dimension before GPU upload. Filtering preserves input order and uses a reusable bounded host batch, not a second full offset list. An unsupported-only request returns the same VF/zero curve without uploading occupancy or allocating result buffers. Test reference constructors can disable filtering so raw invalid-offset shader behavior remains covered. Per-offset ratios and their equal weighting are unchanged; this filter does not remove empty tiles inside otherwise supported offsets.
 
 | Function | Source | Contract |
 |---|---|---|
-| `offset_has_overlap` | `src/gpu/s2_shell.rs:57` | Check all unsigned displacement magnitudes against grid dimensions without signed overflow. |
+| `offset_has_overlap` | `src/gpu/s2_shell.rs:61` | Check all unsigned displacement magnitudes against grid dimensions without signed overflow. |
 
 | Function | Source | Contract |
 |---|---|---|
-| `GpuShellS2Pipeline::with_device` | `src/gpu/s2_shell.rs` | Build production shell resources on a held `Arc<SharedGpuDevice>`; no new device. |
-| `GpuShellS2Pipeline::build_on_device` | `src/gpu/s2_shell.rs:96` | Compile shell resources on supplied handles with balanced GPU error scopes. |
-| `GpuShellS2Pipeline::compute_s2_shell_resident` | `src/gpu/s2_shell.rs:385` | Read a same-device occupancy buffer directly; caller serializes producer and consumer. |
-| `GpuShellS2Pipeline::compute_shell_input` | `src/gpu/s2_shell.rs:410` | Shared execution for host-uploaded or resident occupancy with identical offset semantics. |
-| `GpuVoxelPipeline::shared_device` | `src/gpu/voxel.rs` | Share the process device handle (`Arc<SharedGpuDevice>`) for sequential stages; no device creation. |
-| `GpuVoxelPipeline::occupancy_buffer` | `src/gpu/voxel.rs:54` | Clone completed occupancy storage handle; producer must not overwrite while consumed. |
+| `GpuShellS2Pipeline::with_device` | `src/gpu/s2_shell.rs:87` | Build production shell resources on a held `Arc<SharedGpuDevice>`; no new device. |
+| `GpuShellS2Pipeline::build_on_device` | `src/gpu/s2_shell.rs:100` | Compile shell resources on supplied handles with balanced GPU error scopes. |
+| `GpuShellS2Pipeline::compute_s2_shell_resident` | `src/gpu/s2_shell.rs:407` | Read a same-device occupancy buffer directly; caller serializes producer and consumer. |
+| `GpuShellS2Pipeline::compute_shell_input` | `src/gpu/s2_shell.rs:455` | Shared execution for host-uploaded or resident occupancy with identical offset semantics. |
+| `GpuVoxelPipeline::shared_device` | `src/gpu/voxel.rs:103` | Share the process device handle (`Arc<SharedGpuDevice>`) for sequential stages; no device creation. |
+| `GpuVoxelPipeline::occupancy_buffer` | `src/gpu/voxel.rs:98` | Clone completed occupancy storage handle; producer must not overwrite while consumed. |
 
 GPU exact now constructs the shell stage on the voxel stage’s Device/Queue and binds its occupancy buffer directly. Shell construction does not select an adapter or request another device, and the shell does not allocate/upload a duplicate occupancy field. Both stages run sequentially with separate error scopes. Voxel occupancy counting now runs on the device and only a four-byte count is read for VF; upstream backend capability probes remain separate. Standalone host-occupancy shell calls retain their upload behavior, and later host calls cannot overwrite the producer’s borrowed buffer.
 
@@ -700,15 +701,15 @@ GPU exact now constructs the shell stage on the voxel stage’s Device/Queue and
 
 | Function | Source | Contract |
 |---|---|---|
-| `GpuVoxelPipeline::voxelize_count` | `src/gpu/voxel.rs:199` | Voxelize and return only the occupied-cell count; retain the device field. |
-| `GpuVoxelPipeline::ensure_counter` | `src/gpu/voxel.rs` | Lazily fetch the cached integer counter and allocate the four-byte output under caller error scope; returns compile errors. |
-| `GpuVoxelPipeline::voxelize_impl` | `src/gpu/voxel.rs:267` | Checked common voxel execution with full-grid or count-only readback. |
+| `GpuVoxelPipeline::voxelize_count` | `src/gpu/voxel.rs:296` | Voxelize and return only the occupied-cell count; retain the device field. |
+| `GpuVoxelPipeline::ensure_counter` | `src/gpu/voxel.rs:315` | Lazily fetch the cached integer counter and allocate the four-byte output under caller error scope; returns compile errors. |
+| `GpuVoxelPipeline::voxelize_impl` | `src/gpu/voxel.rs:374` | Checked common voxel execution with full-grid or count-only readback. |
 
 GPU exact now lazily generates one shell-radius Vec at a time and passes its offsets through `compute_s2_shell_resident_stream`. Host batches retain at most the existing partial-slot allowance; they can span radius boundaries while preserving offset order. The support flags used for interpolation are captured when each shell is generated, eliminating the former second enumeration. All offsets, including unsupported tails, are consumed on successful evaluation. Memory is bounded by one radius shell plus a batch, not by a constant independent of radius; an individual large-radius shell is still materialized. Count diagnostics use u128 so aggregate generated counts are not silently saturated.
 
 | Function | Source | Contract |
 |---|---|---|
-| `GpuShellS2Pipeline::compute_s2_shell_resident_stream` | `src/gpu/s2_shell.rs:410` | Consume ordered offsets lazily in bounded batches on a resident grid; preserve per-offset ratios. |
+| `GpuShellS2Pipeline::compute_s2_shell_resident_stream` | `src/gpu/s2_shell.rs:432` | Consume ordered offsets lazily in bounded batches on a resident grid; preserve per-offset ratios. |
 
 GPU exact now uses `shell_offset_iter`, retaining only nested range cursors even within one radius. It preserves the original x/y/z order, origin special case and half-open squared-distance test; the public Vec API remains unchanged for random-access consumers. Support is detected with a peekable iterator and every generated offset is counted as consumed. Safe ordinary integer norms match the Vec implementation; larger norms use u128 to avoid signed multiplication overflow. Enumeration still scans the enclosing cube, so this reduces allocation without changing its O(radius³) search complexity.
 
@@ -733,18 +734,18 @@ Design and bound derivation: `algorithms/s2-two-point-correlation.md`, section "
 |---|---|---|
 | `GpuCertificationStats { queries, uncertain, list_regrowths, cpu_recompute_seconds }` | `src/gpu/certify.rs` | Cumulative per-pipeline counters. MC queries = valid samples; voxel queries = cells. `recompute_ratio()` = uncertain/queries (0 when none), `describe()` = one log line, `accumulate(&other)` adds counters. Re-exported as `rustmspt::gpu::GpuCertificationStats`. |
 | `f32_at_least(x: f64) -> f32` / `f32_at_most(x: f64) -> f32` | `src/gpu/certify.rs` | Smallest f32 >= x / largest f32 <= x. For f32 p, `p < f32_at_least(L)` iff `p < L`, and `p > f32_at_most(H)` iff `p > H`. |
-| `CertReference::new(mesh, origin)` | `src/gpu/certify.rs` | Shift every vertex by `origin` in f64; `mesh_lo`/`mesh_hi` are the CPU `bb.min - 1e-9`/`bb.max + 1e-9` rounded outward to f32 (+inf/-inf for an empty mesh). |
-| `CertReference::params_tail(flags) -> Vec<u8>` | `src/gpu/certify.rs` | 32-byte WGSL tail: `mesh_lo`, `flags` (bit 0 = record every valid MC sample, tests only), `mesh_hi`, pad. |
-| `CertReference::classify(points) -> Vec<bool>` | `src/gpu/certify.rs` | CPU f64 predicate at exact f32 points in the shifted frame, serial; `point_inside_mesh` below 16 points, a prepared BVH query above. |
-| `GpuS2Pipeline::certification_stats()` | `src/gpu/s2.rs` | Copy of the MC counters. |
-| `GpuS2Pipeline::dispatch_batch(dispatch, readback) -> Result<u32, String>` | `src/gpu/s2.rs` | Zero the list counter, dispatch one radius batch, copy hit/valid partials and the whole list to staging, return the reported uncertain count (may exceed capacity). |
-| `GpuS2Pipeline::resolve_uncertain(entries, spr, radii, out)` | `src/gpu/s2.rs` | Decode 7-word records, classify p and q, add a hit to radius `id / spr` when both are inside; errors if a record lies outside the batch. Updates counters. |
-| `uncertain_buffers(device, entries)` | `src/gpu/s2.rs` | Allocate list (STORAGE/COPY_SRC/COPY_DST) and map-read staging of `4 + 28*entries` bytes. |
-| `GpuVoxelPipeline::certification_stats()` | `src/gpu/voxel.rs` | Copy of the voxel counters. |
-| `GpuVoxelPipeline::dispatch_voxels(dispatch, bytes, count_only) -> Result<u32, String>` | `src/gpu/voxel.rs` | Zero the counter, dispatch voxelization and (count mode) the reducer, copy result and list, return the reported uncertain count. |
+| `CertReference::new(mesh, origin)` | `src/gpu/certify.rs:81` | Shift every vertex by `origin` in f64; `mesh_lo`/`mesh_hi` are the CPU `bb.min - 1e-9`/`bb.max + 1e-9` rounded outward to f32 (+inf/-inf for an empty mesh). |
+| `CertReference::params_tail(flags) -> Vec<u8>` | `src/gpu/certify.rs:118` | 32-byte WGSL tail: `mesh_lo`, `flags` (bit 0 = record every valid MC sample, tests only), `mesh_hi`, pad. |
+| `CertReference::classify(points) -> Vec<bool>` | `src/gpu/certify.rs:133` | CPU f64 predicate at exact f32 points in the shifted frame, serial; `point_inside_mesh` below 16 points, a prepared BVH query above. |
+| `GpuS2Pipeline::certification_stats()` | `src/gpu/s2.rs:566` | Copy of the MC counters. |
+| `GpuS2Pipeline::dispatch_batch(dispatch, readback) -> Result<u32, String>` | `src/gpu/s2.rs:852` | Zero the list counter, dispatch one radius batch, copy hit/valid partials and the whole list to staging, return the reported uncertain count (may exceed capacity). |
+| `GpuS2Pipeline::resolve_uncertain(entries, spr, radii, out)` | `src/gpu/s2.rs:923` | Decode 7-word records, classify p and q, add a hit to radius `id / spr` when both are inside; errors if a record lies outside the batch. Updates counters. |
+| `uncertain_buffers(device, entries)` | `src/gpu/s2.rs:963` | Allocate list (STORAGE/COPY_SRC/COPY_DST) and map-read staging of `4 + 28*entries` bytes. |
+| `GpuVoxelPipeline::certification_stats()` | `src/gpu/voxel.rs:629` | Copy of the voxel counters. |
+| `GpuVoxelPipeline::dispatch_voxels(dispatch, bytes, count_only) -> Result<u32, String>` | `src/gpu/voxel.rs:521` | Zero the counter, dispatch voxelization and (count mode) the reducer, copy result and list, return the reported uncertain count. |
 | `GpuVoxelPipeline::voxelize_impl` (changed) | `src/gpu/voxel.rs` | Pre-sizes the list to `voxel_uncertain_entries(cells)`, regrows and re-dispatches on overflow, classifies uncertain centers, adds them to the full result or count and writes `1` into the resident occupancy for inside cells. |
-| `GpuVoxelPipeline::new_with_shader(mesh, bbox, source)` | `src/gpu/voxel.rs` | Shared constructor; `new` passes the certified shader. |
-| `voxel_center(i, pitch) -> f32` | `src/gpu/voxel.rs` | `(i as f32 + 0.5) * pitch`, bit-identical to the shader. |
+| `GpuVoxelPipeline::new_with_shader(mesh, bbox, source)` | `src/gpu/voxel.rs:117` | Shared constructor; `new` passes the certified shader. |
+| `voxel_center(i, pitch) -> f32` | `src/gpu/voxel.rs:50` | `(i as f32 + 0.5) * pitch`, bit-identical to the shader. |
 | `voxel_uncertain_buffers(device, entries)` / `occupancy_usage()` | `src/gpu/voxel.rs` | Voxel list/staging of `4 + 4*entries` bytes; occupancy usage now includes `COPY_DST` for patching. |
 | `mc_uncertain_bytes(entries)` / `MC_UNCERTAIN_INITIAL` / `MC_PARAMS_BYTES` | `src/compute/mc_memory.rs` | MC list bytes (1024 initial records), 608-byte params. `mc_evaluation_peak` gained an `uncertain_capacity` argument. |
 | `voxel_uncertain_entries(cells)` / `exact_cert_bytes(cells)` | `src/compute/exact_memory.rs` | Planned voxel list `max(1024, cells/64)` and its logical bytes (list + staging + 2x32-byte params tail). |

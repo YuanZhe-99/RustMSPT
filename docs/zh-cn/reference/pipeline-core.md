@@ -10,21 +10,21 @@
 |---|---|---|
 | `RenderPipeline::run_in_pool` | `src/pipeline/render.rs:59` | Execute render stages and fallback within the configured pool. |
 | `Pipeline::run`（trait） | `src/pipeline/mod.rs:17` | 每个流水线结构体实现的 trait 方法，用于端到端执行。 |
-| `create_progress_bar` | `src/pipeline/mod.rs:37` | 使用给定模板和填充字符构建一个能感知 tty 的 indicatif 进度条。 |
-| `run_in_cpu_pool` | `src/pipeline/mod.rs` | 在按 `cpu_max`（缺省/-1：全部 worker）确定大小的专用 Rayon 池中运行；forge 与 scale 使用，使所有并行段共享一个预算。 |
+| `create_progress_bar` | `src/pipeline/mod.rs:53` | 使用给定模板和填充字符构建一个能感知 tty 的 indicatif 进度条。 |
+| `run_in_cpu_pool` | `src/pipeline/mod.rs:37` | 在按 `cpu_max`（缺省/-1：全部 worker）确定大小的专用 Rayon 池中运行；forge 与 scale 使用，使所有并行段共享一个预算。 |
 | `RotationMode`（枚举） | `src/pipeline/rotation.rs:6` | 表示不旋转、固定轴旋转或随机轴旋转。 |
-| `parse_rotation_mode` | `src/pipeline/rotation.rs:18` | 将 `none/x/y/z/vector/any` 配置字符串解析为 `RotationMode`。 |
-| `sample_rotation_axis` | `src/pipeline/rotation.rs:57` | 为给定的 `RotationMode` 抽取一个具体的旋转轴向量。 |
+| `parse_rotation_mode` | `src/pipeline/rotation.rs:17` | 将 `none/x/y/z/vector/any` 配置字符串解析为 `RotationMode`。 |
+| `sample_rotation_axis` | `src/pipeline/rotation.rs:56` | 为给定的 `RotationMode` 抽取一个具体的旋转轴向量。 |
 | `ScalePipeline`（结构体） | `src/pipeline/scale.rs:8` | 持有缩放流水线所需的 `ScaleConfig`。 |
-| `ScalePipeline::run` | `src/pipeline/scale.rs:19` | 加载 STL，应用单位换算/系数缩放，可选修正朝向，保存输出。 |
+| `ScalePipeline::run` | `src/pipeline/scale.rs:116` | 加载 STL，应用单位换算/系数缩放，可选修正朝向，保存输出。 |
 | `ForgePipeline`（结构体） | `src/pipeline/forge.rs:12` | 持有 FFD 锻造流水线所需的 `ForgingConfig`。 |
 | `ForgePipeline::parse_roi_bbox` | `src/pipeline/forge.rs:18` | 从配置中解析可选的 6 元素 ROI 包围盒。 |
 | `ForgePipeline::parse_compression_axis` | `src/pipeline/forge.rs:37` | 将压缩轴字符串（`x`/`y`/`z`）解析为索引和标签。 |
-| `ForgePipeline::run` | `src/pipeline/forge.rs:58` | 执行基于 FFD 的压缩/锻造，跟踪 ROI，写出锻造后的 STL 及文本报告。 |
+| `ForgePipeline::run` | `src/pipeline/forge.rs:259` | 执行基于 FFD 的压缩/锻造，跟踪 ROI，写出锻造后的 STL 及文本报告。 |
 | `MeasurePipeline`（结构体） | `src/pipeline/measure.rs:12` | 持有 S2/体积分数测量流水线所需的 `MeasurementConfig`。 |
 | `MeasurePipeline::parse_optional_bbox` | `src/pipeline/measure.rs:18` | 从配置中解析可选的包围盒（3 元素尺寸或 6 元素最小/最大值）。 |
 | `MeasurePipeline::l2_error` | `src/pipeline/measure.rs:27` | 计算两个 S2 值向量在其公共前缀长度上的 L2 距离。 |
-| `MeasurePipeline::run` | `src/pipeline/measure.rs:53` | 加载 STL，计算体积分数与 S2 相关性（精确/MC/两者兼有，CPU 或 GPU），写出报告。 |
+| `MeasurePipeline::run` | `src/pipeline/measure.rs:49` | 加载 STL，计算体积分数与 S2 相关性（精确/MC/两者兼有，CPU 或 GPU），写出报告。 |
 | `MeasurePipeline::run_in_pool` | `src/pipeline/measure.rs:83` | Method-specific measurement in configured pool. |
 
 ---

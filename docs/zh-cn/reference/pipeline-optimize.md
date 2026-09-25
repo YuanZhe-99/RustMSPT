@@ -6,29 +6,29 @@
 
 | Item | Location | Summary |
 |---|---|---|
-| `OptimizePipeline` | `src/pipeline/optimize.rs:27` | 管线配置与有界执行入口。 |
-| `ParticlePrepared` | `src/pipeline/optimize.rs:32` | 缓存网格、包围盒与碰撞形状。 |
-| `IslandResult` | `src/pipeline/optimize.rs:39` | 最佳几何/loss/S2 快照与候选阶段计时。 |
+| `OptimizePipeline` | `src/pipeline/optimize.rs:29` | 管线配置与有界执行入口。 |
+| `ParticlePrepared` | `src/pipeline/optimize.rs:34` | 缓存网格、包围盒与碰撞形状。 |
+| `IslandResult` | `src/pipeline/optimize.rs:41` | 最佳几何/loss/S2 快照与候选阶段计时。 |
 | `GlobalBest` | `src/pipeline/optimize.rs:47` | 由互斥锁保护的完整几何/loss/S2 迁移快照。 |
-| `prepare_particle` | `src/pipeline/optimize.rs:54` | 为单个颗粒准备碰撞查询结构。 |
-| `format_s2_series` | `src/pipeline/optimize.rs:61` | 将曲线格式化为六位小数。 |
-| `push_history_s2` | `src/pipeline/optimize.rs:86` | 向历史记录追加带标签的曲线。 |
-| `prune_progress_message` | `src/pipeline/optimize.rs:91` | 格式化剪枝 loss、VF 与颗粒数。 |
-| `selective_prune_to_target_vf` | `src/pipeline/optimize.rs:103` | 在当前线程池内使用统一 S2 定义进行剪枝。 |
-| `run_sa_island` | `src/pipeline/optimize.rs:296` | 用固定求值器和完整迁移快照运行单岛 SA。 |
+| `prepare_particle` | `src/pipeline/optimize.rs:70` | 为单个颗粒准备碰撞查询结构。 |
+| `format_s2_series` | `src/pipeline/optimize.rs:139` | 将曲线格式化为六位小数。 |
+| `push_history_s2` | `src/pipeline/optimize.rs:148` | 向历史记录追加带标签的曲线。 |
+| `prune_progress_message` | `src/pipeline/optimize.rs:153` | 格式化剪枝 loss、VF 与颗粒数。 |
+| `selective_prune_to_target_vf` | `src/pipeline/optimize.rs:165` | 在当前线程池内使用统一 S2 定义进行剪枝。 |
+| `run_sa_island` | `src/pipeline/optimize.rs:359` | 用固定求值器和完整迁移快照运行单岛 SA。 |
 | `stage_rng` / `fixed_eval_seed` | `src/pipeline/optimize.rs` | 由（`optimization.seed`，阶段）固定、或由 `thread_rng` 播种的逐阶段 ChaCha12 随机流；target/input/final 的一次性 S2 种子。 |
-| `OptimizePipeline::run` | `src/pipeline/optimize.rs:741` | 将全部 optimize 阶段安装到一个按配置创建的 Rayon 池。 |
-| `OptimizePipeline::run_in_pool` | `src/pipeline/optimize.rs:768` | 解析执行策略、加载准备、剪枝、分批运行岛并复核保存最佳结果。 |
-| `S2Method` | `src/pipeline/optimize_execution.rs:12` | 内部 voxel_exact、voxel_mc 与 mesh_mc 三种定义。 |
-| `S2Method::resolve` | `src/pipeline/optimize_execution.rs:20` | 保留现有 exact/非 exact 与 pitch 路由语义。 |
-| `S2Method::name` | `src/pipeline/optimize_execution.rs:31` | 返回诊断使用的实际方法名。 |
-| `resolve_mode` | `src/pipeline/optimize_execution.rs:41` | 环境变量覆盖 YAML，拒绝非法值。 |
-| `select_s2_backend` | `src/pipeline/optimize_execution.rs:57` | GPU 探测前检查方法、CPU/auto 与容量条件，并执行回退策略。 |
-| `OptimizeS2` | `src/pipeline/optimize_execution.rs:130` | 每次运行固定的方法、pitch 与可选共享 GPU 求值器。 |
-| `OptimizeS2::new` | `src/pipeline/optimize_execution.rs:144` | 一次解析执行策略，最多初始化一个持久 GPU MC 实例。 |
-| `OptimizeS2::evaluate` | `src/pipeline/optimize_execution.rs:220` | 一致地计算各阶段 S2；串行使用 GPU 缓冲，VF 计算前释放锁。 |
-| `run_island_batches` | `src/pipeline/optimize_execution.rs:275` | 按当前 Rayon worker 数限制分批执行，保留岛顺序。 |
-| `merge_prepared_particles` | `src/pipeline/optimize.rs:61` | Merge geometry and assign stable particle vertex ranges. |
+| `OptimizePipeline::run` | `src/pipeline/optimize.rs:842` | 将全部 optimize 阶段安装到一个按配置创建的 Rayon 池。 |
+| `OptimizePipeline::run_in_pool` | `src/pipeline/optimize.rs:872` | 解析执行策略、加载准备、剪枝、分批运行岛并复核保存最佳结果。 |
+| `S2Method` | `src/pipeline/optimize_execution.rs:13` | 内部 voxel_exact、voxel_mc 与 mesh_mc 三种定义。 |
+| `S2Method::resolve` | `src/pipeline/optimize_execution.rs:21` | 保留现有 exact/非 exact 与 pitch 路由语义。 |
+| `S2Method::name` | `src/pipeline/optimize_execution.rs:32` | 返回诊断使用的实际方法名。 |
+| `resolve_mode` | `src/pipeline/optimize_execution.rs:42` | 环境变量覆盖 YAML，拒绝非法值。 |
+| `select_s2_backend` | `src/pipeline/optimize_execution.rs:58` | GPU 探测前检查方法、CPU/auto 与容量条件，并执行回退策略。 |
+| `OptimizeS2` | `src/pipeline/optimize_execution.rs:142` | 每次运行固定的方法、pitch 与可选共享 GPU 求值器。 |
+| `OptimizeS2::new` | `src/pipeline/optimize_execution.rs:158` | 一次解析执行策略，最多初始化一个持久 GPU MC 实例。 |
+| `OptimizeS2::evaluate` | `src/pipeline/optimize_execution.rs:248` | 一致地计算各阶段 S2；串行使用 GPU 缓冲，VF 计算前释放锁。 |
+| `run_island_batches` | `src/pipeline/optimize_execution.rs:346` | 按当前 Rayon worker 数限制分批执行，保留岛顺序。 |
+| `merge_prepared_particles` | `src/pipeline/optimize.rs:123` | Merge geometry and assign stable particle vertex ranges. |
 
 ## 类型
 
@@ -194,7 +194,7 @@ mesh MC 的 VF 遵循 CPU 连续网格参考定义，体素方法保留占据率
 
 每个岛用 Arc<GlobalBest> 同时保存最佳几何/loss/S2，IslandResult 保留该 Arc 和计时。改进时在迁移锁外构造新快照，共享槽为 Arc<Mutex<Arc<GlobalBest>>>。exchange_best_snapshot 在锁内仅严格比较 loss 和交换/克隆 Arc 引用；退役快照在解锁后释放，平局保留当前状态。接收岛在锁外重建可变 prepared/grid 并复算当前游走，历史最佳曲线仍对应原几何/loss。最终选优借用获胜快照，不复制 payload。此改动消除迁移 payload 拷贝；创建新本地最佳和准备接收后的可变游走仍复制几何。
 
-| `exchange_best_snapshot` | `src/pipeline/optimize.rs:52` | Exchange immutable best Arc snapshots; release retired payload outside the lock. |
+| `exchange_best_snapshot` | `src/pipeline/optimize.rs:54` | Exchange immutable best Arc snapshots; release retired payload outside the lock. |
 
 mesh-MC 岛现以 IslandVolumes 缓存每粒子连通分量的域内体积。可行候选只替换对应粒子条目，拒绝恢复旧条目；迁移重建，每 64 次候选求值全量刷新。VF 仍按合并网格的源顺序累加全部缓存标量并使用原分母/截断规则，避免运行总量反复加减导致漂移。缓存仅用于连续 mesh MC，voxel 方法保留体素 VF。CPU 固定种子采样和 GPU 错误回退均可使用已验证 VF，不重复裁剪全体；GPU 锁边界不变。完全域内粒子的变换也重新计算贡献以保持浮点参考行为，未假定刚体体积位级不变。预剪枝和最终验证仍使用全量参考求值。
 
@@ -205,8 +205,8 @@ mesh-MC 岛现以 IslandVolumes 缓存每粒子连通分量的域内体积。可
 | `IslandVolumes::replace` | `src/pipeline/optimize_volume.rs:33` | Update one particle and return prior entries for rollback. |
 | `IslandVolumes::restore` | `src/pipeline/optimize_volume.rs:41` | Restore entries after rejection. |
 | `IslandVolumes::fraction` | `src/pipeline/optimize_volume.rs:46` | Sum cached scalars in merged component order, then clamp. |
-| `OptimizeS2::evaluate_with_vf` | `src/pipeline/optimize_execution.rs:242` | Evaluate mesh MC with optional validated VF; reject geometric cache for voxel methods. |
-| `calculate_s2_mesh_mc_seeded_with_vf` | `src/geometry/s2.rs:765` | Preserve fixed-seed mesh MC samples while using caller-provided VF. |
+| `OptimizeS2::evaluate_with_vf` | `src/pipeline/optimize_execution.rs:262` | Evaluate mesh MC with optional validated VF; reject geometric cache for voxel methods. |
+| `calculate_s2_mesh_mc_seeded_with_vf` | `src/geometry/s2.rs:1185` | Preserve fixed-seed mesh MC samples while using caller-provided VF. |
 
 ### 网格统计与查询计数（PERF-13 观测）
 

@@ -547,6 +547,45 @@ fn gpu_line_pipeline_draws_overlay_segments() {
     );
 }
 
+// AI-FUNC-SUMMARY: Render the same scene in one pass and in horizontal strips (including a short final strip) for both projections with overlays on; require at most edge-pixel differences and an identical frame when the strip covers the image.
+#[test]
+#[cfg(feature = "gpu")]
+fn gpu_strip_rendering_matches_one_pass() {
+    let scene = box_scene();
+    let settings = SceneRenderSettings::default();
+    let (w, h) = (80usize, 61usize);
+    let Some(mut gpu_pipeline) = try_gpu() else {
+        return;
+    };
+    for projection in [RenderProjection::Orthographic, RenderProjection::Perspective] {
+        let mesh = Mesh {
+            vertices: vec![Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0)],
+            faces: Vec::new(),
+        };
+        let camera = build_render_camera(&mesh, &RenderCameraSpec {
+            focus_point: [0.0, 0.0, 0.0], view_direction: [0.4, 0.3, -1.0],
+            up_vector: Some([0.0, 0.0, 1.0]), projection, perspective_fov_degrees: 45.0,
+            camera_distance: None, fit_padding: 0.1, width: w, height: h,
+        }).unwrap();
+        let options = rustmspt::gpu::GpuSceneOptions::with_overlays();
+        let whole = gpu_pipeline.render(&scene, &camera, w, h, &settings, &options).unwrap();
+        let covering = rustmspt::gpu::GpuSceneOptions { strip_rows: Some(h + 5), ..options };
+        assert_eq!(gpu_pipeline.render(&scene, &camera, w, h, &settings, &covering).unwrap().rgba, whole.rgba);
+        for rows in [1usize, 7, 16, 60] {
+            let striped = rustmspt::gpu::GpuSceneOptions { strip_rows: Some(rows), ..options };
+            let image = gpu_pipeline.render(&scene, &camera, w, h, &settings, &striped).unwrap();
+            assert_eq!((image.width, image.height), (w, h));
+            let differing = image.rgba.chunks_exact(4).zip(whole.rgba.chunks_exact(4))
+                .filter(|(a, b)| a.iter().zip(b.iter()).any(|(x, y)| x.abs_diff(*y) > 2)).count();
+            let foreground = whole.rgba.chunks_exact(4)
+                .filter(|p| p[..3] != settings.background[..3]).count();
+            assert!(foreground > 200, "{projection:?}: scene must cover the frame");
+            eprintln!("[strip] {projection:?} rows {rows}: {differing} differing, {foreground} foreground");
+            assert!(differing * 50 <= w * h, "{projection:?} rows {rows}: {differing} of {} pixels differ", w * h);
+        }
+    }
+}
+
 #[test]
 #[cfg(feature = "gpu")]
 fn gpu_clip_plane_discards_the_positive_side() {
@@ -921,4 +960,38 @@ fn mesh_render_gpu_small_budget_executes() {
     assert!(!stdout.contains("CPU transparency renderer"));
     assert!(output.join("fixture_front.png").exists());
     assert!(output.join("fixture_iso_ne.png").exists());
+}
+
+// AI-FUNC-SUMMARY: A 1024x1024 GPU preview under a one-MiB budget, which the whole image (8 MiB of targets alone) cannot fit, renders in planned strips on the GPU with no CPU fallback and matches the unbudgeted GPU image.
+#[cfg(feature = "gpu")]
+#[test]
+fn mesh_render_gpu_budget_renders_in_strips() {
+    if let Err(error) = rustmspt::gpu::GpuScenePipeline::new() {
+        eprintln!("SKIP: GPU scene unavailable: {error}"); return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("fixture.vtu");
+    save_vtu(&input, &contract_doc(), VtuEncoding::AppendedRaw).unwrap();
+    let mut images = Vec::new();
+    for (name, budget) in [("strips", Some(1u64)), ("whole", None)] {
+        let output = dir.path().join(name);
+        let config = dir.path().join("config.json");
+        let mut render = serde_json::json!({
+            "input": input, "output_dir": output, "views": ["iso_ne"], "width": 1024, "height": 1024,
+            "backend": "gpu"
+        });
+        if let Some(mb) = budget { render["gpu_memory_limit_mb"] = mb.into(); }
+        std::fs::write(&config, serde_json::json!({"cpu_max": 2, "mesh_render": render}).to_string()).unwrap();
+        let result = std::process::Command::new(env!("CARGO_BIN_EXE_rustmspt"))
+            .args(["mesh-render", "--config"]).arg(&config).env_remove("RUSTMSPT_ACCELERATION").output().unwrap();
+        let stdout = String::from_utf8_lossy(&result.stdout);
+        assert!(result.status.success(), "{stdout} {}", String::from_utf8_lossy(&result.stderr));
+        assert!(stdout.contains("GPU opaque preview") && !stdout.contains("CPU transparency renderer"), "{stdout}");
+        let rows: usize = stdout.split("strip rows ").nth(1).unwrap().split(' ').next().unwrap().parse().unwrap();
+        if budget.is_some() { assert!(rows > 1 && rows < 1024, "{stdout}"); } else { assert_eq!(rows, 1024); }
+        images.push(image::open(output.join("fixture_iso_ne.png")).unwrap().to_rgba8());
+    }
+    let differing = images[0].pixels().zip(images[1].pixels())
+        .filter(|(a, b)| a.0.iter().zip(b.0.iter()).any(|(x, y)| x.abs_diff(*y) > 2)).count();
+    assert!(differing * 100 <= 1024 * 1024, "{differing} pixels differ");
 }

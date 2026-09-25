@@ -1652,3 +1652,5 @@ forge 把整个网格作为一个元素传给 `volume_fraction_of_meshes_in_bbox
 测试：`the_planner_minimises_uploaded_source_voxels`（紧预算下所选方案上传不多于且严格少于分级搜索）；`tiled_gpu_matches_untiled_and_cpu` 改为显式强制 z 板/行/x 段/非整除/立方各形状（`rotate_and_crop_gpu_with` 的 `forced_tile`），因为规划器不再按预算递减遍历所有形状。
 
 **第 (14) 项：mesh-render QBVH 构建与在途图像计数（已实施）。** `scene_render` 增加进程级 `scene_qbvh_build_count()`（`build_scene_shape` 每建一次 QBVH 加一），`render_and_write_overlapped` 改为返回同时驻留的最大帧数；CPU 路径打印 `[mesh-render] cpu scene_qbvh_builds=… views=… max_live_images=…`。`mesh_render_cli_worker_budget_and_fallback` 在 1/2/8 worker 下断言两视图共用 1 次构建、最多 2 帧驻留。GPU 路径的一次上传与两帧上限已由 §56 的测试覆盖。
+
+**第 (12) 项：scene 预览按预算分条带（已实施）。** 此前预算放不下整图时 GPU 预检直接拒绝（§26 记录“尚未实现图像分块”）。`render_memory::scene_strip_rows` 二分出峰值不超预算的最大条带行数（整图可放下时返回整图，连一行都放不下才报错）；`GpuSceneOptions::strip_rows` 让 `render_views_to` 用条带大小的颜色/深度/回读逐条渲染，每条把裁剪空间 y 映射到自身 NDC（f64 合成，x/z/w 不变，深度逐位相同），末条带设置自身视口，只映射回读前缀。mesh-render 预检改用该规划并打印 `strip rows`。llvmpipe 上 1/7/16/60 行条带在正交与透视下与一次渲染逐像素相同；1024×1024 在 1 MiB 预算下 GPU 完成、无回退。测试：`scene_strips_are_the_exact_budget_boundary`、`gpu_strip_rendering_matches_one_pass`、`mesh_render_gpu_budget_renders_in_strips`。几何仍整体上传——几何本身超预算属于另一问题，未处理。

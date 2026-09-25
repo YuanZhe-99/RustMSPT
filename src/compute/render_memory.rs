@@ -105,6 +105,41 @@ impl SceneRenderMemory {
     }
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Choose the tallest horizontal strip of a width x height image whose GPU working set fits an optional MiB budget.
+// Inputs: counted triangles/segments/markers, full image size, optional budget in MiB.
+// Returns: Ok((rows per strip in 1..=height, the plan for that strip)); Err when even one row exceeds the budget or on overflow.
+// Side effects: None; allocates nothing and probes no adapter.
+// Notes: The peak is monotone in rows (only target and staging bytes grow), so a binary search gives the exact boundary: peak(rows) <= limit < peak(rows + 1).
+pub(crate) fn scene_strip_rows(
+    triangles: usize,
+    segments: usize,
+    markers: usize,
+    width: usize,
+    height: usize,
+    limit_mb: Option<u64>,
+) -> Result<(usize, SceneRenderMemory), String> {
+    let full = SceneRenderMemory::plan(triangles, segments, markers, width, height)?;
+    if full.check_budget(limit_mb).is_ok() {
+        return Ok((height, full));
+    }
+    let one = SceneRenderMemory::plan(triangles, segments, markers, width, 1)?;
+    one.check_budget(limit_mb)?;
+    let (mut lo, mut hi) = (1usize, height);
+    while hi - lo > 1 {
+        let mid = lo + (hi - lo) / 2;
+        let fits = SceneRenderMemory::plan(triangles, segments, markers, width, mid)?
+            .check_budget(limit_mb)
+            .is_ok();
+        if fits {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    Ok((lo, SceneRenderMemory::plan(triangles, segments, markers, width, lo)?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,5 +167,20 @@ mod tests {
         assert!(SceneRenderMemory::plan(0, 0, 0, usize::MAX, usize::MAX).is_err());
         let huge = SceneRenderMemory::plan(u32::MAX as usize, 0, 0, 1, 1).unwrap();
         assert!(huge.check_buffers(u64::MAX).is_err());
+    }
+
+    // AI-FUNC-SUMMARY: Verify strip selection returns the whole image when it fits, the exact budget boundary when it does not, and an error when one row cannot fit.
+    #[test]
+    fn scene_strips_are_the_exact_budget_boundary() {
+        let (rows, plan) = scene_strip_rows(12, 0, 0, 1024, 1024, None).unwrap();
+        assert_eq!(rows, 1024);
+        assert_eq!(plan.staging_bytes, 4096 * 1024);
+        let (rows, plan) = scene_strip_rows(12, 0, 0, 1024, 1024, Some(1)).unwrap();
+        assert!(rows > 1 && rows < 1024, "{rows}");
+        assert!(plan.gpu_peak_bytes <= 1024 * 1024);
+        let next = SceneRenderMemory::plan(12, 0, 0, 1024, rows + 1).unwrap();
+        assert!(next.gpu_peak_bytes > 1024 * 1024);
+        assert!(scene_strip_rows(12, 0, 0, 1024, 1024, Some(0)).is_err());
+        assert!(scene_strip_rows(200_000, 0, 0, 16, 16, Some(1)).is_err());
     }
 }

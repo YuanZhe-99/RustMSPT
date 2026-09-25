@@ -10,45 +10,45 @@ This page documents `src/io/mod.rs`, content hashing in `hash.rs`, PNG output in
 | `sha256_file` | `src/io/hash.rs:25` | Streams a file through SHA-256, returning the hex digest and the byte count. |
 | `hex_digest` | `src/io/hash.rs:42` | Renders a digest as lowercase hexadecimal. |
 | `save_image` | `src/io/image.rs:11` | Validates and writes a top-row-first RGBA8 PNG. |
-| `parse_ascii_vertex` | `src/io/stl.rs:9` | Parses one ASCII STL `vertex x y z` line into a `Vec3`. |
-| `quantize_key` | `src/io/stl.rs:21` | Quantizes a vertex to a fixed-precision integer key for tolerant deduplication. |
+| `parse_ascii_vertex` | `src/io/stl.rs:43` | Parses one ASCII STL `vertex x y z` line into a `Vec3`. |
+| `quantize_key` | `src/io/stl.rs:55` | Quantizes a vertex to a fixed-precision integer key for tolerant deduplication. |
 | `WeldMap` | `src/io/stl.rs:10` | Vertex-weld map type (quantized key to first index) with a fast non-SipHash hasher; never iterated. |
 | `WeldHasher` | `src/io/stl.rs:15` | Multiply-xor hasher with 64-bit finalizer for quantized vertex keys. |
 | `dedup_vertex` | `src/io/stl.rs:65` | Deduplicates a vertex against an existing list via quantized key lookup. |
-| `AsciiStlBuilder` | `src/io/stl.rs:47` | Incremental ASCII STL state: vertices, faces, pending vertices, dedup map. |
-| `AsciiStlBuilder::push_line` | `src/io/stl.rs:56` | Consume one raw line with the legacy lossy/trim/vertex rules. |
-| `parse_ascii_stream_or_binary` | `src/io/stl.rs:78` | Line-streamed ASCII STL with binary fallback on the retained bytes. |
-| `parse_f32_le` | `src/io/stl.rs:93` | Parses little-endian `f32` bytes and upcasts to `f64`. |
-| `parse_binary_stl` | `src/io/stl.rs:104` | Parses binary STL bytes into a `Mesh` with deduplicated vertices. |
-| `looks_ascii_stl` | `src/io/stl.rs:151` | Heuristically detects whether bytes represent ASCII STL. |
-| `load_stl` | `src/io/stl.rs:170` | Loads an STL file with automatic ASCII/binary detection. |
-| `load_folder_stls` | `src/io/stl.rs:206` | Loads all STL files in a folder. |
-| `load_stl_or_merge_folder` | `src/io/stl.rs:233` | Loads a single STL file, or merges all STLs in a directory into one mesh. |
-| `save_stl` | `src/io/stl.rs:262` | Saves a mesh as a binary STL file. |
-| `collect_sorted_files` | `src/io/volume.rs:50` | Collects regular files in a folder, sorted by name, optionally filtered by extension. |
-| `resolve_slice_range` | `src/io/volume.rs:78` | Resolves an inclusive slice range from start/end indices, treating `-1` as "from beginning"/"to end". |
-| `decode_raw_slice` | `src/io/volume.rs:107` | Decodes one raw image slice into `i64` values per bit depth, sign, and byte order. |
+| `AsciiStlBuilder` | `src/io/stl.rs:81` | Incremental ASCII STL state: vertices, faces, pending vertices, dedup map. |
+| `AsciiStlBuilder::push_line` | `src/io/stl.rs:90` | Consume one raw line with the legacy lossy/trim/vertex rules. |
+| `parse_ascii_stream_or_binary` | `src/io/stl.rs:112` | Line-streamed ASCII STL with binary fallback on the retained bytes. |
+| `parse_f32_le` | `src/io/stl.rs:141` | Parses little-endian `f32` bytes and upcasts to `f64`. |
+| `parse_binary_stl` | `src/io/stl.rs:152` | Parses binary STL bytes into a `Mesh` with deduplicated vertices. |
+| `looks_ascii_stl` | `src/io/stl.rs:202` | Heuristically detects whether bytes represent ASCII STL. |
+| `load_stl` | `src/io/stl.rs:221` | Loads an STL file with automatic ASCII/binary detection. |
+| `load_folder_stls` | `src/io/stl.rs:255` | Loads all STL files in a folder. |
+| `load_stl_or_merge_folder` | `src/io/stl.rs:282` | Loads a single STL file, or merges all STLs in a directory into one mesh. |
+| `save_stl` | `src/io/stl.rs:311` | Saves a mesh as a binary STL file. |
+| `collect_sorted_files` | `src/io/volume.rs:72` | Collects regular files in a folder, sorted by name, optionally filtered by extension. |
+| `resolve_slice_range` | `src/io/volume.rs:100` | Resolves an inclusive slice range from start/end indices, treating `-1` as "from beginning"/"to end". |
+| `decode_raw_slice` | `src/io/volume.rs:129` | Decodes one raw image slice into `i64` values per bit depth, sign, and byte order. |
 | `load_raw_folder` | `src/io/volume.rs:227` | Loads ordered RAW slices with checked sizing, bounded decoding and one final-output reservation. |
-| `tiff_decoding_to_i64` | `src/io/volume.rs:266` | Converts a TIFF `DecodingResult` into a `Vec<i64>` buffer plus its numeric type. |
-| `load_tiff_file_with_range` | `src/io/volume.rs:286` | Loads a multi-page TIFF file into a `Volume3D` over an inclusive page range. |
-| `load_tiff_file` | `src/io/volume.rs:354` | Loads a TIFF file (all pages) into a `Volume3D`. |
-| `is_tiff_path` | `src/io/volume.rs:359` | Checks whether a path has a `.tif`/`.tiff` extension. |
-| `load_tiff_or_folder` | `src/io/volume.rs:369` | Loads a TIFF volume from a file or folder (all pages/slices). |
-| `load_tiff_or_folder_with_range` | `src/io/volume.rs:379` | Loads a TIFF volume from a file or folder over an inclusive slice range. |
-| `write_tiff_slice` | `src/io/volume.rs:446` | Writes one z-slice of volume data into a TIFF encoder page. |
+| `tiff_decoding_to_i64` | `src/io/volume.rs:299` | Converts a TIFF `DecodingResult` into a `Vec<i64>` buffer plus its numeric type. |
+| `load_tiff_file_with_range` | `src/io/volume.rs:319` | Loads a multi-page TIFF file into a `Volume3D` over an inclusive page range. |
+| `load_tiff_file` | `src/io/volume.rs:387` | Loads a TIFF file (all pages) into a `Volume3D`. |
+| `is_tiff_path` | `src/io/volume.rs:392` | Checks whether a path has a `.tif`/`.tiff` extension. |
+| `load_tiff_or_folder` | `src/io/volume.rs:402` | Loads a TIFF volume from a file or folder (all pages/slices). |
+| `load_tiff_or_folder_with_range` | `src/io/volume.rs:412` | Loads a TIFF volume from a file or folder over an inclusive slice range. |
+| `write_tiff_slice` | `src/io/volume.rs:479` | Writes one z-slice of volume data into a TIFF encoder page. |
 | `TiffPageEncoder` | `src/io/volume.rs:552` | Incremental multi-page TIFF encoder over a borrowed seekable writer. |
 | `TiffPageEncoder::new` | `src/io/volume.rs:562` | Write the TIFF header and fix page size/type. |
 | `TiffPageEncoder::write_slices` | `src/io/volume.rs:590` | Append whole z-slices as consecutive pages. |
-| `save_tiff_or_folder_with_ext` | `src/io/volume.rs:524` | Saves a `Volume3D` as a multi-page TIFF file or a folder of per-slice TIFF files, with configurable extension. |
-| `save_tiff_or_folder` | `src/io/volume.rs:586` | Saves a `Volume3D` to TIFF file or folder sequence with the default `.tiff` extension. |
-| `load_stl_from_reader` | `src/io/stl.rs:192` | Forward-reader STL: streamed ASCII lines and bounded binary records. |
-| `load_stl_hashed` | `src/io/stl.rs:193` | Single-pass STL parsing and raw digest. |
+| `save_tiff_or_folder_with_ext` | `src/io/volume.rs:630` | Saves a `Volume3D` as a multi-page TIFF file or a folder of per-slice TIFF files, with configurable extension. |
+| `save_tiff_or_folder` | `src/io/volume.rs:695` | Saves a `Volume3D` to TIFF file or folder sequence with the default `.tiff` extension. |
+| `load_stl_from_reader` | `src/io/stl.rs:229` | Forward-reader STL: streamed ASCII lines and bounded binary records. |
+| `load_stl_hashed` | `src/io/stl.rs:242` | Single-pass STL parsing and raw digest. |
 | `parse_binary_reader` | `src/io/stl.rs:157` | Read binary triangle records with incremental deduplication. |
-| `read_stl_record` | `src/io/stl.rs:140` | Read complete record or report truncation. |
+| `read_stl_record` | `src/io/stl.rs:191` | Read complete record or report truncation. |
 | `HashingReader` | `src/io/hash.rs:50` | Incremental digest over delivered bytes. |
 | `HashingReader::new` | `src/io/hash.rs:58` | Wrap forward reader for hashing. |
 | `HashingReader::finish` | `src/io/hash.rs:67` | Return digest and consumed byte count. |
-| `stl_paths` | `src/io/stl.rs:218` | List STL paths in existing directory order. |
+| `stl_paths` | `src/io/stl.rs:267` | List STL paths in existing directory order. |
 
 ## Module role: `io/mod.rs`
 

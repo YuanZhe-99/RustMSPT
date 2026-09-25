@@ -6,29 +6,29 @@
 
 | Item | Location | Summary |
 |---|---|---|
-| `OptimizePipeline` | `src/pipeline/optimize.rs:27` | Pipeline configuration and bounded execution entry point. |
-| `ParticlePrepared` | `src/pipeline/optimize.rs:32` | Cached mesh, bbox and collision shape. |
-| `IslandResult` | `src/pipeline/optimize.rs:39` | Best geometry/loss/S2 snapshot and candidate-stage timings. |
+| `OptimizePipeline` | `src/pipeline/optimize.rs:29` | Pipeline configuration and bounded execution entry point. |
+| `ParticlePrepared` | `src/pipeline/optimize.rs:34` | Cached mesh, bbox and collision shape. |
+| `IslandResult` | `src/pipeline/optimize.rs:41` | Best geometry/loss/S2 snapshot and candidate-stage timings. |
 | `GlobalBest` | `src/pipeline/optimize.rs:47` | Mutex-protected coherent geometry/loss/S2 migration snapshot. |
-| `prepare_particle` | `src/pipeline/optimize.rs:54` | Prepare one particle for collision queries. |
-| `format_s2_series` | `src/pipeline/optimize.rs:61` | Format a curve at six decimal places. |
-| `push_history_s2` | `src/pipeline/optimize.rs:86` | Append a labeled curve to history. |
-| `prune_progress_message` | `src/pipeline/optimize.rs:91` | Format pruning loss, VF and particle count. |
-| `selective_prune_to_target_vf` | `src/pipeline/optimize.rs:103` | Prune with the run-wide S2 definition under the installed pool. |
-| `run_sa_island` | `src/pipeline/optimize.rs:296` | Run one SA island with the fixed evaluator and coherent migration. |
+| `prepare_particle` | `src/pipeline/optimize.rs:70` | Prepare one particle for collision queries. |
+| `format_s2_series` | `src/pipeline/optimize.rs:139` | Format a curve at six decimal places. |
+| `push_history_s2` | `src/pipeline/optimize.rs:148` | Append a labeled curve to history. |
+| `prune_progress_message` | `src/pipeline/optimize.rs:153` | Format pruning loss, VF and particle count. |
+| `selective_prune_to_target_vf` | `src/pipeline/optimize.rs:165` | Prune with the run-wide S2 definition under the installed pool. |
+| `run_sa_island` | `src/pipeline/optimize.rs:359` | Run one SA island with the fixed evaluator and coherent migration. |
 | `stage_rng` / `fixed_eval_seed` | `src/pipeline/optimize.rs` | Per-stage ChaCha12 stream fixed by (`optimization.seed`, stage) or seeded from `thread_rng`; one-off S2 seeds for target/input/final. |
-| `OptimizePipeline::run` | `src/pipeline/optimize.rs:741` | Install every optimize stage in one configured Rayon pool. |
-| `OptimizePipeline::run_in_pool` | `src/pipeline/optimize.rs:768` | Resolve execution, load/prepare, prune, batch islands and verify/save the winner. |
-| `S2Method` | `src/pipeline/optimize_execution.rs:12` | Internal voxel_exact, voxel_mc and mesh_mc definitions. |
-| `S2Method::resolve` | `src/pipeline/optimize_execution.rs:20` | Preserve existing exact/non-exact and pitch routing. |
-| `S2Method::name` | `src/pipeline/optimize_execution.rs:31` | Return the actual method name for diagnostics. |
-| `resolve_mode` | `src/pipeline/optimize_execution.rs:41` | Resolve the optional environment override above YAML; reject invalid values. |
-| `select_s2_backend` | `src/pipeline/optimize_execution.rs:57` | Apply method/CPU/auto/capacity gates before any GPU probe; enforce fallback policy. |
-| `OptimizeS2` | `src/pipeline/optimize_execution.rs:130` | Fixed per-run method, pitch and optional shared GPU evaluator. |
-| `OptimizeS2::new` | `src/pipeline/optimize_execution.rs:144` | Resolve execution once and initialize at most one persistent GPU MC instance. |
-| `OptimizeS2::evaluate` | `src/pipeline/optimize_execution.rs:220` | Evaluate any stage consistently; serialize GPU buffers and release the lock before VF work. |
-| `run_island_batches` | `src/pipeline/optimize_execution.rs:275` | Run ordered batches bounded by active Rayon worker count. |
-| `merge_prepared_particles` | `src/pipeline/optimize.rs:61` | Merge geometry and assign stable particle vertex ranges. |
+| `OptimizePipeline::run` | `src/pipeline/optimize.rs:842` | Install every optimize stage in one configured Rayon pool. |
+| `OptimizePipeline::run_in_pool` | `src/pipeline/optimize.rs:872` | Resolve execution, load/prepare, prune, batch islands and verify/save the winner. |
+| `S2Method` | `src/pipeline/optimize_execution.rs:13` | Internal voxel_exact, voxel_mc and mesh_mc definitions. |
+| `S2Method::resolve` | `src/pipeline/optimize_execution.rs:21` | Preserve existing exact/non-exact and pitch routing. |
+| `S2Method::name` | `src/pipeline/optimize_execution.rs:32` | Return the actual method name for diagnostics. |
+| `resolve_mode` | `src/pipeline/optimize_execution.rs:42` | Resolve the optional environment override above YAML; reject invalid values. |
+| `select_s2_backend` | `src/pipeline/optimize_execution.rs:58` | Apply method/CPU/auto/capacity gates before any GPU probe; enforce fallback policy. |
+| `OptimizeS2` | `src/pipeline/optimize_execution.rs:142` | Fixed per-run method, pitch and optional shared GPU evaluator. |
+| `OptimizeS2::new` | `src/pipeline/optimize_execution.rs:158` | Resolve execution once and initialize at most one persistent GPU MC instance. |
+| `OptimizeS2::evaluate` | `src/pipeline/optimize_execution.rs:248` | Evaluate any stage consistently; serialize GPU buffers and release the lock before VF work. |
+| `run_island_batches` | `src/pipeline/optimize_execution.rs:346` | Run ordered batches bounded by active Rayon worker count. |
+| `merge_prepared_particles` | `src/pipeline/optimize.rs:123` | Merge geometry and assign stable particle vertex ranges. |
 
 ## Types
 
@@ -211,7 +211,7 @@ The optimizer starts its shared GPU MC pipeline with empty geometry; each stage 
 
 Each island stores its evaluated best as `Arc<GlobalBest>` containing geometry, loss and S2 together; `IslandResult` retains that Arc plus timings. Improvements build a new snapshot outside the migration mutex. The shared slot is `Arc<Mutex<Arc<GlobalBest>>>`. `exchange_best_snapshot` compares strict losses and swaps/clones only Arc references under the lock, returning a better incoming snapshot if present. Replaced snapshots are dropped after unlocking, so releasing their geometry cannot lengthen the critical section. Ties preserve the incumbent. Receivers rebuild their mutable prepared geometry/grid and re-evaluate the current walk outside the lock; the saved best curve remains paired with its original evaluated geometry/loss. Final selection borrows the winning shared snapshot rather than cloning it. This removes migration payload copies; creating a new local best and preparing a received mutable walk still copy geometry.
 
-| `exchange_best_snapshot` | `src/pipeline/optimize.rs:52` | Exchange immutable best Arc snapshots; release retired payload outside the lock. |
+| `exchange_best_snapshot` | `src/pipeline/optimize.rs:54` | Exchange immutable best Arc snapshots; release retired payload outside the lock. |
 
 Mesh-MC islands now cache each particle’s connected-component clipped-volume contributions in `IslandVolumes`. Feasible candidates replace only their particle’s entries; rejection restores the saved entries, migration rebuilds the cache, and every 64 evaluated candidates refresh all entries. VF still sums all cached component scalars in merged source order and applies the original denominator/clamp, avoiding running-delta drift. The cache is limited to continuous mesh MC: voxel methods keep voxel VF. CPU fixed-seed sampling and GPU failure fallback can accept the validated VF without recomputing geometry, and GPU mutex boundaries stay unchanged. Fully contained transformed particles are still recomputed to preserve floating-point reference behavior; no rigid-volume shortcut is assumed. Pruning and final verification retain full reference evaluation.
 
@@ -222,8 +222,8 @@ Mesh-MC islands now cache each particle’s connected-component clipped-volume c
 | `IslandVolumes::replace` | `src/pipeline/optimize_volume.rs:33` | Update one particle and return prior entries for rollback. |
 | `IslandVolumes::restore` | `src/pipeline/optimize_volume.rs:41` | Restore entries after rejection. |
 | `IslandVolumes::fraction` | `src/pipeline/optimize_volume.rs:46` | Sum cached scalars in merged component order, then clamp. |
-| `OptimizeS2::evaluate_with_vf` | `src/pipeline/optimize_execution.rs:242` | Evaluate mesh MC with optional validated VF; reject geometric cache for voxel methods. |
-| `calculate_s2_mesh_mc_seeded_with_vf` | `src/geometry/s2.rs:765` | Preserve fixed-seed mesh MC samples while using caller-provided VF. |
+| `OptimizeS2::evaluate_with_vf` | `src/pipeline/optimize_execution.rs:262` | Evaluate mesh MC with optional validated VF; reject geometric cache for voxel methods. |
+| `calculate_s2_mesh_mc_seeded_with_vf` | `src/geometry/s2.rs:1185` | Preserve fixed-seed mesh MC samples while using caller-provided VF. |
 
 ### Grid statistics and query counters (PERF-13 observability)
 

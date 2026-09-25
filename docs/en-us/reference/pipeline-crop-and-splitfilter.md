@@ -7,7 +7,7 @@ Covers the `crop` pipeline (`src/pipeline/crop.rs`) — background detection, PC
 | Item | Location | Summary |
 |---|---|---|
 | `gpu_crop_values_supported` | `src/pipeline/crop.rs:25` | Check exact integer representation for GPU interpolation. |
-| `CropPipeline::run_in_pool` | `src/pipeline/crop.rs:621` | Execute crop stages within the configured pool and report completed-stage wall times. |
+| `CropPipeline::run_in_pool` | `src/pipeline/crop.rs:1359` | Execute crop stages within the configured pool and report completed-stage wall times. |
 | `CropPipeline` (struct) | `src/pipeline/crop.rs:14` | Holds `CropConfig` for the crop pipeline. |
 | `InterpolationMode` (enum) | `src/pipeline/crop.rs:19` | Nearest vs. trilinear resampling mode used during rotate+crop. |
 | `parse_byte_order` | `src/pipeline/crop.rs:34` | Parses `little`/`big` (or `le`/`be`) into a `ByteOrder`. |
@@ -23,37 +23,37 @@ Covers the `crop` pipeline (`src/pipeline/crop.rs`) — background detection, PC
 | `infer_trim_pixels` | `src/pipeline/crop.rs:242` | Heuristically infers 0/1/2 pixels of edge trim from boundary artifact intensity. |
 | `resolve_trim_pixels` | `src/pipeline/crop.rs:260` | Resolves the effective edge-trim pixel count from config, supporting `-1` for auto. |
 | `trim_volume_border` | `src/pipeline/crop.rs:287` | Trims a fixed number of border voxels from the XY faces of a volume. |
-| `detect_background_mode` | `src/pipeline/crop.rs:317` | Detects the background value as the modal voxel value on the volume boundary. |
-| `estimate_pca_bbox` | `src/pipeline/crop.rs:351` | Computes PCA rotation, centroid, and rotated-frame foreground bounding box. |
-| `MomentState` | `src/pipeline/crop.rs` | Running count, mean and centered second-moment matrix. |
-| `MomentState::from_row` | `src/pipeline/crop.rs` | Exact moments of one foreground row segment from integer sums. |
-| `MomentState::merge` | `src/pipeline/crop.rs` | Chan parallel merge of two moment states. |
-| `pca_frame` | `src/pipeline/crop.rs` | Sorted, sign-fixed, right-handed PCA frame with canonical near-degenerate eigenspaces. |
-| `projected_bounds` | `src/pipeline/crop.rs` | Fixed-block rotated-frame foreground bounds. |
-| `foreground_row_blocks` | `src/pipeline/crop.rs` | Fixed-block scan handing contiguous row segments to an accumulator. |
-| `estimate_pca_bbox_three_pass` | `src/pipeline/crop.rs` | Test-only previous three-pass fixed-block PCA oracle. |
-| `rotate_and_crop` | `src/pipeline/crop.rs:459` | CPU, rayon-parallel rotate-and-crop of the volume into an axis-aligned output. |
-| `rotate_and_crop_gpu` | `src/pipeline/crop.rs` | Budget-planned, output-tiled GPU rotate-and-crop via `GpuVolumeTransformPipeline` (feature `gpu`). |
-| `CropSourceBlock` | `src/pipeline/crop.rs` | Clamped source sub-block (origin/dims) one output tile may read. |
-| `CropTilePlan` | `src/pipeline/crop.rs` | Chosen tile shape, tile count, retained maxima and peak logical GPU bytes. |
-| `CropTilePlanError` | `src/pipeline/crop.rs` | Planning refusal with an optional lower bound on the required bytes. |
-| `crop_tile_source_block` | `src/pipeline/crop.rs` | Source AABB of a tile's 8 inverse-mapped corners plus interpolation halo and f32 margin. |
-| `crop_gpu_peak_bytes` | `src/pipeline/crop.rs` | Logical GPU peak for retained max block/tile, queued upload, staging, params and guard. |
-| `for_each_crop_tile` | `src/pipeline/crop.rs` | Visits whole-output tiles in z, y, x order. |
-| `evaluate_crop_tiling` | `src/pipeline/crop.rs` | Checks one tile shape against the budget and device buffer limit. |
-| `plan_crop_gpu_tiles` | `src/pipeline/crop.rs` | Largest z-slab / row / x-run tiling that fits the budget and limits. |
-| `CropPipeline::run` | `src/pipeline/crop.rs:598` | Orchestrates load → background detect → PCA bbox → rotate+crop (GPU or CPU) → edge trim → save TIFF. |
+| `detect_background_mode` | `src/pipeline/crop.rs:338` | Detects the background value as the modal voxel value on the volume boundary. |
+| `estimate_pca_bbox` | `src/pipeline/crop.rs:385` | Computes PCA rotation, centroid, and rotated-frame foreground bounding box. |
+| `MomentState` | `src/pipeline/crop.rs:423` | Running count, mean and centered second-moment matrix. |
+| `MomentState::from_row` | `src/pipeline/crop.rs:438` | Exact moments of one foreground row segment from integer sums. |
+| `MomentState::merge` | `src/pipeline/crop.rs:448` | Chan parallel merge of two moment states. |
+| `pca_frame` | `src/pipeline/crop.rs:477` | Sorted, sign-fixed, right-handed PCA frame with canonical near-degenerate eigenspaces. |
+| `projected_bounds` | `src/pipeline/crop.rs:549` | Fixed-block rotated-frame foreground bounds. |
+| `foreground_row_blocks` | `src/pipeline/crop.rs:590` | Fixed-block scan handing contiguous row segments to an accumulator. |
+| `estimate_pca_bbox_three_pass` | `src/pipeline/crop.rs:564` | Test-only previous three-pass fixed-block PCA oracle. |
+| `rotate_and_crop` | `src/pipeline/crop.rs:737` | CPU, rayon-parallel rotate-and-crop of the volume into an axis-aligned output. |
+| `rotate_and_crop_gpu` | `src/pipeline/crop.rs:1131` | Budget-planned, output-tiled GPU rotate-and-crop via `GpuVolumeTransformPipeline` (feature `gpu`). |
+| `CropSourceBlock` | `src/pipeline/crop.rs:818` | Clamped source sub-block (origin/dims) one output tile may read. |
+| `CropTilePlan` | `src/pipeline/crop.rs:847` | Chosen tile shape, tile count, retained maxima and peak logical GPU bytes. |
+| `CropTilePlanError` | `src/pipeline/crop.rs:859` | Planning refusal with an optional lower bound on the required bytes. |
+| `crop_tile_source_block` | `src/pipeline/crop.rs:871` | Source AABB of a tile's 8 inverse-mapped corners plus interpolation halo and f32 margin. |
+| `crop_gpu_peak_bytes` | `src/pipeline/crop.rs:920` | Logical GPU peak for retained max block/tile, queued upload, staging, params and guard. |
+| `for_each_crop_tile` | `src/pipeline/crop.rs:930` | Visits whole-output tiles in z, y, x order. |
+| `evaluate_crop_tiling` | `src/pipeline/crop.rs:957` | Checks one tile shape against the budget and device buffer limit. |
+| `plan_crop_gpu_tiles` | `src/pipeline/crop.rs:1023` | Largest z-slab / row / x-run tiling that fits the budget and limits. |
+| `CropPipeline::run` | `src/pipeline/crop.rs:1339` | Orchestrates load → background detect → PCA bbox → rotate+crop (GPU or CPU) → edge trim → save TIFF. |
 | `SplitFilterPipeline` (struct) | `src/pipeline/split_filter.rs:13` | Holds `SplitFilterConfig` for the split-filter pipeline. |
 | `VolumeStats` (struct) | `src/pipeline/split_filter.rs:18` | Min/max/mean/median summary of kept-particle volumes. |
-| `volume_stats_for_kept` | `src/pipeline/split_filter.rs:26` | Computes `VolumeStats` over particles whose `keep` flag is true. |
-| `count_kept` | `src/pipeline/split_filter.rs:54` | Counts `true` entries in a `keep` boolean slice. |
-| `report_step` | `src/pipeline/split_filter.rs:59` | Appends a before/after/removed summary line for one filter step. |
-| `append_volume_histogram` | `src/pipeline/split_filter.rs:71` | Appends a single text histogram of volume values. |
-| `append_volume_histogram_comparison` | `src/pipeline/split_filter.rs:119` | Appends a side-by-side before/after text histogram of volume values. |
-| `normal_cdf` | `src/pipeline/split_filter.rs:202` | Standard normal CDF, computed via `erf_approx`. |
-| `erf_approx` | `src/pipeline/split_filter.rs:208` | Abramowitz & Stegun 7.1.26 approximation of the error function. |
-| `apply_lognormal_rebalance` | `src/pipeline/split_filter.rs:225` | Drops excess particles from over-represented log-volume bins relative to a fitted lognormal. |
-| `SplitFilterPipeline::run` | `src/pipeline/split_filter.rs:300` | Orchestrates split → aspect-ratio/sharpness/volume filters → save STLs → report. |
+| `volume_stats_for_kept` | `src/pipeline/split_filter.rs:31` | Computes `VolumeStats` over particles whose `keep` flag is true. |
+| `count_kept` | `src/pipeline/split_filter.rs:59` | Counts `true` entries in a `keep` boolean slice. |
+| `report_step` | `src/pipeline/split_filter.rs:64` | Appends a before/after/removed summary line for one filter step. |
+| `append_volume_histogram` | `src/pipeline/split_filter.rs:76` | Appends a single text histogram of volume values. |
+| `append_volume_histogram_comparison` | `src/pipeline/split_filter.rs:124` | Appends a side-by-side before/after text histogram of volume values. |
+| `normal_cdf` | `src/pipeline/split_filter.rs:207` | Standard normal CDF, computed via `erf_approx`. |
+| `erf_approx` | `src/pipeline/split_filter.rs:213` | Abramowitz & Stegun 7.1.26 approximation of the error function. |
+| `apply_lognormal_rebalance` | `src/pipeline/split_filter.rs:230` | Drops excess particles from over-represented log-volume bins relative to a fitted lognormal. |
+| `SplitFilterPipeline::run` | `src/pipeline/split_filter.rs:341` | Orchestrates split → aspect-ratio/sharpness/volume filters → save STLs → report. |
 
 ---
 

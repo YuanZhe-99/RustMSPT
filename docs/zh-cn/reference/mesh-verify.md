@@ -13,28 +13,28 @@ GA-2）：精确谓词与单元质量原语（`src/meshgen/predicates.rs`）、�
 
 | 条目 | 源码位置 | 概述 |
 |---|---|---|
-| `orient3d` | `src/meshgen/predicates.rs:698` | 符号精确的四面体定向行列式 `det[b-a, c-a, d-a]`；全项目**唯一**对 `robust::orient3d` 相反符号约定取负的位置（规则 N10）。 |
-| `tet_signed_volume` | `src/meshgen/predicates.rs:708` | `orient3d/6`；正向四面体为正值。 |
-| `orient3d_sign_test` | `src/meshgen/predicates.rs:713` | 固定定向约定的基准用例：单位四面体必须为正。 |
-| `TetQuality` | `src/meshgen/predicates.rs:729` | 体积、纵横比、半径比、最大/最小二面角（角度**与**余弦）、缩放雅可比、最小高。 |
-| `tet_quality` | `src/meshgen/predicates.rs:748` | 计算单个四面体的 [V4] 指标；返回余弦值使角度门限保持代数化（判定路径中不出现 `acos`）。 |
-| `node_key` | `src/meshgen/predicates.rs:867` | 尺度相关网格上的量化整数节点键；键相同即同一节点。 |
+| `orient3d` | `src/meshgen/predicates.rs:843` | 符号精确的四面体定向行列式 `det[b-a, c-a, d-a]`；全项目**唯一**对 `robust::orient3d` 相反符号约定取负的位置（规则 N10）。 |
+| `tet_signed_volume` | `src/meshgen/predicates.rs:853` | `orient3d/6`；正向四面体为正值。 |
+| `orient3d_sign_test` | `src/meshgen/predicates.rs:858` | 固定定向约定的基准用例：单位四面体必须为正。 |
+| `TetQuality` | `src/meshgen/predicates.rs:874` | 体积、纵横比、半径比、最大/最小二面角（角度**与**余弦）、缩放雅可比、最小高。 |
+| `tet_quality` | `src/meshgen/predicates.rs:893` | 计算单个四面体的 [V4] 指标；返回余弦值使角度门限保持代数化（判定路径中不出现 `acos`）。 |
+| `node_key` | `src/meshgen/predicates.rs:1012` | 尺度相关网格上的量化整数节点键；键相同即同一节点。 |
 | `Severity` | `src/meshgen/verify.rs:21` | 发现项严重级别 `Info < Warn < Fail`，采用日志与 JSON 的契约拼写。 |
 | `CheckStatus` | `src/meshgen/verify.rs:40` | 单节结论：`PASS`/`WARN`/`FAIL`/`SKIPPED`；跳过时必定附带原因。 |
 | `VerifyItem` | `src/meshgen/verify.rs:63` | 单条发现：严重级别、稳定的 `code`、消息、点/单元编号与坐标（供 `mesh-render --highlight-from` 使用）。 |
 | `VerifySection` | `src/meshgen/verify.rs:88` | 单个目录条目：状态、具名指标、限长条目列表（`items_truncated`）。 |
 | `VerifyGates` | `src/meshgen/verify.rs:145` | 可配置门限；所有长度容差均为包围盒对角线的比例，因此门限与尺度无关。 |
-| `VerifyReport` | `src/meshgen/verify.rs:179` | 完整结果与元数据回显；提供 `passed`、`exit_code`、`fired_codes`、`section` 访问器。 |
-| `VerifyOptions` | `src/meshgen/verify.rs:410` | 文档之外的验证器输入；携带 `expected_stage`（从快照文件名解析）用于 [V12] 交叉校验。 |
-| `verify` | `src/meshgen/verify.rs:430` | 对契约 VTU 或外部 VTU 运行检查目录；按契约顺序为每个条目返回一节。 |
-| `verify_with_options` | `src/meshgen/verify.rs:744` | 带文档之外选项的 `verify`；面阶段 s00-s03 会跳过仅适用于体网格的 [V7]/[V8]/[V13]。 |
-| `BoundaryFace` | `src/meshgen/verify.rs:3531` | [V13] 眼中的一个材料边界面：面积、局部边长、到该分量曲面的平均/最大 \|距离\| 与**带符号**偏移。 |
-| `FidelityAcc` | `src/meshgen/verify.rs:3548` | [V13] 的逐分量累加器；所有求和均按面积加权，因此粗面不会仅凭「同样计一次」压过细面。 |
-| `absorb` | `src/meshgen/verify.rs:3561` | 将一个 `BoundaryFace` 折叠进 `FidelityAcc`。 |
-| `check_v13` | `src/meshgen/verify.rs:3603` | [V13] 界面保真度：从体网格读出材料边界（区域集对区域集，绝不查看面标签），并与输入曲面比对。 |
-| `report_to_json` | `src/meshgen/verify.rs:1510` | 序列化冻结的 JSON 报告（手写实现；项目不引入 JSON 依赖）。 |
-| `report_to_log` | `src/meshgen/verify.rs:1619` | 分节的人读日志，每项检查一行 `[PASS]/[WARN]/[FAIL]/[SKIP]`，末尾附汇总。 |
-| `annotate` | `src/meshgen/verify.rs:1681` | 附带质量数组与 `verify_flags` 位掩码的网格副本（第 *k* 位对应 `[V(k+1)]`）。 |
+| `VerifyReport` | `src/meshgen/verify.rs:199` | 完整结果与元数据回显；提供 `passed`、`exit_code`、`fired_codes`、`section` 访问器。 |
+| `VerifyOptions` | `src/meshgen/verify.rs:714` | 文档之外的验证器输入；携带 `expected_stage`（从快照文件名解析）用于 [V12] 交叉校验。 |
+| `verify` | `src/meshgen/verify.rs:738` | 对契约 VTU 或外部 VTU 运行检查目录；按契约顺序为每个条目返回一节。 |
+| `verify_with_options` | `src/meshgen/verify.rs:749` | 带文档之外选项的 `verify`；面阶段 s00-s03 会跳过仅适用于体网格的 [V7]/[V8]/[V13]。 |
+| `BoundaryFace` | `src/meshgen/verify.rs:3903` | [V13] 眼中的一个材料边界面：面积、局部边长、到该分量曲面的平均/最大 \|距离\| 与**带符号**偏移。 |
+| `FidelityAcc` | `src/meshgen/verify.rs:3935` | [V13] 的逐分量累加器；所有求和均按面积加权，因此粗面不会仅凭「同样计一次」压过细面。 |
+| `absorb` | `src/meshgen/verify.rs:3952` | 将一个 `BoundaryFace` 折叠进 `FidelityAcc`。 |
+| `check_v13` | `src/meshgen/verify.rs:4006` | [V13] 界面保真度：从体网格读出材料边界（区域集对区域集，绝不查看面标签），并与输入曲面比对。 |
+| `report_to_json` | `src/meshgen/verify.rs:2358` | 序列化冻结的 JSON 报告（手写实现；项目不引入 JSON 依赖）。 |
+| `report_to_log` | `src/meshgen/verify.rs:2467` | 分节的人读日志，每项检查一行 `[PASS]/[WARN]/[FAIL]/[SKIP]`，末尾附汇总。 |
+| `annotate` | `src/meshgen/verify.rs:2529` | 附带质量数组与 `verify_flags` 位掩码的网格副本（第 *k* 位对应 `[V(k+1)]`）。 |
 | `VerifyGateParams`/`MeshVerifyParams`/`MeshVerifyConfig` | `src/config/mesh_verify.rs:8` | `mesh_verify:` YAML 块：输入、report/json/annotate 输出路径、门限覆盖。 |
 | `gates_from_config` | `src/pipeline/mesh_verify.rs:21` | 将 YAML 覆盖项叠加到契约默认门限上。 |
 | `verify_file` | `src/pipeline/mesh_verify.rs:53` | 加载 → 校验 → 验证 → 写出日志/JSON/带注解 VTU；返回报告。 |

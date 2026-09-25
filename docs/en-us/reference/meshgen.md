@@ -89,88 +89,88 @@ the shape. `s08_cut` is the first snapshot that fits the input.
 | `two_sum` / `two_prod` / `DoubleDouble` | `src/meshgen/predicates.rs:111/118/125` | Frozen error-free primitives and add/sub/mul-only DD arithmetic. |
 | `DeterminantRatio` / `PrecisionTier` / `ConstructionOutcome` | `src/meshgen/predicates.rs:192/229/254` | Exact-ordering ratio and methods, committed precision provenance, and resolved/deferred construction result. |
 | `orient3d_value_permanent` / `orient3d_filtered` / `orient3d_dd_value` | `src/meshgen/predicates.rs:266/286/296` | Shewchuk-order f64 value/permanent, certified static filter with exact fallback, and DD determinant. |
-| `construct_edge_triangle_intersection` | `src/meshgen/predicates.rs:320` | Frozen C1 determinant-ratio construction; f64/DD escalation and DD-floor routing. |
+| `construct_edge_triangle_intersection` | `src/meshgen/predicates.rs:434` | Frozen C1 determinant-ratio construction; f64/DD escalation and DD-floor routing. |
 | `CoplanarSegmentPoint` / `construct_coplanar_segment_intersection` | `src/meshgen/predicates.rs:244/384` | Frozen C3 affine segment intersection; checks both defining-edge stability ratios and retains DD ordering ratios. |
-| `construct_three_triangle_intersection` | `src/meshgen/predicates.rs:492` | Frozen C2 local-frame Cramer construction, fully recomputed in DD on escalation. |
+| `construct_three_triangle_intersection` | `src/meshgen/predicates.rs:631` | Frozen C2 local-frame Cramer construction, fully recomputed in DD on escalation. |
 | `EdgeId` / `EdgeId::new` / `IsectProv` / `SegKey` / `SegKey::new` | `src/meshgen/arrange.rs:29/33/44/52/61` | Canonical `EdgeTri`/`EdgeEdge`/`TriTriTri` and segment identities. |
 | `CoincidenceCase` / policy methods / `CoincidenceEntity` / `CoincidenceEvent` | `src/meshgen/arrange.rs:73/88/97/105/112` | Typed C1-C10 classification, sorted entities/components, and frozen reject/warn semantics. |
 | `DegradedReason` / `DegradedNeighborhood` / `ArrangedPointFeature` | `src/meshgen/arrange.rs:120/130/140` | Durable G2-3 fallback records and welded C5/C6 point features. |
 | `ArrangeOptions` / `ArrangeOptions::new` / `with_coincidence` | `src/meshgen/arrange.rs:149/159/175` | Domain, epsilon, policy, and component table; constructor defaults to `merge`. |
 | `RegistryVertex` / `RegistrySegment` / `IntersectionRegistry` | `src/meshgen/arrange.rs:183/194/203` | Symbolic-first global registry; one committed node retains every compatible provenance alias. |
 | `ArrangedCurve` / `ArrangedFace` / `ArrangedSurface` | `src/meshgen/arrange.rs:218/228/256` | Atomic multi-source/multi-tag faces, curves/radial order, point features, events, warnings, and degraded records. |
-| `ArrangementStats` | `src/meshgen/arrange.rs:240` | Candidate, proper/overlay/contact, f64/DD/floor, feature, and degraded counters. |
-| `arrange_surface` | `src/meshgen/arrange.rs:426` | Pure deterministic CPU G2-1..G2-3 path; returns the validated arranged diagnostic complex or a policy/invariant error. |
-| `arranged_surface_to_doc` | `src/meshgen/arrange.rs:793` | Encode the arranged complex with set-valued face tags, `FaceTagOrientation`, and `FaceTagKind` (`2` for box-clip caps); stamped as s02 by the pipeline. |
-| `clip_arranged_to_box` | `src/meshgen/arrange.rs:4644` | G2-5b Sutherland-Hodgman clip to the domain: solids capped with box-tagged faces, sheets clipped open, curves clipped. |
-| `triangulate_parent` | `src/meshgen/arrange.rs:3385` | Restricted pre-registered Spade CDT; propagates insertion/refused-constraint errors and verifies constraints/tiling. |
+| `ArrangementStats` | `src/meshgen/arrange.rs:243` | Candidate, proper/overlay/contact, f64/DD/floor, feature, and degraded counters. |
+| `arrange_surface` | `src/meshgen/arrange.rs:439` | Pure deterministic CPU G2-1..G2-3 path; returns the validated arranged diagnostic complex or a policy/invariant error. |
+| `arranged_surface_to_doc` | `src/meshgen/arrange.rs:804` | Encode the arranged complex with set-valued face tags, `FaceTagOrientation`, and `FaceTagKind` (`2` for box-clip caps); stamped as s02 by the pipeline. |
+| `clip_arranged_to_box` | `src/meshgen/arrange.rs:4789` | G2-5b Sutherland-Hodgman clip to the domain: solids capped with box-tagged faces, sheets clipped open, curves clipped. |
+| `triangulate_parent` | `src/meshgen/arrange.rs:3855` | Restricted pre-registered Spade CDT; propagates insertion/refused-constraint errors and verifies constraints/tiling. |
 | `SampleKind` / `PairClass` | `src/meshgen/gapfield.rs:48/57` | Sample provenance (vertex / centroid / closest-pair / densified) and the frozen pair classes (`intra`, `inter`, `solid-sheet`, `sheet-sheet`, `surface-box`). |
 | `GapPairing` / `GapSample` / `GapSample::passes_battery` | `src/meshgen/gapfield.rs:68/81/100` | One correspondence, one sample (side, direction, `t_raw`/`t`/`t_exact`, flags, smooth-patch index), and the all-applicable-checks predicate. |
 | `GapGroup` / `GapFieldStats` / `GapField` | `src/meshgen/gapfield.rs:110/122/137` | Provisional (component, side, opposite patch) group with confidence and `t_r`, S3 counters, and the whole field. |
-| `GapFieldOptions` | `src/meshgen/gapfield.rs:152` | Domain, epsilon, bootstrap `h`, gap factors, confidence floor, feature angle (vertex clustering), virtual walls, densification rounds, smoothing sweeps. |
+| `GapFieldOptions` | `src/meshgen/gapfield.rs:280` | Domain, epsilon, bootstrap `h`, gap factors, confidence floor, feature angle (vertex clustering), virtual walls, densification rounds, smoothing sweeps. |
 | `FLAG_MUTUAL` / `FLAG_OPPOSITE_PATCH` / `FLAG_CONTINUITY` / `FLAG_NO_CROSSING` / `FLAG_ORIENTATION` / `FLAGS_ALL` | `src/meshgen/gapfield.rs:28-38` | The five battery bits and their union. |
-| `compute_gap_field` | `src/meshgen/gapfield.rs:345` | Run S3 over a clipped, topology-rebuilt arranged surface; deterministic, pure. |
-| `gapfield_to_doc` | `src/meshgen/gapfield.rs:1655` | Build the `s03_gapfield` document: the arranged surface plus the `separation_t` point field (`-1` = no pairing). |
+| `compute_gap_field` | `src/meshgen/gapfield.rs:495` | Run S3 over a clipped, topology-rebuilt arranged surface; deterministic, pure. |
+| `gapfield_to_doc` | `src/meshgen/gapfield.rs:3080` | Build the `s03_gapfield` document: the arranged surface plus the `separation_t` point field (`-1` = no pairing). |
 | `Regime` / `SkipReason` / `MidSurfaceDefect` | `src/meshgen/gapfield.rs:166/177/190` | The three thin-feature regimes, the `[THIN-SKIP]` taxonomy, and the mid-surface validation defects. |
 | `MidSurface` / `MidSurface::is_valid` / `ThinRegion` | `src/meshgen/gapfield.rs:204/216/227` | The midpoint patch with its source nodes and defects, and one segmented region (wall A faces, the closed-over opposite wall, rims, regime, confidence). |
-| `validate_mid_surface` | `src/meshgen/gapfield.rs:2436` | Run the §3.4 checks (area, orientation, normal deviation, self-intersection, rim agreement, Euler) over a candidate. |
+| `validate_mid_surface` | `src/meshgen/gapfield.rs:2945` | Run the §3.4 checks (area, orientation, normal deviation, self-intersection, rim agreement, Euler) over a candidate. |
 | `CouplingOptions` / `LockReason` / `CouplingReport` / `CouplingReport::locked_for` | `src/meshgen/sizing.rs:35/66/80/94` | Coupling-loop inputs, the three lock reasons, the run report, and the per-reason lock query. |
-| `regime_for` | `src/meshgen/sizing.rs:113` | Classify one region against the current thresholds with the 0.9/1.1 hysteresis dead band. |
-| `couple_gap_and_sizing` | `src/meshgen/sizing.rs:159` | Run the S3<->S4 fixed point to a regime assignment and a converged `h`; errors on the G-8 ordering assertion. |
+| `regime_for` | `src/meshgen/sizing.rs:143` | Classify one region against the current thresholds with the 0.9/1.1 hysteresis dead band. |
+| `couple_gap_and_sizing` | `src/meshgen/sizing.rs:189` | Run the S3<->S4 fixed point to a regime assignment and a converged `h`; errors on the G-8 ordering assertion. |
 | `SizingCriterion` / `SizingSource` | `src/meshgen/sizing.rs:335/351` | Which §10.6 criterion produced a sizing constraint, and the constraint itself. |
 | `SizingOptions` / `beta` / `lfs_floor` | `src/meshgen/sizing.rs:363/410/429` | Sizing-field inputs; the Lipschitz constant `grading - 1`; the floor below which a separation is not a gap. |
 | `curvature_sources` / `feature_sources` / `curve_sources` / `collect_geometry_sources` | `src/meshgen/sizing.rs:504/605/677` | The regime-independent criteria, read on the conditioned input surface. |
-| `gap_sources` | `src/meshgen/sizing.rs:712` | Regime-aware LFS sources: `t / gap_cells` per volumetric S3 sample. |
+| `gap_sources` | `src/meshgen/sizing.rs:815` | Regime-aware LFS sources: `t / gap_cells` per volumetric S3 sample. |
 | `SizingLookup` / `eval` / `eval_box` | `src/meshgen/sizing.rs:969/1067/1083` | The graded field; point evaluation and the exact minimum over a box. |
 | `SizingLeaf` / `SizingStats` / `SizingField` / `locate` / `sample` | `src/meshgen/sizing.rs:1156/1164/1182/1220/1248` | The background octree, its build report, and point location. |
-| `build_sizing_field` | `src/meshgen/sizing.rs:1265` | Refine the octree one parallel level at a time until every leaf resolves the field. |
+| `build_sizing_field` | `src/meshgen/sizing.rs:1416` | Refine the octree one parallel level at a time until every leaf resolves the field. |
 | `SizingConstraint` / `evaluate` / `binding_region` | `src/meshgen/sizing.rs:1407/1468/1498` | `C(R)` for the coupling driver, and which region and term set it. |
-| `sizing_to_doc` | `src/meshgen/sizing.rs:1540` | Encode a sizing field as the `s04_sizing` voxel preview VTU. |
+| `sizing_to_doc` | `src/meshgen/sizing.rs:1699` | Encode a sizing field as the `s04_sizing` voxel preview VTU. |
 | `FREUDENTHAL` / `CellTemplate` | `src/meshgen/lattice.rs:54/493` | The frozen 6-tet Kuhn table, and which template a leaf took. |
 | `balance_octree` / `balance_violation` | `src/meshgen/lattice.rs:156/286` | Strong (face+edge+vertex) 2:1 balance, and a direct check of the property. |
 | `Lattice` / `LatticeStats` / `LatticeOptions` | `src/meshgen/lattice.rs:520/502/531` | The tetrahedralized lattice, its build report, and the tet budget. |
 | `build_lattice` / `build_lattice_with_splits` | `src/meshgen/lattice.rs:611/616` | Tetrahedralize a balanced octree with the Freudenthal and fan templates. |
-| `lattice_to_doc` | `src/meshgen/lattice.rs:833` | Encode the lattice as the `s05_lattice` snapshot VTU. |
+| `lattice_to_doc` | `src/meshgen/lattice.rs:837` | Encode the lattice as the `s05_lattice` snapshot VTU. |
 | `Side` / `Provenance` / `OwnershipRecord` | `src/meshgen/classify.rs:60/68/82` | A tet's side of a component, the entry's origin, and the sparse record. |
-| `resolve` | `src/meshgen/classify.rs:171` | The frozen label rule (SPEC_meshgen_geometry §9.1). |
-| `RAY_DIRECTIONS` | `src/meshgen/classify.rs:42` | The frozen re-shoot sequence (ARB-9). |
+| `resolve` | `src/meshgen/classify.rs:180` | The frozen label rule (SPEC_meshgen_geometry §9.1). |
+| `RAY_DIRECTIONS` | `src/meshgen/classify.rs:46` | The frozen re-shoot sequence (ARB-9). |
 | `Classification` / `ClassifyStats` / `ClassifyOptions` | `src/meshgen/classify.rs:140/112/457` | The S6 result and how each decision was reached. |
-| `classify_lattice` | `src/meshgen/classify.rs:493` | S6: parity classification, record seeding, active-patch filter. |
-| `classified_to_doc` | `src/meshgen/classify.rs:810` | Encode the `s06_classified` snapshot VTU. |
-| `Stage` | `src/meshgen/snapshot.rs:18` | The frozen stage enumeration (0..=11); also the snapshot index. |
-| `Stage::from_path` | `src/meshgen/snapshot.rs:74` | Parse the stage from a snapshot filename's `sNN` token (for the [V12] cross-check). |
-| `should_emit` | `src/meshgen/snapshot.rs:99` | Whether a stage is emitted under `none`/`key`/`all`. |
-| `snapshot_path` | `src/meshgen/snapshot.rs:118` | `<stem>.debug/<stem>_sNN_<name>.vtu` (Quality carries `_r<N>`). |
-| `SnapshotMeta` | `src/meshgen/snapshot.rs:132` | Bundled stamping inputs (stage, round, config hash, domain, determinism, generator version). |
-| `stamp_metadata` | `src/meshgen/snapshot.rs:166` | Stamp the full §2.4 metadata block onto a snapshot document. |
-| `emit_snapshot` | `src/meshgen/snapshot.rs:276` | Stamp metadata, then write the delivered tets-only volume under the plain name and the mixed-cell contract document beside it as `_contract.vtu`; returns the delivered path. |
-| `warn_if_large` | `src/meshgen/snapshot.rs:246` | Size WARN: `snapshots: all` + >5 M tets estimate. |
+| `classify_lattice` | `src/meshgen/classify.rs:704` | S6: parity classification, record seeding, active-patch filter. |
+| `classified_to_doc` | `src/meshgen/classify.rs:1044` | Encode the `s06_classified` snapshot VTU. |
+| `Stage` | `src/meshgen/snapshot.rs:22` | The frozen stage enumeration (0..=11); also the snapshot index. |
+| `Stage::from_path` | `src/meshgen/snapshot.rs:102` | Parse the stage from a snapshot filename's `sNN` token (for the [V12] cross-check). |
+| `should_emit` | `src/meshgen/snapshot.rs:120` | Whether a stage is emitted under `none`/`key`/`all`. |
+| `snapshot_path` | `src/meshgen/snapshot.rs:147` | `<stem>.debug/<stem>_sNN_<name>.vtu` (Quality carries `_r<N>`). |
+| `SnapshotMeta` | `src/meshgen/snapshot.rs:195` | Bundled stamping inputs (stage, round, config hash, domain, determinism, generator version). |
+| `stamp_metadata` | `src/meshgen/snapshot.rs:232` | Stamp the full §2.4 metadata block onto a snapshot document. |
+| `emit_snapshot` | `src/meshgen/snapshot.rs:295` | Stamp metadata, then write the delivered tets-only volume under the plain name and the mixed-cell contract document beside it as `_contract.vtu`; returns the delivered path. |
+| `warn_if_large` | `src/meshgen/snapshot.rs:348` | Size WARN: `snapshots: all` + >5 M tets estimate. |
 
 ### G6-1 snap (S7)
 
 | Item | Source | Summary |
 |---|---|---|
-| `SNAP_MOTION_CAP` | `src/meshgen/snap.rs` | `0.30` - no accepted move exceeds this fraction of the node's shortest incident lattice edge (ARB-11). |
+| `SNAP_MOTION_CAP` | `src/meshgen/snap.rs:43` | `0.30` - no accepted move exceeds this fraction of the node's shortest incident lattice edge (ARB-11). |
 | `SNAP_RECHECK_LOW` / `SNAP_RECHECK_HIGH` | `src/meshgen/snap.rs` | `0.025` / `0.975` - the re-check band: a crossing this close to an edge end promotes the endpoint instead of cutting. |
-| `ALTERNATING_PROJECTION_PASSES` | `src/meshgen/snap.rs` | `15` - the fixed pass count of the degraded-arrangement curve target (ARB-2). |
+| `ALTERNATING_PROJECTION_PASSES` | `src/meshgen/snap.rs:54` | `15` - the fixed pass count of the degraded-arrangement curve target (ARB-2). |
 | `WEIGHT_CORNER` / `WEIGHT_CURVE` / `WEIGHT_SURFACE` | `src/meshgen/snap.rs` | `1e7` / `1e4` / `1e0` - the frozen target priority written as numbers. |
-| `TargetKind` | `src/meshgen/snap.rs` | What a node is bound to, in the contract's `constraint_kind` encoding: `Free` / `Surface` / `Polyline` / `Corner` / `BoxFace`. |
-| `EdgeCrossing` | `src/meshgen/snap.rs` | One exact edge-patch crossing: the edge, the face, the component, the parameter `t`, and the constructed point. |
-| `SnapStats` | `src/meshgen/snap.rs` | S7 diagnostics: crossings, candidates, per-kind snap counts, caps, rejections, promotions, on-cut nodes, motion. |
-| `Snapped` | `src/meshgen/snap.rs` | S7's result: moved nodes, per-node constraints, motion, the under-snapped list, the crossings, and the on-cut set. |
-| `SnapOptions` | `src/meshgen/snap.rs` | S7 inputs: the domain box and the weld tolerance. |
-| `snap_lattice` | `src/meshgen/snap.rs` | Runs S7 - feature capture, band promotion, the re-check pass, and the final crossing list. |
-| `unique_edges` | `src/meshgen/snap.rs` | The lattice's unique edge set as ascending node pairs (parallel map, parallel sort, dedup). |
-| `move_preserves_orientation` | `src/meshgen/snap.rs` | Exact ARB-10 test: whether moving one node keeps every incident tet positively oriented. |
-| `snapped_to_doc` | `src/meshgen/snap.rs` | Encodes the snapped lattice as the `s07_snapped` snapshot VTU. |
+| `TargetKind` | `src/meshgen/snap.rs:68` | What a node is bound to, in the contract's `constraint_kind` encoding: `Free` / `Surface` / `Polyline` / `Corner` / `BoxFace`. |
+| `EdgeCrossing` | `src/meshgen/snap.rs:90` | One exact edge-patch crossing: the edge, the face, the component, the parameter `t`, and the constructed point. |
+| `SnapStats` | `src/meshgen/snap.rs:105` | S7 diagnostics: crossings, candidates, per-kind snap counts, caps, rejections, promotions, on-cut nodes, motion. |
+| `Snapped` | `src/meshgen/snap.rs:142` | S7's result: moved nodes, per-node constraints, motion, the under-snapped list, the crossings, and the on-cut set. |
+| `SnapOptions` | `src/meshgen/snap.rs:173` | S7 inputs: the domain box and the weld tolerance. |
+| `snap_lattice` | `src/meshgen/snap.rs:1485` | Runs S7 - feature capture, band promotion, the re-check pass, and the final crossing list. |
+| `unique_edges` | `src/meshgen/snap.rs:887` | The lattice's unique edge set as ascending node pairs (parallel map, parallel sort, dedup). |
+| `move_preserves_orientation` | `src/meshgen/snap.rs:957` | Exact ARB-10 test: whether moving one node keeps every incident tet positively oriented. |
+| `snapped_to_doc` | `src/meshgen/snap.rs:1841` | Encodes the snapped lattice as the `s07_snapped` snapshot VTU. |
 
 ### G6-2..G6-5 cut (S8)
 
 | Item | Source | Summary |
 |---|---|---|
 | `CUT_VOLUME_TOLERANCE` / `CUT_MIN_DIHEDRAL_DEG` | `src/meshgen/cut.rs` | `0.01` / `8.0` - the guarded dry-run's volume tolerance and the §4.4 runtime dihedral floor. |
-| `NodeSide` | `src/meshgen/cut.rs` | Where a parent node sits relative to the patch: `Inside` / `Outside` / `OnCut`. |
-| `Escalation` | `src/meshgen/cut.rs` | Why a cell could not take §6's path: junction, K1 multi-crossing, inconsistent state, dry-run failure, quality. |
-| `InterfaceFace` | `src/meshgen/cut.rs` | One tagged cut triangle with its `(inside, outside)` element pair. |
+| `NodeSide` | `src/meshgen/cut.rs:80` | Where a parent node sits relative to the patch: `Inside` / `Outside` / `OnCut`. |
+| `Escalation` | `src/meshgen/cut.rs:91` | Why a cell could not take §6's path: junction, K1 multi-crossing, inconsistent state, dry-run failure, quality. |
+| `InterfaceFace` | `src/meshgen/cut.rs:107` | One tagged cut triangle with its `(inside, outside)` element pair. |
 | `CutMesh` / `CutStats` / `CutOptions` | `src/meshgen/cut.rs` | S8's nodes, tets, records, interface and escalation list; its diagnostics; its tolerances. |
 | `snk_split_quad` / `snk_diagonal_is_02` | `src/meshgen/cut.rs` | Rule SNK (§4.1): a quad's diagonal is the one incident to its smallest-`NodeKey` vertex. |
 | `prism_tets` / `prism_tets_with_diagonals` | `src/meshgen/cut.rs` | The frozen six-pattern prism table (§4.3); `None` only for the two cyclic sets Theorem T2 makes unreachable. |

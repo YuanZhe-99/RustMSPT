@@ -11,45 +11,45 @@
 | `sha256_bytes` | `src/io/hash.rs:13` | 字节切片的 SHA-256，返回小写十六进制。 |
 | `sha256_file` | `src/io/hash.rs:25` | 流式计算文件的 SHA-256，返回十六进制摘要与字节数。 |
 | `hex_digest` | `src/io/hash.rs:42` | 将摘要渲染为小写十六进制。 |
-| `parse_ascii_vertex` | `src/io/stl.rs:9` | 将一行 ASCII STL 的 `vertex x y z` 记录解析为 `Vec3`。 |
-| `quantize_key` | `src/io/stl.rs:21` | 将顶点量化为固定精度的整数键，用于容差去重。 |
+| `parse_ascii_vertex` | `src/io/stl.rs:43` | 将一行 ASCII STL 的 `vertex x y z` 记录解析为 `Vec3`。 |
+| `quantize_key` | `src/io/stl.rs:55` | 将顶点量化为固定精度的整数键，用于容差去重。 |
 | `WeldMap` | `src/io/stl.rs:10` | 顶点焊接表类型（量化键到首个索引），使用非 SipHash 的快速哈希；从不迭代。 |
 | `WeldHasher` | `src/io/stl.rs:15` | 用于量化顶点键的乘法-异或哈希，带 64 位终结混合。 |
 | `dedup_vertex` | `src/io/stl.rs:65` | 通过量化键查找，对照现有列表对顶点去重。 |
-| `AsciiStlBuilder` | `src/io/stl.rs:47` | ASCII STL 增量状态：顶点、面、待组面顶点、去重表。 |
-| `AsciiStlBuilder::push_line` | `src/io/stl.rs:56` | 按原 lossy/trim/vertex 规则处理一行原始字节。 |
-| `parse_ascii_stream_or_binary` | `src/io/stl.rs:78` | 逐行流式解析 ASCII STL，未得到三角形时对保留字节回退 binary。 |
-| `parse_f32_le` | `src/io/stl.rs:93` | 解析小端序 `f32` 字节并向上转换为 `f64`。 |
-| `parse_binary_stl` | `src/io/stl.rs:104` | 将二进制 STL 字节解析为顶点已去重的 `Mesh`。 |
-| `looks_ascii_stl` | `src/io/stl.rs:151` | 启发式检测字节内容是否为 ASCII STL。 |
-| `load_stl` | `src/io/stl.rs:170` | 加载 STL 文件，自动检测 ASCII/二进制格式。 |
-| `load_folder_stls` | `src/io/stl.rs:206` | 加载文件夹中所有 STL 文件。 |
-| `load_stl_or_merge_folder` | `src/io/stl.rs:233` | 加载单个 STL 文件，或将目录中所有 STL 合并为一个网格。 |
-| `save_stl` | `src/io/stl.rs:262` | 将网格保存为二进制 STL 文件。 |
-| `collect_sorted_files` | `src/io/volume.rs:50` | 收集文件夹中的常规文件，按名称排序，可选按扩展名过滤。 |
-| `resolve_slice_range` | `src/io/volume.rs:78` | 根据起止索引解析出闭区间切片范围，将 `-1` 视为"从头开始"/"到末尾"。 |
-| `decode_raw_slice` | `src/io/volume.rs:107` | 根据位深、符号性和字节序，将一个原始图像切片解码为 `i64` 值。 |
+| `AsciiStlBuilder` | `src/io/stl.rs:81` | ASCII STL 增量状态：顶点、面、待组面顶点、去重表。 |
+| `AsciiStlBuilder::push_line` | `src/io/stl.rs:90` | 按原 lossy/trim/vertex 规则处理一行原始字节。 |
+| `parse_ascii_stream_or_binary` | `src/io/stl.rs:112` | 逐行流式解析 ASCII STL，未得到三角形时对保留字节回退 binary。 |
+| `parse_f32_le` | `src/io/stl.rs:141` | 解析小端序 `f32` 字节并向上转换为 `f64`。 |
+| `parse_binary_stl` | `src/io/stl.rs:152` | 将二进制 STL 字节解析为顶点已去重的 `Mesh`。 |
+| `looks_ascii_stl` | `src/io/stl.rs:202` | 启发式检测字节内容是否为 ASCII STL。 |
+| `load_stl` | `src/io/stl.rs:221` | 加载 STL 文件，自动检测 ASCII/二进制格式。 |
+| `load_folder_stls` | `src/io/stl.rs:255` | 加载文件夹中所有 STL 文件。 |
+| `load_stl_or_merge_folder` | `src/io/stl.rs:282` | 加载单个 STL 文件，或将目录中所有 STL 合并为一个网格。 |
+| `save_stl` | `src/io/stl.rs:311` | 将网格保存为二进制 STL 文件。 |
+| `collect_sorted_files` | `src/io/volume.rs:72` | 收集文件夹中的常规文件，按名称排序，可选按扩展名过滤。 |
+| `resolve_slice_range` | `src/io/volume.rs:100` | 根据起止索引解析出闭区间切片范围，将 `-1` 视为"从头开始"/"到末尾"。 |
+| `decode_raw_slice` | `src/io/volume.rs:129` | 根据位深、符号性和字节序，将一个原始图像切片解码为 `i64` 值。 |
 | `load_raw_folder` | `src/io/volume.rs:227` | 从一个原始二进制切片文件文件夹中加载 `Volume3D`。 |
-| `tiff_decoding_to_i64` | `src/io/volume.rs:266` | 将 TIFF 的 `DecodingResult` 转换为 `Vec<i64>` 缓冲区及其数值类型。 |
-| `load_tiff_file_with_range` | `src/io/volume.rs:286` | 在一个闭区间页码范围内，将多页 TIFF 文件加载为 `Volume3D`。 |
-| `load_tiff_file` | `src/io/volume.rs:354` | 将一个 TIFF 文件（所有页）加载为 `Volume3D`。 |
-| `is_tiff_path` | `src/io/volume.rs:359` | 检查路径是否具有 `.tif`/`.tiff` 扩展名。 |
-| `load_tiff_or_folder` | `src/io/volume.rs:369` | 从文件或文件夹加载 TIFF 体数据（所有页/切片）。 |
-| `load_tiff_or_folder_with_range` | `src/io/volume.rs:379` | 在一个闭区间切片范围内，从文件或文件夹加载 TIFF 体数据。 |
-| `write_tiff_slice` | `src/io/volume.rs:446` | 将体数据的一个 z 切片写入 TIFF 编码器的一页。 |
+| `tiff_decoding_to_i64` | `src/io/volume.rs:299` | 将 TIFF 的 `DecodingResult` 转换为 `Vec<i64>` 缓冲区及其数值类型。 |
+| `load_tiff_file_with_range` | `src/io/volume.rs:319` | 在一个闭区间页码范围内，将多页 TIFF 文件加载为 `Volume3D`。 |
+| `load_tiff_file` | `src/io/volume.rs:387` | 将一个 TIFF 文件（所有页）加载为 `Volume3D`。 |
+| `is_tiff_path` | `src/io/volume.rs:392` | 检查路径是否具有 `.tif`/`.tiff` 扩展名。 |
+| `load_tiff_or_folder` | `src/io/volume.rs:402` | 从文件或文件夹加载 TIFF 体数据（所有页/切片）。 |
+| `load_tiff_or_folder_with_range` | `src/io/volume.rs:412` | 在一个闭区间切片范围内，从文件或文件夹加载 TIFF 体数据。 |
+| `write_tiff_slice` | `src/io/volume.rs:479` | 将体数据的一个 z 切片写入 TIFF 编码器的一页。 |
 | `TiffPageEncoder` | `src/io/volume.rs:552` | 基于借用可 seek writer 的增量多页 TIFF 编码器。 |
 | `TiffPageEncoder::new` | `src/io/volume.rs:562` | 写入 TIFF 头并固定页尺寸与类型。 |
 | `TiffPageEncoder::write_slices` | `src/io/volume.rs:590` | 以连续页追加完整 z 切片。 |
-| `save_tiff_or_folder_with_ext` | `src/io/volume.rs:524` | 将 `Volume3D` 保存为多页 TIFF 文件或按切片逐一保存的 TIFF 文件夹，可配置扩展名。 |
-| `save_tiff_or_folder` | `src/io/volume.rs:586` | 使用默认的 `.tiff` 扩展名，将 `Volume3D` 保存为 TIFF 文件或切片文件序列。 |
-| `load_stl_from_reader` | `src/io/stl.rs:192` | Forward-reader STL: streamed ASCII lines and bounded binary records. |
-| `load_stl_hashed` | `src/io/stl.rs:193` | Single-pass STL parsing and raw digest. |
+| `save_tiff_or_folder_with_ext` | `src/io/volume.rs:630` | 将 `Volume3D` 保存为多页 TIFF 文件或按切片逐一保存的 TIFF 文件夹，可配置扩展名。 |
+| `save_tiff_or_folder` | `src/io/volume.rs:695` | 使用默认的 `.tiff` 扩展名，将 `Volume3D` 保存为 TIFF 文件或切片文件序列。 |
+| `load_stl_from_reader` | `src/io/stl.rs:229` | Forward-reader STL: streamed ASCII lines and bounded binary records. |
+| `load_stl_hashed` | `src/io/stl.rs:242` | Single-pass STL parsing and raw digest. |
 | `parse_binary_reader` | `src/io/stl.rs:157` | Read binary triangle records with incremental deduplication. |
-| `read_stl_record` | `src/io/stl.rs:140` | Read complete record or report truncation. |
+| `read_stl_record` | `src/io/stl.rs:191` | Read complete record or report truncation. |
 | `HashingReader` | `src/io/hash.rs:50` | Incremental digest over delivered bytes. |
 | `HashingReader::new` | `src/io/hash.rs:58` | Wrap forward reader for hashing. |
 | `HashingReader::finish` | `src/io/hash.rs:67` | Return digest and consumed byte count. |
-| `stl_paths` | `src/io/stl.rs:218` | List STL paths in existing directory order. |
+| `stl_paths` | `src/io/stl.rs:267` | List STL paths in existing directory order. |
 
 ## 模块职责：`io/mod.rs`
 

@@ -7,7 +7,7 @@
 | 条目 | 位置 | 摘要 |
 |---|---|---|
 | `gpu_crop_values_supported` | `src/pipeline/crop.rs:25` | Check exact integer representation for GPU interpolation. |
-| `CropPipeline::run_in_pool` | `src/pipeline/crop.rs:621` | Execute crop stages within the configured pool and report completed-stage wall times. |
+| `CropPipeline::run_in_pool` | `src/pipeline/crop.rs:1359` | Execute crop stages within the configured pool and report completed-stage wall times. |
 | `CropPipeline`（结构体） | `src/pipeline/crop.rs:14` | 持有裁剪流水线所用的 `CropConfig`。 |
 | `InterpolationMode`（枚举） | `src/pipeline/crop.rs:19` | 旋转+裁剪期间使用的最近邻与三线性重采样模式。 |
 | `parse_byte_order` | `src/pipeline/crop.rs:34` | 将 `little`/`big`（或 `le`/`be`）解析为 `ByteOrder`。 |
@@ -23,37 +23,37 @@
 | `infer_trim_pixels` | `src/pipeline/crop.rs:242` | 根据边界伪影强度启发式地推断需裁剪的 0/1/2 像素。 |
 | `resolve_trim_pixels` | `src/pipeline/crop.rs:260` | 从配置中解析出有效的边缘裁剪像素数，支持 `-1` 表示自动。 |
 | `trim_volume_border` | `src/pipeline/crop.rs:287` | 从体数据的 XY 面裁剪固定数量的边界体素。 |
-| `detect_background_mode` | `src/pipeline/crop.rs:317` | 将体数据边界上的众数体素值检测为背景值。 |
-| `estimate_pca_bbox` | `src/pipeline/crop.rs:351` | 计算 PCA 旋转、质心以及旋转坐标系下的前景包围盒。 |
-| `MomentState` | `src/pipeline/crop.rs` | 运行中的计数、均值与中心化二阶矩矩阵。 |
-| `MomentState::from_row` | `src/pipeline/crop.rs` | 由整数和得到单个前景行段的精确矩。 |
-| `MomentState::merge` | `src/pipeline/crop.rs` | 两个矩状态的 Chan 并行合并。 |
-| `pca_frame` | `src/pipeline/crop.rs` | 排序、定号、右手系且近重根特征空间取规范基的 PCA 坐标系。 |
-| `projected_bounds` | `src/pipeline/crop.rs` | 固定分块求旋转坐标系下的前景边界。 |
-| `foreground_row_blocks` | `src/pipeline/crop.rs` | 固定分块扫描，把连续行段交给累加器。 |
-| `estimate_pca_bbox_three_pass` | `src/pipeline/crop.rs` | 仅测试使用的原三遍固定分块 PCA oracle。 |
-| `rotate_and_crop` | `src/pipeline/crop.rs:459` | CPU 上、基于 rayon 并行的旋转+裁剪，将体数据重采样为轴对齐输出。 |
-| `rotate_and_crop_gpu` | `src/pipeline/crop.rs` | 按预算规划、按输出分块执行的 GPU 旋转裁剪（`gpu` 特性）。 |
-| `CropSourceBlock` | `src/pipeline/crop.rs` | 单个输出块可读取的、已裁剪到源体范围的源子块（原点/尺寸）。 |
-| `CropTilePlan` | `src/pipeline/crop.rs` | 选定的块形状、块数、保留最大值与逻辑 GPU 峰值字节。 |
-| `CropTilePlanError` | `src/pipeline/crop.rs` | 规划拒绝原因，附带所需字节的可选下界。 |
-| `crop_tile_source_block` | `src/pipeline/crop.rs` | 块 8 个角点逆映射的源 AABB，加插值 halo 与 f32 误差余量。 |
-| `crop_gpu_peak_bytes` | `src/pipeline/crop.rs` | 保留最大源块/输出块、排队上传、staging、参数和守卫字的逻辑峰值。 |
-| `for_each_crop_tile` | `src/pipeline/crop.rs` | 按 z、y、x 顺序遍历整个输出的块。 |
-| `evaluate_crop_tiling` | `src/pipeline/crop.rs` | 检查某一块形状是否满足预算和设备单缓冲上限。 |
-| `plan_crop_gpu_tiles` | `src/pipeline/crop.rs` | 选择满足预算与上限的最大 z 板/行/x 段分块。 |
-| `CropPipeline::run` | `src/pipeline/crop.rs:598` | 编排加载 → 背景检测 → PCA 包围盒 → 旋转+裁剪（GPU 或 CPU）→ 边缘裁剪 → 保存 TIFF。 |
+| `detect_background_mode` | `src/pipeline/crop.rs:338` | 将体数据边界上的众数体素值检测为背景值。 |
+| `estimate_pca_bbox` | `src/pipeline/crop.rs:385` | 计算 PCA 旋转、质心以及旋转坐标系下的前景包围盒。 |
+| `MomentState` | `src/pipeline/crop.rs:423` | 运行中的计数、均值与中心化二阶矩矩阵。 |
+| `MomentState::from_row` | `src/pipeline/crop.rs:438` | 由整数和得到单个前景行段的精确矩。 |
+| `MomentState::merge` | `src/pipeline/crop.rs:448` | 两个矩状态的 Chan 并行合并。 |
+| `pca_frame` | `src/pipeline/crop.rs:477` | 排序、定号、右手系且近重根特征空间取规范基的 PCA 坐标系。 |
+| `projected_bounds` | `src/pipeline/crop.rs:549` | 固定分块求旋转坐标系下的前景边界。 |
+| `foreground_row_blocks` | `src/pipeline/crop.rs:590` | 固定分块扫描，把连续行段交给累加器。 |
+| `estimate_pca_bbox_three_pass` | `src/pipeline/crop.rs:564` | 仅测试使用的原三遍固定分块 PCA oracle。 |
+| `rotate_and_crop` | `src/pipeline/crop.rs:737` | CPU 上、基于 rayon 并行的旋转+裁剪，将体数据重采样为轴对齐输出。 |
+| `rotate_and_crop_gpu` | `src/pipeline/crop.rs:1131` | 按预算规划、按输出分块执行的 GPU 旋转裁剪（`gpu` 特性）。 |
+| `CropSourceBlock` | `src/pipeline/crop.rs:818` | 单个输出块可读取的、已裁剪到源体范围的源子块（原点/尺寸）。 |
+| `CropTilePlan` | `src/pipeline/crop.rs:847` | 选定的块形状、块数、保留最大值与逻辑 GPU 峰值字节。 |
+| `CropTilePlanError` | `src/pipeline/crop.rs:859` | 规划拒绝原因，附带所需字节的可选下界。 |
+| `crop_tile_source_block` | `src/pipeline/crop.rs:871` | 块 8 个角点逆映射的源 AABB，加插值 halo 与 f32 误差余量。 |
+| `crop_gpu_peak_bytes` | `src/pipeline/crop.rs:920` | 保留最大源块/输出块、排队上传、staging、参数和守卫字的逻辑峰值。 |
+| `for_each_crop_tile` | `src/pipeline/crop.rs:930` | 按 z、y、x 顺序遍历整个输出的块。 |
+| `evaluate_crop_tiling` | `src/pipeline/crop.rs:957` | 检查某一块形状是否满足预算和设备单缓冲上限。 |
+| `plan_crop_gpu_tiles` | `src/pipeline/crop.rs:1023` | 选择满足预算与上限的最大 z 板/行/x 段分块。 |
+| `CropPipeline::run` | `src/pipeline/crop.rs:1339` | 编排加载 → 背景检测 → PCA 包围盒 → 旋转+裁剪（GPU 或 CPU）→ 边缘裁剪 → 保存 TIFF。 |
 | `SplitFilterPipeline`（结构体） | `src/pipeline/split_filter.rs:13` | 持有拆分-过滤流水线所用的 `SplitFilterConfig`。 |
 | `VolumeStats`（结构体） | `src/pipeline/split_filter.rs:18` | 保留颗粒体积的最小/最大/均值/中位数汇总。 |
-| `volume_stats_for_kept` | `src/pipeline/split_filter.rs:26` | 在 `keep` 标志为真的颗粒上计算 `VolumeStats`。 |
-| `count_kept` | `src/pipeline/split_filter.rs:54` | 统计 `keep` 布尔切片中 `true` 的条目数。 |
-| `report_step` | `src/pipeline/split_filter.rs:59` | 为某一过滤步骤追加一行前/后/移除数量的汇总。 |
-| `append_volume_histogram` | `src/pipeline/split_filter.rs:71` | 追加一份体积值的单一文本直方图。 |
-| `append_volume_histogram_comparison` | `src/pipeline/split_filter.rs:119` | 追加一份并排显示的前/后体积值文本直方图对比。 |
-| `normal_cdf` | `src/pipeline/split_filter.rs:202` | 标准正态分布 CDF，通过 `erf_approx` 计算。 |
-| `erf_approx` | `src/pipeline/split_filter.rs:208` | Abramowitz & Stegun 7.1.26 误差函数近似。 |
-| `apply_lognormal_rebalance` | `src/pipeline/split_filter.rs:225` | 相对于拟合的对数正态分布，从代表过多的对数体积区间中剔除多余颗粒。 |
-| `SplitFilterPipeline::run` | `src/pipeline/split_filter.rs:300` | 编排拆分 → 长宽比/尖锐度/体积过滤 → 保存 STL → 报告生成。 |
+| `volume_stats_for_kept` | `src/pipeline/split_filter.rs:31` | 在 `keep` 标志为真的颗粒上计算 `VolumeStats`。 |
+| `count_kept` | `src/pipeline/split_filter.rs:59` | 统计 `keep` 布尔切片中 `true` 的条目数。 |
+| `report_step` | `src/pipeline/split_filter.rs:64` | 为某一过滤步骤追加一行前/后/移除数量的汇总。 |
+| `append_volume_histogram` | `src/pipeline/split_filter.rs:76` | 追加一份体积值的单一文本直方图。 |
+| `append_volume_histogram_comparison` | `src/pipeline/split_filter.rs:124` | 追加一份并排显示的前/后体积值文本直方图对比。 |
+| `normal_cdf` | `src/pipeline/split_filter.rs:207` | 标准正态分布 CDF，通过 `erf_approx` 计算。 |
+| `erf_approx` | `src/pipeline/split_filter.rs:213` | Abramowitz & Stegun 7.1.26 误差函数近似。 |
+| `apply_lognormal_rebalance` | `src/pipeline/split_filter.rs:230` | 相对于拟合的对数正态分布，从代表过多的对数体积区间中剔除多余颗粒。 |
+| `SplitFilterPipeline::run` | `src/pipeline/split_filter.rs:341` | 编排拆分 → 长宽比/尖锐度/体积过滤 → 保存 STL → 报告生成。 |
 
 ---
 

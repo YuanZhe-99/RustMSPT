@@ -19,8 +19,8 @@
 | `clip_mesh_by_plane_with_cap` | `src/geometry/volume.rs:352` | 对网格执行一次平面裁剪，并对产生的开口进行封盖。 |
 | `clip_mesh_by_bbox` | `src/geometry/volume.rs:403` | 通过连续六次平面裁剪，将网格裁剪到一个轴对齐包围盒内。 |
 | `particle_volume_in_bbox` | `src/geometry/volume.rs:424` | 网格裁剪到包围盒后的体积。 |
-| `volume_fraction_in_bbox` | `src/geometry/volume.rs:434` | 单个网格在包围盒内的体积分数。 |
-| `volume_fraction_of_meshes_in_bbox` | `src/geometry/volume.rs:444` | 多个网格在包围盒内的总体积分数（并行计算）。 |
+| `volume_fraction_in_bbox` | `src/geometry/volume.rs:437` | 单个网格在包围盒内的体积分数。 |
+| `volume_fraction_of_meshes_in_bbox` | `src/geometry/volume.rs:450` | 多个网格在包围盒内的总体积分数（并行计算）。 |
 | `to_parry_trimesh` | `src/geometry/collision.rs:29` | 将 `Mesh` 转换为 parry3d 的 `TriMesh`。 |
 | `trimesh_contains_point` | `src/geometry/collision.rs:61` | 借助形状的层次包围体，以射线奇偶判定点是否位于实体内部。 |
 | `mesh_surfaces_intersect_prepared` | `src/geometry/collision.rs:99` | 给定预先构建的包围盒/形状，精确判定两个网格*表面*是否相交。 |

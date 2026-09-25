@@ -7,12 +7,12 @@
 
 | 条目 | 位置 | 摘要 |
 |---|---|---|
-| `TARGET_BIN_PROBES` | `src/pipeline/pack.rs:27` | 某个已选中区间在被排除出本轮重新选择之前，可容忍的最大连续放置失败次数。 |
-| `PackPipeline` | `src/pipeline/pack.rs:95` | 包装 `PackingConfig` 的流水线结构体；实现 `Pipeline`。 |
-| `CandidateProposal` | `src/pipeline/pack.rs:34` | 一个抽取的候选网格，及其可选的预计算 `MeshMetrics`。 |
-| `validate_sphericity_target` | `src/pipeline/pack.rs:110` | 在堆积开始前验证 `target_mean_sphericity`/`mean_sphericity_tolerance` 配置。 |
-| `check_geometry_filters` | `src/pipeline/pack.rs:141` | 对候选网格应用配置中的 `min_volume`、`max_aspect_ratio`、`max_sharpness_ratio` 过滤器。 |
-| `PackPipeline::run` | `src/pipeline/pack.rs:124` | 核心的顺序随机堆积循环，可选带有目标粒径分布与平均球形度引导。 |
+| `TARGET_BIN_PROBES` | `src/pipeline/pack.rs:316` | 某个已选中区间在被排除出本轮重新选择之前，可容忍的最大连续放置失败次数。 |
+| `PackPipeline` | `src/pipeline/pack.rs:318` | 包装 `PackingConfig` 的流水线结构体；实现 `Pipeline`。 |
+| `CandidateProposal` | `src/pipeline/pack.rs:323` | 一个抽取的候选网格，及其可选的预计算 `MeshMetrics`。 |
+| `validate_sphericity_target` | `src/pipeline/pack.rs:333` | 在堆积开始前验证 `target_mean_sphericity`/`mean_sphericity_tolerance` 配置。 |
+| `check_geometry_filters` | `src/pipeline/pack.rs:364` | 对候选网格应用配置中的 `min_volume`、`max_aspect_ratio`、`max_sharpness_ratio` 过滤器。 |
+| `PackPipeline::run` | `src/pipeline/pack.rs:413` | 核心的顺序随机堆积循环，可选带有目标粒径分布与平均球形度引导。 |
 | `DiameterBin` | `src/pipeline/pack_targets.rs:8` | 半开（最后一个区间为闭区间）的粒径区间，带有目标频率。 |
 | `DiameterBin::midpoint` | `src/pipeline/pack_targets.rs:16` | 该区间的算术中点。 |
 | `TargetDistribution` | `src/pipeline/pack_targets.rs:22` | 解析并归一化后的目标粒径分布（有序、不重叠的区间）。 |
@@ -37,19 +37,19 @@
 | `PackCollider` | `src/pipeline/pack.rs:59` | 缓存的碰撞体 bbox 与形状。 |
 | `PackCollider::new` | `src/pipeline/pack.rs:66` | 只准备一次碰撞形状。 |
 | `PackCollider::blocks` | `src/pipeline/pack.rs:74` | 缓存的重叠或间隙判定。 |
-| `bbox_may_block` | `src/pipeline/pack.rs:103` | 精确判定自身的 bbox 拒绝（可选 bbox）。 |
-| `periodic_image_shifts` | `src/pipeline/pack.rs:114` | 按 `generate_periodic_ghosts` 顺序给出周期平移及平移后 bbox。 |
-| `PackImage` | `src/pipeline/pack.rs:148` | 已接受颗粒或 `(particle_id, shift)` 镜像，碰撞体按需构建。 |
-| `PackScene` | `src/pipeline/pack.rs:155` | 镜像存储、增量网格、无 bbox 列表与 ghost 构建计数。 |
-| `PackScene::new` | `src/pipeline/pack.rs:164` | 创建使用 domain/8 网格的空存储。 |
-| `PackScene::build_ghost` | `src/pipeline/pack.rs:175` | 平移并准备一个镜像（计数）。 |
-| `PackScene::collider` | `src/pipeline/pack.rs:183` | 线程安全的惰性镜像碰撞体。 |
-| `PackScene::reachable` | `src/pipeline/pack.rs:192` | bbox 在 gap 下可能阻挡查询的镜像。 |
-| `PackScene::blocks_any` | `src/pipeline/pack.rs:219` | 对可达镜像串行/并行 any()。 |
-| `PackScene::candidate_images` | `src/pipeline/pack.rs:244` | 完整旧版可行性判定，候选及已接受镜像均惰性实例化。 |
-| `PackScene::insert` | `src/pipeline/pack.rs:276` | 记录已接受颗粒及其镜像描述。 |
-| `PackScene::image_stats` | `src/pipeline/pack.rs:300` | 存储镜像数、已实例化 ghost 数、ghost 构建数。 |
-| `PackPipeline::run_in_pool` | `src/pipeline/pack.rs:442` | Packing work under configured pool. |
+| `bbox_may_block` | `src/pipeline/pack.rs:105` | 精确判定自身的 bbox 拒绝（可选 bbox）。 |
+| `periodic_image_shifts` | `src/pipeline/pack.rs:116` | 按 `generate_periodic_ghosts` 顺序给出周期平移及平移后 bbox。 |
+| `PackImage` | `src/pipeline/pack.rs:150` | 已接受颗粒或 `(particle_id, shift)` 镜像，碰撞体按需构建。 |
+| `PackScene` | `src/pipeline/pack.rs:157` | 镜像存储、增量网格、无 bbox 列表与 ghost 构建计数。 |
+| `PackScene::new` | `src/pipeline/pack.rs:166` | 创建使用 domain/8 网格的空存储。 |
+| `PackScene::build_ghost` | `src/pipeline/pack.rs:177` | 平移并准备一个镜像（计数）。 |
+| `PackScene::collider` | `src/pipeline/pack.rs:185` | 线程安全的惰性镜像碰撞体。 |
+| `PackScene::reachable` | `src/pipeline/pack.rs:194` | bbox 在 gap 下可能阻挡查询的镜像。 |
+| `PackScene::blocks_any` | `src/pipeline/pack.rs:221` | 对可达镜像串行/并行 any()。 |
+| `PackScene::candidate_images` | `src/pipeline/pack.rs:246` | 完整旧版可行性判定，候选及已接受镜像均惰性实例化。 |
+| `PackScene::insert` | `src/pipeline/pack.rs:278` | 记录已接受颗粒及其镜像描述。 |
+| `PackScene::image_stats` | `src/pipeline/pack.rs:302` | 存储镜像数、已实例化 ghost 数、ghost 构建数。 |
+| `PackPipeline::run_in_pool` | `src/pipeline/pack.rs:444` | Packing work under configured pool. |
 
 **另请参阅：** 关于本流水线中大量使用的 `MeshMetrics` 与 `scale_mesh_to_equivalent_diameter`，见
 [geometry-analysis.md](geometry-analysis.md)。

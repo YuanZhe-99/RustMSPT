@@ -19,19 +19,19 @@ VTU 读写器（`src/io/vtu.rs`）、场景抽取层（`src/meshgen/render_scene
 | `load_vtu` | `src/io/vtu.rs:479` | 读取契约子集（ascii + appended-raw，UInt32/UInt64 头）；对压缩或 base64 文件返回明确命名的错误。 |
 | `SetKind` | `src/meshgen/render_scene.rs:8` | 渲染集合归属（`Volume` 边界面 vs 带标签的 `Face` 单元）；重合命中去重时 Face 优先。 |
 | `SceneTri`/`SceneSegment`/`SceneMarker` | `src/meshgen/render_scene.rs:15` | 抽取阶段产出的世界坐标图元，携带颜色/不透明度。 |
-| `RenderScene` | `src/meshgen/render_scene.rs:43` | 抽取结果：三角形、叠加线段、标记点、用于取景的整文档包围盒。 |
-| `SceneFilter` | `src/meshgen/render_scene.rs:52` | 以"与"组合的过滤器：cell_kind、component、region_key、partition、regime、background、array_range、bbox、clip_plane（波浪形裁剪）。 |
-| `ColorMode` | `src/meshgen/render_scene.rs:67` | 单色 / 分类调色板（整型数组）/ viridis 标量色带（浮点数组）三种着色方式；指定**点**数组时，单元取其非哨兵点值的均值。 |
-| `point_array_cell_value` | `src/meshgen/render_scene.rs:273` | 将点数组归约为每单元一个值（非哨兵点值的均值）以供着色。 |
-| `SceneSpec` | `src/meshgen/render_scene.rs:77` | 完整抽取规格：过滤器、着色模式、逐集合不透明度 + 按区域覆盖、叠加开关、高亮点。 |
+| `RenderScene` | `src/meshgen/render_scene.rs:46` | 抽取结果：三角形、叠加线段、标记点、用于取景的整文档包围盒。 |
+| `SceneFilter` | `src/meshgen/render_scene.rs:57` | 以"与"组合的过滤器：cell_kind、component、region_key、partition、regime、background、array_range、bbox、clip_plane（波浪形裁剪）。 |
+| `ColorMode` | `src/meshgen/render_scene.rs:72` | 单色 / 分类调色板（整型数组）/ viridis 标量色带（浮点数组）三种着色方式；指定**点**数组时，单元取其非哨兵点值的均值。 |
+| `point_array_cell_value` | `src/meshgen/render_scene.rs:281` | 将点数组归约为每单元一个值（非哨兵点值的均值）以供着色。 |
+| `SceneSpec` | `src/meshgen/render_scene.rs:88` | 完整抽取规格：过滤器、着色模式、逐集合不透明度 + 按区域覆盖、叠加开关、高亮点。 |
 | `categorical_color` / `scalar_color` | `src/meshgen/render_scene.rs:132` | 12 色分类调色板（哨兵值 → 灰色）与紧凑型 viridis 色带。 |
-| `build_scene` | `src/meshgen/render_scene.rs:358` | VtuDoc + SceneSpec → RenderScene：过滤链、确定性的边界面/线框输出、带标签的面、曲线线段、标记点。缺失数组时的错误会指明数组名。 |
+| `build_scene` | `src/meshgen/render_scene.rs:437` | VtuDoc + SceneSpec → RenderScene：过滤链、确定性的边界面/线框输出、带标签的面、曲线线段、标记点。缺失数组时的错误会指明数组名。 |
 | `SceneRenderSettings` | `src/geometry/scene_render.rs:12` | 场景渲染外观设置；背景为 RGBA（alpha 为 0 表示透明 PNG）。 |
-| `render_scene_cpu` | `src/geometry/scene_render.rs:95` | CPU 参考渲染器：每条像素射线做全命中 QBVH 遍历、前到后 alpha 合成、重合命中去重（Face 优先于 Volume）、带深度测试的线叠加、标记点。 |
-| `named_view` | `src/geometry/scene_render.rs:287` | 将 front/back/left/right/top/bottom/iso_ne/iso_nw/iso_se/iso_sw 解析为 (view_direction, up)。 |
+| `render_scene_cpu` | `src/geometry/scene_render.rs:116` | CPU 参考渲染器：每条像素射线做全命中 QBVH 遍历、前到后 alpha 合成、重合命中去重（Face 优先于 Volume）、带深度测试的线叠加、标记点。 |
+| `named_view` | `src/geometry/scene_render.rs:343` | 将 front/back/left/right/top/bottom/iso_ne/iso_nw/iso_se/iso_sw 解析为 (view_direction, up)。 |
 | `ViewSpec`/`FilterSpec` | `src/config/mesh_render.rs:7` | 视角（命名预设或自定义相机块）与按类型标记的过滤器的 YAML 形式。 |
 | `MeshRenderParams`/`MeshRenderConfig` | `src/config/mesh_render.rs:38` | `mesh_render:` YAML 配置块（输入 VTU、output_dir、views、图像、着色、不透明度、过滤器、叠加、相机）。 |
-| `MeshRenderPipeline` | `src/pipeline/mesh_render.rs:18` | `mesh-render` 子命令：加载 VTU → 构建场景 → 每个视角输出一张 PNG（`<stem>_<view>.png`）。 |
+| `MeshRenderPipeline` | `src/pipeline/mesh_render.rs:20` | `mesh-render` 子命令：加载 VTU → 构建场景 → 每个视角输出一张 PNG（`<stem>_<view>.png`）。 |
 
 ## GPU 预览路径（GA-3c）
 
@@ -132,9 +132,9 @@ GPU 场景测试样例显式初始化两个线框计数字段，并在 GPU 特�
 
 与 mesh_render 同级的可选 cpu_max 接受整数或整数字符串。缺省/-1 使用可用 CPU，其余夹取 1..available。场景准备、所有 CPU 视图及 GPU 失败回退均进入同一个 Rayon 池，日志记录请求与实际线程数及 CPU 渲染入口的线程索引。backend: gpu 仍为严格不透明预览；auto 可回退透明 CPU 参考路径，回退不再建池。
 
-| `MeshRenderPipeline::with_worker_pool` | `src/pipeline/mesh_render.rs:193` | Execute scene preparation, rendering and fallback within the worker budget. |
+| `MeshRenderPipeline::with_worker_pool` | `src/pipeline/mesh_render.rs:201` | Execute scene preparation, rendering and fallback within the worker budget. |
 
-| `MeshRenderPipeline::run_in_pool` | `src/pipeline/mesh_render.rs:218` | Execute scene preparation, rendering and fallback within the worker budget. |
+| `MeshRenderPipeline::run_in_pool` | `src/pipeline/mesh_render.rs:226` | Execute scene preparation, rendering and fallback within the worker budget. |
 
 RUSTMSPT_ACCELERATION=cpu|gpu|auto 在加载输入前覆盖已验证的 YAML backend；非法环境值报错。生效的 gpu 仍严格拒绝失败，auto 允许回退，cpu 不初始化 GPU。此处未把 STL 渲染的像素阈值套用于既有 mesh 预览。
 
@@ -155,6 +155,8 @@ GPU 多视图且配置 worker 数大于 1 时，`consume_frames` 通过零容量
 ### CPU PNG 写出重叠（PERF-17，2026-09-25）
 
 **构建与驻留计数（PERF-17，2026-09-25）。** CPU 路径打印 `[mesh-render] cpu scene_qbvh_builds=<n> views=<n> max_live_images=<n>`。`scene_qbvh_builds` 是进程级计数 `geometry::scene_render::scene_qbvh_build_count()`（每个含几何的 `PreparedScene` 加一）在准备前后的差值，因此无论渲染多少视图都为 1；`max_live_images` 由 `render_and_write_overlapped` 返回（单视图为 1，写出与渲染重叠后为 2）。`mesh_render_cli_worker_budget_and_fallback` 在 1/2/8 worker 下断言 `scene_qbvh_builds=1 views=2 max_live_images=2`。GPU 路径每个 `GpuScenePipeline` 只上传一次，其主机帧由会合式 writer 限制（最多两帧，§56）。
+
+**小预算下的 GPU 条带渲染（2026-09-25）。** 当 `gpu_memory_limit_mb` 放不下整图的颜色/深度目标与回读缓冲时，预检不再拒绝：`scene_strip_rows` 选出工作集能放下的最高水平条带（二分得到精确边界），日志报告 `strip rows <n> of <height>`，`GpuScenePipeline` 用条带大小的目标逐条渲染每个视图（`GpuSceneOptions::strip_rows`，`None` 表示一次渲染整图）。每个条带把裁剪空间 y 重映射到自己的 NDC 范围（`y' = s*(y - c*w)`，在 f64 中合成后再转 f32），较短的末条带把视口设为自身行数；x、z、w 不变，因此深度逐位相同，只有 y 的舍入可能使边缘移动一个像素。几何仍整体上传，所以预算小于“一行加几何”时仍拒绝（auto 回退，gpu 报错）。在 llvmpipe 上，1/7/16/60 行条带在两种投影下都与一次渲染完全相同（`gpu_strip_rendering_matches_one_pass`，为硬件保留 2% 边缘像素容差）；`mesh_render_gpu_budget_renders_in_strips` 在 1 MiB 预算下于 GPU 渲染 1024×1024，无 CPU 回退，并与无预算图像比较。
 
 CPU 视图改由 `render_and_write_overlapped` 处理：第 *i* 个视图在 `rayon::join` 中渲染（内部仍按像素并行），同时第 *i-1* 个视图在同一线程池的另一个 worker 上进行 PNG 编码和写盘；因此最多存在两张已完成或正在渲染的图像，写出仍按视图顺序。写出错误在并发开始的那次渲染结束后立即返回；之后的视图不再渲染或写出，CPU 写出错误也不会触发任何回退。单 worker 时 `join` 依次内联执行渲染与写出，即原来的顺序循环。测试在 1/2/4 worker、0/1/2/7 个视图下与顺序循环比较 PNG 字节和顺序，检查首/中/末帧写错（且最多多渲染一个视图），并证明下一视图的渲染在上一张写出完成前开始。GPU writer 保留 `consume_frames`：其生产者由回调驱动（`render_views_to` 推送帧），逐帧 `rayon::join` 需要拉取式 GPU API，而 rayon scope 加阻塞交接会让线程池 worker 阻塞在通道上；其阻塞/排空/回退顺序由现有测试覆盖，本次未改动。忽略的 release 基准 `cpu_overlap_benchmark`（level-5 icosphere 的 8 个视图，预热后 5 个样本，4 核共享机器且有并发构建）未发现可靠差异：256²/1024²/2048² 及 1/2/4 worker 下重叠/顺序中位比值为 0.95～1.23，样本离散度大于差值，原因是 PNG 编码只占 CPU 光线投射时间的一小部分。Auto 后端选择：STL `render` 已通过 `resolve_execution` 使用 `acceleration.gpu_min_pixels`（默认 250,000）；`mesh-render` 默认仍为 `gpu_min_pixels: 0`，因为把小尺寸 `auto` 渲染切到 CPU 会改变图像（CPU 为透明度参考，GPU 为不透明预览），而不仅是成本。
 
