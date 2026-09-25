@@ -117,6 +117,12 @@
 | `occupancy_dims` | Geometry — Analysis | `src/geometry/s2.rs` | 给定域和体素尺寸的占据网格维度。 |
 | `part_voxel_ranges` | Geometry — Analysis | `src/geometry/s2.rs` | 每个连通分量的预备查询及截断后的体素范围；全量与增量体素化共用。 |
 | `particle_voxel_coverage` | Geometry — Analysis | `src/geometry/s2.rs` | 体素中心位于某颗粒内部的扁平索引，每个包含它的连通分量各记一次。 |
+| `voxel_mc_rng` | Geometry — Analysis | `src/geometry/s2.rs` | 为单个体素 MC 半径新建的无种子 Xoshiro256++（`SmallRng`），种子取自 `thread_rng`；不得用于带种子的路径。 |
+| `cached_mc_shells` | Geometry — Analysis | `src/geometry/s2.rs` | 半径 1..=r_max 的壳层偏移，相同 `(r_max, pitch)` 键时复用。 |
+| `voxel_mc_radii` | Geometry — Analysis | `src/geometry/s2.rs` | 逐半径的体素 MC 命中比例；仅在要求时按半径并行，两种方式估计量相同。 |
+| `VOXEL_MC_PARALLEL_MIN_SAMPLES` | Geometry — Analysis | `src/geometry/s2.rs` | MC 总样本数低于 65,536 时各半径串行（实测确定）。 |
+| `particle_voxel_coverage_in` | Geometry — Analysis | `src/geometry/s2.rs` | 对预处理分量范围做包含查询；按 x 列并行或串行，输出顺序相同。 |
+| `COVERAGE_PARALLEL_MIN_VOXELS` | Geometry — Analysis | `src/geometry/s2.rs` | 单颗粒候选体素少于 1,024 时覆盖查询串行（实测确定）。 |
 | `VoxelCoverage` | Geometry — Analysis | `src/geometry/s2.rs` | SA 用的逐体素覆盖计数及对应占据场；计数 > 0 即占据。 |
 | `VoxelCoverage::new` | Geometry — Analysis | `src/geometry/s2.rs` | 为整个粒子群建立计数；网格等于对合并网格调用 VoxelS2::new。 |
 | `VoxelCoverage::replace` | Geometry — Analysis | `src/geometry/s2.rs` | 只重新查询被移动的颗粒，替换其列表并返回旧列表用于回滚。 |
@@ -214,9 +220,10 @@
 | `mesh_solids_nested_prepared` | Geometry — Volume & Collision | `src/geometry/collision.rs:150` | 判定两个闭合实体中是否有一个整体位于另一个内部。 |
 | `mesh_collision_exact_prepared` | Geometry — Volume & Collision | `src/geometry/collision.rs:196` | 判定两个网格实体是否重叠：表面相交，或一个包含另一个。 |
 | `mesh_distance_exact_prepared` | Geometry — Volume & Collision | `src/geometry/collision.rs:214` | 在给定预先构建的包围盒/形状的情况下，进行经包围盒过滤的精确距离查询。 |
-| `mesh_collision_exact` | Geometry — Volume & Collision | `src/geometry/collision.rs:259` | 便捷封装：构建包围盒/形状后测试碰撞。 |
-| `mesh_distance_exact` | Geometry — Volume & Collision | `src/geometry/collision.rs:268` | 便捷封装：构建包围盒/形状后计算距离。 |
-| `generate_periodic_ghosts` | Geometry — Volume & Collision | `src/geometry/collision.rs:282` | 为周期边界碰撞生成一个网格经平移的镜像副本。 |
+| `mesh_closer_than_prepared` | Geometry — Volume & Collision | `src/geometry/collision.rs:267` | 带筛查的 `距离 < 间隙` 判定（双 BVH 余量筛查后再算精确距离）。 |
+| `mesh_collision_exact` | Geometry — Volume & Collision | `src/geometry/collision.rs:374` | 便捷封装：构建包围盒/形状后测试碰撞。 |
+| `mesh_distance_exact` | Geometry — Volume & Collision | `src/geometry/collision.rs:383` | 便捷封装：构建包围盒/形状后计算距离。 |
+| `generate_periodic_ghosts` | Geometry — Volume & Collision | `src/geometry/collision.rs:397` | 为周期边界碰撞生成一个网格经平移的镜像副本。 |
 | `simulate_forging_ffd` | Geometry — Volume & Collision | `src/geometry/forging.rs:10` | 带侧向鼓凸的简单 Z 轴自由变形压缩。 |
 | `simulate_forging_ffd_with_tracking` | Geometry — Volume & Collision | `src/geometry/forging.rs:43` | 带孔隙致密化和感兴趣区域包围盒跟踪、轴向可配置的自由变形锻造。 |
 | `GpuContext` | GPU | `src/gpu/context.rs:3` | GPU 初始化成功后持有适配器名称与缓冲区大小能力信息。 |
@@ -855,6 +862,7 @@
 | `VoxelS2::calculate_exact_with` | Geometry Analysis | `src/geometry/s2.rs` | 指定 CPU 内核计算 exact S2。 |
 | `DEFAULT_CPU_EXACT_BUDGET_BYTES` | Geometry Analysis | `src/geometry/s2.rs` | 默认 CPU exact 工作集预算（768 MiB）。 |
 | `NS_PER_FFT_UNIT` | Geometry Analysis | `src/geometry/s2.rs` | 校准的每 P*log2(P) 单位 FFT 成本（ns）。 |
+| `FFT_PARALLEL_EFFICIENCY` | Geometry Analysis | `src/geometry/s2.rs` | FFT 并行效率模型参数。 |
 | `NS_PER_DIRECT_PAIR` | Geometry Analysis | `src/geometry/s2.rs` | 校准的每访问配对直接法成本（ns）。 |
 | `DIRECT_PARALLEL_EFFICIENCY` | Geometry Analysis | `src/geometry/s2.rs` | 直接法并行效率模型参数。 |
 

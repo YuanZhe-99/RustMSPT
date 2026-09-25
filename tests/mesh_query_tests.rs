@@ -244,3 +244,22 @@ fn shared_voxel_grid_preserves_exact_and_mc_vf() {
         assert!(mc.iter().all(|v| v.is_finite() && (0.0..=1.0).contains(v)));
     }
 }
+
+// AI-FUNC-SUMMARY: Voxel Monte Carlo S2 must estimate the same quantity as exact S2: on a voxelized sphere with 200k samples per radius every radius lands within 0.01 of exact (about 5 binomial sigma); guards the fast MC generator and its uniform draws; no file output.
+#[test]
+fn voxel_monte_carlo_estimates_the_exact_s2() {
+    use rustmspt::geometry::s2::VoxelS2;
+    let bbox = BoundingBox { min: Vec3::new(0.0, 0.0, 0.0), max: Vec3::new(30.0, 30.0, 30.0) };
+    let mesh = merge_meshes(&[
+        icosphere_mesh(Vec3::new(10.0, 12.0, 14.0), 7.0, 3),
+        icosphere_mesh(Vec3::new(21.0, 18.0, 15.0), 5.0, 3),
+    ]);
+    let grid = VoxelS2::new(&mesh, bbox, 1.0);
+    let exact = grid.calculate(8, "exact", 200);
+    let mc = grid.calculate(8, "monte_carlo", 200_000);
+    assert_eq!(mc[0], exact[0]);
+    for r in 1..=8 {
+        assert!((mc[r] - exact[r]).abs() < 0.01, "r {r}: mc {} exact {}", mc[r], exact[r]);
+    }
+    assert!(exact[8] < exact[1], "the fixture must decay, or agreement says little");
+}

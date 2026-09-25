@@ -1,7 +1,7 @@
 use crate::config::placement::{BoundaryMode, ResolvedBoundary};
 use crate::config::placement::VoidCrossing;
 use crate::geometry::{
-    bbox_distance, bbox_overlaps, cut_face_names, mesh_distance_exact_prepared,
+    bbox_distance, bbox_overlaps, cut_face_names, mesh_closer_than_prepared,
     mesh_solids_nested_prepared, mesh_surfaces_intersect_prepared, mesh_volume_in_bbox_exact,
     to_parry_trimesh, UnitQuat, VoidIndex,
 };
@@ -14,7 +14,9 @@ use rayon::prelude::*;
 /// 1.4-2x from two clear pairs upward, but end to end on dense runs (PLAN.Performance, PERF-12 item 2)
 /// about 98 % of attempts are rejected, the ordered search still waits for in-flight speculative
 /// distances, and the parallel path measured 0-10 % slower on a shared 4-core host, so it is off by
-/// default. The answer is identical either way; only speed changes.
+/// default. Re-measured after the gap screen (PLAN.Performance.md §68) on an idle 8-core host: 4 set
+/// against serial gave 0.97-1.05x end to end at volume fraction 0.25-0.30 on 4 and 8 threads, so it
+/// stays off. The answer is identical either way; only speed changes.
 pub const PAIR_PARALLEL_MIN: usize = usize::MAX;
 
 /// Why a proposed placement was not accepted.
@@ -388,7 +390,9 @@ fn pair_needs_exact_test(ctx: &FeasibilityContext, candidate: &Candidate, other:
 // needs distances only for pairs before f, since no later pair can be first. Those distances run in
 // parallel above `parallel_min` with the ordered `find_map_first`, so the smallest gap-failing index
 // c wins and the answer is Gap at c if it exists, else phase A's reason at f. Every pair phase B
-// reaches passed overlap and enclosure, which is why its gap failure is also its serial reason.
+// reaches passed overlap and enclosure, which is why its gap failure is also its serial reason, and
+// why phase B calls mesh_closer_than_prepared with the collision already ruled out rather than
+// repeating it; that helper also screens clearly separated pairs with a bounded query first.
 fn first_pair_rejection(
     bbox: BoundingBox,
     shape: Option<&TriMesh>,
@@ -409,8 +413,8 @@ fn first_pair_rejection(
     if gap > 0.0 {
         let too_close = |index: &usize| {
             let other = &placed[*index];
-            let d = mesh_distance_exact_prepared(Some(bbox), shape, Some(other.bbox), other.shape.as_ref());
-            (d < gap).then_some(RejectReason::ParticleGap)
+            mesh_closer_than_prepared(Some(bbox), shape, Some(other.bbox), other.shape.as_ref(), gap, true)
+                .then_some(RejectReason::ParticleGap)
         };
         let before = &survivors[..cut];
         let gap_reason = if before.len() >= parallel_min {
@@ -446,7 +450,7 @@ fn exact_pair_rejection(bbox: BoundingBox, shape: Option<&TriMesh>, other: &Plac
         return Some(reason);
     }
     if gap > 0.0 {
-        let d = mesh_distance_exact_prepared(Some(bbox), shape, Some(other.bbox), other.shape.as_ref());
+        let d = crate::geometry::mesh_distance_exact_prepared(Some(bbox), shape, Some(other.bbox), other.shape.as_ref());
         if d < gap {
             return Some(RejectReason::ParticleGap);
         }

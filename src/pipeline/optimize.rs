@@ -5,7 +5,7 @@ use crate::error::{Result, RustMsptError};
 use crate::geometry::{
     bbox_distance, bbox_overlaps, check_boundary_constraints_mode,
     generate_periodic_ghosts, l2_norm, merge_meshes, mesh_bbox, mesh_centroid, mesh_volume,
-    mesh_collision_exact_prepared, mesh_distance_exact_prepared, move_mesh_to_target_center,
+    mesh_closer_than_prepared, mesh_collision_exact_prepared, move_mesh_to_target_center,
     orient_components_to_positive_volume, rotate_mesh_around_center, split_mesh_into_granules,
     to_parry_trimesh, vec_norm, volume_fraction_of_meshes_in_bbox, wrap_mesh_centroid_to_box,
 };
@@ -557,13 +557,14 @@ fn run_sa_island(
                     };
                     if need_exact_distance {
                         distance_checks += 1;
-                        let d = mesh_distance_exact_prepared(
+                        if mesh_closer_than_prepared(
                             candidate_bbox,
                             candidate_shape.as_ref(),
                             other.bbox,
                             other.shape.as_ref(),
-                        );
-                        if d < min_neighbor {
+                            min_neighbor,
+                            true,
+                        ) {
                             blocked = true;
                             break;
                         }
@@ -647,13 +648,14 @@ fn run_sa_island(
                         };
                         if need_exact_distance {
                             distance_checks += 1;
-                            let d = mesh_distance_exact_prepared(
+                            if mesh_closer_than_prepared(
                                 g_bbox,
                                 g_shape.as_ref(),
                                 other.bbox,
                                 other.shape.as_ref(),
-                            );
-                            if d < min_neighbor {
+                                min_neighbor,
+                                true,
+                            ) {
                                 ghost_blocked = true;
                                 break;
                             }

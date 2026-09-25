@@ -2,7 +2,7 @@ use crate::config::{parse_box_dimensions, PackingConfig};
 use crate::error::{Result, RustMsptError};
 use crate::geometry::{
     bbox_distance, check_boundary_constraints_mode, merge_meshes,
-    mesh_bbox, mesh_collision_exact_prepared, mesh_distance_exact_prepared, mesh_metrics,
+    mesh_bbox, mesh_closer_than_prepared, mesh_collision_exact_prepared, mesh_metrics,
     mesh_surface_area, mesh_volume, move_mesh_to_target_center,
     orient_components_to_positive_volume, particle_volume_in_bbox, rotate_mesh_around_center,
     scale_mesh_to_equivalent_diameter, split_mesh_into_granules, to_parry_trimesh, translate_mesh,
@@ -82,12 +82,14 @@ impl PackCollider {
         }
         stats.narrow_phase.fetch_add(1, Ordering::Relaxed);
         if gap > 0.0 {
-            mesh_distance_exact_prepared(
+            mesh_closer_than_prepared(
                 self.bbox,
                 self.shape.as_ref(),
                 other.bbox,
                 other.shape.as_ref(),
-            ) < gap
+                gap,
+                false,
+            )
         } else {
             mesh_collision_exact_prepared(
                 self.bbox,

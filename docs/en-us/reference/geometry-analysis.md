@@ -17,6 +17,12 @@ This page documents `src/geometry/metrics.rs` (mesh manifold validation and volu
 | `build_bbox_occupancy` | `src/geometry/s2.rs:112` | Parallel voxelization of a mesh into a boolean occupancy grid. |
 | `part_voxel_ranges` | `src/geometry/s2.rs` | Prepared query and clamped voxel range per connected component; the single definition shared by full and incremental voxelization. |
 | `particle_voxel_coverage` | `src/geometry/s2.rs` | Voxel indices whose centres lie inside one particle, once per containing component, in component/x/y/z order. |
+| `voxel_mc_rng` | `src/geometry/s2.rs` | Fresh unseeded Xoshiro256++ (`SmallRng`) for one voxel MC radius, seeded from `thread_rng`; never for seeded paths. |
+| `cached_mc_shells` | `src/geometry/s2.rs` | Shell offsets for radii 1..=r_max, reused for an identical `(r_max, pitch)` key. |
+| `voxel_mc_radii` | `src/geometry/s2.rs` | Voxel MC hit ratios per radius; parallel over radii only when asked, same estimator either way. |
+| `VOXEL_MC_PARALLEL_MIN_SAMPLES` | `src/geometry/s2.rs` | 65,536 total MC samples below which radii run serially (measured). |
+| `particle_voxel_coverage_in` | `src/geometry/s2.rs` | Containment queries over prepared component ranges; parallel over x columns or serial, identical output order. |
+| `COVERAGE_PARALLEL_MIN_VOXELS` | `src/geometry/s2.rs` | 1,024 candidate voxels below which one particle's coverage queries run serially (measured). |
 | `VoxelCoverage` | `src/geometry/s2.rs` | Per-voxel coverage counts (number of components containing the centre) with matching occupancy (count > 0); replace re-queries only the moved particle, restore rolls back without queries. Equals VoxelS2::new on the merged mesh exactly. |
 | `shell_offsets_for_distance` | `src/geometry/s2.rs:184` | Enumerates integer voxel offsets lying within a spherical shell annulus. |
 | `fill_missing_s2_with_smooth_interpolation` | `src/geometry/s2.rs:217` | Fills unsupported S2 radii via linear or cubic-spline interpolation. |
@@ -65,7 +71,7 @@ This page documents `src/geometry/metrics.rs` (mesh manifold validation and volu
 | `finish_exact_curve` | `src/geometry/s2.rs` | Assemble, interpolate and pin S2(0). |
 | `VoxelS2::calculate_exact_with` | `src/geometry/s2.rs` | Exact S2 with an explicitly chosen CPU kernel. |
 | `DEFAULT_CPU_EXACT_BUDGET_BYTES` | `src/geometry/s2.rs` | Default CPU exact working-set budget (768 MiB). |
-| `NS_PER_FFT_UNIT` / `NS_PER_DIRECT_PAIR` / `DIRECT_PARALLEL_EFFICIENCY` | `src/geometry/s2.rs` | Calibrated cost-model constants. |
+| `NS_PER_FFT_UNIT` / `FFT_PARALLEL_EFFICIENCY` / `NS_PER_DIRECT_PAIR` / `DIRECT_PARALLEL_EFFICIENCY` | `src/geometry/s2.rs` | Calibrated cost-model constants. |
 
 ---
 
@@ -199,7 +205,7 @@ This is the two-point correlation function (`S2(r)`) engine — the largest and 
   1. **`voxel_pitch <= 0.0` and `method != "exact"`** → routes directly to `calculate_s2_monte_carlo_mesh`, which samples point pairs directly against the mesh's triangles with no voxelization at all (most accurate, but the slowest per-sample since each sample calls `point_inside_mesh` twice against the full triangle list).
   2. **Otherwise**, the mesh is first voxelized once via `build_bbox_occupancy` (shared by both remaining branches) to produce an occupancy grid and volume fraction `vf`. If the grid has zero occupied voxels, returns an all-zero vector immediately.
   3. **`method == "exact"`** → `VoxelS2::calculate` asks `cached_exact_plan` (see *CPU exact kernel planning* below) to choose between `calculate_s2_exact_fft` and `calculate_s2_exact_direct` by modeled time among kernels whose working set fits `DEFAULT_CPU_EXACT_BUDGET_BYTES`, and logs the choice once per plan key. Both kernels return bit-identical values, so the choice affects only time and memory.
-  4. **Any other `method` value** (the voxelized Monte Carlo path) → for each radius `1..=r_max`, precomputes the shell offsets once via `shell_offsets_for_distance`, then draws `samples.max(200)` random voxel-pair samples per radius (random voxel + random offset from that radius's shell) and estimates `S2(r)` as the hit fraction among in-bounds pairs. Unsupported radii (empty shell, or zero valid pairs) are filled in afterward via `fill_missing_s2_with_smooth_interpolation`.
+  4. **Any other `method` value** (the voxelized Monte Carlo path) → for each radius `1..=r_max`, precomputes the shell offsets once via `shell_offsets_for_distance`, then draws `samples.max(200)` random voxel-pair samples per radius (random voxel + random offset from that radius's shell) and estimates `S2(r)` as the hit fraction among in-bounds pairs. Unsupported radii (empty shell, or zero valid pairs) are filled in afterward via `fill_missing_s2_with_smooth_interpolation`. The shell offsets come from `cached_mc_shells` (reused for an identical `(r_max, pitch)`, so SA does not rebuild them per evaluation), the sampling is `voxel_mc_radii`, each radius draws from a fresh unseeded `voxel_mc_rng` (Xoshiro256++, rand's `SmallRng`) through precomputed `Uniform` distributions, and the radii run in parallel only when `samples * r_max >= VOXEL_MC_PARALLEL_MIN_SAMPLES` (65,536). The estimator is unchanged; the old per-radius `thread_rng` with per-call `gen_range` cost 6-8x the occupancy lookup per sample (PLAN.Performance.md §68).
 - **See also:** `calculate_s2_monte_carlo_mesh`, `build_bbox_occupancy`, `calculate_s2_exact_direct`, `calculate_s2_exact_fft`, `fill_missing_s2_with_smooth_interpolation`, `calculate_s2_with_gpu` (GPU-accelerated wrapper around this function), [GPU reference](gpu.md).
 
 #### approximate_s2
@@ -393,7 +399,7 @@ GPU exact now uses `shell_offset_iter`, retaining only nested range cursors even
 `plan_exact_cpu(dims, r_max, pitch, workers, budget)` returns an `ExactCpuPlan`:
 
 - `exact_shell_work` enumerates one octant of the in-domain offset ball once (sign copies weighted by multiplicity, loops cut at `r_max`) with the shell iterator's half-open float bounds, returning the in-domain offset count `K`, the exact direct work `W = Σ (nx-|dx|)(ny-|dy|)(nz-|dz|)` and the largest per-radius offset count. A unit test checks it against brute-force shell enumeration.
-- Modeled times: FFT `NS_PER_FFT_UNIT·P·log2 P` (P = padded cells, no parallel credit); direct `NS_PER_DIRECT_PAIR·W / (1 + DIRECT_PARALLEL_EFFICIENCY·(min(workers,K)-1))`. Constants (2.0 ns, 0.36 ns, 1/3) are single-worker release fits from the ignored `exact_cost_model_calibration` test; at 4 workers that host showed no FFT speedup and about 2x direct speedup.
+- Modeled times: FFT `NS_PER_FFT_UNIT·P·log2 P / (1 + FFT_PARALLEL_EFFICIENCY·(workers-1))` (P = padded cells); direct `NS_PER_DIRECT_PAIR·W / (1 + DIRECT_PARALLEL_EFFICIENCY·(min(workers,K)-1))`. Constants (7.0 ns, 0.18, 1.35 ns, 0.6) are release fits from the ignored `exact_cost_model_calibration` test at 1/4/8 workers on an idle 8-core host (PLAN.Performance.md §68): FFT sped up 1.7x at 4 workers and 2.1x at 8, direct 3.1x and 5.2x. With them the planner picks the faster kernel in all 18 calibration cases; the earlier constants (2.0, none, 0.36, 1/3, fitted on a shared 4-core host) missed one 8-worker case by 10%. Absolute times are host-specific; only the FFT/direct ratio decides, and it agreed between the two hosts (5.2 vs 5.6).
 - Working sets (checked `u64`): FFT = occupancy + complex grid + transpose (when the transform uses more than one task) + per-worker line/scratch + axis plans + output; direct = occupancy + in-domain offsets and per-offset counts for each concurrently processed radius + output. Plans' opaque internals and other threads' retained 16 MiB caches are not included.
 - Only kernels whose working set fits the budget are eligible; the cheaper one wins (FFT on ties). If neither fits, direct is reported with reason `no kernel fits budget`.
 

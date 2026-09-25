@@ -7,7 +7,7 @@
 //! and reports a volume fraction that counts the same space twice.
 
 use rustmspt::geometry::{
-    box_mesh, icosphere_mesh, mesh_bbox, mesh_collision_exact, mesh_collision_exact_prepared,
+    box_mesh, icosphere_mesh, mesh_bbox, mesh_closer_than_prepared, mesh_collision_exact, mesh_collision_exact_prepared,
     mesh_distance_exact_prepared, mesh_solids_nested_prepared, mesh_surfaces_intersect_prepared,
     merge_meshes, point_inside_mesh, to_parry_trimesh, trimesh_contains_point,
 };
@@ -205,4 +205,53 @@ fn the_hierarchy_point_test_agrees_with_the_scanning_one() {
         inside > 200,
         "only {inside} points landed inside - the sample says nothing"
     );
+}
+
+// ------------------------------------------------- the screened gap question
+
+/// `mesh_closer_than_prepared` screens clearly separated pairs with a bounded
+/// query before measuring. It must answer exactly `distance < gap` everywhere,
+/// including a gap equal to the measured distance and one ulp above it, where a
+/// screen that trusted its own points instead of the exact distance would flip.
+#[test]
+fn the_screened_gap_test_answers_exactly_what_the_distance_answers() {
+    let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
+    let mut next = move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        (state >> 11) as f64 / (1u64 << 53) as f64
+    };
+    let base = icosphere_mesh(Vec3::new(0.0, 0.0, 0.0), 1.0, 2);
+    let mut checked = 0usize;
+    let mut closer = 0usize;
+    for _ in 0..120 {
+        let dir = Vec3::new(next() - 0.5, next() - 0.5, next() - 0.5);
+        let len = dir.dot(dir).sqrt().max(1e-9);
+        let offset = 1.4 + 2.0 * next();
+        let centre = Vec3::new(dir.x / len * offset, dir.y / len * offset, dir.z / len * offset);
+        let sx = 0.4 + next();
+        let other = Mesh {
+            vertices: base
+                .vertices
+                .iter()
+                .map(|v| Vec3::new(centre.x + v.x * sx, centre.y + v.y * 0.7, centre.z + v.z * 0.5))
+                .collect(),
+            faces: base.faces.clone(),
+        };
+        let (ab, bb) = (mesh_bbox(&base), mesh_bbox(&other));
+        let (at, bt) = (to_parry_trimesh(&base), to_parry_trimesh(&other));
+        let d = mesh_distance_exact_prepared(ab, at.as_ref(), bb, bt.as_ref());
+        let apart = !mesh_collision_exact_prepared(ab, at.as_ref(), bb, bt.as_ref());
+        for gap in [0.0, 0.05, 0.3, 1.0, d, f64::from_bits(d.to_bits() + 1), d * 0.999_999, d * 1.000_001] {
+            let expected = d < gap;
+            assert_eq!(mesh_closer_than_prepared(ab, at.as_ref(), bb, bt.as_ref(), gap, false), expected, "d {d} gap {gap}");
+            if apart {
+                assert_eq!(mesh_closer_than_prepared(ab, at.as_ref(), bb, bt.as_ref(), gap, true), expected, "d {d} gap {gap}");
+            }
+            checked += 1;
+            closer += expected as usize;
+        }
+    }
+    assert!(closer > 100 && closer + 100 < checked, "both answers exercised: {closer} of {checked}");
 }

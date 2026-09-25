@@ -17,6 +17,12 @@
 | `build_bbox_occupancy` | `src/geometry/s2.rs:112` | 将网格并行体素化为布尔占据网格。 |
 | `part_voxel_ranges` | `src/geometry/s2.rs` | 每个连通分量的预备查询及截断体素范围；全量与增量体素化共用的唯一定义。 |
 | `particle_voxel_coverage` | `src/geometry/s2.rs` | 中心位于某颗粒内部的体素索引，每个包含它的分量各一次，按分量/x/y/z 顺序。 |
+| `voxel_mc_rng` | `src/geometry/s2.rs` | 为单个体素 MC 半径新建的无种子 Xoshiro256++（`SmallRng`），种子取自 `thread_rng`；不得用于带种子的路径。 |
+| `cached_mc_shells` | `src/geometry/s2.rs` | 半径 1..=r_max 的壳层偏移，相同 `(r_max, pitch)` 键时复用。 |
+| `voxel_mc_radii` | `src/geometry/s2.rs` | 逐半径的体素 MC 命中比例；仅在要求时按半径并行，两种方式估计量相同。 |
+| `VOXEL_MC_PARALLEL_MIN_SAMPLES` | `src/geometry/s2.rs` | MC 总样本数低于 65,536 时各半径串行（实测确定）。 |
+| `particle_voxel_coverage_in` | `src/geometry/s2.rs` | 对预处理分量范围做包含查询；按 x 列并行或串行，输出顺序相同。 |
+| `COVERAGE_PARALLEL_MIN_VOXELS` | `src/geometry/s2.rs` | 单颗粒候选体素少于 1,024 时覆盖查询串行（实测确定）。 |
 | `VoxelCoverage` | `src/geometry/s2.rs` | 逐体素覆盖计数（包含该体素中心的分量数）及对应占据（计数 > 0）；replace 只重新查询被移动颗粒，restore 无查询回滚。与对合并网格调用 VoxelS2::new 完全相等。 |
 | `shell_offsets_for_distance` | `src/geometry/s2.rs:184` | 枚举落在球壳环带内的整数体素偏移量。 |
 | `fill_missing_s2_with_smooth_interpolation` | `src/geometry/s2.rs:217` | 通过线性或三次样条插值填补不受支持的 S2 半径。 |
@@ -65,7 +71,7 @@
 | `finish_exact_curve` | `src/geometry/s2.rs` | 汇总、插值并固定 S2(0)。 |
 | `VoxelS2::calculate_exact_with` | `src/geometry/s2.rs` | 指定 CPU 内核计算 exact S2。 |
 | `DEFAULT_CPU_EXACT_BUDGET_BYTES` | `src/geometry/s2.rs` | 默认 CPU exact 工作集预算（768 MiB）。 |
-| `NS_PER_FFT_UNIT` / `NS_PER_DIRECT_PAIR` / `DIRECT_PARALLEL_EFFICIENCY` | `src/geometry/s2.rs` | 校准后的成本模型常数。 |
+| `NS_PER_FFT_UNIT` / `FFT_PARALLEL_EFFICIENCY` / `NS_PER_DIRECT_PAIR` / `DIRECT_PARALLEL_EFFICIENCY` | `src/geometry/s2.rs` | 校准后的成本模型常数。 |
 
 ---
 
@@ -199,7 +205,7 @@
   1. **`voxel_pitch <= 0.0` 且 `method != "exact"`** → 直接路由至 `calculate_s2_monte_carlo_mesh`，该函数直接针对网格的三角形对点对进行采样，完全不做体素化（最精确，但每样本最慢，因为每个样本都要对完整三角形列表调用两次 `point_inside_mesh`）。
   2. **否则**，先通过 `build_bbox_occupancy`（被其余两个分支共用）对网格进行一次体素化，生成占据网格和体积分数 `vf`。如果网格中占据体素数为零，则立即返回全零向量。
   3. **`method == "exact"`** → `VoxelS2::calculate` 通过 `cached_exact_plan`（见下文“CPU exact 内核规划”）在工作集不超过 `DEFAULT_CPU_EXACT_BUDGET_BYTES` 的内核中按模型时间选择 `calculate_s2_exact_fft` 或 `calculate_s2_exact_direct`，并对每个计划键记录一次选择。两个内核结果逐位相同，选择只影响时间与内存。
-  4. **任何其他 `method` 值**（体素化蒙特卡洛路径）→ 对于每个半径 `1..=r_max`，先通过 `shell_offsets_for_distance` 预先计算一次壳层偏移量，然后为每个半径抽取 `samples.max(200)` 个随机体素对样本（随机体素 + 该半径壳层中的随机偏移），并以在界内点对中的命中比例估计 `S2(r)`。不受支持的半径（空壳层，或零个有效点对）随后通过 `fill_missing_s2_with_smooth_interpolation` 填补。
+  4. **任何其他 `method` 值**（体素化蒙特卡洛路径）→ 对于每个半径 `1..=r_max`，先通过 `shell_offsets_for_distance` 预先计算一次壳层偏移量，然后为每个半径抽取 `samples.max(200)` 个随机体素对样本（随机体素 + 该半径壳层中的随机偏移），并以在界内点对中的命中比例估计 `S2(r)`。不受支持的半径（空壳层，或零个有效点对）随后通过 `fill_missing_s2_with_smooth_interpolation` 填补。壳层偏移由 `cached_mc_shells` 提供（相同 `(r_max, pitch)` 时复用，SA 不必每次评估重建），采样在 `voxel_mc_radii` 中进行：每个半径使用新建的无种子 `voxel_mc_rng`（Xoshiro256++，即 rand 的 `SmallRng`），通过预先构造的 `Uniform` 分布抽样；仅当 `samples * r_max >= VOXEL_MC_PARALLEL_MIN_SAMPLES`（65,536）时各半径并行。估计量不变；原先每半径 `thread_rng` 加逐次 `gen_range` 的单样本成本是占据查找的 6～8 倍（PLAN.Performance.md §68）。
 - **另请参阅：** `calculate_s2_monte_carlo_mesh`、`build_bbox_occupancy`、`calculate_s2_exact_direct`、`calculate_s2_exact_fft`、`fill_missing_s2_with_smooth_interpolation`、`calculate_s2_with_gpu`（本函数的 GPU 加速封装）、[GPU 参考](gpu.md)。
 
 #### approximate_s2
@@ -393,7 +399,7 @@ GPU exact 现使用 shell_offset_iter，单个半径内部也只保留嵌套范�
 `plan_exact_cpu(dims, r_max, pitch, workers, budget)` 返回 `ExactCpuPlan`：
 
 - `exact_shell_work` 只枚举一次域内偏移球的一个卦限（符号副本按重数加权，循环在 `r_max` 处截断），使用与壳迭代器相同的半开浮点边界，返回域内偏移数 `K`、精确直接工作量 `W = Σ (nx-|dx|)(ny-|dy|)(nz-|dz|)` 以及最大单半径偏移数；单元测试与暴力壳枚举对照。
-- 模型时间：FFT 为 `NS_PER_FFT_UNIT·P·log2 P`（P 为填充后单元数，不计并行加速）；直接法为 `NS_PER_DIRECT_PAIR·W / (1 + DIRECT_PARALLEL_EFFICIENCY·(min(workers,K)-1))`。常数（2.0 ns、0.36 ns、1/3）来自被忽略的 release 测试 `exact_cost_model_calibration` 的单 worker 拟合；该主机 4 worker 时 FFT 无加速，直接法约 2 倍。
+- 模型时间：FFT 为 `NS_PER_FFT_UNIT·P·log2 P / (1 + FFT_PARALLEL_EFFICIENCY·(workers-1))`（P 为填充后单元数）；直接法为 `NS_PER_DIRECT_PAIR·W / (1 + DIRECT_PARALLEL_EFFICIENCY·(min(workers,K)-1))`。常数（7.0 ns、0.18、1.35 ns、0.6）来自被忽略的 release 测试 `exact_cost_model_calibration` 在空闲 8 核主机上 1/4/8 worker 的拟合（PLAN.Performance.md §68）：FFT 在 4/8 worker 时加速 1.7/2.1 倍，直接法 3.1/5.2 倍。使用这些常数时规划器在全部 18 个校准用例中都选中更快的内核；此前在共享 4 核主机上拟合的常数（2.0、无、0.36、1/3）在一个 8 worker 用例上选错，相差 10%。绝对时间与主机相关，决定选择的只是 FFT/直接法比值，两台主机上该比值一致（5.2 对 5.6）。
 - 工作集（checked `u64`）：FFT = 占据场 + 复数网格 + 转置（变换多于一个任务时）+ 每 worker 行/scratch + 轴 plan + 输出；直接法 = 占据场 + 每个并发半径的域内偏移及逐偏移计数 + 输出。不包含 plan 内部不透明存储及其他线程保留的 16 MiB 缓存。
 - 只有工作集不超过预算的内核可选，取模型时间更小者（相等取 FFT）；都不满足时报告直接法，原因为 `no kernel fits budget`。
 

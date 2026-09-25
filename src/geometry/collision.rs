@@ -255,6 +255,121 @@ pub fn mesh_distance_exact_prepared(
     0.0
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Decide `mesh_distance_exact_prepared(...) < gap` without measuring the distance of pairs that are clearly farther apart than the gap.
+// Inputs: bounding boxes and parry3d TriMesh references for both meshes; the gap; `solids_known_apart` when the caller has already shown mesh_collision_exact_prepared is false for these exact arguments.
+// Returns: true iff the pair is closer than the gap, with the same fallbacks as mesh_distance_exact_prepared (missing boxes read as distance 0).
+// Side effects: None.
+// Notes: A bounded parry closest_points query at a margin just above the gap screens the pair first; its
+// Disjoint answer is GJK's proven lower bound exceeding the margin, so only pairs within the margin reach
+// the exact distance, which then decides exactly as before. `solids_known_apart` skips the collision test
+// the distance function would repeat; passing it when the collision has not been ruled out is a caller bug.
+pub fn mesh_closer_than_prepared(
+    a_bbox: Option<BoundingBox>,
+    a_shape: Option<&TriMesh>,
+    b_bbox: Option<BoundingBox>,
+    b_shape: Option<&TriMesh>,
+    gap: f64,
+    solids_known_apart: bool,
+) -> bool {
+    let (Some(a_bbox), Some(b_bbox)) = (a_bbox, b_bbox) else {
+        return 0.0 < gap;
+    };
+    let bbox_d = bbox_distance(a_bbox, b_bbox);
+    let fallback = if bbox_d > 0.0 {
+        bbox_d
+    } else {
+        if !solids_known_apart && mesh_collision_exact_prepared(Some(a_bbox), a_shape, Some(b_bbox), b_shape) {
+            return 0.0 < gap;
+        }
+        0.0
+    };
+    let (Some(a_shape), Some(b_shape)) = (a_shape, b_shape) else {
+        return fallback < gap;
+    };
+    if gap <= 0.0 {
+        return false;
+    }
+    let scale = [a_bbox.min, a_bbox.max, b_bbox.min, b_bbox.max]
+        .iter()
+        .map(|p| p.x.abs().max(p.y.abs()).max(p.z.abs()))
+        .fold(0.0_f64, f64::max);
+    let margin = gap * (1.0 + 1e-6) + 64.0 * f64::EPSILON * scale;
+    if !triangles_within_margin(a_shape, b_shape, margin) {
+        return false;
+    }
+    let identity = Isometry::identity();
+    query::distance(&identity, a_shape, &identity, b_shape).unwrap_or(fallback) < gap
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Conservatively decide whether any triangle of `a` lies within `margin` of any triangle of `b`.
+// Inputs: two prepared TriMeshes in the same frame and a non-negative margin.
+// Returns: false only when every triangle pair is provably farther apart than `margin`; true as soon as one pair is within it.
+// Side effects: None.
+// Notes: A simultaneous traversal of both hierarchies prunes node pairs whose boxes, one inflated by the
+// margin on every axis, do not overlap (an L-infinity test, so it keeps every Euclidean-near pair), and
+// measures leaf triangle pairs with GJK, exiting at the first within the margin. parry's own composite
+// closest_points is not used: in 0.19 it panics when nothing is within the margin and does not prune
+// interior nodes by it.
+fn triangles_within_margin(a: &TriMesh, b: &TriMesh, margin: f64) -> bool {
+    use parry3d_f64::bounding_volume::SimdAabb;
+    use parry3d_f64::math::{Real, SimdReal, Vector, SIMD_WIDTH};
+    use parry3d_f64::na::SimdValue;
+    use parry3d_f64::partitioning::{SimdSimultaneousVisitStatus, SimdSimultaneousVisitor};
+
+    struct Screen<'m> {
+        a: &'m TriMesh,
+        b: &'m TriMesh,
+        margin: f64,
+        inflate: Vector<SimdReal>,
+        found: bool,
+    }
+
+    impl SimdSimultaneousVisitor<u32, u32, SimdAabb> for Screen<'_> {
+        fn visit(
+            &mut self,
+            left_bv: &SimdAabb,
+            left_data: Option<[Option<&u32>; SIMD_WIDTH]>,
+            right_bv: &SimdAabb,
+            right_data: Option<[Option<&u32>; SIMD_WIDTH]>,
+        ) -> SimdSimultaneousVisitStatus {
+            let loose = SimdAabb { mins: left_bv.mins - self.inflate, maxs: left_bv.maxs + self.inflate };
+            let mask = loose.intersects_permutations(right_bv);
+            if let (Some(data1), Some(data2)) = (left_data, right_data) {
+                let identity = Isometry::identity();
+                for (ii, face1) in data1.into_iter().enumerate() {
+                    let Some(face1) = face1 else { continue };
+                    let t1 = self.a.triangle(*face1);
+                    for (jj, face2) in data2.into_iter().enumerate() {
+                        let Some(face2) = face2 else { continue };
+                        if !mask[ii].extract(jj) {
+                            continue;
+                        }
+                        let t2 = self.b.triangle(*face2);
+                        let near = query::distance(&identity, &t1, &identity, &t2).map_or(true, |d| d <= self.margin);
+                        if near {
+                            self.found = true;
+                            return SimdSimultaneousVisitStatus::ExitEarly;
+                        }
+                    }
+                }
+            }
+            SimdSimultaneousVisitStatus::MaybeContinue(mask)
+        }
+    }
+
+    let mut screen = Screen {
+        a,
+        b,
+        margin,
+        inflate: Vector::<SimdReal>::splat(Vector::<Real>::repeat(margin)),
+        found: false,
+    };
+    a.qbvh().traverse_bvtt(b.qbvh(), &mut screen);
+    screen.found
+}
+
 // AI-FUNC-SUMMARY: Convenience wrapper that computes bounding boxes and shapes on-the-fly then tests collision; returns bool; side effects: None.
 pub fn mesh_collision_exact(a: &Mesh, b: &Mesh) -> bool {
     let a_bbox = mesh_bbox(a);

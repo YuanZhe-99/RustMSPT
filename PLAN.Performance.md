@@ -1,6 +1,6 @@
 # RustMSPT 非 Mesh Gen 管线性能优化计划
 
-状态：2026-09-25 Cloud Session 完成 §66 所列批次后按用户要求阶段收尾，**后续交给本地 Agent**，交接见 §67（§65 为上一 Session 交接，保留作历史）。已实施子项及验证见第 10～66 节；PERF-00～19 的整体验收尚未完成。前文“源码确认”描述初始基线，当前实现以各批记录和源码为准。
+状态：2026-09-25 Cloud Session 完成 §66 后交给本地 Agent（交接见 §67）；本地 Agent 从 §68 起继续（§65 为更早交接，保留作历史）。已实施子项及验证见第 10～66 节；PERF-00～19 的整体验收尚未完成。前文“源码确认”描述初始基线，当前实现以各批记录和源码为准。
 
 检查日期：2026-09-12。源码基线：`891badc09ae03fb99ab57d206451e75de226ee60`。
 
@@ -1447,4 +1447,65 @@ run_in_pool 增加完成阶段 wall time：load/background/pca/transform_and_bac
 9. 未触及：PERF-08 GPU BVH、PERF-09 shell 成本选择/生产启用 tile 实验、PERF-13 宽粒径层次网格（需证据）、PERF-18 二进制 STL 并行解码（需证明解析主导）、PERF-11 以外 pack 端到端计时（pack 未设种子）。
 
 文档：各 agent 已同步 en-us/zh-cn reference、algorithms、function-index；部分旧 function-index 行号可能过时。`AGENTS.md` 已追加本批的约定（见其末尾 2026-09-25 段落）。
+
+## 68. 本地 Session：同步复核与间隙判定筛查（2026-09-25，本地 8 核 WSL2）
+
+环境：本地 WSL2，8 逻辑核、19 GB，空闲负载约 0.05；无 `/dev/dri`，只有 `/dev/dxg`，Vulkan ICD 中没有 dzn，wgpu 可用的仍只有 lavapipe/llvmpipe，因此**硬件 GPU 验收在本机仍无法进行**。
+
+**同步复核（HEAD `78749a5`）：** 默认 `cargo test --release` 44 组 634 passed/0 failed/30 ignored；`cargo test --release --features gpu --no-fail-fast` 44 组 694 passed/0 failed/41 ignored，与 §67 完全一致（GPU 套件在独立 worktree 中运行）。**本地环境注意：** WSLg 下若保留 `DISPLAY`/`WAYLAND_DISPLAY`，`crop_execution_tests` 的两个 GPU 用例（`crop_gpu_values_rounding_and_errors`、`crop_gpu_budget_executes_tiles`）会在约 3 分钟后失败，子进程以 `XIO: fatal IO error 111 (Connection refused) on X server ":0"` 退出（Xlib 默认 IO 错误处理直接 exit，X0 套接字在运行期间被重建）；`env -u DISPLAY -u WAYLAND_DISPLAY` 下两次均通过。这是 GL 适配器经 Xwayland 初始化时的环境问题，不是 crop 代码回归；但它说明 GL 后端在桌面会话中可能被 X 服务器的生命周期拖垮，后续可考虑在无显示需求时优先 Vulkan 或显式排除 GL（未做，需先确认对其他环境的影响）。`cargo test` 默认遇到失败组即停止，本机 GPU 回归必须用 `--no-fail-fast` 并去掉显示变量。
+
+**PERF-12/11/10：间隙判定筛查（已实施）。** §67 第 4 项建议的“超过 gap 即停止”的距离查询。新增 `geometry::mesh_closer_than_prepared(a_bbox, a_shape, b_bbox, b_shape, gap, solids_known_apart) -> bool`，语义严格等于 `mesh_distance_exact_prepared(...) < gap`（含缺失包围盒/形状时的回退）：
+
+1. 先用私有 `triangles_within_margin` 做有界筛查：两棵 QBVH 同时遍历（`traverse_bvtt`），将一侧节点包围盒各轴膨胀 margin 后与另一侧不相交的节点对剪枝（L∞ 判定，保留所有欧氏距离不超过 margin 的对），叶子三角形对用 GJK `query::distance`，遇到第一对不超过 margin 即退出。margin = `gap·(1+1e-6) + 64·EPSILON·坐标尺度`。筛查判定“全部远于 margin”才返回 false；否则调用原来的 `query::distance` 并按原规则比较，所以边界处的决定与原实现相同。
+2. `solids_known_apart = true` 时不重复碰撞检测：placement 阶段 B 的存活对已通过相交/嵌套检查，optimize 的两处间隙检查紧跟在同参数的 `mesh_collision_exact_prepared` 之后；旧版 pack 传 `false`。
+3. **未使用 parry 0.19 的复合形状 `closest_points`**：余量内没有任何三角形时它在 `traverse_best_first(...).expect("The composite shape must not be empty.")` 处 panic，且内部节点按当前最优值而非 margin 剪枝，等于逐三角形遍历。
+
+验证：`tests/collision_tests.rs::the_screened_gap_test_answers_exactly_what_the_distance_answers` 在 120 对随机旋转/拉伸球（level 2）× 8 个间隙（含 0、间隙恰等于实测距离、大一个 ulp、±1e-6 相对偏移）上逐一与 `distance < gap` 比较，两种 `solids_known_apart` 均一致，true/false 两种结果均被覆盖。默认全量 44 组 635 passed/0 failed/30 ignored（多出的 1 项即此测试）；clippy 库警告 47 条，新代码无警告。
+
+实测（release，本机空闲，每组 3 次取中位；基线为 HEAD `78749a5` 的二进制）：
+
+| 场景 | 基线 | 新实现 | 比值 |
+|---|---|---|---|
+| placement VF 0.10，1 线程 | 0.264 s | 0.118 s | 0.446 |
+| placement VF 0.10，8 线程 | 0.261 s | 0.098 s | 0.375 |
+| placement VF 0.25，1 线程 | 7.968 s | 2.375 s | 0.298 |
+| placement VF 0.25，8 线程 | 5.427 s | 1.283 s | 0.236 |
+| placement VF 0.30，1 线程 | 29.270 s | 7.071 s | 0.242 |
+| placement VF 0.30，8 线程 | 31.490 s | 10.626 s | 0.337 |
+| 旧版 pack（VF 0.15、max_attempts 20000）pack_loop 阶段 | 1.09 s | 0.61 s | 约 0.56 |
+
+placement 各组 `particles.json`、`particles.stl`、`size_distribution.csv` 与基线逐字节一致；`run_report.json` 除 `git_dirty`、路径长度（目录名 base/gap 差一个字符）引起的配置/记录 SHA 与字节数外，拒绝计数等全部相同。旧版 pack 与 optimize 使用未设种子的 `thread_rng`，不能比较输出，正确性依赖上述等价测试；pack 两侧窄相位次数相近（881/876）。optimize 在默认配置下剪枝后只剩 2 个颗粒、每次运行的距离检查数相差很大（946 对 19），2000 次迭代的计时（6.92→5.32 s）**不作为结论**。VF 0.30 时 8 线程慢于 1 线程（两侧都是），说明 placement 在高 VF 下并行无收益，属于后续 PERF-12 的问题，不是本改动引入。
+
+基准脚本与原始输出：本机 scratchpad `bench-gap/run.py`、`bench-gap3/`（不入库）。
+
+**PERF-00：本机 1/2/4/8 worker 矩阵（§67 第 1 项，已运行）。** `scripts/perf_matrix.py` 默认 10 条管线、1 次冷 + 5 次暖，二进制为含间隙筛查的版本；证据在 `data/output/performance/20260925-local-matrix/work/`（`perf_matrix_raw.json`、`perf_matrix_summary.md`，`source-head.txt` + `source.diff` 记录源码身份），全部成功。**主要结论是仓库自带输入对大多数管线太小，矩阵测到的是进程与线程池开销而非扩展性**：split-filter、pack、placement、forge、scale、crop 的 `total_in_pool` 暖中位都在 3～90 ms，8 worker 的 S(p) 为 0.3～1.2（多 worker 反而更慢）；render 0.225 s→0.077 s（S(8)=2.91），mesh-render 1.445 s→0.554 s（S(8)=2.61），measure 0.176 s→0.118 s（S(8)=1.49）；唯一的长任务 optimize 的 `anneal` 为 24.4/19.9/17.5/14.5 s（S(8)=1.68）。要得到可用的扩展性结论，后续矩阵需要加大输入（例如 placement VF 0.25～0.30、更大的 CT、更多视图）；这次记录作为“默认输入下的开销基线”。另一个限制：矩阵每次调用都重新生成 pack→optimize 链，而 pack 无种子，两次矩阵的 optimize 输入不同（本批一次 9 个颗粒、一次 4 个），跨矩阵比较 optimize 不可靠；下面的 A/B 改为对同一份链输入运行。
+
+**PERF-06/10：体素 MC 采样器（已实施）。** optimize 日志显示 anneal 中 S2 占 28.7/30.7 s（`voxel_mc`、r_max 10、8000 样本、50³ 网格、已启用 `VoxelCoverage`）。在真实链输入上拆分每次评估：移动颗粒重体素化 0.5 ms，MC 评估 9.5 ms（1 线程）/4.1 ms（8 线程），即约 120 ns/样本，而两次占据查找只需 6～10 ns。微基准（每样本 ns，1/8 线程）：`thread_rng`+`gen_range` 86～154，`thread_rng`+预构造 `Uniform` 66～121，ChaCha8+`Uniform` 46～61，Xoshiro256++（rand 的 `SmallRng`）+`Uniform` 19～21，仅查找 6～18。改动：
+
+1. `voxel_mc_rng()`：每个半径新建一个由 `thread_rng` 取种的 `SmallRng`，配合预先构造的 `Uniform`。体素 MC 原本就无种子、不可复现，估计量（均匀体素、均匀壳层偏移、界内点对的命中比例）不变；带种子的路径（placement、mesh MC 的 seeded API）不使用它。`Cargo.toml` 为已有依赖 `rand 0.8` 打开 `small_rng` feature，未新增 crate。
+2. `cached_mc_shells(r_max, pitch)`：壳层偏移按 `(r_max, pitch)` 缓存（单项，同 `EXACT_PLAN_CACHE` 模式），省去每次评估约 0.15 ms 的立方体枚举。
+3. `voxel_mc_radii(..., parallel)` + `VOXEL_MC_PARALLEL_MIN_SAMPLES = 65,536`：总样本数低于阈值时各半径串行。50³ 网格实测（par/ser）：2 万样本时 8 worker 2.02、4 worker 1.41；8 万时 8 worker 1.00、2～4 worker 0.64～0.65；32 万以上 0.25～0.45。
+4. `particle_voxel_coverage_in(..., parallel)` + `COVERAGE_PARALLEL_MIN_VOXELS = 1,024`：单颗粒候选体素少于阈值时串行。实测约 1 µs/包含查询：448 体素串行 0.42 ms 对 8 worker 0.55 ms；9,504 体素串行 9.8 ms 对 8 worker 3.7 ms（最初的 32,768 阈值会让后者变慢，已按实测改为 1,024）。串行/并行输出列表逐元素相同。
+
+验证：`tests/mesh_query_tests.rs::voxel_monte_carlo_estimates_the_exact_s2`（双球 30³，20 万样本/半径，8 个半径均与 exact 相差 <0.01，约 5σ；连续 30 次运行 0 失败）；`voxel_coverage_tests::serial_and_parallel_coverage_lists_are_identical`（1/2/8 worker 逐元素相同，含公开路径）；`voxel_coverage_tests::serial_and_parallel_voxel_mc_estimate_exact`；原有 240 步增量占据 oracle 仍通过。默认全量 44 组 638 passed/0 failed/30 ignored（比 §67 多 4 项新测试）。
+
+同一链输入上的 optimize A/B（`data/output/performance/20260925-local-matrix/ab-mc/`，每组 1 次预热 + 5 次，取 anneal 中位；optimize 无种子，单次波动约 ±15%）：
+
+| 二进制 | 1 worker anneal | 8 worker anneal |
+|---|---|---|
+| 间隙筛查版（本批基线） | 19.50 s（S2 18.04 s） | 13.68 s（S2 12.08 s） |
+| + 快速 MC 生成器 | 9.51 s（S2 8.37 s），0.49× | 12.05 s（S2 10.86 s），0.88× |
+| + 壳层缓存与串行阈值（第二次运行，快速 MC 版对照 10.34/10.85 s） | 8.94 s（S2 7.41 s），相对快速 MC 0.86× | 7.39 s（S2 5.81 s），相对快速 MC 0.68× |
+
+合计相对本批基线约为 1 worker 0.46×、8 worker 0.54×。matrix 中 measure（默认配置）1 worker `total_in_pool` 0.176→0.089 s。仍未解决：8 worker 相对 1 worker 的收益仍很小（默认规模下每次评估约 1～2 ms，主循环串行），进一步提速需要减少每次评估的工作量（例如 coverage 的逐列射线扫描代替逐体素包含查询——需先证明与固定方向射线奇偶判定逐体素一致，未做）。
+
+GPU 全量（`env -u DISPLAY -u WAYLAND_DISPLAY cargo test --release --features gpu --no-fail-fast`）：44 组 698 passed/0 failed/41 ignored（694 + 4 项新测试）。clippy 库警告默认 47、GPU 53（§64 为 48/55），新代码无警告。
+
+**PERF-07：`plan_exact_cpu` 常数重新校准（§67 第 2 项，已实施）。** 本机空闲时运行 `exact_cost_model_calibration`（本批把 worker 从 1/4 扩到 1/4/8），原始行保存在 `data/output/performance/20260925-local-matrix/exact-cost-calibration.log`。结果：单 worker 绝对常数约为云端的 3.5 倍（FFT 6.1～7.7 ns/单位对 2.0；直接法 1.26～1.53 ns/对对 0.36），但两者比值几乎相同（本机约 5.2，云端 5.6），所以旧常数在 18 个用例中已有 17 个选对；唯一选错的是 8 worker、32³/r_max 8（FFT 0.0168 s 对直接法 0.0185 s，差 10%）。云端“FFT 无并行收益”的结论在本机不成立：FFT 在 4/8 worker 时加速 1.7/2.1 倍，直接法 3.1/5.2 倍（旧模型效率 1/3 低估了直接法）。改为 `NS_PER_FFT_UNIT = 7.0`、新增 `FFT_PARALLEL_EFFICIENCY = 0.18`（FFT 时间除以 `1 + 0.18·(workers-1)`）、`NS_PER_DIRECT_PAIR = 1.35`、`DIRECT_PARALLEL_EFFICIENCY = 0.6`。用同一份日志回放：新模型 18/18 选中更快内核，最大损失 1.00×；旧模型 17/18、最大 1.10×。两个内核结果逐位相同，所以常数只影响耗时。关于“measure exact 是否需要运行时上限”：规划器只在工作集预算内选择，内存由 768 MiB 预算约束；耗时上限需要产品层面的决定（本批未加）。
+
+**PERF-12：复测 `PAIR_PARALLEL_MIN`（§67 第 4 项后半）。** `pair_threshold_benchmark`（level 2，320 面/颗粒）：存活对 ≥4 时并行快 1.14～1.9 倍，≤3 时 0.84～1.03。端到端用 `PAIR_PARALLEL_MIN = 4` 临时构建，对照串行，placement VF 0.25/0.30、4/8 线程，各 3 次中位：比值 0.999、1.048、0.973、1.018，STL 逐字节一致。**没有端到端收益**（筛查后精确距离已不再主导，阶段 A 的相交/嵌套仍串行），保持 `usize::MAX`，常量注释已记录复测。
+
+**§68 状态（本批收尾）。** 已完成并验证：间隙判定筛查（placement 2.2～4.2×、旧版 pack 循环约 0.56×）、体素 MC 生成器 + 壳层缓存 + 两处串行阈值（optimize anneal 同输入约 0.46×/0.54×，measure 默认配置约 0.5×）、PERF-07 常数重拟合（18/18 选对）、`PAIR_PARALLEL_MIN` 复测（保持串行）、本机默认输入矩阵。未提交；工作区改动包括 `src/geometry/{collision,s2,mod}.rs`、`src/pipeline/{placement_feasibility,pack,optimize}.rs`、`Cargo.toml`（rand `small_rng` feature）、`tests/{collision_tests,mesh_query_tests}.rs`、中英文 reference/algorithms/function-index、`AGENTS.md` 和本文件。
+
+仍开放（按 §67 编号）：1 的硬件 GPU 部分（本机无硬件 GPU 适配器），以及用**更大输入**重跑矩阵（默认输入只测到开销）；3 crop 轴定号行为变化需要负责人决定是否接受；5 认证列表纳入内存预算、逐三角形误差界预计算；6 GPU tile 传输重叠等；7 GPU writer 的 Rayon 化；8 §57 double free 未复现；9 所列未触及项。新发现的候选：coverage 的逐列 z 向射线扫描（需先证明与固定方向奇偶判定逐体素一致）、placement 在高 VF 下 8 线程不快于 1 线程（阶段 A 与接受循环串行）。
 

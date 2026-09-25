@@ -4,6 +4,7 @@ use super::bbox::mesh_bbox;
 use super::mesh_ops::split_mesh_into_granules;
 use super::volume::volume_fraction_in_bbox;
 use rand::Rng;
+use rand::distributions::{Distribution, Uniform};
 use rayon::prelude::*;
 use rustfft::num_complex::Complex;
 use rustfft::{Fft, FftPlanner};
@@ -206,7 +207,8 @@ fn build_bbox_occupancy(mesh: &Mesh, bbox: BoundingBox, voxel_pitch: f64) -> (Ve
 // Side effects: None.
 // Notes: Uses part_voxel_ranges and the same prepared containment test and voxel centres as
 // build_bbox_occupancy, so the union over particles of these lists is exactly the full occupancy.
-// Parallel over x columns with an indexed collect, so the list order is independent of worker count.
+// Parallel over x columns with an indexed collect only from COVERAGE_PARALLEL_MIN_VOXELS candidate
+// voxels up, serial below; the list order is the same either way and independent of worker count.
 fn particle_voxel_coverage(mesh: &Mesh, bbox: BoundingBox, voxel_pitch: f64, dims: [usize; 3]) -> Vec<usize> {
     let [_, ny, nz] = dims;
     let parts = split_mesh_into_granules(mesh);
@@ -216,26 +218,42 @@ fn particle_voxel_coverage(mesh: &Mesh, bbox: BoundingBox, voxel_pitch: f64, dim
         parts.iter().collect()
     };
     let part_ranges = part_voxel_ranges(&source_parts, bbox, voxel_pitch, dims);
+    let voxels: usize = part_ranges.iter().map(|(_, x0, x1, y0, y1, z0, z1)| (x1 - x0) * (y1 - y0) * (z1 - z0)).sum();
+    particle_voxel_coverage_in(&part_ranges, bbox, voxel_pitch, [ny, nz], voxels >= COVERAGE_PARALLEL_MIN_VOXELS)
+}
+
+/// Candidate voxels in one particle's ranges below which its containment queries run serially.
+/// Measured at ~1 us per query (PLAN.Performance.md §68): 448 voxels ran 0.42 ms serial against
+/// 0.55 ms on 8 workers, while 9,504 voxels ran 9.8 ms serial against 3.7 ms on 8 workers.
+pub(crate) const COVERAGE_PARALLEL_MIN_VOXELS: usize = 1024;
+
+// AI-FUNC-SUMMARY: Containment-query every voxel centre in each prepared component's index range, in part then x/y/z order; returns the covered flat indices; side effects: parallel over x columns when `parallel`, serial otherwise, with identical output order.
+fn particle_voxel_coverage_in(part_ranges: &[PartVoxelRange<'_>], bbox: BoundingBox, voxel_pitch: f64, [ny, nz]: [usize; 2], parallel: bool) -> Vec<usize> {
     let mut covered = Vec::new();
-    for (p, x0, x1, y0, y1, z0, z1) in &part_ranges {
-        let columns: Vec<Vec<usize>> = (*x0..*x1)
-            .into_par_iter()
-            .map_init(MeshQueryScratch::default, |scratch, x| {
-                let cx = voxel_centre(bbox.min.x, x, voxel_pitch);
-                let mut hits = Vec::new();
-                for y in *y0..*y1 {
-                    let cy = voxel_centre(bbox.min.y, y, voxel_pitch);
-                    for z in *z0..*z1 {
-                        let center = Vec3::new(cx, cy, voxel_centre(bbox.min.z, z, voxel_pitch));
-                        if p.contains_point(center, scratch) {
-                            hits.push(index_3d_to_flat(x, y, z, ny, nz));
-                        }
+    for (p, x0, x1, y0, y1, z0, z1) in part_ranges {
+        let column = |scratch: &mut MeshQueryScratch, x: usize| {
+            let cx = voxel_centre(bbox.min.x, x, voxel_pitch);
+            let mut hits = Vec::new();
+            for y in *y0..*y1 {
+                let cy = voxel_centre(bbox.min.y, y, voxel_pitch);
+                for z in *z0..*z1 {
+                    let center = Vec3::new(cx, cy, voxel_centre(bbox.min.z, z, voxel_pitch));
+                    if p.contains_point(center, scratch) {
+                        hits.push(index_3d_to_flat(x, y, z, ny, nz));
                     }
                 }
-                hits
-            })
-            .collect();
-        covered.extend(columns.into_iter().flatten());
+            }
+            hits
+        };
+        if parallel {
+            let columns: Vec<Vec<usize>> = (*x0..*x1).into_par_iter().map_init(MeshQueryScratch::default, column).collect();
+            covered.extend(columns.into_iter().flatten());
+        } else {
+            let mut scratch = MeshQueryScratch::default();
+            for x in *x0..*x1 {
+                covered.extend(column(&mut scratch, x));
+            }
+        }
     }
     covered
 }
@@ -490,9 +508,10 @@ fn fft_index_3d(x: usize, y: usize, z: usize, ny: usize, nz: usize) -> usize {
 const FFT_RETAIN_BYTES: usize = 16 * 1024 * 1024;
 
 pub(crate) const DEFAULT_CPU_EXACT_BUDGET_BYTES: u64 = 768 * 1024 * 1024;
-pub(crate) const NS_PER_FFT_UNIT: f64 = 2.0;
-pub(crate) const NS_PER_DIRECT_PAIR: f64 = 0.36;
-pub(crate) const DIRECT_PARALLEL_EFFICIENCY: f64 = 1.0 / 3.0;
+pub(crate) const NS_PER_FFT_UNIT: f64 = 7.0;
+pub(crate) const FFT_PARALLEL_EFFICIENCY: f64 = 0.18;
+pub(crate) const NS_PER_DIRECT_PAIR: f64 = 1.35;
+pub(crate) const DIRECT_PARALLEL_EFFICIENCY: f64 = 0.6;
 
 // AI-FUNC-SUMMARY: Return the smallest 2,3,5-smooth length >= min_len (1 for 0/1) by enumerating 2^a*3^b*5^c with checked arithmetic; None on overflow.
 fn smooth_fft_length(min_len: usize) -> Option<usize> {
@@ -699,7 +718,7 @@ fn direct_working_set_bytes(dims: [usize; 3], r_max: usize, max_shell_offsets: u
 // Inputs: grid dims, r_max, positive pitch, worker count, working-set budget in bytes.
 // Returns: ExactCpuPlan with both modeled wall times, both checked working sets, the selection and a reason string.
 // Side effects: None (enumerates the clamped offset box once in the current Rayon pool).
-// Notes: Constants are single-worker release fits (exact_cost_model_calibration). FFT time = NS_PER_FFT_UNIT*P*log2(P) with no parallel credit (the calibration measured none at 4 workers); direct time = NS_PER_DIRECT_PAIR*W / (1 + DIRECT_PARALLEL_EFFICIENCY*(min(workers, K)-1)). Only kernels whose working set fits are eligible; the cheaper eligible one wins (FFT on ties). When neither fits, direct is chosen because it needs the least memory and the reason says so. Both kernels return identical integer counts, so the choice never changes results.
+// Notes: Constants are release fits on an idle 8-core host (exact_cost_model_calibration, PLAN.Performance.md §68). FFT time = NS_PER_FFT_UNIT*P*log2(P) / (1 + FFT_PARALLEL_EFFICIENCY*(workers-1)); direct time = NS_PER_DIRECT_PAIR*W / (1 + DIRECT_PARALLEL_EFFICIENCY*(min(workers, K)-1)). Only kernels whose working set fits are eligible; the cheaper eligible one wins (FFT on ties). When neither fits, direct is chosen because it needs the least memory and the reason says so. Both kernels return identical integer counts, so the choice never changes results.
 pub(crate) fn plan_exact_cpu(dims: [usize; 3], r_max: usize, pitch: f64, workers: usize, budget_bytes: u64) -> ExactCpuPlan {
     let workers = workers.max(1);
     let padded_opt = padded_fft_dims(dims);
@@ -708,7 +727,8 @@ pub(crate) fn plan_exact_cpu(dims: [usize; 3], r_max: usize, pitch: f64, workers
     let fft_bytes = padded_opt.and_then(|p| fft_working_set_bytes(dims, p, r_max, workers));
     let direct_bytes = direct_working_set_bytes(dims, r_max, max_shell, workers);
     let padded_cells = padded.iter().fold(1f64, |a, &n| a * n as f64);
-    let fft_seconds = NS_PER_FFT_UNIT * padded_cells * padded_cells.max(2.0).log2() * 1e-9;
+    let fft_speedup = 1.0 + FFT_PARALLEL_EFFICIENCY * (workers as f64 - 1.0);
+    let fft_seconds = NS_PER_FFT_UNIT * padded_cells * padded_cells.max(2.0).log2() / fft_speedup * 1e-9;
     let direct_tasks = (workers as f64).min(offsets.max(1) as f64);
     let direct_speedup = 1.0 + DIRECT_PARALLEL_EFFICIENCY * (direct_tasks - 1.0);
     let direct_seconds = NS_PER_DIRECT_PAIR * pair_work as f64 / direct_speedup * 1e-9;
@@ -1212,6 +1232,96 @@ pub struct VoxelS2 {
     pitch: f64,
 }
 
+/// Total voxel Monte Carlo samples (samples per radius times radii) below which the radii run
+/// serially. Measured on a 50^3 grid (PLAN.Performance.md §68): at 20k total samples 8 workers
+/// took 2.0x the serial time and 4 workers 1.4x; at 80k parallel broke even on 8 workers and won
+/// 0.64x on 2-4; from 320k up it won 0.25-0.45x.
+pub(crate) const VOXEL_MC_PARALLEL_MIN_SAMPLES: usize = 1 << 16;
+
+type McShells = Arc<Vec<Vec<[isize; 3]>>>;
+
+static MC_SHELL_CACHE: std::sync::Mutex<Option<((usize, u64), McShells)>> = std::sync::Mutex::new(None);
+
+// AI-FUNC-SUMMARY: Shell offsets for radii 1..=r_max at a pitch, reusing the last computed set for an identical (r_max, pitch) key; returns a shared list per radius; side effects: replaces the single cached entry when the key changes.
+// Notes: SA evaluates the same r_max and pitch thousands of times; regenerating the cubes cost ~0.15 ms per evaluation, about a tenth of the fast MC itself.
+fn cached_mc_shells(r_max: usize, pitch: f64) -> McShells {
+    let key = (r_max, pitch.to_bits());
+    if let Ok(guard) = MC_SHELL_CACHE.lock() {
+        if let Some((cached, shells)) = guard.as_ref() {
+            if *cached == key {
+                return Arc::clone(shells);
+            }
+        }
+    }
+    let half_width_vox = 0.5 / pitch;
+    let shells: McShells = Arc::new((1..=r_max).map(|r| shell_offsets_for_distance(r as f64 / pitch, half_width_vox)).collect());
+    if let Ok(mut guard) = MC_SHELL_CACHE.lock() {
+        *guard = Some((key, Arc::clone(&shells)));
+    }
+    shells
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Voxel Monte Carlo S2 hit ratios for radii 0..=r_max over an occupancy grid.
+// Inputs: occupancy, dims, per-radius shell offsets (index r-1), the occupancy VF, samples per radius, and whether radii run in parallel.
+// Returns: (value, supported) per radius; radius 0 is (vf, true), a radius with no offsets or no valid pair is (0.0, false).
+// Side effects: draws unseeded randomness.
+// Notes: The estimator is uniform voxel, uniform shell offset, hits over in-grid pairs; `parallel` changes only scheduling.
+fn voxel_mc_radii(occ: &[bool], dims: [usize; 3], shells: &[Vec<[isize; 3]>], vf: f64, mc_samples: usize, parallel: bool) -> Vec<(f64, bool)> {
+    let [nx, ny, nz] = dims;
+    let radius = |r: usize| -> (f64, bool) {
+        if r == 0 {
+            return (vf, true);
+        }
+        let offsets = &shells[r - 1];
+        if offsets.is_empty() {
+            return (0.0, false);
+        }
+        let mut valid = 0usize;
+        let mut hits = 0usize;
+        let mut rng = voxel_mc_rng();
+        let (ux, uy, uz) = (Uniform::new(0, nx), Uniform::new(0, ny), Uniform::new(0, nz));
+        let uo = Uniform::new(0, offsets.len());
+        for _ in 0..mc_samples {
+            let x = ux.sample(&mut rng);
+            let y = uy.sample(&mut rng);
+            let z = uz.sample(&mut rng);
+            let off = &offsets[uo.sample(&mut rng)];
+            let x2 = x as isize + off[0];
+            let y2 = y as isize + off[1];
+            let z2 = z as isize + off[2];
+            if x2 < 0 || y2 < 0 || z2 < 0 {
+                continue;
+            }
+            let (x2u, y2u, z2u) = (x2 as usize, y2 as usize, z2 as usize);
+            if x2u >= nx || y2u >= ny || z2u >= nz {
+                continue;
+            }
+            valid += 1;
+            if occ[index_3d_to_flat(x, y, z, ny, nz)] && occ[index_3d_to_flat(x2u, y2u, z2u, ny, nz)] {
+                hits += 1;
+            }
+        }
+        if valid == 0 {
+            (0.0, false)
+        } else {
+            (hits as f64 / valid as f64, true)
+        }
+    };
+    if parallel {
+        (0..=shells.len()).into_par_iter().map(radius).collect()
+    } else {
+        (0..=shells.len()).map(radius).collect()
+    }
+}
+
+// AI-FUNC-SUMMARY: Fresh unseeded generator for one voxel Monte Carlo radius: Xoshiro256++ (rand's SmallRng) seeded from the thread-local entropy source; returns the generator; side effects: draws one seed from thread_rng.
+// Notes: Voxel MC was already unseeded and non-reproducible; this keeps that contract and the estimator (uniform voxel, uniform shell offset, hits over valid pairs) while replacing ChaCha12 and per-call gen_range, which cost 6-8x the occupancy lookup per sample. Nothing seeded may use it.
+fn voxel_mc_rng() -> rand::rngs::SmallRng {
+    use rand::SeedableRng;
+    rand::rngs::SmallRng::from_rng(rand::thread_rng()).unwrap_or_else(|_| rand::rngs::SmallRng::seed_from_u64(rand::random()))
+}
+
 impl VoxelS2 {
     // AI-FUNC-SUMMARY: Prepare one occupancy grid for a fixed mesh, domain and positive pitch; owns grid data and performs parallel voxelization.
     pub fn new(mesh: &Mesh, bbox: BoundingBox, pitch: f64) -> Self {
@@ -1258,59 +1368,9 @@ impl VoxelS2 {
         _ => {
             let mc_samples = samples.max(200);
             let pitch = effective_pitch.max(1e-9);
-            let half_width_vox = 0.5 / pitch;
-            let shells: Vec<Vec<[isize; 3]>> = (1..=r_max)
-                .map(|r| shell_offsets_for_distance(r as f64 / pitch, half_width_vox))
-                .collect();
-            let results: Vec<(f64, bool)> = (0..=r_max)
-                .into_par_iter()
-                .map(|r| {
-                    if r == 0 {
-                        return (vf, true);
-                    }
-
-                    let offsets = &shells[r - 1];
-                    if offsets.is_empty() {
-                        return (0.0, false);
-                    }
-                    let mut valid = 0usize;
-                    let mut hits = 0usize;
-                    let mut rng = rand::thread_rng();
-
-                    for _ in 0..mc_samples {
-                        let x = rng.gen_range(0..nx);
-                        let y = rng.gen_range(0..ny);
-                        let z = rng.gen_range(0..nz);
-                        let off = &offsets[rng.gen_range(0..offsets.len())];
-
-                        let x2 = x as isize + off[0];
-                        let y2 = y as isize + off[1];
-                        let z2 = z as isize + off[2];
-                        if x2 < 0 || y2 < 0 || z2 < 0 {
-                            continue;
-                        }
-                        let x2u = x2 as usize;
-                        let y2u = y2 as usize;
-                        let z2u = z2 as usize;
-                        if x2u >= nx || y2u >= ny || z2u >= nz {
-                            continue;
-                        }
-
-                        valid += 1;
-                        let i1 = index_3d_to_flat(x, y, z, ny, nz);
-                        let i2 = index_3d_to_flat(x2u, y2u, z2u, ny, nz);
-                        if occ[i1] && occ[i2] {
-                            hits += 1;
-                        }
-                    }
-
-                    if valid == 0 {
-                        (0.0, false)
-                    } else {
-                        (hits as f64 / valid as f64, true)
-                    }
-                })
-                .collect();
+            let shells = cached_mc_shells(r_max, pitch);
+            let parallel = mc_samples.saturating_mul(r_max) >= VOXEL_MC_PARALLEL_MIN_SAMPLES;
+            let results = voxel_mc_radii(occ, self.dims, &shells, vf, mc_samples, parallel);
 
             let mut out = vec![0.0; r_max + 1];
             let mut has_support = vec![false; r_max + 1];
@@ -1672,12 +1732,12 @@ mod exact_plan_tests {
         assert_eq!(near.method, ExactCpuMethod::Direct, "{}", near.describe());
     }
 
-    // AI-FUNC-SUMMARY: Release calibration benchmark: time FFT and direct kernels on grids spanning both regimes at 1 and 4 workers, printing raw seconds with modeled units (P*log2 P and pair work) so NS_PER_FFT_UNIT and NS_PER_DIRECT_PAIR can be fitted.
+    // AI-FUNC-SUMMARY: Release calibration benchmark: time FFT and direct kernels on grids spanning both regimes at 1, 4 and 8 workers, printing raw seconds with modeled units (P*log2 P and pair work) so NS_PER_FFT_UNIT and NS_PER_DIRECT_PAIR can be fitted.
     #[test]
     #[ignore = "release cost-model calibration"]
     fn exact_cost_model_calibration() {
         let cases: [([usize; 3], usize); 6] = [([32, 32, 32], 2), ([32, 32, 32], 8), ([64, 64, 64], 2), ([64, 64, 64], 6), ([96, 96, 96], 3), ([128, 128, 32], 4)];
-        for workers in [1, 4] {
+        for workers in [1, 4, 8] {
             let pool = rayon::ThreadPoolBuilder::new().num_threads(workers).build().unwrap();
             pool.install(|| {
                 for (dims, r_max) in cases {
@@ -1817,6 +1877,44 @@ mod voxel_coverage_tests {
             .filter(|(a, b)| a != b)
             .count();
         assert_eq!(differing, 0, "{label}: {differing} voxels differ from full voxelization");
+    }
+
+    // AI-FUNC-SUMMARY: The serial and parallel coverage paths return the identical list, element for element, on a two-component particle straddling the domain, at 1/2/8 workers; no file output.
+    #[test]
+    fn serial_and_parallel_coverage_lists_are_identical() {
+        let bbox = BoundingBox { min: Vec3::new(0.0, 0.0, 0.0), max: Vec3::new(12.0, 10.0, 9.0) };
+        let pitch = 0.25;
+        let dims = occupancy_dims(bbox, pitch);
+        let mesh = merge_meshes(&[icosphere_mesh(Vec3::new(1.0, 5.0, 4.0), 2.2, 3), icosphere_mesh(Vec3::new(8.0, 4.0, 5.0), 1.5, 2)]);
+        let parts = split_mesh_into_granules(&mesh);
+        let refs: Vec<&Mesh> = parts.iter().collect();
+        let ranges = part_voxel_ranges(&refs, bbox, pitch, dims);
+        let serial = particle_voxel_coverage_in(&ranges, bbox, pitch, [dims[1], dims[2]], false);
+        assert!(serial.len() > 1000, "fixture must cover voxels: {}", serial.len());
+        for workers in [1usize, 2, 8] {
+            let pool = rayon::ThreadPoolBuilder::new().num_threads(workers).build().unwrap();
+            let parallel = pool.install(|| particle_voxel_coverage_in(&ranges, bbox, pitch, [dims[1], dims[2]], true));
+            assert_eq!(serial, parallel, "{workers} workers");
+            assert_eq!(pool.install(|| particle_voxel_coverage(&mesh, bbox, pitch, dims)), serial, "{workers} workers, public path");
+        }
+    }
+
+    // AI-FUNC-SUMMARY: Serial and parallel voxel MC radii estimate the same S2: with 200k samples per radius both land within 0.01 of exact at every radius; no file output.
+    #[test]
+    fn serial_and_parallel_voxel_mc_estimate_exact() {
+        let bbox = BoundingBox { min: Vec3::new(0.0, 0.0, 0.0), max: Vec3::new(24.0, 24.0, 24.0) };
+        let grid = VoxelS2::new(&merge_meshes(&[icosphere_mesh(Vec3::new(9.0, 10.0, 11.0), 6.0, 3), icosphere_mesh(Vec3::new(17.0, 15.0, 12.0), 4.0, 3)]), bbox, 1.0);
+        let exact = grid.calculate_exact_with(6, ExactCpuMethod::Direct);
+        let vf = exact[0];
+        let shells = cached_mc_shells(6, 1.0);
+        for parallel in [false, true] {
+            let mc = voxel_mc_radii(&grid.occupancy, grid.dims, &shells, vf, 200_000, parallel);
+            assert_eq!(mc.len(), 7);
+            assert_eq!(mc[0], (vf, true));
+            for r in 1..=6 {
+                assert!(mc[r].1 && (mc[r].0 - exact[r]).abs() < 0.01, "parallel {parallel} r {r}: {:?} vs {}", mc[r], exact[r]);
+            }
+        }
     }
 
     // AI-FUNC-SUMMARY: Oracle over accepted/rejected moves, overlapping particles, domain-crossing moves, a two-component particle, periodic refresh, removal and migration; asserts occupancy and exact S2 equal full re-voxelization at every step; no file output.

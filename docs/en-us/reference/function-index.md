@@ -124,6 +124,12 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `occupancy_dims` | Geometry — Analysis | `src/geometry/s2.rs` | Occupancy grid dimensions for a domain and pitch. |
 | `part_voxel_ranges` | Geometry — Analysis | `src/geometry/s2.rs` | Prepared query and clamped voxel range per connected component; shared by full and incremental voxelization. |
 | `particle_voxel_coverage` | Geometry — Analysis | `src/geometry/s2.rs` | Flat voxel indices whose centres lie inside one particle, once per containing component. |
+| `voxel_mc_rng` | Geometry — Analysis | `src/geometry/s2.rs` | Fresh unseeded Xoshiro256++ (`SmallRng`) for one voxel MC radius, seeded from `thread_rng`; never for seeded paths. |
+| `cached_mc_shells` | Geometry — Analysis | `src/geometry/s2.rs` | Shell offsets for radii 1..=r_max, reused for an identical `(r_max, pitch)` key. |
+| `voxel_mc_radii` | Geometry — Analysis | `src/geometry/s2.rs` | Voxel MC hit ratios per radius; parallel over radii only when asked, same estimator either way. |
+| `VOXEL_MC_PARALLEL_MIN_SAMPLES` | Geometry — Analysis | `src/geometry/s2.rs` | 65,536 total MC samples below which radii run serially (measured). |
+| `particle_voxel_coverage_in` | Geometry — Analysis | `src/geometry/s2.rs` | Containment queries over prepared component ranges; parallel over x columns or serial, identical output order. |
+| `COVERAGE_PARALLEL_MIN_VOXELS` | Geometry — Analysis | `src/geometry/s2.rs` | 1,024 candidate voxels below which one particle's coverage queries run serially (measured). |
 | `VoxelCoverage` | Geometry — Analysis | `src/geometry/s2.rs` | Per-voxel coverage counts and matching occupancy for SA; occupied iff count > 0. |
 | `VoxelCoverage::new` | Geometry — Analysis | `src/geometry/s2.rs` | Build counts for a population; grid equals VoxelS2::new over the merged mesh. |
 | `VoxelCoverage::replace` | Geometry — Analysis | `src/geometry/s2.rs` | Re-query one moved particle, swap its list and return the old one for rollback. |
@@ -221,9 +227,10 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `mesh_solids_nested_prepared` | Geometry — Volume & Collision | `src/geometry/collision.rs:150` | Whether one closed solid lies wholly inside the other. |
 | `mesh_collision_exact_prepared` | Geometry — Volume & Collision | `src/geometry/collision.rs:196` | Whether two mesh solids overlap: surfaces cross, or one contains the other. |
 | `mesh_distance_exact_prepared` | Geometry — Volume & Collision | `src/geometry/collision.rs:214` | Bbox-filtered exact distance query given pre-built bboxes/shapes. |
-| `mesh_collision_exact` | Geometry — Volume & Collision | `src/geometry/collision.rs:259` | Convenience wrapper: builds bbox/shape then tests collision. |
-| `mesh_distance_exact` | Geometry — Volume & Collision | `src/geometry/collision.rs:268` | Convenience wrapper: builds bbox/shape then computes distance. |
-| `generate_periodic_ghosts` | Geometry — Volume & Collision | `src/geometry/collision.rs:282` | Generates translated ghost copies of a mesh for periodic boundary collision. |
+| `mesh_closer_than_prepared` | Geometry — Volume & Collision | `src/geometry/collision.rs:267` | Screened `distance < gap` test (dual-BVH margin screen, then exact distance). |
+| `mesh_collision_exact` | Geometry — Volume & Collision | `src/geometry/collision.rs:374` | Convenience wrapper: builds bbox/shape then tests collision. |
+| `mesh_distance_exact` | Geometry — Volume & Collision | `src/geometry/collision.rs:383` | Convenience wrapper: builds bbox/shape then computes distance. |
+| `generate_periodic_ghosts` | Geometry — Volume & Collision | `src/geometry/collision.rs:397` | Generates translated ghost copies of a mesh for periodic boundary collision. |
 | `simulate_forging_ffd` | Geometry — Volume & Collision | `src/geometry/forging.rs:10` | Simple Z-axis FFD compression with lateral bulge. |
 | `simulate_forging_ffd_with_tracking` | Geometry — Volume & Collision | `src/geometry/forging.rs:43` | Axis-configurable FFD forging with void densification and ROI bbox tracking. |
 | `GpuContext` | GPU | `src/gpu/context.rs:3` | Holds adapter name and buffer-size capabilities after successful GPU init. |
@@ -928,6 +935,7 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `VoxelS2::calculate_exact_with` | Geometry Analysis | `src/geometry/s2.rs` | Exact S2 with a forced CPU kernel. |
 | `DEFAULT_CPU_EXACT_BUDGET_BYTES` | Geometry Analysis | `src/geometry/s2.rs` | Default CPU exact working-set budget (768 MiB). |
 | `NS_PER_FFT_UNIT` | Geometry Analysis | `src/geometry/s2.rs` | Calibrated FFT cost per P*log2(P) unit (ns). |
+| `FFT_PARALLEL_EFFICIENCY` | Geometry Analysis | `src/geometry/s2.rs` | Modeled FFT parallel efficiency. |
 | `NS_PER_DIRECT_PAIR` | Geometry Analysis | `src/geometry/s2.rs` | Calibrated direct cost per visited pair (ns). |
 | `DIRECT_PARALLEL_EFFICIENCY` | Geometry Analysis | `src/geometry/s2.rs` | Modeled direct parallel efficiency. |
 

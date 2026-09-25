@@ -27,9 +27,10 @@
 | `mesh_solids_nested_prepared` | `src/geometry/collision.rs:150` | 判定两个闭合实体中是否有一个整体位于另一个内部。 |
 | `mesh_collision_exact_prepared` | `src/geometry/collision.rs:196` | 判定两个网格*实体*是否重叠：表面相交，或一个包含另一个。 |
 | `mesh_distance_exact_prepared` | `src/geometry/collision.rs:214` | 给定预先构建的包围盒/形状，进行带包围盒过滤的精确距离查询。 |
-| `mesh_collision_exact` | `src/geometry/collision.rs:259` | 便捷封装：构建包围盒/形状后测试碰撞。 |
-| `mesh_distance_exact` | `src/geometry/collision.rs:268` | 便捷封装：构建包围盒/形状后计算距离。 |
-| `generate_periodic_ghosts` | `src/geometry/collision.rs:282` | 为周期边界碰撞生成网格的平移镜像副本。 |
+| `mesh_closer_than_prepared` | `src/geometry/collision.rs:267` | 带筛查的 `距离 < 间隙` 判定：先做有界双 BVH 余量筛查再算精确距离，结果与距离判定完全一致。 |
+| `mesh_collision_exact` | `src/geometry/collision.rs:374` | 便捷封装：构建包围盒/形状后测试碰撞。 |
+| `mesh_distance_exact` | `src/geometry/collision.rs:383` | 便捷封装：构建包围盒/形状后计算距离。 |
+| `generate_periodic_ghosts` | `src/geometry/collision.rs:397` | 为周期边界碰撞生成网格的平移镜像副本。 |
 | `simulate_forging_ffd` | `src/geometry/forging.rs:10` | 简单的 Z 轴 FFD 压缩加侧向鼓起。 |
 | `simulate_forging_ffd_with_tracking` | `src/geometry/forging.rs:43` | 轴可配置的 FFD 锻造，带孔隙致密化与 ROI 包围盒跟踪。 |
 | `forge_owned` | `src/geometry/forging.rs:66` | Ownership-consuming FFD and ROI transform. |
@@ -268,10 +269,24 @@
 - **说明：** 逻辑为：计算 `bbox_d = bbox_distance(a_bbox, b_bbox)`。若 `bbox_d > 0.0`（包围盒分离），则精确形状距离至少为 `bbox_d`，因此计算形状间的 `query::distance`（若形状缺失或查询出错则回退为 `bbox_d`）——包围盒分离即保证网格不重叠，因而跳过碰撞检查。若 `bbox_d == 0.0`（包围盒接触或重叠），则必须通过 `mesh_collision_exact_prepared` 检查实际是否重叠；若确实重叠，返回 `0.0`；否则回退到精确的 `query::distance` 调用（若形状缺失或查询失败，默认返回 `0.0`）。因此**嵌套**配对报出 `0.0`，而非两个表面之间的空隙：嵌套蕴含包围盒重叠，故快速路径无法绕过碰撞调用，而该调用如今返回 `true`。
 - **另请参阅：** [`bbox_distance`](geometry-core.md#bbox_distance)、[`mesh_collision_exact_prepared`](#mesh_collision_exact_prepared)。
 
+#### mesh_closer_than_prepared
+
+- **签名：** `pub fn mesh_closer_than_prepared(a_bbox: Option<BoundingBox>, a_shape: Option<&TriMesh>, b_bbox: Option<BoundingBox>, b_shape: Option<&TriMesh>, gap: f64, solids_known_apart: bool) -> bool`
+- **源码位置：** `src/geometry/collision.rs:267`
+- **用途：** 判定 `mesh_distance_exact_prepared(...) < gap`，对明显远于间隙的配对不再测量完整距离。
+- **参数：**
+  - `a_bbox`、`b_bbox`、`a_shape`、`b_shape` — 同 `mesh_distance_exact_prepared`。
+  - `gap` — 被检验的间隙。
+  - `solids_known_apart` — 仅当调用方已对完全相同的参数证明 `mesh_collision_exact_prepared` 为 `false` 时传 `true`，此时不再重复碰撞检测。
+- **返回值：** `bool`，与 `mesh_distance_exact_prepared(...) < gap` 完全相同，包括其回退规则（包围盒缺失按距离 `0.0` 处理）。
+- **副作用：** 无。
+- **说明：** 两个形状都存在时，先由私有函数 `triangles_within_margin` 筛查：同时遍历两棵 QBVH，将一侧包围盒在各轴上按余量膨胀后仍不重叠的节点对剪枝，叶子三角形对用 GJK 测距，一旦有一对落在余量内即提前退出。余量为 `gap * (1 + 1e-6) + 64 * EPSILON * 坐标尺度`。只有筛查无法分开的配对才调用 `query::distance`，并按原规则判定。刻意不使用 parry 0.19 的复合形状 `closest_points`：余量内无任何三角形时它会 panic，且内部节点不按余量剪枝。调用方为 placement 的阶段 B（`solids_known_apart = true`）、optimize 的间隙检查（在重叠检测之后，`true`）和旧版 pack（`false`）。`tests/collision_tests.rs::the_screened_gap_test_answers_exactly_what_the_distance_answers` 在 960 组配对/间隙上与距离函数逐一比较，包括间隙恰等于实测距离及大一个 ulp 的情形。
+- **另请参阅：** [`mesh_distance_exact_prepared`](#mesh_distance_exact_prepared)、[`mesh_collision_exact_prepared`](#mesh_collision_exact_prepared)。
+
 #### mesh_collision_exact
 
 - **签名：** `pub fn mesh_collision_exact(a: &Mesh, b: &Mesh) -> bool`
-- **源码位置：** `src/geometry/collision.rs:259`
+- **源码位置：** `src/geometry/collision.rs:374`
 - **用途：** 便捷封装函数，为两个网格即时计算包围盒与 parry3d 形状，然后测试碰撞。
 - **参数：**
   - `a`、`b` — 待测试的两个网格。
@@ -283,7 +298,7 @@
 #### mesh_distance_exact
 
 - **签名：** `pub fn mesh_distance_exact(a: &Mesh, b: &Mesh) -> f64`
-- **源码位置：** `src/geometry/collision.rs:268`
+- **源码位置：** `src/geometry/collision.rs:383`
 - **用途：** 便捷封装函数，为两个网格即时计算包围盒与 parry3d 形状，然后计算它们的精确距离。
 - **参数：**
   - `a`、`b` — 待测量的两个网格。
@@ -294,7 +309,7 @@
 #### generate_periodic_ghosts
 
 - **签名：** `pub fn generate_periodic_ghosts(mesh: &Mesh, box_bounds: BoundingBox) -> Vec<Mesh>`
-- **源码位置：** `src/geometry/collision.rs:282`
+- **源码位置：** `src/geometry/collision.rs:397`
 - **用途：** 生成网格的平移"镜像"副本，沿各轴组合按堆积盒的尺寸偏移，以支持周期边界条件下的碰撞检测（靠近盒子一个面的颗粒可能与靠近对面的颗粒发生碰撞）。
 - **参数：**
   - `mesh` — 待生成镜像的源网格。

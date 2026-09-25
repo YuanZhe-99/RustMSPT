@@ -160,7 +160,10 @@ run_placement
 存活邻居为止，只有在它之前的颗粒对才需要代价占绝大部分的精确距离。当这样的颗粒对数量达到
 `FeasibilityContext::pair_parallel_min`（默认 `PAIR_PARALLEL_MIN`）时，这些距离用有序的
 `find_map_first` 并行计算，因此返回的原因始终是按邻居顺序和每对内部检查顺序的第一个，与串行扫描完全
-相同。计数器仍只由串行调用方递增。`forced_parallel_pair_checks_match_serial_attempt_by_attempt` 以固定
+相同。计数器仍只由串行调用方递增。间隙判定本身调用 `mesh_closer_than_prepared`，并告知碰撞已被排除：
+不重复相交与嵌套检查，且先用有界的双层次结构筛查排除明显远于间隙的颗粒对，再测精确距离。在随仓库提供的
+placement 配置上，整次运行加快 2.2～4.2 倍（体积分数 0.10～0.30，1 与 8 线程），记录、STL 与尺寸 CSV
+逐字节一致。`forced_parallel_pair_checks_match_serial_attempt_by_attempt` 以固定
 候选序列分别强制串行和强制并行，在 1/2/4/8 个 worker 下逐次比较。
 
 **未达标是一种结果。** 什么也没放置的运行仍会写出报告、不写 STL、并以零码退出。只有配置不可用或输出

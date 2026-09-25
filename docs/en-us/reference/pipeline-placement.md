@@ -167,6 +167,11 @@ exact distance, which is the whole cost. When `FeasibilityContext::pair_parallel
 `PAIR_PARALLEL_MIN`) or more of them do, the distances run in parallel with the ordered
 `find_map_first`, so the returned reason is the first one in neighbour order and per-pair check order,
 exactly as a serial scan would return. Counters are still incremented only by the sequential caller.
+The gap question itself goes through `mesh_closer_than_prepared` with the collision already ruled
+out: overlap and enclosure are not repeated, and a bounded dual-hierarchy screen settles every pair
+clearly farther apart than the gap before any exact distance is measured. On the shipped placement
+config this took whole runs 2.2-4.2x faster (volume fraction 0.10-0.30, 1 and 8 threads) with the
+record, STL and size CSV byte-identical.
 `forced_parallel_pair_checks_match_serial_attempt_by_attempt` replays a fixed candidate sequence
 forced serial and forced parallel on 1/2/4/8 workers and compares every attempt.
 

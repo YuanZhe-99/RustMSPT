@@ -276,7 +276,9 @@ them took the same run, placing the same particles, to 0.21 s.
   box test. Building one per attempt means building a bounding-volume hierarchy per attempt.
 - The exact in-box volume runs only for a particle whose box actually straddles the domain. One
   wholly inside keeps its full volume by definition.
-- The exact pair distance is reached only after both cheaper tests fail to separate the pair.
+- The exact pair distance is reached only after both cheaper tests fail to separate the pair, and
+  even then only for a pair a bounded screen at the gap cannot show to be farther apart
+  (`mesh_closer_than_prepared`); the answer is the same as measuring every such distance.
 
 A particle's full volume is `scale³ × shell.volume`, never a fresh tetrahedra sum over the
 transformed mesh.
