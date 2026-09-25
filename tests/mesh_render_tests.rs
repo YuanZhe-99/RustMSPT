@@ -808,6 +808,8 @@ fn mesh_render_cli_worker_budget_and_fallback() {
             }
             assert!(stdout.contains(&format!("CPU transparency renderer: workers={}, worker_index=Some(", workers.min(available))), "{stdout}");
             if backend == "auto" { assert!(stdout.contains("GPU preview unavailable"), "{stdout}"); }
+            // Two views share one scene QBVH, and at most two frames are ever resident.
+            assert!(stdout.contains("[mesh-render] cpu scene_qbvh_builds=1 views=2 max_live_images=2"), "{stdout}");
             let images: Vec<_> = ["front", "iso_ne"].iter().map(|view| {
                 let path = out.join(format!("fixture_{view}.png"));
                 let decoded = image::open(&path).unwrap().to_rgba8();

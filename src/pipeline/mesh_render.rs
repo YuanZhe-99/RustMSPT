@@ -67,26 +67,29 @@ fn consume_frames<T: Send>(
 // AI-FUNC-SUMMARY:
 // Purpose: Render items in order and write each result, overlapping the write of item i-1 with the render of item i through rayon::join.
 // Inputs: items, a render closure (may use nested Rayon parallelism), an ordered write closure receiving (index, frame).
-// Returns: Ok after every frame is written, or the first write error.
+// Returns: Ok(most frames resident at once: 1, or 2 once writing overlaps rendering) after every frame is written, or the first write error.
 // Side effects: Whatever render/write do.
 // Notes: At most one finished frame waits for or undergoes writing while the next renders, so two frames are resident at most. Writes happen strictly in index order. A write error returns after the concurrently started render finishes; no later item is rendered or written. With one worker, join runs render then write inline, which is sequential.
 fn render_and_write_overlapped<C: Sync, T: Send>(
     items: &[C],
     render: impl Fn(&C) -> T + Sync,
     mut write: impl FnMut(usize, T) -> Result<()> + Send,
-) -> Result<()> {
+) -> Result<usize> {
     let mut pending: Option<(usize, T)> = None;
+    let mut max_live = 0usize;
     for (index, item) in items.iter().enumerate() {
         let (frame, written) = match pending.take() {
             None => (render(item), Ok(())),
             Some((previous, image)) => rayon::join(|| render(item), || write(previous, image)),
         };
+        // The frame just rendered plus the one that was being written while it rendered.
+        max_live = max_live.max(if index == 0 { 1 } else { 2 });
         written?;
         pending = Some((index, frame));
     }
     match pending {
-        Some((index, frame)) => write(index, frame),
-        None => Ok(()),
+        Some((index, frame)) => write(index, frame).map(|()| max_live),
+        None => Ok(max_live),
     }
 }
 
@@ -466,11 +469,12 @@ impl MeshRenderPipeline {
                 rayon::current_thread_index()
             );
             timer.restart();
+            let builds_before = crate::geometry::scene_render::scene_qbvh_build_count();
             let prepared = PreparedScene::new(&scene);
             timer.stage("cpu_prepare");
             let render_nanos = std::sync::atomic::AtomicU64::new(0);
             let mut write_seconds = 0.0;
-            render_and_write_overlapped(
+            let max_live = render_and_write_overlapped(
                 &cameras,
                 |(_, camera)| {
                     let started = std::time::Instant::now();
@@ -490,6 +494,11 @@ impl MeshRenderPipeline {
                     Ok(())
                 },
             )?;
+            println!(
+                "[mesh-render] cpu scene_qbvh_builds={} views={} max_live_images={max_live}",
+                crate::geometry::scene_render::scene_qbvh_build_count() - builds_before,
+                cameras.len()
+            );
             timer.report(
                 "cpu_render",
                 render_nanos.load(std::sync::atomic::Ordering::Relaxed) as f64 * 1e-9,

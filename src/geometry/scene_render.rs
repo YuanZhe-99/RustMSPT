@@ -49,6 +49,7 @@ fn build_scene_shape(scene: &RenderScene) -> Option<SceneShape> {
         set.push(t.set);
     }
     let shape = to_parry_trimesh(&mesh)?;
+    SCENE_QBVH_BUILDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     // The measured 24-triangle scene loses to the extra traversal; the first
     // profitable layered case has 192 triangles. Retain all-hits below that.
     let opaque = alpha.len() >= 192 && alpha.iter().all(|&a| a == 1.0);
@@ -120,6 +121,14 @@ pub fn render_scene_cpu(
     settings: &SceneRenderSettings,
 ) -> RenderedImage {
     PreparedScene::new(scene).render(camera, width, height, settings)
+}
+
+static SCENE_QBVH_BUILDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+// AI-FUNC-SUMMARY: Process-wide count of scene QBVH builds (one per PreparedScene with geometry); returns u64; side effects: none.
+// Notes: PERF-17 acceptance observes that several views of one scene share a single build.
+pub fn scene_qbvh_build_count() -> u64 {
+    SCENE_QBVH_BUILDS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 // AI-FUNC-SUMMARY: Borrow a scene and retain its immutable QBVH/materials across camera renders.

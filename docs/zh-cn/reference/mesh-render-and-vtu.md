@@ -154,6 +154,8 @@ GPU 多视图且配置 worker 数大于 1 时，`consume_frames` 通过零容量
 
 ### CPU PNG 写出重叠（PERF-17，2026-09-25）
 
+**构建与驻留计数（PERF-17，2026-09-25）。** CPU 路径打印 `[mesh-render] cpu scene_qbvh_builds=<n> views=<n> max_live_images=<n>`。`scene_qbvh_builds` 是进程级计数 `geometry::scene_render::scene_qbvh_build_count()`（每个含几何的 `PreparedScene` 加一）在准备前后的差值，因此无论渲染多少视图都为 1；`max_live_images` 由 `render_and_write_overlapped` 返回（单视图为 1，写出与渲染重叠后为 2）。`mesh_render_cli_worker_budget_and_fallback` 在 1/2/8 worker 下断言 `scene_qbvh_builds=1 views=2 max_live_images=2`。GPU 路径每个 `GpuScenePipeline` 只上传一次，其主机帧由会合式 writer 限制（最多两帧，§56）。
+
 CPU 视图改由 `render_and_write_overlapped` 处理：第 *i* 个视图在 `rayon::join` 中渲染（内部仍按像素并行），同时第 *i-1* 个视图在同一线程池的另一个 worker 上进行 PNG 编码和写盘；因此最多存在两张已完成或正在渲染的图像，写出仍按视图顺序。写出错误在并发开始的那次渲染结束后立即返回；之后的视图不再渲染或写出，CPU 写出错误也不会触发任何回退。单 worker 时 `join` 依次内联执行渲染与写出，即原来的顺序循环。测试在 1/2/4 worker、0/1/2/7 个视图下与顺序循环比较 PNG 字节和顺序，检查首/中/末帧写错（且最多多渲染一个视图），并证明下一视图的渲染在上一张写出完成前开始。GPU writer 保留 `consume_frames`：其生产者由回调驱动（`render_views_to` 推送帧），逐帧 `rayon::join` 需要拉取式 GPU API，而 rayon scope 加阻塞交接会让线程池 worker 阻塞在通道上；其阻塞/排空/回退顺序由现有测试覆盖，本次未改动。忽略的 release 基准 `cpu_overlap_benchmark`（level-5 icosphere 的 8 个视图，预热后 5 个样本，4 核共享机器且有并发构建）未发现可靠差异：256²/1024²/2048² 及 1/2/4 worker 下重叠/顺序中位比值为 0.95～1.23，样本离散度大于差值，原因是 PNG 编码只占 CPU 光线投射时间的一小部分。Auto 后端选择：STL `render` 已通过 `resolve_execution` 使用 `acceleration.gpu_min_pixels`（默认 250,000）；`mesh-render` 默认仍为 `gpu_min_pixels: 0`，因为把小尺寸 `auto` 渲染切到 CPU 会改变图像（CPU 为透明度参考，GPU 为不透明预览），而不仅是成本。
 
 ### 不透明场景最近命中组（2026-09-23）

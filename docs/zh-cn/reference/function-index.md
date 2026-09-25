@@ -26,6 +26,7 @@
 | `PreparedScene` | Geometry | `src/geometry/scene_render.rs:108` | Immutable CPU scene accelerator shared across cameras. |
 | `PreparedScene::new` | Geometry | `src/geometry/scene_render.rs:115` | Prepare QBVH and materials once. |
 | `PreparedScene::render` | Geometry | `src/geometry/scene_render.rs:120` | Render a view with retained preparation and per-task hit scratch. |
+| `scene_qbvh_build_count` | Geometry | `src/geometry/scene_render.rs` | 进程级场景 QBVH 构建计数（每个含几何的 PreparedScene 一次）。 |
 | `RenderPipeline::run_in_pool` | Pipeline | `src/pipeline/render.rs:59` | Execute render stages and fallback within the configured pool. |
 | `gpu_crop_values_supported` | Pipeline | `src/pipeline/crop.rs:25` | Check exact integer representation for GPU interpolation. |
 | `CropPipeline::run_in_pool` | Pipeline | `src/pipeline/crop.rs:621` | Execute crop stages within the configured pool and report completed-stage wall times. |
