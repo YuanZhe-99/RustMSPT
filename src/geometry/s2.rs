@@ -506,6 +506,8 @@ fn fft_index_3d(x: usize, y: usize, z: usize, ny: usize, nz: usize) -> usize {
 }
 
 const FFT_RETAIN_BYTES: usize = 16 * 1024 * 1024;
+/// Target size of the x-axis gather buffer in the parallel FFT (one band of y-planes).
+const FFT_X_BAND_BYTES: usize = 8 * 1024 * 1024;
 
 pub(crate) const DEFAULT_CPU_EXACT_BUDGET_BYTES: u64 = 768 * 1024 * 1024;
 pub(crate) const NS_PER_FFT_UNIT: f64 = 7.0;
@@ -689,13 +691,21 @@ fn exact_shell_work(dims: [usize; 3], r_max: usize, pitch: f64) -> (u64, u128, u
         .fold((0u64, 0u128, 0u64), |(k, w, m), &(rk, rw)| (k + rk, w + rw, m.max(rk)))
 }
 
-// AI-FUNC-SUMMARY: Estimate the FFT kernel's peak bytes with checked arithmetic: occupancy, complex grid, transpose when the transform uses more than one task, per-worker line/scratch buffers, axis plans and the output curve; None on overflow.
+// AI-FUNC-SUMMARY: Estimate the FFT kernel's peak bytes with checked arithmetic: occupancy, complex grid, one x-axis gather band (at most FFT_X_BAND_BYTES, never more than the grid) when the transform uses more than one task, per-worker line/scratch buffers, axis plans and the output curve; None on overflow.
 fn fft_working_set_bytes(dims: [usize; 3], padded: [usize; 3], r_max: usize, workers: usize) -> Option<u64> {
     let cells = dims.iter().try_fold(1u64, |a, &n| a.checked_mul(n as u64))?;
     let padded_cells = padded.iter().try_fold(1u64, |a, &n| a.checked_mul(n as u64))?;
     let tasks = (workers.max(1) as u64).min(padded_cells.div_ceil(65536)).max(1);
     let complex = std::mem::size_of::<Complex<f64>>() as u64;
-    let arrays = padded_cells.checked_mul(complex)?.checked_mul(if tasks > 1 { 2 } else { 1 })?;
+    let grid = padded_cells.checked_mul(complex)?;
+    let band = if tasks > 1 {
+        let plane = (padded[0] as u64).checked_mul(padded[2] as u64)?.checked_mul(complex)?.max(1);
+        let planes = (FFT_X_BAND_BYTES as u64 / plane).clamp(1, padded[1].max(1) as u64);
+        planes.checked_mul(plane)?
+    } else {
+        0
+    };
+    let arrays = grid.checked_add(band)?;
     let max_axis = *padded.iter().max()? as u64;
     let scratch = (workers.max(1) as u64).checked_mul(4)?.checked_mul(max_axis)?.checked_mul(complex)?;
     let plans = 12u64.checked_mul(max_axis)?.checked_mul(complex)?;
@@ -810,8 +820,13 @@ impl FftWorkspace {
             .saturating_mul(std::mem::size_of::<Complex<f64>>())
     }
 
-    // AI-FUNC-SUMMARY: Run an in-place separable transform using cached axis plans/transpose and task-local scratch; normalize inverse values in the installed Rayon pool.
+    // AI-FUNC-SUMMARY: Run an in-place separable transform using cached axis plans, a band-sized x-axis gather buffer and task-local scratch; normalize inverse values in the installed Rayon pool.
     fn transform(&mut self, inverse: bool) {
+        self.transform_banded(inverse, FFT_X_BAND_BYTES);
+    }
+
+    // AI-FUNC-SUMMARY: transform with an explicit x-axis band size in bytes; the band changes only memory and scheduling, never the result; side effects: as transform.
+    fn transform_banded(&mut self, inverse: bool, band_bytes: usize) {
         let [nx, ny, nz] = self.dims;
         let plans = if inverse {
             &self.inverse
@@ -864,7 +879,6 @@ impl FftWorkspace {
             return;
         }
 
-        buf.resize(data.len(), Complex::default());
         data.par_chunks_mut(nz).with_min_len((nx * ny / tasks).max(1)).for_each_init(
             || vec![Complex::default(); fft_z.get_inplace_scratch_len()],
             |scratch, line| fft_z.process_with_scratch(line, scratch),
@@ -890,35 +904,51 @@ impl FftWorkspace {
             },
         );
 
-        {
-            let data_ref: &[Complex<f64>] = data;
-            buf.par_chunks_mut(nx * nz)
-                .with_min_len((ny / tasks).max(1))
-                .enumerate()
-                .for_each(|(y, y_slab)| {
+        // The x axis is strided by ny*nz, so its lines are gathered into a buffer, transformed there
+        // and scattered back - in bands of y-planes, not the whole grid at once. A whole-grid buffer
+        // doubled the peak memory of every parallel exact S2 (a 200^3 padded grid: 131 -> 255 MiB);
+        // a band of about FFT_X_BAND_BYTES keeps the extra memory bounded. Each line sees exactly the
+        // values and the plan it did before, so the result is bit-identical.
+        let plane = (nx * nz).max(1);
+        let band = (band_bytes / (plane * std::mem::size_of::<Complex<f64>>())).clamp(1, ny);
+        buf.resize(band * plane, Complex::default());
+        let mut y0 = 0;
+        while y0 < ny {
+            let rows = band.min(ny - y0);
+            let band_buf = &mut buf[..rows * plane];
+            {
+                let data_ref: &[Complex<f64>] = data;
+                band_buf.par_chunks_mut(plane).enumerate().for_each(|(dy, y_slab)| {
+                    let y = y0 + dy;
                     for z in 0..nz {
                         for x in 0..nx {
                             y_slab[z * nx + x] = data_ref[fft_index_3d(x, y, z, ny, nz)];
                         }
                     }
                 });
-        }
-        buf.par_chunks_mut(nx).with_min_len((ny * nz / tasks).max(1)).for_each_init(
-            || vec![Complex::default(); fft_x.get_inplace_scratch_len()],
-            |scratch, line| fft_x.process_with_scratch(line, scratch),
-        );
-        {
-            let buf_ref: &[Complex<f64>] = buf;
-            data.par_chunks_mut(ny * nz)
-                .with_min_len((nx / tasks).max(1))
-                .enumerate()
-                .for_each(|(x, x_slab)| {
-                    for y in 0..ny {
-                        for z in 0..nz {
-                            x_slab[y * nz + z] = buf_ref[(y * nz + z) * nx + x];
+            }
+            band_buf
+                .par_chunks_mut(nx)
+                .with_min_len((rows * nz / tasks).max(1))
+                .for_each_init(
+                    || vec![Complex::default(); fft_x.get_inplace_scratch_len()],
+                    |scratch, line| fft_x.process_with_scratch(line, scratch),
+                );
+            {
+                let band_ref: &[Complex<f64>] = band_buf;
+                data.par_chunks_mut(ny * nz)
+                    .with_min_len((nx / tasks).max(1))
+                    .enumerate()
+                    .for_each(|(x, x_slab)| {
+                        for dy in 0..rows {
+                            let y = y0 + dy;
+                            for z in 0..nz {
+                                x_slab[y * nz + z] = band_ref[(dy * nz + z) * nx + x];
+                            }
                         }
-                    }
-                });
+                    });
+            }
+            y0 += rows;
         }
 
         if inverse {
@@ -1527,6 +1557,40 @@ pub(crate) fn try_calculate_s2_gpu_exact_limited(mesh: &Mesh, bbox: BoundingBox,
 #[cfg(test)]
 mod fft_workspace_tests {
     use super::*;
+
+    // AI-FUNC-SUMMARY: The banded parallel transform equals the serial transform bit for bit, forward and inverse, with one-plane bands, three-plane bands and a single whole-grid band, and its gather buffer stays at the band size; no file output.
+    #[test]
+    fn banded_parallel_fft_matches_serial_bit_for_bit() {
+        let dims = [60usize, 48, 50];
+        let cells: usize = dims.iter().product();
+        let fill = |w: &mut FftWorkspace| {
+            for (i, v) in w.grid.iter_mut().enumerate() {
+                *v = Complex::new(((i * 37) % 11) as f64 - 5.0, ((i * 13) % 7) as f64 * 0.25);
+            }
+        };
+        let serial_pool = rayon::ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+        let mut reference = FftWorkspace::new(dims);
+        fill(&mut reference);
+        serial_pool.install(|| {
+            reference.transform(false);
+            reference.transform(true);
+        });
+        let plane_bytes = dims[0] * dims[2] * std::mem::size_of::<Complex<f64>>();
+        let parallel_pool = rayon::ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+        for planes in [1usize, 5, dims[1]] {
+            let mut work = FftWorkspace::new(dims);
+            fill(&mut work);
+            parallel_pool.install(|| {
+                assert!(rayon::current_num_threads().min(cells.div_ceil(65536)) >= 2, "fixture must take the parallel path");
+                work.transform_banded(false, planes * plane_bytes);
+                work.transform_banded(true, planes * plane_bytes);
+            });
+            let a: Vec<(u64, u64)> = reference.grid.iter().map(|c| (c.re.to_bits(), c.im.to_bits())).collect();
+            let b: Vec<(u64, u64)> = work.grid.iter().map(|c| (c.re.to_bits(), c.im.to_bits())).collect();
+            assert_eq!(a, b, "{planes}-plane bands");
+            assert_eq!(work.transpose.len(), planes.min(dims[1]) * dims[0] * dims[2], "gather buffer is one band");
+        }
+    }
 
     // AI-FUNC-SUMMARY: Verify cached storage reuse never retains stale occupancy, supports nested consumers and drops array worksets above its retention cap.
     #[test]

@@ -307,7 +307,7 @@
 
 #### FftWorkspace::transform
 
-`FftWorkspace::transform(inverse)` applies cached dimension-specific forward/inverse axis plans to its complex grid. The task count is min(current pool workers, ceil(padded cells / 65536)), at least one. One task uses serial axis gathers and one shared scratch buffer, without allocating a transpose array. Multiple tasks use a lazily allocated persistent transpose buffer and task-local `process_with_scratch` storage, with axis-specific minimum chunk lengths. Filling, power spectrum and normalization use the same task budget. Inverse normalization and the power-spectrum pass execute under the caller's Rayon pool. 填充尺寸为不小于 2N-1 的最小 2,3,5-平滑长度（`padded_fft_dims`）。
+`FftWorkspace::transform(inverse)` applies cached dimension-specific forward/inverse axis plans to its complex grid. The task count is min(current pool workers, ceil(padded cells / 65536)), at least one. One task uses serial axis gathers and one shared scratch buffer, without allocating a transpose array. Multiple tasks gather the strided x-axis lines into a buffer in bands of y-planes of about `FFT_X_BAND_BYTES` (8 MiB), transform them there and scatter them back band by band, with task-local `process_with_scratch` storage and axis-specific minimum chunk lengths. The earlier whole-grid transpose buffer doubled the peak of every parallel exact S2 (200^3 padded: 131 -> 255 MiB on 2 workers); banding brings it to 141 MiB on 2 workers and 153 MiB on 8, bit-identical (`banded_parallel_fft_matches_serial_bit_for_bit`, PLAN.Performance.md §76). `transform_banded` takes the band size explicitly for that test. Filling, power spectrum and normalization use the same task budget. Inverse normalization and the power-spectrum pass execute under the caller's Rayon pool. 填充尺寸为不小于 2N-1 的最小 2,3,5-平滑长度（`padded_fft_dims`）。
 
 #### with_fft_correlation
 
@@ -400,7 +400,7 @@ GPU exact 现使用 shell_offset_iter，单个半径内部也只保留嵌套范�
 
 - `exact_shell_work` 只枚举一次域内偏移球的一个卦限（符号副本按重数加权，循环在 `r_max` 处截断），使用与壳迭代器相同的半开浮点边界，返回域内偏移数 `K`、精确直接工作量 `W = Σ (nx-|dx|)(ny-|dy|)(nz-|dz|)` 以及最大单半径偏移数；单元测试与暴力壳枚举对照。
 - 模型时间：FFT 为 `NS_PER_FFT_UNIT·P·log2 P / (1 + FFT_PARALLEL_EFFICIENCY·(workers-1))`（P 为填充后单元数）；直接法为 `NS_PER_DIRECT_PAIR·W / (1 + DIRECT_PARALLEL_EFFICIENCY·(min(workers,K)-1))`。常数（7.0 ns、0.18、1.35 ns、0.6）来自被忽略的 release 测试 `exact_cost_model_calibration` 在空闲 8 核主机上 1/4/8 worker 的拟合（PLAN.Performance.md §68）：FFT 在 4/8 worker 时加速 1.7/2.1 倍，直接法 3.1/5.2 倍。使用这些常数时规划器在全部 18 个校准用例中都选中更快的内核；此前在共享 4 核主机上拟合的常数（2.0、无、0.36、1/3）在一个 8 worker 用例上选错，相差 10%。绝对时间与主机相关，决定选择的只是 FFT/直接法比值，两台主机上该比值一致（5.2 对 5.6）。
-- 工作集（checked `u64`）：FFT = 占据场 + 复数网格 + 转置（变换多于一个任务时）+ 每 worker 行/scratch + 轴 plan + 输出；直接法 = 占据场 + 每个并发半径的域内偏移及逐偏移计数 + 输出。不包含 plan 内部不透明存储及其他线程保留的 16 MiB 缓存。
+- 工作集（checked `u64`）：FFT = 占据场 + 复数网格 + 一个 x 轴收集带（变换多于一个任务时；至多 `FFT_X_BAND_BYTES`，且不超过网格）+ 每 worker 行/scratch + 轴 plan + 输出；直接法 = 占据场 + 每个并发半径的域内偏移及逐偏移计数 + 输出。不包含 plan 内部不透明存储及其他线程保留的 16 MiB 缓存。
 - 只有工作集不超过预算的内核可选，取模型时间更小者（相等取 FFT）；都不满足时报告直接法，原因为 `no kernel fits budget`。
 
 `DEFAULT_CPU_EXACT_BUDGET_BYTES` 为 768 MiB，相当于旧 24,000,000 填充单元 FFT 上限的网格加转置大小，因此不会有配置比以前分配明显更多内存。`VoxelS2::calculate` 使用 `cached_exact_plan`：相同 `(dims, r_max, pitch, workers, budget)` 复用上次计划，只在键变化时打印 `[Info] CPU exact S2 plan: ... method=... reason=...`。`VoxelS2::calculate_exact_with` 为测试和基准强制指定内核。

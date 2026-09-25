@@ -114,7 +114,7 @@ for `r`, not a random sample — via one of two equivalent algorithms:
 PERF-07). FFT time is modeled as `c_fft · P · log2 P` for `P` padded cells; direct time as
 `c_pair · W`, where `W` is the exact number of voxel pairs the direct kernel visits (the sum over
 in-domain shell offsets of their overlap volumes, at most `K · N`). Only kernels whose peak
-working set (checked arithmetic: occupancy, complex grid, transpose, per-worker scratch for FFT;
+working set (checked arithmetic: occupancy, complex grid, one x-axis gather band, per-worker scratch for FFT;
 occupancy and per-radius offset lists for direct) fits the default 768 MiB budget are eligible,
 and the cheaper one wins. The budget equals the grid-plus-transpose size of the old fixed
 24,000,000-padded-cell limit. FFT correlation values are rounded to integer pair counts and both
