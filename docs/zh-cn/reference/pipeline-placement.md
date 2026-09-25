@@ -210,3 +210,7 @@ run_placement
 `voxel_labels` prepares immutable per-particle mesh queries and a bounded spatial grid once. Parallel 1024-voxel tiles query their enclosing box once, sort candidate slice indices, and preserve original particle ownership order and void-first classification. Worker scratch retains ray hits. `particle_at_prepared` returns the first acceptance id and bbox-test count, reduced without shared atomics. The test-only original particle scan is the differential oracle. Output phase/id arrays and file schema are unchanged; full-array allocation and streaming I/O remain pending.
 
 Shape library input now uses `load_stl_hashed` so geometry and source digest come from one byte stream. Binary raw-file buffering is bounded; ASCII retains the legacy text parser. Source/shell order and digests are unchanged.
+
+### 阶段计时（PERF-00）
+
+`run_placement_in_pool` 向 stdout 打印 `[Timing] placement stage=<load|plan|place|write_outputs|report|total_in_pool> seconds=<f>`、`[Timing] placement workers=<n>` 和 `[Timing] placement peak_rss_bytes=<n|unavailable>`。这些行从不写入记录、报告或 CSV，因此跨线程数的逐字节输出比较不受影响；报告自身的 `elapsed` 字段不变。

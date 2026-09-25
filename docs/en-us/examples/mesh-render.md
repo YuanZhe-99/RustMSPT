@@ -95,3 +95,7 @@ RUSTMSPT_UPDATE_RENDER_BASELINES=1 cargo test --test mesh_visual_regression_test
 The GPU baseline test compares opaque variants against the CPU reference and
 skips when no adapter is available. Transparent GPU output is excluded by
 design because the CPU path is the exact transparency reference.
+
+### Timing lines (added 2026-09-25)
+
+Captured output above predates the shared stage timer. Current builds also print `[Timing] mesh-render stage=<name> seconds=<f>` for each completed stage, then `[Timing] mesh-render workers=<n>` and `[Timing] mesh-render peak_rss_bytes=<n|unavailable>`. Stage names are listed in `../reference/pipeline-core.md` (`pipeline/timing.rs`); output files are unchanged.

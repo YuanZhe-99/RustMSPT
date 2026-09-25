@@ -391,3 +391,7 @@ Successful stages emit `[Timing] crop stage=<name> seconds=<wall_seconds>` for `
 ### Dense background counts (2026-09-23)
 
 `for_each_boundary_value` visits only faces, counting corners/edges once. Background mode uses 256 `usize` counters for U8/I8 and 65,536 counters for U16/I16 volumes with at least 65,536 voxels (at most 512 KiB on a 64-bit host). Smaller 16-bit and all 32-bit volumes retain the HashMap path. A checked index sends values outside the declared dense range into a sparse spill map; metadata is not used to truncate/reject arbitrary i64 values. Dense and sparse counts share a running mode with the original smallest-value tie break; no final full histogram scan is needed. Counters are local and released before PCA. Independent full-grid ordered-map oracles cover collapsed dimensions, both integer extrema, signed ranges and metadata mismatches. Real-input end-to-end evidence is tracked in PLAN.Performance.md §62.
+
+### Shared stage timer (2026-09-25)
+
+Crop now emits its stage lines through `pipeline::timing::StageTimer` with the same names, order, nine-decimal format and stage boundaries as before (`restart` excludes the same untimed gaps), and appends `[Timing] crop workers=<n>` and `[Timing] crop peak_rss_bytes=<n|unavailable>`. Split-filter emits `load`, `split`, `metrics`, `filter`, `write_stl`, `write_report` and `total_in_pool`; a folder input is now loaded completely before splitting (each source mesh is still dropped as soon as it is split). See `pipeline-core.md` for the helper.

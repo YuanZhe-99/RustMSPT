@@ -305,7 +305,7 @@ fn selective_prune_to_target_vf(
 // Purpose: Run one simulated annealing island: perturb one random particle per iteration, check constraints/collisions, compute S2 loss, accept/reject via Metropolis criterion.
 // Inputs: island_id, num_islands, initial prepared particles, target S2, optimization params, box bounds, boundary mode/params, rotation mode, fixed S2 evaluator, optional global best for migration, migration interval, and mutable history log.
 // Returns: IslandResult with best particles, loss, S2, and timing, or a propagated evaluator error.
-// Side effects: Mutates history_log; prints progress; exchanges coherent geometry/loss/S2 snapshots through global_best; evaluates all stages with the run-wide evaluator in the installed pool.
+// Side effects: Mutates history_log; prints progress and, at the end, one [GridStats] occupancy line plus grid-query/bbox-reject/narrow-phase/distance counters (observation only, no RNG or decision change); exchanges coherent geometry/loss/S2 snapshots through global_best; evaluates all stages with the run-wide evaluator in the installed pool.
 // Notes: Three move types (60% local translate+rotate, 30% move toward neighbor, 10% random reposition). Updates only moved-particle grid cells after acceptance; migration rebuilds the grid. Adaptive temperature adjusts within acceptance window.
 #[allow(clippy::too_many_arguments)]
 fn run_sa_island(
@@ -371,6 +371,11 @@ fn run_sa_island(
         .collect();
     let cell_size = estimate_cell_size(&bboxes_for_grid.iter().map(|&(_, b)| b).collect::<Vec<_>>());
     let mut grid = SpatialGrid::build(&bboxes_for_grid, box_bounds, cell_size);
+    let mut grid_queries = 0u64;
+    let mut grid_candidates = 0u64;
+    let mut bbox_rejects = 0u64;
+    let mut narrow_phase = 0u64;
+    let mut distance_checks = 0u64;
 
     if num_islands > 1 {
         println!("[Info] Island {island_id}: starting with {} particles, initial loss {current_loss:.6}", prepared.len());
@@ -477,7 +482,10 @@ fn run_sa_island(
         let mut blocked = false;
         {
             let mut neighbors = if let Some(cb) = candidate_bbox {
-                grid.query_neighbors_with_margin(cb, min_neighbor, idx)
+                grid_queries += 1;
+                let found = grid.query_neighbors_with_margin(cb, min_neighbor, idx);
+                grid_candidates += found.len() as u64;
+                found
             } else {
                 (0..prepared.len()).filter(|&j| j != idx).collect()
             };
@@ -496,13 +504,16 @@ fn run_sa_island(
                     bbox_gap = Some(bd);
                     if min_neighbor > 0.0 {
                         if bd >= min_neighbor {
+                            bbox_rejects += 1;
                             continue;
                         }
                     } else if bd > 0.0 {
+                        bbox_rejects += 1;
                         continue;
                     }
                 }
 
+                narrow_phase += 1;
                 let overlap = mesh_collision_exact_prepared(
                     candidate_bbox,
                     candidate_shape.as_ref(),
@@ -520,6 +531,7 @@ fn run_sa_island(
                         None => true,
                     };
                     if need_exact_distance {
+                        distance_checks += 1;
                         let d = mesh_distance_exact_prepared(
                             candidate_bbox,
                             candidate_shape.as_ref(),
@@ -563,7 +575,10 @@ fn run_sa_island(
                 let g_bbox = mesh_bbox(g);
                 let g_shape = to_parry_trimesh(g);
                 let mut ghost_neighbors = if let Some(gb) = g_bbox {
-                    grid.query_neighbors_with_margin(gb, min_neighbor, idx)
+                    grid_queries += 1;
+                    let found = grid.query_neighbors_with_margin(gb, min_neighbor, idx);
+                    grid_candidates += found.len() as u64;
+                    found
                 } else {
                     (0..prepared.len()).filter(|&j| j != idx).collect()
                 };
@@ -581,13 +596,16 @@ fn run_sa_island(
                         bbox_gap = Some(bd);
                         if min_neighbor > 0.0 {
                             if bd >= min_neighbor {
+                                bbox_rejects += 1;
                                 continue;
                             }
                         } else if bd > 0.0 {
+                            bbox_rejects += 1;
                             continue;
                         }
                     }
 
+                    narrow_phase += 1;
                     if mesh_collision_exact_prepared(
                         g_bbox,
                         g_shape.as_ref(),
@@ -603,6 +621,7 @@ fn run_sa_island(
                             None => true,
                         };
                         if need_exact_distance {
+                            distance_checks += 1;
                             let d = mesh_distance_exact_prepared(
                                 g_bbox,
                                 g_shape.as_ref(),
@@ -738,6 +757,10 @@ fn run_sa_island(
     }
 
     progress.finish_with_message("Optimization loop completed");
+    println!("{}", grid.stats().summary_line(&format!("optimize island={island_id}")));
+    println!(
+        "[GridStats] optimize island={island_id} queries grid_queries={grid_queries} grid_candidates={grid_candidates} bbox_rejects={bbox_rejects} narrow_phase={narrow_phase} distance_checks={distance_checks}"
+    );
 
     Ok(IslandResult {
         best,
@@ -782,9 +805,10 @@ impl Pipeline for OptimizePipeline {
 }
 
 impl OptimizePipeline {
-    // AI-FUNC-SUMMARY: Execute every optimize stage under one installed Rayon pool and a fixed S2 evaluator; returns success or input/output/backend error; writes STL, history and diagnostics.
+    // AI-FUNC-SUMMARY: Execute every optimize stage under one installed Rayon pool and a fixed S2 evaluator; returns success or input/output/backend error; writes STL, history and diagnostics, including load/prepare_evaluator/target_s2/input_s2/prune/anneal/final_s2/write timings, workers and peak RSS.
     fn run_in_pool(&self, thread_pool: &ThreadPool) -> Result<()> {
         let run_start = Instant::now();
+        let mut timer = crate::pipeline::timing::StageTimer::start("optimize");
         let params = &self.config.optimization;
         let box_bounds = parse_box_dimensions(&self.config.r#box.dimensions)?;
         let mode = params.mode.unwrap_or(1);
@@ -829,8 +853,10 @@ impl OptimizePipeline {
             ));
         }
 
+        timer.stage("load");
         let merged_input = merge_meshes(&particles);
         let evaluator = OptimizeS2::new(params, box_bounds, &merged_input)?;
+        timer.stage("prepare_evaluator");
         println!("[Info] {}", evaluator.description);
 
         let target = match self.config.target.r#type.as_str() {
@@ -862,6 +888,7 @@ impl OptimizePipeline {
             }
         };
 
+        timer.stage("target_s2");
         let mut history_log = vec![evaluator.description.clone()];
         let s2_method = evaluator.method.name();
         println!(
@@ -881,6 +908,7 @@ impl OptimizePipeline {
         push_history_s2(&mut history_log, "Target S2", &target);
         push_history_s2(&mut history_log, "Input S2", &input_s2);
         history_log.push(format!("Input Loss: {input_loss:.6}"));
+        timer.stage("input_s2");
 
         selective_prune_to_target_vf(
             &mut particles,
@@ -892,6 +920,7 @@ impl OptimizePipeline {
             &mut history_log,
         )?;
 
+        timer.stage("prune");
         let prepared: Vec<ParticlePrepared> = particles
             .into_iter()
             .map(prepare_particle)
@@ -927,6 +956,7 @@ impl OptimizePipeline {
             }
         }
         let best = best.unwrap();
+        timer.stage("anneal");
         let search_loss = best.best.loss;
         let (s2_time, collision_time) = (best.s2_time, best.collision_time);
         let best_mesh = merge_meshes(&best.best.particles);
@@ -942,12 +972,14 @@ impl OptimizePipeline {
         history_log.push(format!("Selected Search Loss: {search_loss:.6}"));
         push_history_s2(&mut history_log, "Final Best S2", &best_s2);
         history_log.push(format!("Final Best Loss: {best_loss:.6}"));
+        timer.stage("final_s2");
 
         save_stl(
             Path::new(&self.config.output.path),
             &best_mesh_oriented,
             "optimized_structure",
         )?;
+        timer.stage("write_stl");
 
         let output_path = Path::new(&self.config.output.path);
         let history_path = output_path
@@ -955,6 +987,7 @@ impl OptimizePipeline {
             .unwrap_or_else(|| Path::new("."))
             .join("s2_history.txt");
         fs::write(&history_path, history_log.join("\n"))?;
+        timer.stage("write_history");
 
         println!("[Info] Optimization completed.");
         println!("[Info] Best loss: {best_loss:.6}");
@@ -974,6 +1007,8 @@ impl OptimizePipeline {
             s2_time.as_secs_f64(),
             collision_time.as_secs_f64()
         );
+        timer.total("total_in_pool");
+        timer.report_resources();
         Ok(())
     }
 }

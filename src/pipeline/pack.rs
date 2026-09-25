@@ -20,9 +20,38 @@ use rand::Rng;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use std::collections::BTreeSet;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::f64::consts::PI;
 use std::fs;
 use std::path::Path;
+
+#[derive(Default)]
+struct PackQueryStats {
+    collision_tests: AtomicU64,
+    direct_scans: AtomicU64,
+    grid_queries: AtomicU64,
+    grid_candidates: AtomicU64,
+    pair_tests: AtomicU64,
+    bbox_rejects: AtomicU64,
+    narrow_phase: AtomicU64,
+}
+
+impl PackQueryStats {
+    // AI-FUNC-SUMMARY: Format the collision counters as one `[GridStats] pack queries ...` line; counts under parallel short-circuiting `any` depend on scheduling and are diagnostic only; returns String; side effects: none.
+    fn summary_line(&self) -> String {
+        let get = |c: &AtomicU64| c.load(Ordering::Relaxed);
+        format!(
+            "[GridStats] pack queries collision_tests={} direct_scans={} grid_queries={} grid_candidates={} pair_tests={} bbox_rejects={} narrow_phase={}",
+            get(&self.collision_tests),
+            get(&self.direct_scans),
+            get(&self.grid_queries),
+            get(&self.grid_candidates),
+            get(&self.pair_tests),
+            get(&self.bbox_rejects),
+            get(&self.narrow_phase)
+        )
+    }
+}
 
 struct PackCollider {
     bbox: Option<crate::types::BoundingBox>,
@@ -38,14 +67,17 @@ impl PackCollider {
         }
     }
 
-    // AI-FUNC-SUMMARY: Apply the legacy bbox rejection and solid-overlap/clearance predicate using cached shapes; missing geometry retains conservative behavior.
-    fn blocks(&self, other: &Self, gap: f64) -> bool {
+    // AI-FUNC-SUMMARY: Apply the legacy bbox rejection and solid-overlap/clearance predicate using cached shapes; missing geometry retains conservative behavior; increments the pair/bbox-reject/narrow-phase counters in stats (relaxed atomics, decisions unchanged).
+    fn blocks(&self, other: &Self, gap: f64, stats: &PackQueryStats) -> bool {
+        stats.pair_tests.fetch_add(1, Ordering::Relaxed);
         if let (Some(a), Some(b)) = (self.bbox, other.bbox) {
             let distance = bbox_distance(a, b);
             if (gap > 0.0 && distance >= gap) || (gap <= 0.0 && distance > 0.0) {
+                stats.bbox_rejects.fetch_add(1, Ordering::Relaxed);
                 return false;
             }
         }
+        stats.narrow_phase.fetch_add(1, Ordering::Relaxed);
         if gap > 0.0 {
             mesh_distance_exact_prepared(
                 self.bbox,
@@ -64,19 +96,24 @@ impl PackCollider {
     }
 }
 
-// AI-FUNC-SUMMARY: Test a prepared candidate against incremental spatial neighbors and bbox-less colliders; small populations scan directly and all exact predicates share cached shapes.
+// AI-FUNC-SUMMARY: Test a prepared candidate against incremental spatial neighbors and bbox-less colliders; small populations scan directly and all exact predicates share cached shapes; counts calls, direct scans, grid queries and grid candidates in stats without changing the result.
 fn pack_blocked(
     candidate: &PackCollider,
     colliders: &[PackCollider],
     grid: &crate::geometry::spatial::SpatialGrid,
     gap: f64,
+    stats: &PackQueryStats,
 ) -> bool {
+    stats.collision_tests.fetch_add(1, Ordering::Relaxed);
     if colliders.len() < 32 || candidate.bbox.is_none() {
+        stats.direct_scans.fetch_add(1, Ordering::Relaxed);
         return colliders
             .iter()
-            .any(|other| candidate.blocks(other, gap));
+            .any(|other| candidate.blocks(other, gap, stats));
     }
     let mut neighbors = grid.query_neighbors_with_margin(candidate.bbox.unwrap(), gap, usize::MAX);
+    stats.grid_queries.fetch_add(1, Ordering::Relaxed);
+    stats.grid_candidates.fetch_add(neighbors.len() as u64, Ordering::Relaxed);
     neighbors.extend(
         colliders
             .iter()
@@ -84,9 +121,9 @@ fn pack_blocked(
             .filter_map(|(i, c)| c.bbox.is_none().then_some(i)),
     );
     if neighbors.len() < 32 {
-        neighbors.iter().any(|&i| candidate.blocks(&colliders[i], gap))
+        neighbors.iter().any(|&i| candidate.blocks(&colliders[i], gap, stats))
     } else {
-        neighbors.par_iter().any(|&i| candidate.blocks(&colliders[i], gap))
+        neighbors.par_iter().any(|&i| candidate.blocks(&colliders[i], gap, stats))
     }
 }
 
@@ -217,8 +254,9 @@ impl Pipeline for PackPipeline {
 }
 
 impl PackPipeline {
-    // AI-FUNC-SUMMARY: Execute loading, sequential proposal RNG, cached parallel feasibility and output under the configured Rayon worker budget.
+    // AI-FUNC-SUMMARY: Execute loading, sequential proposal RNG, cached parallel feasibility and output under the configured Rayon worker budget; prints load/pack_loop/merge_orient/write_stl/report timings, [GridStats] occupancy and query counters, workers and peak RSS.
     fn run_in_pool(&self) -> Result<()> {
+        let mut timer = crate::pipeline::timing::StageTimer::start("pack");
         let box_bounds = parse_box_dimensions(&self.config.r#box.dimensions)?;
         let box_volume = box_bounds.volume();
         if box_volume <= 0.0 {
@@ -314,6 +352,8 @@ impl PackPipeline {
                 .unwrap_or("any")
         );
 
+        timer.stage("load");
+        let query_stats = PackQueryStats::default();
         let mut rng = rand::thread_rng();
         let mut placed: Vec<Mesh> = Vec::new();
         let mut colliders: Vec<PackCollider> = Vec::new();
@@ -552,6 +592,7 @@ impl PackPipeline {
                     &colliders,
                     &collision_grid,
                     min_neighbor,
+                    &query_stats,
                 ) {
                     reject_candidate!();
                 }
@@ -565,7 +606,7 @@ impl PackPipeline {
                 };
                 if candidate_ghosts
                     .iter()
-                    .any(|ghost| pack_blocked(ghost, &colliders, &collision_grid, min_neighbor))
+                    .any(|ghost| pack_blocked(ghost, &colliders, &collision_grid, min_neighbor, &query_stats))
                 {
                     reject_candidate!();
                 }
@@ -634,6 +675,11 @@ impl PackPipeline {
         }
 
         progress.finish_with_message("Packing loop completed");
+        timer.stage("pack_loop");
+        if colliders.len() >= 32 {
+            println!("{}", collision_grid.stats().summary_line("pack"));
+        }
+        println!("{}", query_stats.summary_line());
 
         if placed.is_empty() {
             return Err(RustMsptError::InvalidMesh(
@@ -652,11 +698,13 @@ impl PackPipeline {
         } else {
             (final_mesh.clone(), 0usize, 0usize)
         };
+        timer.stage("merge_orient");
         save_stl(
             Path::new(&self.config.output.path),
             &final_mesh_oriented,
             "packed_result",
         )?;
+        timer.stage("write_stl");
 
         let vf = (current_volume / box_volume).clamp(0.0, 1.0);
         println!("[Info] Packing completed.");
@@ -745,6 +793,9 @@ impl PackPipeline {
                 "[Info] Orientation fix: flipped {flipped_components}/{component_count} components to positive signed volume"
             );
         }
+        timer.stage("report");
+        timer.total("total_in_pool");
+        timer.report_resources();
         Ok(())
     }
 }
@@ -817,7 +868,7 @@ mod collider_tests {
                     let expected = queries.iter().any(|q| original_blocked(q, &meshes, gap));
                     let actual = queries
                         .iter()
-                        .any(|q| pack_blocked(&PackCollider::new(q), &prepared, &grid, gap));
+                        .any(|q| pack_blocked(&PackCollider::new(q), &prepared, &grid, gap, &PackQueryStats::default()));
                     assert_eq!(actual, expected, "periodic={periodic} gap={gap}");
                 }
             }

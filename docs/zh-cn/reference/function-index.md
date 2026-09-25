@@ -725,12 +725,12 @@
 | `SpatialGrid::remove` | Geometry Core | `src/geometry/spatial.rs:59` | Remove all item cell references. |
 | `SpatialGrid::update` | Geometry Core | `src/geometry/spatial.rs:72` | Replace one item membership. |
 | `SpatialQueryScratch` | Geometry Core | `src/geometry/spatial.rs:5` | Retained neighbors and membership storage. |
-| `SpatialGrid::query_into` | Geometry Core | `src/geometry/spatial.rs:111` | Fill reusable query scratch. |
+| `SpatialGrid::query_into` | Geometry Core | `src/geometry/spatial.rs:136` | Fill reusable query scratch. |
 
 | `PackCollider` | Pipeline Packing | `src/pipeline/pack.rs:27` | Cached collider bbox and shape. |
 | `PackCollider::new` | Pipeline Packing | `src/pipeline/pack.rs:34` | Prepare collision shape once. |
-| `PackCollider::blocks` | Pipeline Packing | `src/pipeline/pack.rs:42` | Cached overlap or clearance predicate. |
-| `pack_blocked` | Pipeline Packing | `src/pipeline/pack.rs:68` | Check incremental spatial candidates. |
+| `PackCollider::blocks` | Pipeline Packing | `src/pipeline/pack.rs:71` | Cached overlap or clearance predicate; updates PackQueryStats counters. |
+| `pack_blocked` | Pipeline Packing | `src/pipeline/pack.rs:100` | Check incremental spatial candidates; counts queries in PackQueryStats. |
 | `PackPipeline::run_in_pool` | Pipeline Packing | `src/pipeline/pack.rs:221` | Packing work under configured pool. |
 
 | `MeasurePipeline::run_in_pool` | Pipeline Core | `src/pipeline/measure.rs:83` | Method-specific measurement in configured pool. |
@@ -855,3 +855,23 @@
 | `consume_file_batches` | `src/io/volume.rs:47` | 当前池最多解码两文件，按源顺序消费/验证，失败后不启动后续批次。 |
 | `write_tiff_pages` | `src/io/volume.rs:552` | 借用 writer 顺序编码 TIFF，显式最终刷新并传播错误。 |
 | `for_each_boundary_value` | `src/pipeline/crop.rs:313` | 按 z 主序访问边界体素一次，供专用背景计数器使用。 |
+
+| `StageTimer` | Pipeline Core | `src/pipeline/timing.rs:3` | 每条流水线的总时钟与阶段时钟。 |
+| `StageTimer::start` | Pipeline Core | `src/pipeline/timing.rs:11` | 启动两个时钟。 |
+| `StageTimer::restart` | Pipeline Core | `src/pipeline/timing.rs:17` | 静默重置阶段时钟。 |
+| `StageTimer::stage` | Pipeline Core | `src/pipeline/timing.rs:22` | 打印阶段秒数并重启。 |
+| `StageTimer::report` | Pipeline Core | `src/pipeline/timing.rs:30` | 打印累计的阶段时长。 |
+| `StageTimer::total` | Pipeline Core | `src/pipeline/timing.rs:35` | 打印自启动以来的秒数。 |
+| `StageTimer::report_resources` | Pipeline Core | `src/pipeline/timing.rs:42` | 打印 worker 数与峰值 RSS。 |
+| `format_stage_line` | Pipeline Core | `src/pipeline/timing.rs:49` | 统一的 `[Timing]` 阶段行格式。 |
+| `report_workers` | Pipeline Core | `src/pipeline/timing.rs:54` | 打印当前 Rayon worker 数。 |
+| `report_peak_rss` | Pipeline Core | `src/pipeline/timing.rs:59` | 打印 VmHWM 字节数或 unavailable。 |
+| `peak_rss_bytes` | Pipeline Core | `src/pipeline/timing.rs:67` | 读取 VmHWM，不可用时为 None。 |
+| `parse_vm_hwm` | Pipeline Core | `src/pipeline/timing.rs:73` | 解析 VmHWM kB 行。 |
+| `GridStats` | Geometry Core | `src/geometry/spatial.rs:11` | 桶占用摘要。 |
+| `GridStats::summary_line` | Geometry Core | `src/geometry/spatial.rs:22` | 格式化 `[GridStats]` 行。 |
+| `SpatialGrid::stats` | Geometry Core | `src/geometry/spatial.rs:181` | 一遍扫描的占用统计。 |
+| `map_vertices_centroid` | Geometry Core | `src/geometry/mesh_ops.rs:265` | 顶点映射并返回逐位一致的映射后质心。 |
+| `split_mesh_into_granules_reference` | Geometry Core | `src/geometry/mesh_ops.rs:136` | 仅测试用的原颗粒拆分 oracle。 |
+| `PackQueryStats` | Pipeline Packing | `src/pipeline/pack.rs:29` | relaxed 原子碰撞计数。 |
+| `PackQueryStats::summary_line` | Pipeline Packing | `src/pipeline/pack.rs:41` | 格式化 pack 查询计数。 |

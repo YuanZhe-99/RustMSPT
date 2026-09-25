@@ -164,3 +164,7 @@ threshold, so it ran fully "exact" on CPU alongside the 40,000-sample Monte Carl
   if the voxel grid exceeds 1,500,000 voxels (e.g. a much larger bbox or much finer
   `voxel_pitch`); watch stdout for the corresponding `[Warning]` line when tuning these values on
   larger domains.
+
+### Timing lines (added 2026-09-25)
+
+Captured output above predates the shared stage timer. Current builds also print `[Timing] measure stage=<name> seconds=<f>` for each completed stage, then `[Timing] measure workers=<n>` and `[Timing] measure peak_rss_bytes=<n|unavailable>`. Stage names are listed in `../reference/pipeline-core.md` (`pipeline/timing.rs`); output files are unchanged.

@@ -196,9 +196,47 @@ Shared rotation-axis utilities used by the `pack` and `optimize` pipelines when 
 
 `forge_owned(mesh, lattice_bbox, track_bbox, compression_ratio, compression_axis, bulge_factor, mesh_type, void_densification)` consumes the mesh and applies the existing tracked FFD mapping. The public borrowed wrapper clones once and delegates. ForgePipeline moves its input into this entry, retains the already computed input bbox, removes unused whole-mesh volume scans, and moves the output when orientation is disabled. ScalePipeline likewise moves its transformed mesh when orientation is disabled. Both log transform-only seconds separately from I/O.
 
-`map_vertices` keeps small slices serial and maps disjoint 8192-vertex blocks on the current Rayon pool only with multiple workers and at least max(131072, workers * 65536) vertices. Scale, translate and both FFD variants use it. Each vertex retains its arithmetic order; void centroid is still accumulated serially after the affine pass. ROI remains unaffected by void closure. Clipped ROI VF and output bbox are still measured from actual geometry; no determinant approximation is substituted.
+`map_vertices` keeps small slices serial and maps disjoint 8192-vertex blocks on the current Rayon pool only with multiple workers and at least max(131072, workers * 65536) vertices. Scale, translate and both FFD variants use it. Each vertex retains its arithmetic order; the void centroid keeps the serial index-order accumulation of `mesh_centroid` but, when the affine pass is serial, is summed inside that pass (`map_vertices_centroid`, bit-identical). Fusing the ROI output translation into the FFD pass was not done: `vf_after` and the orientation fix read the unshifted mesh, and clipping at shifted coordinates is not bit-identical. Scale's before/after volume and bbox scans are kept: `|f|^3 * V` is not the same float sum, and a scaled-bbox shortcut would only save one vertex pass. ROI remains unaffected by void closure. Clipped ROI VF and output bbox are still measured from actual geometry; no determinant approximation is substituted.
 
 
 ### Render execution policy
 
 `RenderPipeline::run` installs the whole pipeline in the configured worker pool. `run_in_pool` loads geometry, resolves the environment override and method budget, renders and writes only after success. Both selection and runtime failures honor `cpu_fallback`. GPU work estimates include vertices, color/depth, aligned staging and uniforms. Actual CPU fallback executes in the same pool.
+
+## `pipeline/timing.rs` — stage timing and peak RSS (PERF-00)
+
+| Item | Location | Summary |
+|---|---|---|
+| `StageTimer` | `src/pipeline/timing.rs:3` | Per-pipeline total and current-stage clocks. |
+| `StageTimer::start` | `src/pipeline/timing.rs:11` | Start both clocks for a named pipeline. |
+| `StageTimer::restart` | `src/pipeline/timing.rs:17` | Reset the stage clock without printing (excludes untimed work). |
+| `StageTimer::stage` | `src/pipeline/timing.rs:22` | Print the time since the last mark and restart the stage clock. |
+| `StageTimer::report` | `src/pipeline/timing.rs:30` | Print an externally accumulated duration as a stage. |
+| `StageTimer::total` | `src/pipeline/timing.rs:35` | Print the time since start under a given stage name. |
+| `StageTimer::report_resources` | `src/pipeline/timing.rs:42` | Print workers and peak RSS lines. |
+| `format_stage_line` | `src/pipeline/timing.rs:49` | Format `[Timing] <pipeline> stage=<name> seconds=<f>` (nine decimals). |
+| `report_workers` | `src/pipeline/timing.rs:54` | Print `[Timing] <pipeline> workers=<rayon::current_num_threads()>`. |
+| `report_peak_rss` | `src/pipeline/timing.rs:59` | Print `[Timing] <pipeline> peak_rss_bytes=<n|unavailable>`. |
+| `peak_rss_bytes` | `src/pipeline/timing.rs:67` | VmHWM from `/proc/self/status` in bytes, `None` when unavailable. |
+| `parse_vm_hwm` | `src/pipeline/timing.rs:73` | Parse a `VmHWM: <n> kB` line; `None` when absent, malformed or not kB. |
+
+Every non-meshgen pipeline prints wall-clock stage lines in one format, `[Timing] <pipeline> stage=<name> seconds=<f>`, then `[Timing] <pipeline> workers=<n>` (the Rayon worker count of the pool the stages ran in — the configured pool for pipelines that build one, the global pool for `forge`/`scale`, which honour `RAYON_NUM_THREADS`) and `[Timing] <pipeline> peak_rss_bytes=<n|unavailable>`. Peak RSS is the process high-water mark read from `VmHWM`; it covers the whole process, not only the timed stages, and is never estimated: a platform without `/proc` prints `unavailable`. Stage lines are emitted only for stages that completed; an error returns before any fabricated measurement.
+
+| Pipeline | Stages (in order) | Final line |
+|---|---|---|
+| `split-filter` | `load`, `split`, `metrics`, `filter`, `write_stl`, `write_report` | `total_in_pool` |
+| `pack` (legacy `packing:`) | `load` (targets, input, split, filters), `pack_loop`, `merge_orient`, `write_stl`, `report` (summary and distribution CSV) | `total_in_pool` |
+| `pack` (`placement:`) | `load` (library, sizes, void), `plan` (multiset and first report), `place` (placement and top-up), `write_outputs`, `report` | `total_in_pool` |
+| `optimize` | `load`, `prepare_evaluator`, `target_s2`, `input_s2`, `prune`, `anneal`, `final_s2`, `write_stl`, `write_history` | `total_in_pool` |
+| `measure` | `load`, `split_vf`, `s2_exact` and/or `s2_monte_carlo`, `write` | `total_in_pool` |
+| `forge` | `load`, `vf_before`, `transform`, `vf_after`, `orient_shift`, `write_stl`, `write_report` | `total` |
+| `scale` | `load`, `stats_before`, `transform`, `orient_stats_after`, `write_stl` | `total` |
+| `render` | `load`, `prepare`, `render_and_backend`, `encode_write` | `total_in_pool` |
+| `mesh-render` | `load`, `scene`, `cameras`, then `gpu_render_write` when a GPU attempt was made, and `cpu_prepare`, `cpu_render`, `encode_write` (per-view sums) when the CPU renderer ran | `total_in_pool` |
+| `crop` | `load`, `background`, `pca`, `transform_and_backend`, `trim`, `encode_write` (unchanged names) | `total_in_pool` |
+
+`total_in_pool` excludes CLI parsing, config loading and pool creation; `process_wall` in `scripts/perf_matrix.py` measures the whole process. Timing lines go to stdout only and never into output files, records or reports, so outputs and placement determinism are unchanged. Legacy `pack` and `optimize` additionally print `[GridStats]` lines (see `pipeline-packing.md` and `pipeline-optimize.md`).
+
+### Benchmark matrix runner
+
+`scripts/perf_matrix.py` (python3, standard library only) runs selected pipelines at worker counts (default 1/2/4/8) with `--warmup` cold runs (default 1, reported separately) and `--repeats` warm runs (default 5). Each run gets its own config copy (worker field set through `cpu_max`, `packing.cpu_max`, `optimization.cpu_max`, `measurement.cpu_max`, `render.cpu_max` or `--threads` for placement; `RAYON_NUM_THREADS` is also set, and `RUSTMSPT_ACCELERATION=cpu`) and its own output directory under `--work`, so nothing under `data/` is overwritten. Optimize, measure, forge and scale consume a small chain (pack then optimize, run once) produced in the work directory. Output: `perf_matrix_raw.json` (every run's stages, reported workers, peak RSS, grid lines, return code, process wall time) and `perf_matrix_summary.md` (per stage and worker count: cold, warm median/min/max, S(p) = median T1 / median Tp, E(p) = S(p) / reported workers, median peak RSS). Worker counts above the core count are clamped by pipelines that clamp `cpu_max`; the reported `workers` column shows what actually ran. "Cold" means the first process of a configuration, not a dropped page cache. `--optimize-iterations` reduces `optimization.max_iterations` for shorter runs.

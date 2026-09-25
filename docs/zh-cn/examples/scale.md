@@ -93,3 +93,7 @@ scaling:
   （如默认配置所示），因为该检查在大型网格上每个分量的开销并不小。
 - 关于 `ScalePipeline::run` 的完整行为参考，包括 `scaling.type`/`value` 组合无效时的确切错误
   条件，见 `../reference/pipeline-core.md`。
+
+### 计时行（2026-09-25 新增）
+
+上面的捕获输出早于共享阶段计时器。当前版本还会为每个已完成阶段打印 `[Timing] scale stage=<name> seconds=<f>`，随后打印 `[Timing] scale workers=<n>` 与 `[Timing] scale peak_rss_bytes=<n|unavailable>`。阶段名称见 `../reference/pipeline-core.md`（`pipeline/timing.rs`）；输出文件不变。

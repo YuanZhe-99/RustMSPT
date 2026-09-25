@@ -52,7 +52,7 @@ impl Pipeline for ForgePipeline {
     // Purpose: Execute forging pipeline: load STL, apply FFD compression along configured axis with bulge and optional void densification, translate output to align ROI, save forged STL and report.
     // Inputs: ForgingConfig with input/output, compression ratio/axis, bulge factor, ROI bbox, mesh_type, and void_densification.
     // Returns: Ok(()) or error.
-    // Side effects: Reads STL from disk; writes forged STL and report .txt to disk; prints diagnostics to stdout.
+    // Side effects: Reads STL from disk; writes forged STL and report .txt to disk; prints diagnostics plus load/vf_before/transform/vf_after/orient_shift/write_stl/write_report/total timings, global-pool workers and peak RSS to stdout.
     fn run(&self) -> Result<()> {
         let params = &self.config.forging;
         let input = Path::new(&params.input_stl_path);
@@ -64,7 +64,9 @@ impl Pipeline for ForgePipeline {
         );
         let report_path = output.with_extension("txt");
 
+        let mut timer = crate::pipeline::timing::StageTimer::start("forge");
         let mesh = load_stl_or_merge_folder(input)?;
+        timer.stage("load");
         let lattice_bbox =
             mesh_bbox(&mesh).unwrap_or(BoundingBox::from_size(Vec3::new(1.0, 1.0, 1.0)));
         let roi_bbox = Self::parse_roi_bbox(&params.roi_bounding_box);
@@ -72,6 +74,7 @@ impl Pipeline for ForgePipeline {
         let before_roi_vf = roi_bbox
             .map(|roi| volume_fraction_in_bbox(&mesh, roi))
             .unwrap_or_else(|| volume_fraction_in_bbox(&mesh, lattice_bbox));
+        timer.stage("vf_before");
 
         let compression = params.compression_ratio.unwrap_or(0.2);
         let (compression_axis, compression_axis_label) =
@@ -97,9 +100,11 @@ impl Pipeline for ForgePipeline {
             "[Info] Forge transform seconds: {:.6}",
             transform_started.elapsed().as_secs_f64()
         );
+        timer.stage("transform");
         let after_roi_vf = tracked_roi
             .map(|roi| volume_fraction_in_bbox(&compressed, roi))
             .unwrap_or_else(|| volume_fraction_in_bbox(&compressed, lattice_bbox));
+        timer.stage("vf_after");
 
         let (mut compressed_oriented, flipped_components, component_count) = if enable_orient {
             let (mesh_fixed, flipped, total) = orient_components_to_positive_volume(&compressed);
@@ -119,7 +124,9 @@ impl Pipeline for ForgePipeline {
             }
         }
 
+        timer.stage("orient_shift");
         save_stl(output, &compressed_oriented, "forged_mesh")?;
+        timer.stage("write_stl");
 
         let input_bbox = lattice_bbox;
         let output_bbox = mesh_bbox(&compressed_oriented).unwrap_or(lattice_bbox);
@@ -186,6 +193,7 @@ impl Pipeline for ForgePipeline {
             fs::create_dir_all(parent)?;
         }
         fs::write(&report_path, report)?;
+        timer.stage("write_report");
 
         println!("[Info] Forging completed.");
         println!(
@@ -239,6 +247,8 @@ impl Pipeline for ForgePipeline {
         );
         println!("[Info] Output STL written: {}", output.display());
         println!("[Info] Output report written: {}", report_path.display());
+        timer.total("total");
+        timer.report_resources();
 
         Ok(())
     }

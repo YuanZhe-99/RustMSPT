@@ -224,3 +224,7 @@ its unit test observes pool size and worker indices inside nested `par_iter` wor
 `voxel_labels` prepares immutable per-particle mesh queries and a bounded spatial grid once. Parallel 1024-voxel tiles query their enclosing box once, sort candidate slice indices, and preserve original particle ownership order and void-first classification. Worker scratch retains ray hits. `particle_at_prepared` returns the first acceptance id and bbox-test count, reduced without shared atomics. The test-only original particle scan is the differential oracle. Output phase/id arrays and file schema are unchanged; full-array allocation and streaming I/O remain pending.
 
 Shape library input now uses `load_stl_hashed` so geometry and source digest come from one byte stream. Binary raw-file buffering is bounded; ASCII retains the legacy text parser. Source/shell order and digests are unchanged.
+
+### Stage timing (PERF-00)
+
+`run_placement_in_pool` prints `[Timing] placement stage=<load|plan|place|write_outputs|report|total_in_pool> seconds=<f>`, `[Timing] placement workers=<n>` and `[Timing] placement peak_rss_bytes=<n|unavailable>` to stdout. They are never written into the record, report or CSV, so the byte-identical output comparisons across thread counts are unaffected; the report's own `elapsed` field is unchanged.

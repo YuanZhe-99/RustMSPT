@@ -142,7 +142,7 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `mesh_centroid` | Geometry — Core | `src/geometry/mesh_ops.rs:5` | Arithmetic centroid of mesh vertices. |
 | `vec_norm` | Geometry — Core | `src/geometry/mesh_ops.rs:19` | Euclidean length of a vector. |
 | `merge_meshes` | Geometry — Core | `src/geometry/mesh_ops.rs:24` | Combines multiple meshes into one, remapping face indices. |
-| `split_mesh_into_granules` | Geometry — Core | `src/geometry/mesh_ops.rs:47` | Splits a mesh into connected components (BFS over shared vertices). |
+| `split_mesh_into_granules` | Geometry — Core | `src/geometry/mesh_ops.rs:48` | Splits a mesh into connected components (CSR vertex-to-face BFS over shared vertices). |
 | `translate_mesh` | Geometry — Core | `src/geometry/mesh_ops.rs:120` | Translates all mesh vertices by a delta vector, in place. |
 | `move_mesh_to_target_center` | Geometry — Core | `src/geometry/mesh_ops.rs:125` | Moves a mesh so its centroid matches a target position. |
 | `wrap_mesh_centroid_to_box` | Geometry — Core | `src/geometry/mesh_ops.rs:136` | Wraps a mesh's centroid into a box under periodic boundary conditions. |
@@ -785,12 +785,12 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `SpatialGrid::remove` | Geometry Core | `src/geometry/spatial.rs:59` | Remove all item cell references. |
 | `SpatialGrid::update` | Geometry Core | `src/geometry/spatial.rs:72` | Replace one item membership. |
 | `SpatialQueryScratch` | Geometry Core | `src/geometry/spatial.rs:5` | Retained neighbors and membership storage. |
-| `SpatialGrid::query_into` | Geometry Core | `src/geometry/spatial.rs:111` | Fill reusable query scratch. |
+| `SpatialGrid::query_into` | Geometry Core | `src/geometry/spatial.rs:136` | Fill reusable query scratch. |
 
 | `PackCollider` | Pipeline Packing | `src/pipeline/pack.rs:27` | Cached collider bbox and shape. |
 | `PackCollider::new` | Pipeline Packing | `src/pipeline/pack.rs:34` | Prepare collision shape once. |
-| `PackCollider::blocks` | Pipeline Packing | `src/pipeline/pack.rs:42` | Cached overlap or clearance predicate. |
-| `pack_blocked` | Pipeline Packing | `src/pipeline/pack.rs:68` | Check incremental spatial candidates. |
+| `PackCollider::blocks` | Pipeline Packing | `src/pipeline/pack.rs:71` | Cached overlap or clearance predicate; updates PackQueryStats counters. |
+| `pack_blocked` | Pipeline Packing | `src/pipeline/pack.rs:100` | Check incremental spatial candidates; counts queries in PackQueryStats. |
 | `PackPipeline::run_in_pool` | Pipeline Packing | `src/pipeline/pack.rs:221` | Packing work under configured pool. |
 
 | `MeasurePipeline::run_in_pool` | Pipeline Core | `src/pipeline/measure.rs:83` | Method-specific measurement in configured pool. |
@@ -915,3 +915,23 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `consume_file_batches` | `src/io/volume.rs:47` | Decode at most two files in the current pool; consume/validate in source order and stop subsequent batches on errors. |
 | `write_tiff_pages` | `src/io/volume.rs:552` | Borrowed sequential TIFF encoding with explicit final flush and propagated output errors. |
 | `for_each_boundary_value` | `src/pipeline/crop.rs:313` | Visit boundary voxels once in z-major order for specialized background counters. |
+
+| `StageTimer` | Pipeline Core | `src/pipeline/timing.rs:3` | Per-pipeline total and stage clocks. |
+| `StageTimer::start` | Pipeline Core | `src/pipeline/timing.rs:11` | Start both clocks. |
+| `StageTimer::restart` | Pipeline Core | `src/pipeline/timing.rs:17` | Reset stage clock silently. |
+| `StageTimer::stage` | Pipeline Core | `src/pipeline/timing.rs:22` | Print stage seconds and restart. |
+| `StageTimer::report` | Pipeline Core | `src/pipeline/timing.rs:30` | Print an accumulated stage duration. |
+| `StageTimer::total` | Pipeline Core | `src/pipeline/timing.rs:35` | Print seconds since start. |
+| `StageTimer::report_resources` | Pipeline Core | `src/pipeline/timing.rs:42` | Print workers and peak RSS. |
+| `format_stage_line` | Pipeline Core | `src/pipeline/timing.rs:49` | Shared `[Timing]` stage line format. |
+| `report_workers` | Pipeline Core | `src/pipeline/timing.rs:54` | Print current Rayon worker count. |
+| `report_peak_rss` | Pipeline Core | `src/pipeline/timing.rs:59` | Print VmHWM bytes or unavailable. |
+| `peak_rss_bytes` | Pipeline Core | `src/pipeline/timing.rs:67` | Read VmHWM, None when unavailable. |
+| `parse_vm_hwm` | Pipeline Core | `src/pipeline/timing.rs:73` | Parse a VmHWM kB line. |
+| `GridStats` | Geometry Core | `src/geometry/spatial.rs:11` | Bucket occupancy summary. |
+| `GridStats::summary_line` | Geometry Core | `src/geometry/spatial.rs:22` | Format a `[GridStats]` line. |
+| `SpatialGrid::stats` | Geometry Core | `src/geometry/spatial.rs:181` | One-pass occupancy statistics. |
+| `map_vertices_centroid` | Geometry Core | `src/geometry/mesh_ops.rs:265` | Vertex map with bit-identical post-map centroid. |
+| `split_mesh_into_granules_reference` | Geometry Core | `src/geometry/mesh_ops.rs:136` | Test-only former granule split oracle. |
+| `PackQueryStats` | Pipeline Packing | `src/pipeline/pack.rs:29` | Relaxed atomic collision counters. |
+| `PackQueryStats::summary_line` | Pipeline Packing | `src/pipeline/pack.rs:41` | Format pack query counters. |

@@ -345,7 +345,7 @@ impl Pipeline for SplitFilterPipeline {
 }
 
 impl SplitFilterPipeline {
-    // AI-FUNC-SUMMARY: Run split, ordered metric preparation, serial filtering/RNG and output inside one configured pool.
+    // AI-FUNC-SUMMARY: Run split, ordered metric preparation, serial filtering/RNG and output inside one configured pool; prints load/split/metrics/filter/write_stl/write_report/total_in_pool timings, workers and peak RSS.
     fn run_in_pool(&self) -> Result<()> {
         let input = Path::new(&self.config.input.path);
         let output_folder = Path::new(&self.config.output.folder);
@@ -371,15 +371,18 @@ impl SplitFilterPipeline {
             ));
         }
 
-        let mut particles: Vec<Mesh> = Vec::new();
-        if input.is_dir() {
-            for (_, mesh) in load_folder_stls(input)? {
-                particles.extend(split_mesh_into_granules(&mesh));
-            }
+        let mut timer = crate::pipeline::timing::StageTimer::start("split-filter");
+        let sources: Vec<Mesh> = if input.is_dir() {
+            load_folder_stls(input)?.into_iter().map(|(_, mesh)| mesh).collect()
         } else {
-            let mesh = load_stl(input)?;
+            vec![load_stl(input)?]
+        };
+        timer.stage("load");
+        let mut particles: Vec<Mesh> = Vec::new();
+        for mesh in sources {
             particles.extend(split_mesh_into_granules(&mesh));
         }
+        timer.stage("split");
 
         if particles.is_empty() {
             return Err(RustMsptError::InvalidMesh(
@@ -390,6 +393,7 @@ impl SplitFilterPipeline {
         let mut keep = vec![true; particles.len()];
         let active_filter = self.config.filter.as_ref().filter(|filter| filter.enabled.unwrap_or(true));
         let metrics = prepare_particle_metrics(&particles, active_filter.and_then(|f| f.max_aspect_ratio), active_filter.is_some_and(|f| f.max_sharpness_ratio.is_some()));
+        timer.stage("metrics");
         let volumes: Vec<f64> = metrics.iter().map(|m| m.volume).collect();
         let before_volumes = &volumes;
         let mut report_lines: Vec<String> = Vec::new();
@@ -518,6 +522,7 @@ impl SplitFilterPipeline {
             ));
         }
 
+        timer.stage("filter");
         fs::create_dir_all(output_folder)?;
 
         // Keep at most two STL writers active; consume errors in stable output-rank order.
@@ -529,6 +534,7 @@ impl SplitFilterPipeline {
             }).collect();
             for result in results { result?; }
         }
+        timer.stage("write_stl");
 
         report_lines.push("".to_string());
         report_lines.push("Summary:".to_string());
@@ -566,6 +572,7 @@ impl SplitFilterPipeline {
             fs::create_dir_all(parent)?;
         }
         fs::write(&report_path, report_lines.join("\n"))?;
+        timer.stage("write_report");
 
         println!(
             "[Info] Split filter completed: input particles={}, kept={}, removed={}",
@@ -576,6 +583,8 @@ impl SplitFilterPipeline {
         println!("[Info] Output folder: {}", output_folder.display());
         println!("[Info] Output prefix: {}", prefix);
         println!("[Info] Report written: {}", report_path.display());
+        timer.total("total_in_pool");
+        timer.report_resources();
 
         Ok(())
     }

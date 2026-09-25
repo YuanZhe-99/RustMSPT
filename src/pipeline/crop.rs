@@ -774,30 +774,28 @@ impl Pipeline for CropPipeline {
 }
 
 impl CropPipeline {
-    // AI-FUNC-SUMMARY: Execute all crop stages under one configured pool, preserving interpolation/type/backend/fallback policy; report completed-stage wall times, with backend selection and GPU initialization included in transform_and_backend.
+    // AI-FUNC-SUMMARY: Execute all crop stages under one configured pool, preserving interpolation/type/backend/fallback policy; report completed-stage wall times through StageTimer, with backend selection and GPU initialization included in transform_and_backend, then workers and peak RSS.
     fn run_in_pool(&self) -> Result<()> {
         let requested = crate::compute::policy::configured_mode(&self.config.acceleration)?;
-        let total_started = std::time::Instant::now();
-        let stage_started = std::time::Instant::now();
+        let mut timer = crate::pipeline::timing::StageTimer::start("crop");
         let input_volume = load_input_volume(&self.config)?;
-        println!("[Timing] crop stage=load seconds={:.9}", stage_started.elapsed().as_secs_f64());
+        timer.stage("load");
         println!(
             "[Info] Crop input loaded: shape=({},{},{})",
             input_volume.width, input_volume.height, input_volume.depth
         );
 
-        let stage_started = std::time::Instant::now();
+        timer.restart();
         let background = detect_background_mode(&input_volume);
-        println!("[Timing] crop stage=background seconds={:.9}", stage_started.elapsed().as_secs_f64());
+        timer.stage("background");
         println!("[Info] Background value detected: {}", background);
 
         let interpolation_mode = parse_interpolation_mode(self.config.interpolation.as_deref())?;
         println!("[Info] Interpolation mode: {:?}", interpolation_mode);
 
-        let stage_started = std::time::Instant::now();
+        timer.restart();
         let (rot, centroid, min_v, max_v, fg_count) = estimate_pca_bbox(&input_volume, background)?;
-        println!("[Timing] crop stage=pca seconds={:.9}", stage_started.elapsed().as_secs_f64());
-        let stage_started = std::time::Instant::now();
+        timer.stage("pca");
         println!("[Info] Foreground voxels: {}", fg_count);
         println!(
             "[Info] Rotated bbox: min=({:.3},{:.3},{:.3}) max=({:.3},{:.3},{:.3})",
@@ -900,29 +898,29 @@ impl CropPipeline {
             rayon::current_thread_index()
         );
 
-        println!("[Timing] crop stage=transform_and_backend seconds={:.9}", stage_started.elapsed().as_secs_f64());
-        let stage_started = std::time::Instant::now();
+        timer.stage("transform_and_backend");
         let trim_pixels = resolve_trim_pixels(self.config.edge_trim, &cropped, background)?;
         println!("[Info] Edge trim pixels (xy): {}", trim_pixels);
         let cropped = trim_volume_border(cropped, trim_pixels)?;
-        println!("[Timing] crop stage=trim seconds={:.9}", stage_started.elapsed().as_secs_f64());
+        timer.stage("trim");
 
         println!(
             "[Info] Cropped output shape=({},{},{})",
             cropped.width, cropped.height, cropped.depth
         );
 
-        let stage_started = std::time::Instant::now();
+        timer.restart();
         let output = Path::new(&self.config.output.path);
         let prefix = self.config.output.folder_prefix.as_deref();
         let ext = self.config.output.folder_extension.as_deref();
         save_tiff_or_folder_with_ext(&cropped, output, prefix, ext)?;
-        println!("[Timing] crop stage=encode_write seconds={:.9}", stage_started.elapsed().as_secs_f64());
+        timer.stage("encode_write");
         println!(
             "[Info] Crop pipeline completed. Output written: {}",
             output.display()
         );
-        println!("[Timing] crop stage=total_in_pool seconds={:.9}", total_started.elapsed().as_secs_f64());
+        timer.total("total_in_pool");
+        timer.report_resources();
         Ok(())
     }
 }

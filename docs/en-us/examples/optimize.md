@@ -206,3 +206,7 @@ requesting GPU does not silently select continuous MC. `Selected Search Loss` re
 winning score, while `Final Best S2/Loss` comes from a full-budget re-evaluation with the same method.
 Unlike placement, SA is stochastic and does not promise identical output across thread counts.
 Earlier captured output above predates these additional diagnostics.
+
+### Timing lines (added 2026-09-25)
+
+Captured output above predates the shared stage timer. Current builds also print `[Timing] optimize stage=<name> seconds=<f>` for each completed stage, then `[Timing] optimize workers=<n>` and `[Timing] optimize peak_rss_bytes=<n|unavailable>` and one or two `[GridStats]` lines. Stage names are listed in `../reference/pipeline-core.md` (`pipeline/timing.rs`); output files are unchanged.
