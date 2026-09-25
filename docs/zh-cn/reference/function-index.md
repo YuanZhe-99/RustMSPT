@@ -221,9 +221,9 @@
 | `mesh_collision_exact_prepared` | Geometry — Volume & Collision | `src/geometry/collision.rs:196` | 判定两个网格实体是否重叠：表面相交，或一个包含另一个。 |
 | `mesh_distance_exact_prepared` | Geometry — Volume & Collision | `src/geometry/collision.rs:214` | 在给定预先构建的包围盒/形状的情况下，进行经包围盒过滤的精确距离查询。 |
 | `mesh_closer_than_prepared` | Geometry — Volume & Collision | `src/geometry/collision.rs:267` | 带筛查的 `距离 < 间隙` 判定（双 BVH 余量筛查后再算精确距离）。 |
-| `mesh_collision_exact` | Geometry — Volume & Collision | `src/geometry/collision.rs:374` | 便捷封装：构建包围盒/形状后测试碰撞。 |
-| `mesh_distance_exact` | Geometry — Volume & Collision | `src/geometry/collision.rs:383` | 便捷封装：构建包围盒/形状后计算距离。 |
-| `generate_periodic_ghosts` | Geometry — Volume & Collision | `src/geometry/collision.rs:397` | 为周期边界碰撞生成一个网格经平移的镜像副本。 |
+| `mesh_collision_exact` | Geometry — Volume & Collision | `src/geometry/collision.rs:402` | 便捷封装：构建包围盒/形状后测试碰撞。 |
+| `mesh_distance_exact` | Geometry — Volume & Collision | `src/geometry/collision.rs:411` | 便捷封装：构建包围盒/形状后计算距离。 |
+| `generate_periodic_ghosts` | Geometry — Volume & Collision | `src/geometry/collision.rs:425` | 为周期边界碰撞生成一个网格经平移的镜像副本。 |
 | `simulate_forging_ffd` | Geometry — Volume & Collision | `src/geometry/forging.rs:10` | 带侧向鼓凸的简单 Z 轴自由变形压缩。 |
 | `simulate_forging_ffd_with_tracking` | Geometry — Volume & Collision | `src/geometry/forging.rs:43` | 带孔隙致密化和感兴趣区域包围盒跟踪、轴向可配置的自由变形锻造。 |
 | `GpuContext` | GPU | `src/gpu/context.rs:3` | GPU 初始化成功后持有适配器名称与缓冲区大小能力信息。 |

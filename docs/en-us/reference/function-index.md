@@ -228,9 +228,9 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `mesh_collision_exact_prepared` | Geometry — Volume & Collision | `src/geometry/collision.rs:196` | Whether two mesh solids overlap: surfaces cross, or one contains the other. |
 | `mesh_distance_exact_prepared` | Geometry — Volume & Collision | `src/geometry/collision.rs:214` | Bbox-filtered exact distance query given pre-built bboxes/shapes. |
 | `mesh_closer_than_prepared` | Geometry — Volume & Collision | `src/geometry/collision.rs:267` | Screened `distance < gap` test (dual-BVH margin screen, then exact distance). |
-| `mesh_collision_exact` | Geometry — Volume & Collision | `src/geometry/collision.rs:374` | Convenience wrapper: builds bbox/shape then tests collision. |
-| `mesh_distance_exact` | Geometry — Volume & Collision | `src/geometry/collision.rs:383` | Convenience wrapper: builds bbox/shape then computes distance. |
-| `generate_periodic_ghosts` | Geometry — Volume & Collision | `src/geometry/collision.rs:397` | Generates translated ghost copies of a mesh for periodic boundary collision. |
+| `mesh_collision_exact` | Geometry — Volume & Collision | `src/geometry/collision.rs:402` | Convenience wrapper: builds bbox/shape then tests collision. |
+| `mesh_distance_exact` | Geometry — Volume & Collision | `src/geometry/collision.rs:411` | Convenience wrapper: builds bbox/shape then computes distance. |
+| `generate_periodic_ghosts` | Geometry — Volume & Collision | `src/geometry/collision.rs:425` | Generates translated ghost copies of a mesh for periodic boundary collision. |
 | `simulate_forging_ffd` | Geometry — Volume & Collision | `src/geometry/forging.rs:10` | Simple Z-axis FFD compression with lateral bulge. |
 | `simulate_forging_ffd_with_tracking` | Geometry — Volume & Collision | `src/geometry/forging.rs:43` | Axis-configurable FFD forging with void densification and ROI bbox tracking. |
 | `GpuContext` | GPU | `src/gpu/context.rs:3` | Holds adapter name and buffer-size capabilities after successful GPU init. |

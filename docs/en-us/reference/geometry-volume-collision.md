@@ -28,9 +28,9 @@ This page documents three `src/geometry/` submodules: `volume.rs` (mesh volume c
 | `mesh_collision_exact_prepared` | `src/geometry/collision.rs:196` | Whether two mesh *solids* overlap: surfaces cross, or one contains the other. |
 | `mesh_distance_exact_prepared` | `src/geometry/collision.rs:214` | Bbox-filtered exact distance query given pre-built bboxes/shapes. |
 | `mesh_closer_than_prepared` | `src/geometry/collision.rs:267` | Screened `distance < gap` test: a bounded dual-BVH margin screen before the exact distance; answers exactly as the distance does. |
-| `mesh_collision_exact` | `src/geometry/collision.rs:374` | Convenience wrapper: builds bbox/shape then tests collision. |
-| `mesh_distance_exact` | `src/geometry/collision.rs:383` | Convenience wrapper: builds bbox/shape then computes distance. |
-| `generate_periodic_ghosts` | `src/geometry/collision.rs:397` | Generates translated ghost copies of a mesh for periodic boundary collision. |
+| `mesh_collision_exact` | `src/geometry/collision.rs:402` | Convenience wrapper: builds bbox/shape then tests collision. |
+| `mesh_distance_exact` | `src/geometry/collision.rs:411` | Convenience wrapper: builds bbox/shape then computes distance. |
+| `generate_periodic_ghosts` | `src/geometry/collision.rs:425` | Generates translated ghost copies of a mesh for periodic boundary collision. |
 | `simulate_forging_ffd` | `src/geometry/forging.rs:10` | Simple Z-axis FFD compression with lateral bulge. |
 | `simulate_forging_ffd_with_tracking` | `src/geometry/forging.rs:43` | Axis-configurable FFD forging with void densification and ROI bbox tracking. |
 | `forge_owned` | `src/geometry/forging.rs:66` | Ownership-consuming FFD and ROI transform. |
@@ -280,13 +280,13 @@ This module wraps [parry3d](https://parry.rs/)'s exact triangle-mesh intersectio
   - `solids_known_apart` — `true` only when the caller has already shown `mesh_collision_exact_prepared` is `false` for these exact arguments; the collision test is then not repeated.
 - **Returns:** `bool`, identical to `mesh_distance_exact_prepared(...) < gap`, including its fallbacks (missing boxes read as distance `0.0`).
 - **Side effects:** None.
-- **Notes:** Pairs with both shapes present are first screened by the private `triangles_within_margin`: a simultaneous traversal of both QBVHs that prunes node pairs whose boxes, one inflated by the margin on every axis, do not overlap, and measures leaf triangle pairs with GJK, exiting at the first pair within the margin. The margin is `gap * (1 + 1e-6) + 64 * EPSILON * coordinate_scale`. Only a pair the screen cannot separate reaches `query::distance`, which then decides exactly as before. parry 0.19's composite `closest_points` is deliberately not used: it panics when nothing lies within the margin and does not prune interior nodes by it. Used by placement's phase B (`solids_known_apart = true`), optimize's clearance checks (`true`, after their overlap test) and legacy pack (`false`). `tests/collision_tests.rs::the_screened_gap_test_answers_exactly_what_the_distance_answers` compares it with the distance on 960 pairs and gaps, including a gap equal to the measured distance and one ulp above it.
+- **Notes:** Pairs with both shapes present are first bounded by the private `screen_triangle_pairs`: a simultaneous traversal of both QBVHs that prunes node pairs whose boxes, one inflated by the upper bound on every axis, do not overlap, and measures leaf triangle pairs with GJK. One pair below `gap - slack` answers true at once (the mesh distance is the minimum over pairs); every pair beyond `gap + slack` answers false; only a pair inside that band reaches `query::distance`, which then decides exactly as before. `slack = 1e-6 * gap + 64 * EPSILON * coordinate_scale` covers GJK evaluating the same triangle pair with its arguments swapped. parry 0.19's composite `closest_points` is deliberately not used: it panics when nothing lies within the margin and does not prune interior nodes by it. Used by placement's phase B (`solids_known_apart = true`), optimize's clearance checks (`true`, after their overlap test) and legacy pack (`false`). `tests/collision_tests.rs::the_screened_gap_test_answers_exactly_what_the_distance_answers` compares it with the distance on 1,200 pairs and gaps, including a gap equal to the measured distance, one ulp above it, and 1e-5 either side.
 - **See also:** [`mesh_distance_exact_prepared`](#mesh_distance_exact_prepared), [`mesh_collision_exact_prepared`](#mesh_collision_exact_prepared).
 
 #### mesh_collision_exact
 
 - **Signature:** `pub fn mesh_collision_exact(a: &Mesh, b: &Mesh) -> bool`
-- **Source:** `src/geometry/collision.rs:374`
+- **Source:** `src/geometry/collision.rs:402`
 - **Purpose:** Convenience wrapper that computes bounding boxes and parry3d shapes on the fly for two meshes, then tests collision.
 - **Parameters:**
   - `a`, `b` — the two meshes to test.
@@ -298,7 +298,7 @@ This module wraps [parry3d](https://parry.rs/)'s exact triangle-mesh intersectio
 #### mesh_distance_exact
 
 - **Signature:** `pub fn mesh_distance_exact(a: &Mesh, b: &Mesh) -> f64`
-- **Source:** `src/geometry/collision.rs:383`
+- **Source:** `src/geometry/collision.rs:411`
 - **Purpose:** Convenience wrapper that computes bounding boxes and parry3d shapes on the fly for two meshes, then computes their exact distance.
 - **Parameters:**
   - `a`, `b` — the two meshes to measure between.
@@ -309,7 +309,7 @@ This module wraps [parry3d](https://parry.rs/)'s exact triangle-mesh intersectio
 #### generate_periodic_ghosts
 
 - **Signature:** `pub fn generate_periodic_ghosts(mesh: &Mesh, box_bounds: BoundingBox) -> Vec<Mesh>`
-- **Source:** `src/geometry/collision.rs:397`
+- **Source:** `src/geometry/collision.rs:425`
 - **Purpose:** Generates translated "ghost" copies of a mesh, shifted by the packing box's dimensions along each axis combination, to support collision detection under periodic boundary conditions (a particle near one face of the box can collide with particles near the opposite face).
 - **Parameters:**
   - `mesh` — the source mesh to generate ghosts of.

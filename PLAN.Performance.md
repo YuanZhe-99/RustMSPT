@@ -1537,3 +1537,14 @@ GPU 全量（`env -u DISPLAY -u WAYLAND_DISPLAY cargo test --release --features 
 所有配置下 `particles.json`/`particles.stl`/`size_distribution.csv` 与串行逐字节一致。新增 `tests/placement_pipeline_tests.rs::a_dense_run_is_identical_on_one_two_and_eight_threads`（24³ 域、VF 0.30、两种球，15,728 次尝试放 90 个，约 175 次/颗粒），1/2/8 worker 的几何、记录、CSV 与报告（仅去掉 runtime、路径与 `elapsed_s`，保留拒绝计数与 consumed_attempts）全部相同；**去掉 `set_word_pos` 后该测试失败**（`particles.json differs at 2 workers`），证明它能守住契约。
 
 剩余：8 worker 仍远离理想（CPU 8.8 s，墙钟 2.4 s），瓶颈是批末屏障与长尾评估；可能的下一步是不设屏障的有序流水（例如按固定窗口持续派发、按序确认），需要重新论证回退点。
+
+## 71. 间隙筛查三向定界（2026-09-25，本地）
+
+§70 之后在 VF 0.30、1 worker 下对 27,898 次评估插桩（临时代码，未提交）：评估共 4.69 s，其中**间隙判定 2.27 s（48%）**、候选 TriMesh 构建 1.34 s（29%）、相交+嵌套 0.74 s（16%）、网格查询 0.18 s、变换+包围盒 0.07 s。间隙判定仍最大，是因为 §68 的筛查一旦找到任何一对三角形落在 margin 内就回退到完整 `query::distance`，而稠密时这正是常态。
+
+改动：`triangles_within_margin` 改为 `screen_triangle_pairs(a, b, lower, upper) -> Screen`。网格距离是所有三角形对 GJK 距离的最小值，所以只要某一对 < `lower` 就能直接判定“更近”，无需完整距离；所有对都 > `upper` 则判定“不更近”；只有落在 [`lower`, `upper`] 窄带内才回退到 `query::distance`。`lower/upper = gap ∓ slack`，`slack = 1e-6·gap + 64·EPSILON·坐标尺度`，覆盖 parry 复合距离内部以交换参数顺序计算同一对三角形时的末位差异。等价测试扩到每对 10 个间隙（共 1,200 组），新增 ±1e-5 相对偏移（窄带外、由筛查自行判定）的用例，与 `distance < gap` 全部一致。
+
+结果（VF 0.30，交替 6 次，中位；对照为 §70 的二进制）：1 worker 4.71 → 3.37 s（0.72×），4 worker 2.46 → 1.40 s（0.57×），8 worker 2.07 → 1.45 s（0.70×）；`particles.stl` 与 `size_distribution.csv` 全部逐字节一致。旧版 pack 与 optimize 共用该函数，一并受益（未单独计时）。
+
+仍开放：候选 TriMesh 构建（原占 29%）现在是最大单项；可行方向是每个颗粒按 (壳层, 尺度) 预建一次局部 TriMesh、用 Isometry 查询，但这会改变碰撞谓词的浮点输入，决定可能在末位不同，需要单独论证与验收，未做。
+

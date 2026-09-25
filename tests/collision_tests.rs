@@ -209,10 +209,11 @@ fn the_hierarchy_point_test_agrees_with_the_scanning_one() {
 
 // ------------------------------------------------- the screened gap question
 
-/// `mesh_closer_than_prepared` screens clearly separated pairs with a bounded
-/// query before measuring. It must answer exactly `distance < gap` everywhere,
-/// including a gap equal to the measured distance and one ulp above it, where a
-/// screen that trusted its own points instead of the exact distance would flip.
+/// `mesh_closer_than_prepared` bounds the distance from triangle pairs before
+/// measuring it. It must answer exactly `distance < gap` everywhere: at a gap
+/// equal to the measured distance and one ulp above it (inside the band where
+/// the screen must defer to the exact distance), and 1e-5 either side of it
+/// (just outside that band, where the screen answers on its own).
 #[test]
 fn the_screened_gap_test_answers_exactly_what_the_distance_answers() {
     let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
@@ -243,7 +244,7 @@ fn the_screened_gap_test_answers_exactly_what_the_distance_answers() {
         let (at, bt) = (to_parry_trimesh(&base), to_parry_trimesh(&other));
         let d = mesh_distance_exact_prepared(ab, at.as_ref(), bb, bt.as_ref());
         let apart = !mesh_collision_exact_prepared(ab, at.as_ref(), bb, bt.as_ref());
-        for gap in [0.0, 0.05, 0.3, 1.0, d, f64::from_bits(d.to_bits() + 1), d * 0.999_999, d * 1.000_001] {
+        for gap in [0.0, 0.05, 0.3, 1.0, d, f64::from_bits(d.to_bits() + 1), d * 0.999_999, d * 1.000_001, d * 0.999_99, d * 1.000_01] {
             let expected = d < gap;
             assert_eq!(mesh_closer_than_prepared(ab, at.as_ref(), bb, bt.as_ref(), gap, false), expected, "d {d} gap {gap}");
             if apart {

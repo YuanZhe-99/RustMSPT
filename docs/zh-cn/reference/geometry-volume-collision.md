@@ -28,9 +28,9 @@
 | `mesh_collision_exact_prepared` | `src/geometry/collision.rs:196` | 判定两个网格*实体*是否重叠：表面相交，或一个包含另一个。 |
 | `mesh_distance_exact_prepared` | `src/geometry/collision.rs:214` | 给定预先构建的包围盒/形状，进行带包围盒过滤的精确距离查询。 |
 | `mesh_closer_than_prepared` | `src/geometry/collision.rs:267` | 带筛查的 `距离 < 间隙` 判定：先做有界双 BVH 余量筛查再算精确距离，结果与距离判定完全一致。 |
-| `mesh_collision_exact` | `src/geometry/collision.rs:374` | 便捷封装：构建包围盒/形状后测试碰撞。 |
-| `mesh_distance_exact` | `src/geometry/collision.rs:383` | 便捷封装：构建包围盒/形状后计算距离。 |
-| `generate_periodic_ghosts` | `src/geometry/collision.rs:397` | 为周期边界碰撞生成网格的平移镜像副本。 |
+| `mesh_collision_exact` | `src/geometry/collision.rs:402` | 便捷封装：构建包围盒/形状后测试碰撞。 |
+| `mesh_distance_exact` | `src/geometry/collision.rs:411` | 便捷封装：构建包围盒/形状后计算距离。 |
+| `generate_periodic_ghosts` | `src/geometry/collision.rs:425` | 为周期边界碰撞生成网格的平移镜像副本。 |
 | `simulate_forging_ffd` | `src/geometry/forging.rs:10` | 简单的 Z 轴 FFD 压缩加侧向鼓起。 |
 | `simulate_forging_ffd_with_tracking` | `src/geometry/forging.rs:43` | 轴可配置的 FFD 锻造，带孔隙致密化与 ROI 包围盒跟踪。 |
 | `forge_owned` | `src/geometry/forging.rs:66` | Ownership-consuming FFD and ROI transform. |
@@ -280,13 +280,13 @@
   - `solids_known_apart` — 仅当调用方已对完全相同的参数证明 `mesh_collision_exact_prepared` 为 `false` 时传 `true`，此时不再重复碰撞检测。
 - **返回值：** `bool`，与 `mesh_distance_exact_prepared(...) < gap` 完全相同，包括其回退规则（包围盒缺失按距离 `0.0` 处理）。
 - **副作用：** 无。
-- **说明：** 两个形状都存在时，先由私有函数 `triangles_within_margin` 筛查：同时遍历两棵 QBVH，将一侧包围盒在各轴上按余量膨胀后仍不重叠的节点对剪枝，叶子三角形对用 GJK 测距，一旦有一对落在余量内即提前退出。余量为 `gap * (1 + 1e-6) + 64 * EPSILON * 坐标尺度`。只有筛查无法分开的配对才调用 `query::distance`，并按原规则判定。刻意不使用 parry 0.19 的复合形状 `closest_points`：余量内无任何三角形时它会 panic，且内部节点不按余量剪枝。调用方为 placement 的阶段 B（`solids_known_apart = true`）、optimize 的间隙检查（在重叠检测之后，`true`）和旧版 pack（`false`）。`tests/collision_tests.rs::the_screened_gap_test_answers_exactly_what_the_distance_answers` 在 960 组配对/间隙上与距离函数逐一比较，包括间隙恰等于实测距离及大一个 ulp 的情形。
+- **说明：** 两个形状都存在时，先由私有函数 `screen_triangle_pairs` 给距离定界：同时遍历两棵 QBVH，将一侧包围盒在各轴上按上界膨胀后仍不重叠的节点对剪枝，叶子三角形对用 GJK 测距。只要有一对小于 `gap - slack` 就立即返回 true（网格距离是所有三角形对的最小值）；所有对都大于 `gap + slack` 则返回 false；只有落在该窄带内的情形才调用 `query::distance` 并按原规则判定。`slack = 1e-6 * gap + 64 * EPSILON * 坐标尺度`，覆盖 GJK 交换参数顺序计算同一对三角形时的差异。刻意不使用 parry 0.19 的复合形状 `closest_points`：余量内无任何三角形时它会 panic，且内部节点不按余量剪枝。调用方为 placement 的阶段 B（`solids_known_apart = true`）、optimize 的间隙检查（在重叠检测之后，`true`）和旧版 pack（`false`）。`tests/collision_tests.rs::the_screened_gap_test_answers_exactly_what_the_distance_answers` 在 1,200 组配对/间隙上与距离函数逐一比较，包括间隙恰等于实测距离、大一个 ulp、以及上下相差 1e-5 的情形。
 - **另请参阅：** [`mesh_distance_exact_prepared`](#mesh_distance_exact_prepared)、[`mesh_collision_exact_prepared`](#mesh_collision_exact_prepared)。
 
 #### mesh_collision_exact
 
 - **签名：** `pub fn mesh_collision_exact(a: &Mesh, b: &Mesh) -> bool`
-- **源码位置：** `src/geometry/collision.rs:374`
+- **源码位置：** `src/geometry/collision.rs:402`
 - **用途：** 便捷封装函数，为两个网格即时计算包围盒与 parry3d 形状，然后测试碰撞。
 - **参数：**
   - `a`、`b` — 待测试的两个网格。
@@ -298,7 +298,7 @@
 #### mesh_distance_exact
 
 - **签名：** `pub fn mesh_distance_exact(a: &Mesh, b: &Mesh) -> f64`
-- **源码位置：** `src/geometry/collision.rs:383`
+- **源码位置：** `src/geometry/collision.rs:411`
 - **用途：** 便捷封装函数，为两个网格即时计算包围盒与 parry3d 形状，然后计算它们的精确距离。
 - **参数：**
   - `a`、`b` — 待测量的两个网格。
@@ -309,7 +309,7 @@
 #### generate_periodic_ghosts
 
 - **签名：** `pub fn generate_periodic_ghosts(mesh: &Mesh, box_bounds: BoundingBox) -> Vec<Mesh>`
-- **源码位置：** `src/geometry/collision.rs:397`
+- **源码位置：** `src/geometry/collision.rs:425`
 - **用途：** 生成网格的平移"镜像"副本，沿各轴组合按堆积盒的尺寸偏移，以支持周期边界条件下的碰撞检测（靠近盒子一个面的颗粒可能与靠近对面的颗粒发生碰撞）。
 - **参数：**
   - `mesh` — 待生成镜像的源网格。

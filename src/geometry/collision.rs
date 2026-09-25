@@ -260,9 +260,9 @@ pub fn mesh_distance_exact_prepared(
 // Inputs: bounding boxes and parry3d TriMesh references for both meshes; the gap; `solids_known_apart` when the caller has already shown mesh_collision_exact_prepared is false for these exact arguments.
 // Returns: true iff the pair is closer than the gap, with the same fallbacks as mesh_distance_exact_prepared (missing boxes read as distance 0).
 // Side effects: None.
-// Notes: A bounded parry closest_points query at a margin just above the gap screens the pair first; its
-// Disjoint answer is GJK's proven lower bound exceeding the margin, so only pairs within the margin reach
-// the exact distance, which then decides exactly as before. `solids_known_apart` skips the collision test
+// Notes: screen_triangle_pairs bounds the distance first: one triangle pair clearly below the gap answers
+// true, every pair provably beyond a margin just above it answers false, and only a pair inside that
+// narrow band (relative 1e-6 plus rounding) falls back to the exact distance, which then decides as before. `solids_known_apart` skips the collision test
 // the distance function would repeat; passing it when the collision has not been ruled out is a caller bug.
 pub fn mesh_closer_than_prepared(
     a_bbox: Option<BoundingBox>,
@@ -294,39 +294,56 @@ pub fn mesh_closer_than_prepared(
         .iter()
         .map(|p| p.x.abs().max(p.y.abs()).max(p.z.abs()))
         .fold(0.0_f64, f64::max);
-    let margin = gap * (1.0 + 1e-6) + 64.0 * f64::EPSILON * scale;
-    if !triangles_within_margin(a_shape, b_shape, margin) {
-        return false;
+    let slack = 1e-6 * gap + 64.0 * f64::EPSILON * scale;
+    match screen_triangle_pairs(a_shape, b_shape, gap - slack, gap + slack) {
+        Screen::Below => true,
+        Screen::Beyond => false,
+        Screen::Ambiguous => {
+            let identity = Isometry::identity();
+            query::distance(&identity, a_shape, &identity, b_shape).unwrap_or(fallback) < gap
+        }
     }
-    let identity = Isometry::identity();
-    query::distance(&identity, a_shape, &identity, b_shape).unwrap_or(fallback) < gap
+}
+
+/// What a bounded screen of two meshes' triangle pairs established about their distance.
+enum Screen {
+    /// Some triangle pair is closer than the lower bound, so the mesh distance is too.
+    Below,
+    /// Every triangle pair is provably farther apart than the upper bound.
+    Beyond,
+    /// Neither: some pair lies between the bounds, and only the exact distance can decide.
+    Ambiguous,
 }
 
 // AI-FUNC-SUMMARY:
-// Purpose: Conservatively decide whether any triangle of `a` lies within `margin` of any triangle of `b`.
-// Inputs: two prepared TriMeshes in the same frame and a non-negative margin.
-// Returns: false only when every triangle pair is provably farther apart than `margin`; true as soon as one pair is within it.
+// Purpose: Bound the distance between two meshes from their triangle pairs without computing it.
+// Inputs: two prepared TriMeshes in the same frame; lower and upper bounds with lower < upper.
+// Returns: Below as soon as one triangle pair is closer than `lower`; Beyond when every pair is provably farther than `upper`; Ambiguous otherwise.
 // Side effects: None.
-// Notes: A simultaneous traversal of both hierarchies prunes node pairs whose boxes, one inflated by the
-// margin on every axis, do not overlap (an L-infinity test, so it keeps every Euclidean-near pair), and
-// measures leaf triangle pairs with GJK, exiting at the first within the margin. parry's own composite
+// Notes: A simultaneous traversal of both hierarchies prunes node pairs whose boxes, one inflated by
+// `upper` on every axis, do not overlap (an L-infinity test, so it keeps every Euclidean-near pair),
+// and measures leaf triangle pairs with GJK. The mesh distance is the minimum over triangle pairs, so
+// one pair below `lower` proves it below; the caller's `lower` sits below the gap by a slack that
+// covers GJK evaluating the same pair with its arguments swapped. parry's own composite
 // closest_points is not used: in 0.19 it panics when nothing is within the margin and does not prune
 // interior nodes by it.
-fn triangles_within_margin(a: &TriMesh, b: &TriMesh, margin: f64) -> bool {
+fn screen_triangle_pairs(a: &TriMesh, b: &TriMesh, lower: f64, upper: f64) -> Screen {
     use parry3d_f64::bounding_volume::SimdAabb;
     use parry3d_f64::math::{Real, SimdReal, Vector, SIMD_WIDTH};
     use parry3d_f64::na::SimdValue;
     use parry3d_f64::partitioning::{SimdSimultaneousVisitStatus, SimdSimultaneousVisitor};
 
-    struct Screen<'m> {
+    struct Visitor<'m> {
         a: &'m TriMesh,
         b: &'m TriMesh,
-        margin: f64,
+        lower: f64,
+        upper: f64,
         inflate: Vector<SimdReal>,
-        found: bool,
+        below: bool,
+        ambiguous: bool,
     }
 
-    impl SimdSimultaneousVisitor<u32, u32, SimdAabb> for Screen<'_> {
+    impl SimdSimultaneousVisitor<u32, u32, SimdAabb> for Visitor<'_> {
         fn visit(
             &mut self,
             left_bv: &SimdAabb,
@@ -347,10 +364,13 @@ fn triangles_within_margin(a: &TriMesh, b: &TriMesh, margin: f64) -> bool {
                             continue;
                         }
                         let t2 = self.b.triangle(*face2);
-                        let near = query::distance(&identity, &t1, &identity, &t2).map_or(true, |d| d <= self.margin);
-                        if near {
-                            self.found = true;
-                            return SimdSimultaneousVisitStatus::ExitEarly;
+                        match query::distance(&identity, &t1, &identity, &t2) {
+                            Ok(d) if d < self.lower => {
+                                self.below = true;
+                                return SimdSimultaneousVisitStatus::ExitEarly;
+                            }
+                            Ok(d) if d > self.upper => {}
+                            _ => self.ambiguous = true,
                         }
                     }
                 }
@@ -359,15 +379,23 @@ fn triangles_within_margin(a: &TriMesh, b: &TriMesh, margin: f64) -> bool {
         }
     }
 
-    let mut screen = Screen {
+    let mut visitor = Visitor {
         a,
         b,
-        margin,
-        inflate: Vector::<SimdReal>::splat(Vector::<Real>::repeat(margin)),
-        found: false,
+        lower,
+        upper,
+        inflate: Vector::<SimdReal>::splat(Vector::<Real>::repeat(upper)),
+        below: false,
+        ambiguous: false,
     };
-    a.qbvh().traverse_bvtt(b.qbvh(), &mut screen);
-    screen.found
+    a.qbvh().traverse_bvtt(b.qbvh(), &mut visitor);
+    if visitor.below {
+        Screen::Below
+    } else if visitor.ambiguous {
+        Screen::Ambiguous
+    } else {
+        Screen::Beyond
+    }
 }
 
 // AI-FUNC-SUMMARY: Convenience wrapper that computes bounding boxes and shapes on-the-fly then tests collision; returns bool; side effects: None.
