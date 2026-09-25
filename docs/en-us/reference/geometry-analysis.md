@@ -45,6 +45,24 @@ This page documents `src/geometry/metrics.rs` (mesh manifold validation and volu
 | `FftWorkspace::array_bytes` | `src/geometry/s2.rs:363` | Report retained complex-array capacities. |
 | `with_fft_correlation` | `src/geometry/s2.rs:489` | Evaluate occupancy FFT with bounded cache retention. |
 | `FFT_RETAIN_BYTES` | `src/geometry/s2.rs:332` | Maximum retained FFT array bytes per calling thread. |
+| `smooth_fft_length` | `src/geometry/s2.rs` | Smallest 2,3,5-smooth length >= a minimum. |
+| `padded_fft_dims` | `src/geometry/s2.rs` | Per-axis smooth padding >= 2N-1 for linear autocorrelation. |
+| `ExactCpuMethod` | `src/geometry/s2.rs` | CPU exact kernel selector (Fft/Direct). |
+| `ExactCpuPlan` | `src/geometry/s2.rs` | Modeled cost, working sets and chosen kernel for one grid. |
+| `ExactCpuPlan::selected_bytes` | `src/geometry/s2.rs` | Working set of the selected kernel. |
+| `ExactCpuPlan::fits_budget` | `src/geometry/s2.rs` | Whether the selected kernel fits the budget. |
+| `ExactCpuPlan::describe` | `src/geometry/s2.rs` | One-line observable plan description. |
+| `exact_shell_work` | `src/geometry/s2.rs` | In-domain offsets K, exact pair work W, largest shell. |
+| `fft_working_set_bytes` | `src/geometry/s2.rs` | Checked FFT peak-byte estimate. |
+| `direct_working_set_bytes` | `src/geometry/s2.rs` | Checked direct peak-byte estimate. |
+| `plan_exact_cpu` | `src/geometry/s2.rs` | Cost-model/budget selection between FFT and direct. |
+| `cached_exact_plan` | `src/geometry/s2.rs` | Reuse and log the plan once per key. |
+| `offset_in_domain` | `src/geometry/s2.rs` | Whether a shift leaves any valid voxel pair. |
+| `direct_pair_counts` | `src/geometry/s2.rs` | Integer (hits, valid) for one shift via contiguous z runs. |
+| `finish_exact_curve` | `src/geometry/s2.rs` | Assemble, interpolate and pin S2(0). |
+| `VoxelS2::calculate_exact_with` | `src/geometry/s2.rs` | Exact S2 with an explicitly chosen CPU kernel. |
+| `DEFAULT_CPU_EXACT_BUDGET_BYTES` | `src/geometry/s2.rs` | Default CPU exact working-set budget (768 MiB). |
+| `NS_PER_FFT_UNIT` / `NS_PER_DIRECT_PAIR` / `DIRECT_PARALLEL_EFFICIENCY` | `src/geometry/s2.rs` | Calibrated cost-model constants. |
 
 ---
 
@@ -177,7 +195,7 @@ This is the two-point correlation function (`S2(r)`) engine — the largest and 
 - **Notes — method routing (the core logic of this function):**
   1. **`voxel_pitch <= 0.0` and `method != "exact"`** → routes directly to `calculate_s2_monte_carlo_mesh`, which samples point pairs directly against the mesh's triangles with no voxelization at all (most accurate, but the slowest per-sample since each sample calls `point_inside_mesh` twice against the full triangle list).
   2. **Otherwise**, the mesh is first voxelized once via `build_bbox_occupancy` (shared by both remaining branches) to produce an occupancy grid and volume fraction `vf`. If the grid has zero occupied voxels, returns an all-zero vector immediately.
-  3. **`method == "exact"`** → computes the padded FFT grid size `(2nx-1)(2ny-1)(2nz-1)` and compares it against a fixed threshold of **24,000,000 cells** (`max_fft_cells`). If the padded grid would exceed this threshold, falls back to `calculate_s2_exact_direct` (direct O(shell-size × grid-size) pair enumeration, avoiding the large FFT memory allocation); otherwise uses `calculate_s2_exact_fft` (FFT-based autocorrelation, asymptotically faster for large grids).
+  3. **`method == "exact"`** → `VoxelS2::calculate` asks `cached_exact_plan` (see *CPU exact kernel planning* below) to choose between `calculate_s2_exact_fft` and `calculate_s2_exact_direct` by modeled time among kernels whose working set fits `DEFAULT_CPU_EXACT_BUDGET_BYTES`, and logs the choice once per plan key. Both kernels return bit-identical values, so the choice affects only time and memory.
   4. **Any other `method` value** (the voxelized Monte Carlo path) → for each radius `1..=r_max`, precomputes the shell offsets once via `shell_offsets_for_distance`, then draws `samples.max(200)` random voxel-pair samples per radius (random voxel + random offset from that radius's shell) and estimates `S2(r)` as the hit fraction among in-bounds pairs. Unsupported radii (empty shell, or zero valid pairs) are filled in afterward via `fill_missing_s2_with_smooth_interpolation`.
 - **See also:** `calculate_s2_monte_carlo_mesh`, `build_bbox_occupancy`, `calculate_s2_exact_direct`, `calculate_s2_exact_fft`, `fill_missing_s2_with_smooth_interpolation`, `calculate_s2_with_gpu` (GPU-accelerated wrapper around this function), [GPU reference](gpu.md).
 
@@ -280,11 +298,11 @@ This is the two-point correlation function (`S2(r)`) engine — the largest and 
 
 #### FftWorkspace::transform
 
-`FftWorkspace::transform(inverse)` applies cached dimension-specific forward/inverse axis plans to its complex grid. The task count is min(current pool workers, ceil(padded cells / 65536)), at least one. One task uses serial axis gathers and one shared scratch buffer, without allocating a transpose array. Multiple tasks use a lazily allocated persistent transpose buffer and task-local `process_with_scratch` storage, with axis-specific minimum chunk lengths. Filling, power spectrum and normalization use the same task budget. Inverse normalization and the power-spectrum pass execute under the caller's Rayon pool. Padding remains exactly 2N-1.
+`FftWorkspace::transform(inverse)` applies cached dimension-specific forward/inverse axis plans to its complex grid. The task count is min(current pool workers, ceil(padded cells / 65536)), at least one. One task uses serial axis gathers and one shared scratch buffer, without allocating a transpose array. Multiple tasks use a lazily allocated persistent transpose buffer and task-local `process_with_scratch` storage, with axis-specific minimum chunk lengths. Filling, power spectrum and normalization use the same task budget. Inverse normalization and the power-spectrum pass execute under the caller's Rayon pool. Padded dimensions are the smallest 2,3,5-smooth lengths >= 2N-1 (`padded_fft_dims`).
 
 #### with_fft_correlation
 
-`with_fft_correlation(occ, dims, consume)` takes exclusive ownership of a thread-local cached workspace, resets/fills its grid, transforms the occupancy, and passes complex correlation storage and padded dimensions to the consumer. Production shell evaluation reads clamped real counts directly, avoiding another full f64 correlation allocation. A workspace is retained only when its two array capacities total at most 16 MiB and every padded axis is <=4096. Plan internals occupy additional memory; this is a cache-admission limit, not a complete process-memory budget. Dimension changes discard the prior workspace before allocating its replacement. Large workspaces are released at return. No TLS borrow survives parallel work or the consumer callback, allowing nested Rayon evaluations safely; concurrent callers have independent workspaces. The current exact cell limits remain pending the full workload planner.
+`with_fft_correlation(occ, dims, consume)` takes exclusive ownership of a thread-local cached workspace, resets/fills its grid, transforms the occupancy, and passes complex correlation storage and padded dimensions to the consumer. Production shell evaluation reads clamped real counts directly, avoiding another full f64 correlation allocation. A workspace is retained only when its two array capacities total at most 16 MiB and every padded axis is <=4096. Plan internals occupy additional memory; this is a cache-admission limit, not a complete process-memory budget. Dimension changes discard the prior workspace before allocating its replacement. Large workspaces are released at return. No TLS borrow survives parallel work or the consumer callback, allowing nested Rayon evaluations safely; concurrent callers have independent workspaces. Kernel selection and the working-set budget are made by `plan_exact_cpu`.
 
 #### autocorrelation_counts_fft
 
@@ -296,7 +314,7 @@ This is the two-point correlation function (`S2(r)`) engine — the largest and 
   - `nx`, `ny`, `nz` — grid dimensions.
 - **Returns:** `(corr, [fx, fy, fz])` — a flat `f64` correlation-count grid over the padded FFT dimensions, and those padded dimensions themselves.
 - **Side effects:** None (allocates and returns new buffers; does not mutate `occ`).
-- **Notes:** Pads each axis to `2N-1` (`fx = 2*nx-1`, etc.) before transforming, to avoid circular-convolution wraparound artifacts that would corrupt correlation counts near the grid boundary. After the round-trip FFT → conjugate-square → IFFT, takes the real part and clamps to `>= 0.0` (autocorrelation counts should be non-negative; clamping guards against tiny negative floating-point noise). Negative offsets are recovered from the padded grid via wraparound indexing in the caller (`calculate_s2_exact_fft`'s `get_corr` closure).
+- **Notes:** Pads each axis to the smallest 2,3,5-smooth length >= `2N-1` (`padded_fft_dims`) before transforming, to avoid circular-convolution wraparound artifacts that would corrupt correlation counts near the grid boundary. After the round-trip FFT → conjugate-square → IFFT, takes the real part and clamps to `>= 0.0` (autocorrelation counts should be non-negative; clamping guards against tiny negative floating-point noise). Negative offsets are recovered from the padded grid via wraparound indexing in the caller (`calculate_s2_exact_fft`'s `wrap` closure, index `L-|d|`); production rounds each value to the nearest integer count.
 - **See also:** `FftWorkspace::transform`, `calculate_s2_exact_fft` (sole caller).
 
 #### calculate_s2_exact_direct
@@ -310,8 +328,8 @@ This is the two-point correlation function (`S2(r)`) engine — the largest and 
   - `voxel_pitch` — voxel edge length, used to convert physical radius `r` to voxel-space `r_vox = r / voxel_pitch`.
   - `vf` — volume fraction, used directly as `S2(0)`.
 - **Returns:** `Vec<f64>` of length `r_max + 1`, S2 values per radius, with unsupported radii filled via `fill_missing_s2_with_smooth_interpolation`.
-- **Side effects:** None (pure computation); parallelizes the outer radius loop via `rayon`'s `into_par_iter`.
-- **Notes:** For each radius, computes shell offsets via `shell_offsets_for_distance`, then for each offset iterates the full valid overlap region of the grid (`x_start..x_end` etc., accounting for the offset's sign) counting `valid_pairs` and `hit_pairs` (both endpoints occupied), and averages the hit fraction across all offsets in the shell. This is `O(shell_size × grid_size)` per radius — more expensive per-radius than the FFT approach for large radii/grids, but avoids the FFT's `O((2n)^3)` memory footprint, which is why `calculate_s2` selects this path when the padded grid exceeds 24M cells.
+- **Side effects:** None (pure computation); parallel over radii and, within a radius, over offsets.
+- **Notes:** For each radius, collects the in-domain offsets of `shell_offset_iter` (same order as `shell_offsets_for_distance`), counts each with `direct_pair_counts` in parallel (indexed collect), and averages `hits/valid` in offset order. Work is `W = Σ valid pairs`; memory is the occupancy plus one offset list per concurrent radius. Returns values bit-identical to `calculate_s2_exact_fft`. `plan_exact_cpu` selects it when its modeled time is lower or the FFT working set exceeds the budget.
 - **See also:** `shell_offsets_for_distance`, `fill_missing_s2_with_smooth_interpolation`, `calculate_s2` (sole caller, "exact"-large-grid branch), `calculate_s2_exact_fft` (the FFT alternative for smaller grids).
 
 #### calculate_s2_exact_fft
@@ -322,7 +340,7 @@ This is the two-point correlation function (`S2(r)`) engine — the largest and 
 - **Parameters:** Same as `calculate_s2_exact_direct`.
 - **Returns:** `Vec<f64>` of length `r_max + 1`, S2 values per radius, with unsupported radii filled via `fill_missing_s2_with_smooth_interpolation`.
 - **Side effects:** None (pure computation); parallelizes the outer radius loop via `rayon`.
-- **Notes:** Because the correlation grid is computed once up front (amortized `O((2n)^3 log n)` FFT cost) rather than per-offset, this is asymptotically much cheaper than `calculate_s2_exact_direct` for large radius ranges, at the cost of the padded-grid memory allocation — which is exactly the tradeoff `calculate_s2` evaluates via the 24M-cell threshold before choosing this path. Offsets whose absolute value would exceed the grid dimensions (`adx >= nx` etc.) are skipped as unsupported for that shell entry, since no valid pair exists at that offset.
+- **Notes:** Because the correlation grid is computed once up front (`O(P log P)` with smooth padding) rather than per offset, this is cheaper than `calculate_s2_exact_direct` for large radius ranges, at the cost of the padded-grid memory — the tradeoff `plan_exact_cpu` models. Each correlation value is rounded to the nearest integer count, so results equal the direct kernel's bit for bit. Offsets with `|d| >= N` on any axis are skipped (no valid pair).
 - **See also:** `autocorrelation_counts_fft`, `shell_offsets_for_distance`, `fill_missing_s2_with_smooth_interpolation`, `calculate_s2` (sole caller, "exact"-small-grid branch), `calculate_s2_exact_direct` (the direct-enumeration alternative for large grids).
 
 #### calculate_s2_monte_carlo_mesh
@@ -347,7 +365,7 @@ This is the two-point correlation function (`S2(r)`) engine — the largest and 
 
 `calculate_s2_mesh_mc_seeded(mesh, bbox, r_max, samples, seed, prepared)` returns continuous MC S2. Radius/sample blocks of 2048 use independent ChaCha12 streams derived from radius and block, with integer reductions. Results are reproducible across worker counts; `prepared=false` uses full-scan containment for differential benchmarks. Ordinary mesh MC chooses a fresh base seed and uses prepared queries. This changes the old unseeded RNG draw protocol, not the point/direction distribution.
 
-`VoxelS2::new(mesh, bbox, pitch)` owns one voxelization at a positive pitch (minimum 1e-9). `calculate(r_max, method, samples)` reuses it for exact or voxel MC, reporting occupancy VF. Measure lazily retains this object across CPU methods/fallbacks; continuous MC remains independent. Voxelization prepares per-component queries and reuses per-worker hit scratch. Components below the domain have their upper index clamped before unsigned conversion.
+`VoxelS2::new(mesh, bbox, pitch)` owns one voxelization at a positive pitch (minimum 1e-9). `calculate(r_max, method, samples)` reuses it for exact or voxel MC, reporting occupancy VF; exact selects its kernel through `cached_exact_plan`. `calculate_exact_with(r_max, method)` (crate-internal) forces FFT or direct. Measure lazily retains this object across CPU methods/fallbacks; continuous MC remains independent. Voxelization prepares per-component queries and reuses per-worker hit scratch. Components below the domain have their upper index clamped before unsigned conversion.
 
 GPU exact now constructs the shell stage on the voxel stage’s Device/Queue and binds its occupancy buffer directly. Shell construction does not select an adapter or request another device, and the shell does not allocate/upload a duplicate occupancy field. Both stages run sequentially with separate error scopes. Voxel occupancy counting now runs on the device and only a four-byte count is read for VF; upstream backend capability probes remain separate. Standalone host-occupancy shell calls retain their upload behavior, and later host calls cannot overwrite the producer’s borrowed buffer.
 
@@ -359,4 +377,21 @@ GPU exact now uses `shell_offset_iter`, retaining only nested range cursors even
 
 | Function | Source | Contract |
 |---|---|---|
-| `shell_offset_iter` | `src/geometry/s2.rs:213` | Lazy ordered shell enumeration with constant cursor storage; GPU exact streaming and tests. |
+| `shell_offset_iter` | `src/geometry/s2.rs:213` | Lazy ordered shell enumeration with constant cursor storage; GPU exact streaming, both CPU exact kernels, and tests. |
+
+## CPU exact kernel planning and smooth padding (PERF-07)
+
+`padded_fft_dims(dims)` pads each axis to `smooth_fft_length(2N-1)`, the smallest 2,3,5-smooth length that is at least `2N-1` (`smooth_fft_length` enumerates `2^a·3^b·5^c` with checked arithmetic; `None` on overflow). Any length `L >= 2N-1` keeps the circular correlation of the zero-padded grid equal to the linear one for every shift `|d| <= N-1`, and a negative shift `-d` is still read at index `L-d`. `with_fft_correlation`, `FftWorkspace` and the retention rule use these padded dimensions.
+
+`calculate_s2_exact_fft` rounds each correlation value to the nearest integer pair count before dividing by the analytic valid-pair count, and both CPU kernels enumerate each radius with `shell_offset_iter` filtered by `offset_in_domain`, summing `hits/valid` in the same order. The FFT and direct kernels therefore return bit-identical curves for every grid, padding and worker count (tested with `forced_kernels_are_selection_independent` and the all-offset integer oracle `fft_scratch_matches_integer_pairs`, which includes FFT-unfriendly and long/thin axes). Rounding requires the FFT absolute error to stay below 0.5, which holds by many orders of magnitude for f64 grids of the admitted size.
+
+`calculate_s2_exact_direct` now parallelizes over radii and, inside each radius, over its in-domain offsets (indexed collect, then an ordered sum); `direct_pair_counts` counts each shift over contiguous z runs. `finish_exact_curve` is the shared tail (interpolation, `S2(0)=vf`).
+
+`plan_exact_cpu(dims, r_max, pitch, workers, budget)` returns an `ExactCpuPlan`:
+
+- `exact_shell_work` enumerates one octant of the in-domain offset ball once (sign copies weighted by multiplicity, loops cut at `r_max`) with the shell iterator's half-open float bounds, returning the in-domain offset count `K`, the exact direct work `W = Σ (nx-|dx|)(ny-|dy|)(nz-|dz|)` and the largest per-radius offset count. A unit test checks it against brute-force shell enumeration.
+- Modeled times: FFT `NS_PER_FFT_UNIT·P·log2 P` (P = padded cells, no parallel credit); direct `NS_PER_DIRECT_PAIR·W / (1 + DIRECT_PARALLEL_EFFICIENCY·(min(workers,K)-1))`. Constants (2.0 ns, 0.36 ns, 1/3) are single-worker release fits from the ignored `exact_cost_model_calibration` test; at 4 workers that host showed no FFT speedup and about 2x direct speedup.
+- Working sets (checked `u64`): FFT = occupancy + complex grid + transpose (when the transform uses more than one task) + per-worker line/scratch + axis plans + output; direct = occupancy + in-domain offsets and per-offset counts for each concurrently processed radius + output. Plans' opaque internals and other threads' retained 16 MiB caches are not included.
+- Only kernels whose working set fits the budget are eligible; the cheaper one wins (FFT on ties). If neither fits, direct is reported with reason `no kernel fits budget`.
+
+`DEFAULT_CPU_EXACT_BUDGET_BYTES` is 768 MiB, the size of the old 24,000,000-padded-cell FFT limit's grid plus transpose, so no configuration allocates materially more than before. `VoxelS2::calculate` uses `cached_exact_plan`, which reuses the last plan for an identical `(dims, r_max, pitch, workers, budget)` and prints `[Info] CPU exact S2 plan: ... method=... reason=...` only when the key changes. `VoxelS2::calculate_exact_with` forces a kernel for tests and benchmarks.

@@ -151,3 +151,35 @@ fn gpu_exact_shrinks_batches_to_one_mib() {
     let generated: usize = (1..=16).map(|r| rustmspt::geometry::s2::shell_offsets_for_distance(r as f64,0.5).len()).sum();
     assert!(generated>11456);
 }
+
+// AI-FUNC-SUMMARY: Verify the working-set budget replaced the fixed 1,500,000-cell exact ceiling: a 2,197,000-voxel-scale grid now runs and logs its plan, while a grid whose occupancy alone exceeds the budget is refused before voxelization without writing output.
+#[test]
+fn exact_budget_replaces_fixed_cell_ceiling() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("input.stl");
+    let output = dir.path().join("result.txt");
+    let config = dir.path().join("config.json");
+    save_stl(&input, &box_mesh(BoundingBox { min: Vec3::new(10.0, 10.0, 10.0), max: Vec3::new(30.0, 30.0, 30.0) }), "cube").unwrap();
+    for (size, success) in [(130, true), (1000, false)] {
+        std::fs::write(&config, serde_json::json!({"measurement": {
+            "stl_path": input, "output_path": output, "bounding_box": [size, size, size],
+            "r_max": 2, "voxel_pitch": 1.0, "mc_method": "exact", "mc_samples": 200, "cpu_max": 2,
+            "acceleration": {"mode": "cpu"}
+        }}).to_string()).unwrap();
+        if output.exists() {
+            std::fs::remove_file(&output).unwrap();
+        }
+        let result = Command::new(env!("CARGO_BIN_EXE_rustmspt")).args(["measure", "--config"]).arg(&config)
+            .env("RUSTMSPT_ACCELERATION", "cpu").output().unwrap();
+        let stdout = String::from_utf8_lossy(&result.stdout);
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert_eq!(result.status.success(), success, "{stdout} {stderr}");
+        if success {
+            assert!(stdout.contains("CPU exact working-set plan") && stdout.contains("method=direct"), "{stdout}");
+            assert!(std::fs::read_to_string(&output).unwrap().contains("exact=cpu"));
+        } else {
+            assert!(stderr.contains("working-set budget") || stdout.contains("working-set budget"), "{stdout} {stderr}");
+            assert!(!output.exists());
+        }
+    }
+}

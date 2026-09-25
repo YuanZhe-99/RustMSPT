@@ -373,50 +373,105 @@ fn detect_background_mode(volume: &Volume3D) -> i64 {
 
 }
 
+/// PCA result: (rotation, centroid, rotated min, rotated max, foreground voxel count).
+type PcaEstimate = (Matrix3<f64>, Vector3<f64>, Vector3<f64>, Vector3<f64>, usize);
+
 // AI-FUNC-SUMMARY:
 // Purpose: Compute PCA rotation and foreground bounding box in the rotated coordinate frame.
 // Inputs: volume and detected background value.
 // Returns: Tuple of (rotation matrix, centroid, rotated min, rotated max, foreground voxel count).
 // Side effects: None.
-// Notes: Ensures right-handed coordinate system (det > 0). Returns error if no foreground voxels found.
+// Notes: One statistics pass (exact per-row integer moments merged with Chan's formula inside each fixed 65536-voxel block, blocks merged in ascending order) replaces the centroid and covariance passes; a second pass projects bounds. Worker count never changes the result. The frame comes from pca_frame (canonical basis for near-degenerate eigenspaces, right-handed). Returns error if no foreground voxels found.
 fn estimate_pca_bbox(
     volume: &Volume3D,
     background: i64,
-) -> Result<(
-    Matrix3<f64>,
-    Vector3<f64>,
-    Vector3<f64>,
-    Vector3<f64>,
-    usize,
-)> {
-    let partials = foreground_blocks(volume, background, || (0usize, Vector3::zeros()), |state, p| {
-        state.0 += 1;
-        state.1 += p;
+) -> Result<PcaEstimate> {
+    let partials = foreground_row_blocks(volume, MomentState::default, |state, x0, y, z, row| {
+        let mut count = 0u64;
+        let mut sum = 0u128;
+        let mut sum_sq = 0u128;
+        for (x, &value) in row.iter().enumerate() {
+            if value != background {
+                let x = (x0 + x) as u128;
+                count += 1;
+                sum += x;
+                sum_sq += x * x;
+            }
+        }
+        if count > 0 {
+            state.merge(&MomentState::from_row(count, sum, sum_sq, y, z));
+        }
     });
-    let (count, sum) = partials.into_iter().fold((0usize, Vector3::zeros()), |(count, sum), (n, value)| (count + n, sum + value));
-
-    if count == 0 {
+    let stats = partials.into_iter().fold(MomentState::default(), |mut total, block| {
+        total.merge(&block);
+        total
+    });
+    if stats.count == 0 {
         return Err(RustMsptError::InvalidConfig(
             "No foreground voxels found after background detection".to_string(),
         ));
     }
+    let count = stats.count as usize;
+    let centroid = stats.mean;
+    let rot = pca_frame(stats.m2 / stats.count as f64);
+    let (min_v, max_v) = projected_bounds(volume, background, &rot, &centroid);
+    Ok((rot, centroid, min_v, max_v, count))
+}
 
-    let centroid = sum / count as f64;
-    let partials = foreground_blocks(volume, background, Matrix3::zeros, |cov, p| {
-        let d = p - centroid;
-        cov[(0, 0)] += d.x * d.x;
-        cov[(0, 1)] += d.x * d.y;
-        cov[(0, 2)] += d.x * d.z;
-        cov[(1, 0)] += d.y * d.x;
-        cov[(1, 1)] += d.y * d.y;
-        cov[(1, 2)] += d.y * d.z;
-        cov[(2, 0)] += d.z * d.x;
-        cov[(2, 1)] += d.z * d.y;
-        cov[(2, 2)] += d.z * d.z;
-    });
-    let mut cov = partials.into_iter().fold(Matrix3::zeros(), |sum, value| sum + value);
-    cov /= count as f64;
+/// Running count, mean and centered second-moment matrix of foreground coordinates.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct MomentState {
+    count: u64,
+    mean: Vector3<f64>,
+    m2: Matrix3<f64>,
+}
 
+impl Default for MomentState {
+    // AI-FUNC-SUMMARY: Return the empty moment state (count 0, zero mean and M2); side effects: None.
+    fn default() -> Self {
+        Self { count: 0, mean: Vector3::zeros(), m2: Matrix3::zeros() }
+    }
+}
+
+impl MomentState {
+    // AI-FUNC-SUMMARY: Build the exact moments of one foreground row segment from integer count, sum x and sum x^2 at fixed (y, z); only the xx entry of M2 is nonzero; side effects: None.
+    fn from_row(count: u64, sum: u128, sum_sq: u128, y: usize, z: usize) -> Self {
+        let n = count as f64;
+        let mean_x = sum as f64 / n;
+        let centered = sum_sq as f64 - (sum as f64) * mean_x;
+        let mut m2 = Matrix3::zeros();
+        m2[(0, 0)] = centered.max(0.0);
+        Self { count, mean: Vector3::new(mean_x, y as f64, z as f64), m2 }
+    }
+
+    // AI-FUNC-SUMMARY: Merge another moment state into this one with Chan's parallel formula (mean shift and delta outer product weighted by na*nb/n); empty operands are no-ops; side effects: mutates self.
+    fn merge(&mut self, other: &MomentState) {
+        if other.count == 0 {
+            return;
+        }
+        if self.count == 0 {
+            *self = *other;
+            return;
+        }
+        let na = self.count as f64;
+        let nb = other.count as f64;
+        let n = na + nb;
+        let delta = other.mean - self.mean;
+        self.mean += delta * (nb / n);
+        self.m2 += other.m2 + delta * delta.transpose() * (na * nb / n);
+        self.count += other.count;
+    }
+}
+
+const PCA_DEGENERATE_REL_TOL: f64 = 1e-3;
+
+// AI-FUNC-SUMMARY:
+// Purpose: Turn a covariance matrix into a right-handed crop frame whose columns are principal axes in descending eigenvalue order.
+// Inputs: symmetric covariance matrix.
+// Returns: rotation matrix (columns = frame axes).
+// Side effects: None.
+// Notes: Adjacent sorted eigenvalues within PCA_DEGENERATE_REL_TOL of the largest magnitude form one eigenspace. A full 3-D eigenspace yields exactly the scan axes. A 2-D eigenspace's columns are the scan axes x, y, z (in that order) projected into it and Gram-Schmidt orthonormalized, accepting an axis only when its residual norm is >= 0.5 (enough axes always exist), so each column has a positive component along its source axis. A non-degenerate column is sign-fixed so its largest-magnitude component (lowest axis on exact ties) is positive, because the eigen-solver's sign flips under last-bit covariance changes. A negative determinant then flips column 2.
+fn pca_frame(cov: Matrix3<f64>) -> Matrix3<f64> {
     let eig = SymmetricEigen::new(cov);
     let mut order = [0usize, 1usize, 2usize];
     order.sort_by(|a, b| {
@@ -424,39 +479,102 @@ fn estimate_pca_bbox(
             .partial_cmp(&eig.eigenvalues[*a])
             .unwrap_or(Ordering::Equal)
     });
-
-    let mut rot = Matrix3::from_columns(&[
-        eig.eigenvectors.column(order[0]).into_owned(),
-        eig.eigenvectors.column(order[1]).into_owned(),
-        eig.eigenvectors.column(order[2]).into_owned(),
-    ]);
-
+    let values = order.map(|i| eig.eigenvalues[i]);
+    let mut columns = order.map(|i| eig.eigenvectors.column(i).into_owned());
+    let scale = values.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+    let mut start = 0;
+    while start < 3 {
+        let mut end = start + 1;
+        while end < 3 && (values[end - 1] - values[end]).abs() <= PCA_DEGENERATE_REL_TOL * scale {
+            end += 1;
+        }
+        if end - start == 1 {
+            let c = &mut columns[start];
+            let lead = (0..3).fold(0, |best, i| if c[i].abs() > c[best].abs() { i } else { best });
+            if c[lead] < 0.0 {
+                *c = -*c;
+            }
+        } else if end - start == 3 {
+            columns = [Vector3::x(), Vector3::y(), Vector3::z()];
+        } else {
+            let span = &columns[start..end];
+            let project = |v: &Vector3<f64>| span.iter().fold(Vector3::zeros(), |acc, u| acc + u * u.dot(v));
+            let mut chosen: Vec<Vector3<f64>> = Vec::with_capacity(end - start);
+            for axis in 0..3 {
+                if chosen.len() == end - start {
+                    break;
+                }
+                let mut residual = project(&Vector3::ith(axis, 1.0));
+                for c in &chosen {
+                    residual -= c * c.dot(&residual);
+                }
+                let norm = residual.norm();
+                if norm >= 0.5 {
+                    chosen.push(residual / norm);
+                }
+            }
+            if chosen.len() == end - start {
+                for (slot, c) in columns[start..end].iter_mut().zip(chosen) {
+                    *slot = c;
+                }
+            }
+        }
+        start = end;
+    }
+    let mut rot = Matrix3::from_columns(&columns);
     if rot.determinant() < 0.0 {
         let c2 = -rot.column(2).into_owned();
         rot.set_column(2, &c2);
     }
+    rot
+}
 
+// AI-FUNC-SUMMARY: Project every foreground voxel into the rotated frame about the centroid over fixed 65536-voxel blocks and return the (min, max) corners; min/max merges are order-independent; side effects: None.
+fn projected_bounds(volume: &Volume3D, background: i64, rot: &Matrix3<f64>, centroid: &Vector3<f64>) -> (Vector3<f64>, Vector3<f64>) {
     let inv = rot.transpose();
     let empty_bounds = || (Vector3::repeat(f64::INFINITY), Vector3::repeat(f64::NEG_INFINITY));
     let partials = foreground_blocks(volume, background, empty_bounds, |(min, max), p| {
         let q = inv * (p - centroid);
         for axis in 0..3 { min[axis] = min[axis].min(q[axis]); max[axis] = max[axis].max(q[axis]); }
     });
-    let (min_v, max_v) = partials.into_iter().fold(empty_bounds(), |(mut min, mut max), (lo, hi)| {
+    partials.into_iter().fold(empty_bounds(), |(mut min, mut max), (lo, hi)| {
         for axis in 0..3 { min[axis] = min[axis].min(lo[axis]); max[axis] = max[axis].max(hi[axis]); }
         (min, max)
-    });
+    })
+}
 
+#[cfg(test)]
+// AI-FUNC-SUMMARY: Previous fixed-block three-pass PCA (centroid pass, centered covariance pass, bounds pass) retained as the oracle for the one-pass moment merge; uses the same pca_frame.
+fn estimate_pca_bbox_three_pass(
+    volume: &Volume3D,
+    background: i64,
+) -> Result<PcaEstimate> {
+    let partials = foreground_blocks(volume, background, || (0usize, Vector3::zeros()), |state, p| {
+        state.0 += 1;
+        state.1 += p;
+    });
+    let (count, sum) = partials.into_iter().fold((0usize, Vector3::zeros()), |(count, sum), (n, value)| (count + n, sum + value));
+    if count == 0 {
+        return Err(RustMsptError::InvalidConfig(
+            "No foreground voxels found after background detection".to_string(),
+        ));
+    }
+    let centroid = sum / count as f64;
+    let partials = foreground_blocks(volume, background, Matrix3::zeros, |cov, p| {
+        let d = p - centroid;
+        *cov += d * d.transpose();
+    });
+    let cov = partials.into_iter().fold(Matrix3::zeros(), |sum, value| sum + value) / count as f64;
+    let rot = pca_frame(cov);
+    let (min_v, max_v) = projected_bounds(volume, background, &rot, &centroid);
     Ok((rot, centroid, min_v, max_v, count))
 }
 
-
-// AI-FUNC-SUMMARY: Scan fixed 65536-voxel blocks in parallel, visiting foreground positions in source order and collecting partials by block index regardless of worker count.
-fn foreground_blocks<T: Send>(
+// AI-FUNC-SUMMARY: Scan fixed 65536-voxel blocks in parallel and hand each contiguous row segment (start x, y, z, values) to the accumulator in source order, collecting partials by block index regardless of worker count.
+fn foreground_row_blocks<T: Send>(
     volume: &Volume3D,
-    background: i64,
     initial: impl Fn() -> T + Sync + Send,
-    accumulate: impl Fn(&mut T, Vector3<f64>) + Sync + Send,
+    accumulate: impl Fn(&mut T, usize, usize, usize, &[i64]) + Sync + Send,
 ) -> Vec<T> {
     const BLOCK: usize = 65536;
     let scan = |(block, values): (usize, &[i64])| {
@@ -468,9 +586,7 @@ fn foreground_blocks<T: Send>(
             let y = (index / volume.width) % volume.height;
             let z = index / (volume.width * volume.height);
             let count = (volume.width - x0).min(values.len() - offset);
-            for (x, &value) in values[offset..offset + count].iter().enumerate() {
-                if value != background { accumulate(&mut result, Vector3::new((x0 + x) as f64, y as f64, z as f64)); }
-            }
+            accumulate(&mut result, x0, y, z, &values[offset..offset + count]);
             offset += count;
         }
         result
@@ -484,18 +600,26 @@ fn foreground_blocks<T: Send>(
     }
 }
 
+// AI-FUNC-SUMMARY: Scan fixed 65536-voxel blocks in parallel, visiting foreground positions in source order and collecting partials by block index regardless of worker count.
+fn foreground_blocks<T: Send>(
+    volume: &Volume3D,
+    background: i64,
+    initial: impl Fn() -> T + Sync + Send,
+    accumulate: impl Fn(&mut T, Vector3<f64>) + Sync + Send,
+) -> Vec<T> {
+    foreground_row_blocks(volume, initial, |result, x0, y, z, row| {
+        for (x, &value) in row.iter().enumerate() {
+            if value != background { accumulate(result, Vector3::new((x0 + x) as f64, y as f64, z as f64)); }
+        }
+    })
+}
+
 #[cfg(test)]
 // AI-FUNC-SUMMARY: Original serial three-pass PCA retained as a numerical oracle for fixed-block reductions.
 fn estimate_pca_bbox_serial(
     volume: &Volume3D,
     background: i64,
-) -> Result<(
-    Matrix3<f64>,
-    Vector3<f64>,
-    Vector3<f64>,
-    Vector3<f64>,
-    usize,
-)> {
+) -> Result<PcaEstimate> {
     let mut count: usize = 0;
     let mut sum = Vector3::new(0.0, 0.0, 0.0);
 
@@ -1082,7 +1206,7 @@ mod performance_tests {
         Volume3D { width, height, depth, data, numeric_type: crate::io::volume::VolumeNumericType::U8 }
     }
 
-    // AI-FUNC-SUMMARY: Verify fixed-block PCA is worker-independent and agrees numerically with the serial oracle, including degenerate foregrounds.
+    // AI-FUNC-SUMMARY: Verify fixed-block PCA is worker-independent and agrees with the serial oracle's axes up to the canonical column signs, including degenerate foregrounds.
     #[test]
     fn fixed_block_pca_matches_serial_and_workers() {
         for kind in 0..5 {
@@ -1102,18 +1226,171 @@ mod performance_tests {
                 assert!((actual.0.transpose()*actual.0 - Matrix3::identity()).norm() < 1e-12);
                 assert!(actual.0.determinant() > 0.999999999);
                 if kind == 0 {
-                    assert!((actual.0 - serial.0).norm() < 1e-10);
-                    assert!((actual.2 - serial.2).norm() < 1e-9);
-                    assert!((actual.3 - serial.3).norm() < 1e-9);
-                    let new = rotate_and_crop(&volume, 0, &actual.0, &actual.1, &actual.2, &actual.3, InterpolationMode::Nearest);
-                    let old = rotate_and_crop(&volume, 0, &serial.0, &serial.1, &serial.2, &serial.3, InterpolationMode::Nearest);
-                    assert_eq!(new.data, old.data);
+                    for c in 0..3 {
+                        let (a, b) = (actual.0.column(c), serial.0.column(c));
+                        assert!((a - b).norm().min((a + b).norm()) < 1e-10, "{} {}", actual.0, serial.0);
+                    }
                 }
                 reference = Some(actual);
             }
         }
         let mut empty = pca_fixture(4); empty.data.fill(0);
         assert!(estimate_pca_bbox(&empty, 0).is_err());
+    }
+
+    // AI-FUNC-SUMMARY: Test helper voxelizing a shape predicate into a U8 volume of the given size.
+    fn shape_volume(dims: (usize, usize, usize), solid: impl Fn(f64, f64, f64) -> bool) -> Volume3D {
+        let (width, height, depth) = dims;
+        let mut data = vec![0; width * height * depth];
+        for z in 0..depth { for y in 0..height { for x in 0..width {
+            if solid(x as f64, y as f64, z as f64) { data[voxel_index(width, height, x, y, z)] = 1; }
+        } } }
+        Volume3D { width, height, depth, data, numeric_type: crate::io::volume::VolumeNumericType::U8 }
+    }
+
+    // AI-FUNC-SUMMARY: Verify the one-pass moment merge matches the fixed-block three-pass oracle within tight tolerances (frame, centroid, bounds, nearest crop output) on oblique non-degenerate samples at serial and parallel sizes, bit-identical across 1/2/8 workers.
+    #[test]
+    fn online_moments_match_three_pass_and_workers() {
+        let mut large = pca_fixture(0);
+        large.depth *= 8;
+        large.data.resize(large.width * large.height * large.depth, 0);
+        let oblique = shape_volume((120, 90, 110), |x, y, z| {
+            let (a, b, c) = (x - 61.3, y - 44.7, z - 52.1);
+            let u = 0.8 * a + 0.36 * b - 0.48 * c;
+            let v = -0.6 * a + 0.48 * b - 0.64 * c;
+            let w = 0.0 * a + 0.8 * b + 0.6 * c;
+            (u / 50.0).powi(2) + (v / 30.0).powi(2) + (w / 17.0).powi(2) < 1.0
+        });
+        for volume in [pca_fixture(0), large, oblique] {
+            let oracle = estimate_pca_bbox_three_pass(&volume, 0).unwrap();
+            let mut reference = None;
+            for workers in [1, 2, 8] {
+                let pool = rayon::ThreadPoolBuilder::new().num_threads(workers).build().unwrap();
+                let actual = pool.install(|| estimate_pca_bbox(&volume, 0)).unwrap();
+                if let Some(previous) = &reference { assert_eq!(&actual, previous); }
+                assert_eq!(actual.4, oracle.4);
+                assert!((actual.1 - oracle.1).norm() < 1e-11, "{:?} {:?}", actual.1, oracle.1);
+                assert!((actual.0 - oracle.0).norm() < 1e-10, "{} {}", actual.0, oracle.0);
+                assert!((actual.2 - oracle.2).norm() < 1e-8);
+                assert!((actual.3 - oracle.3).norm() < 1e-8);
+                let new = rotate_and_crop(&volume, 0, &actual.0, &actual.1, &actual.2, &actual.3, InterpolationMode::Nearest);
+                let old = rotate_and_crop(&volume, 0, &oracle.0, &oracle.1, &oracle.2, &oracle.3, InterpolationMode::Nearest);
+                assert_eq!(new.data, old.data);
+                reference = Some(actual);
+            }
+        }
+    }
+
+    // AI-FUNC-SUMMARY: Check the canonical frame for triple-degenerate (cube, sphere) and double-degenerate (cylinders along z and x) foregrounds, and that slightly perturbed versions of each give the identical frame and a right-handed rotation.
+    #[test]
+    fn near_degenerate_eigenspaces_use_canonical_frame() {
+        let cube = |extra: bool| shape_volume((40, 40, 40), move |x, y, z| {
+            (x - 20.0).abs() <= 10.0 && (y - 20.0).abs() <= 10.0 && (z - 20.0).abs() <= 10.0 || (extra && x == 21.0 && y == 17.0 && z == 31.0)
+        });
+        let sphere = |extra: bool| shape_volume((48, 48, 48), move |x, y, z| {
+            (x - 23.5).powi(2) + (y - 23.5).powi(2) + (z - 23.5).powi(2) < 15.0f64.powi(2) || (extra && x == 24.0 && y == 23.0 && z == 39.0)
+        });
+        let cylinder_z = |extra: bool| shape_volume((40, 40, 80), move |x, y, z| {
+            (x - 19.5).powi(2) + (y - 19.5).powi(2) < 100.0 && (5.0..75.0).contains(&z) || (extra && x == 25.0 && y == 12.0 && z == 40.0)
+        });
+        let cylinder_x = |extra: bool| shape_volume((80, 40, 40), move |x, y, z| {
+            (y - 19.5).powi(2) + (z - 19.5).powi(2) < 100.0 && (5.0..75.0).contains(&x) || (extra && x == 40.0 && y == 27.0 && z == 14.0)
+        });
+        let frame = |v: &Volume3D| estimate_pca_bbox(v, 0).unwrap().0;
+        let identity = Matrix3::identity();
+        for rot in [frame(&cube(false)), frame(&cube(true)), frame(&sphere(false)), frame(&sphere(true))] {
+            assert_eq!(rot, identity, "{rot}");
+        }
+        let z_frame = Matrix3::from_columns(&[Vector3::z(), Vector3::x(), Vector3::y()]);
+        for rot in [frame(&cylinder_z(false)), frame(&cylinder_z(true))] {
+            assert!((rot - z_frame).norm() < 1e-12, "{rot}");
+        }
+        let x_long = frame(&cylinder_x(false));
+        let x_perturbed = frame(&cylinder_x(true));
+        assert!((x_long - identity).norm() < 1e-12, "{x_long}");
+        assert!((x_long - x_perturbed).norm() < 1e-12, "{x_long} {x_perturbed}");
+        assert!(x_long.determinant() > 0.999999999);
+    }
+
+    // AI-FUNC-SUMMARY: Feed pca_frame covariances whose degenerate eigenspace is tilted away from the scan axes, with and without relative noise far below the tolerance, and require identical right-handed orthonormal frames whose degenerate columns span the eigenspace.
+    #[test]
+    fn tilted_degenerate_eigenspace_is_stable_under_noise() {
+        let axis = Vector3::new(1.0, 2.0, 2.0) / 3.0;
+        let base = Matrix3::identity() * 4.0 + axis * axis.transpose() * 5.0;
+        let noise = Matrix3::new(1.0, 0.3, -0.2, 0.3, -0.7, 0.5, -0.2, 0.5, 0.4) * 1e-9;
+        let a = pca_frame(base);
+        let b = pca_frame(base + noise);
+        assert!((a.column(0).dot(&axis).abs() - 1.0).abs() < 1e-9);
+        assert!((a - b).norm() < 1e-6, "{a} {b}");
+        assert!((a.transpose() * a - Matrix3::identity()).norm() < 1e-12);
+        assert!(a.determinant() > 0.999999999);
+        for c in 1..3 {
+            assert!(a.column(c).dot(&axis).abs() < 1e-9);
+        }
+        let triple = pca_frame(Matrix3::identity() * 7.0 + noise);
+        assert_eq!(triple, Matrix3::identity());
+    }
+
+    // AI-FUNC-SUMMARY: Release benchmark of the three-pass fixed-block PCA versus the one-pass moment merge on small, large and extra-large oblique volumes, one warmup plus five alternating samples per worker count.
+    #[test]
+    #[ignore = "release performance measurement"]
+    fn pca_online_benchmark() {
+        let upscale = |source: &Volume3D, f: usize| {
+            let mut v = Volume3D { width: source.width*f, height: source.height*f, depth: source.depth*f, data: vec![0; source.data.len()*f*f*f], numeric_type: source.numeric_type };
+            for z in 0..v.depth { for y in 0..v.height { for x in 0..v.width {
+                v.data[voxel_index(v.width, v.height, x, y, z)] = source.data[voxel_index(source.width, source.height, x/f, y/f, z/f)];
+            } } }
+            v
+        };
+        let small = pca_fixture(0);
+        let large = upscale(&small, 2);
+        let xlarge = upscale(&small, 4);
+        for (case, volume) in [("small", &small), ("large", &large), ("xlarge", &xlarge)] {
+            for workers in [1, 2, 4] {
+                let pool = rayon::ThreadPoolBuilder::new().num_threads(workers).build().unwrap();
+                pool.install(|| {
+                    estimate_pca_bbox(volume, 0).unwrap();
+                    estimate_pca_bbox_three_pass(volume, 0).unwrap();
+                    for sample in 0..5 {
+                        let mut times = [0.0; 2];
+                        for which in if sample % 2 == 0 { [0, 1] } else { [1, 0] } {
+                            let start = std::time::Instant::now();
+                            for _ in 0..10 {
+                                std::hint::black_box(if which == 0 { estimate_pca_bbox_three_pass(volume, 0) } else { estimate_pca_bbox(volume, 0) }).unwrap();
+                            }
+                            times[which] = start.elapsed().as_secs_f64();
+                        }
+                        println!("PCA_ONLINE case={case} voxels={} workers={workers} sample={sample} repeats=10 three_pass_s={:.6} online_s={:.6}", volume.data.len(), times[0], times[1]);
+                    }
+                });
+            }
+        }
+    }
+
+    // AI-FUNC-SUMMARY: Report, for the repository's real CT RAW stack, the covariance eigenvalues and whether the canonical frame differs from the original serial PCA frame (column signs or degenerate basis); prints only, never asserts on the data.
+    #[test]
+    #[ignore = "requires data/input/ct_stack"]
+    fn real_ct_frame_report() {
+        let spec = RawFolderSpec {
+            folder: std::path::PathBuf::from("data/input/ct_stack"),
+            width: 744,
+            height: 789,
+            bits: 16,
+            signed: false,
+            byte_order: ByteOrder::LittleEndian,
+            slice_start: -1,
+            slice_end: -1,
+        };
+        let volume = load_raw_folder(&spec).unwrap();
+        let background = detect_background_mode(&volume);
+        let serial = estimate_pca_bbox_serial(&volume, background).unwrap();
+        let online = estimate_pca_bbox(&volume, background).unwrap();
+        let three = estimate_pca_bbox_three_pass(&volume, background).unwrap();
+        let signs: Vec<f64> = (0..3).map(|c| online.0.column(c).dot(&serial.0.column(c)).signum()).collect();
+        let (_, _, _, _, count) = online;
+        println!("REAL_CT background={background} count={count} column_dot_signs={signs:?}");
+        println!("REAL_CT serial={} online={} three_pass_diff={:.3e}", serial.0, online.0, (online.0 - three.0).norm());
+        println!("REAL_CT serial_bounds={:?}..{:?} online_bounds={:?}..{:?}", serial.2, serial.3, online.2, online.3);
     }
 
     // AI-FUNC-SUMMARY: Measure serial and fixed-block three-pass PCA with one warmup and five alternating samples per worker count.

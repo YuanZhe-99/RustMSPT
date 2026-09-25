@@ -97,11 +97,19 @@ S2(r) 是一种标准的微结构表征统计量：在堆积体内随机投放�
   直接检查 `(x,y,z)` 和 `(x,y,z)+offset` 两处的占据情况——不使用 FFT，但每个半径的
   开销为 O(壳层大小 × 网格大小)，并通过 rayon 在各个半径之间并行化。
 
-`calculate_s2` 会根据**填充后的 FFT 网格规模**自动在两者之间选择：它计算
-`fx * fy * fz` 并与固定阈值 **24,000,000 个单元**进行比较。低于该阈值时使用 FFT
-路径（速度快，且一旦计算完成，其成本与 `r_max` 无关）。高于该阈值时——即对于填充后
-`2N-1` 立方体会导致内存与 FFT 运行时开销激增的大体素网格——则回退到直接枚举，该方式
-每个半径的速度更慢，但不需要一次性分配大块内存。
+`calculate_s2` 通过**内存预算下的成本模型**（`plan_exact_cpu`，PERF-07）在两者之间选择。
+FFT 时间建模为 `c_fft · P · log2 P`（`P` 为填充后单元数）；直接法时间为 `c_pair · W`，其中
+`W` 是直接内核实际访问的体素配对数（域内壳偏移重叠体积之和，至多 `K · N`）。只有峰值工作集
+（checked 算术：FFT 为占据场、复数网格、转置、每 worker scratch；直接法为占据场与每半径偏移
+列表）不超过默认 768 MiB 预算的内核才可选，取成本较低者。该预算等于旧的固定 24,000,000
+填充单元上限的网格加转置大小。FFT 相关值取整为整数配对计数，且两个内核按相同顺序累加壳项，
+因此返回**逐位相同**的曲线：选择只影响时间和内存。所选方法、两种模型时间、两种工作集和原因
+每个计划打印一次。
+
+实际中 `r_max` 相对网格较大时 FFT 更优（其成本不随 `r_max` 增长）；大网格上 `r_max` 较小时
+直接法更优，此时 `W` 接近 `K · N` 且 `K` 很小。填充使用每轴不小于 `2N-1` 的最小 2,3,5-平滑
+长度而非恰好 `2N-1`：任何 `>= 2N-1` 的长度对 `|d| <= N-1` 的位移都不会回绕，平滑长度避免了
+素数长度的慢变换（例如 127 -> 128，199 -> 200）。
 
 ## 壳层偏移：`shell_offsets_for_distance`
 
@@ -220,7 +228,7 @@ CPU mesh MC and voxelization now cache geometry queries through `PreparedMeshQue
 
 ### Reusable exact FFT storage
 
-CPU exact FFT now reuses forward/inverse axis plans, complex grid and transpose storage for repeated same-dimension evaluations on a calling thread. It fills and normalizes under the current pool, reads shell counts directly from the complex correlation grid, and releases oversized workspaces after use. Retention is capped at 16 MiB of arrays per thread and padded axes <=4096; opaque FFT plan memory is additional. Nested evaluations take separate owned workspaces without holding a thread-local borrow. This does not replace the pending complete memory/cost planner or change 2N-1 padding.
+CPU exact FFT now reuses forward/inverse axis plans, complex grid and transpose storage for repeated same-dimension evaluations on a calling thread. It fills and normalizes under the current pool, reads shell counts directly from the complex correlation grid, and releases oversized workspaces after use. Retention is capped at 16 MiB of arrays per thread and padded axes <=4096; opaque FFT plan memory is additional. Nested evaluations take separate owned workspaces without holding a thread-local borrow. 上文所述的内存/成本规划与平滑填充随后在 PERF-07 中加入。
 
 ### GPU MC 工作组整数归约
 
@@ -249,3 +257,26 @@ GPU exact 现逐半径延迟生成一个 shell Vec，经 compute_s2_shell_reside
 GPU exact 现使用 shell_offset_iter，单个半径内部也只保留嵌套范围游标；保持原 x/y/z 顺序、原点特殊情况和半开平方距离判定。需要随机访问的公共 Vec API 保持不变。用 peekable 判定该半径是否有支持，生成数量在消费时累计。普通范围沿用原整数范数，更大范数用 u128 避免有符号乘法溢出。仍扫描包围立方体，降低分配并未改变 O(半径³) 搜索复杂度。
 
 新建的驻留 GPU exact 求值在后端选择和执行中共用 ExactMemoryPlan。设 T=max(36×faces,4)、M=4×cells、B 为批次部分结果槽数，保守逻辑峰值为 2T+M+128+80B，计入待完成三角/offset 上传和批次增长时同时存在的新旧缓冲；128 字节覆盖固定参数/计数/占位资源。B 从 200000 按 MiB 预算缩小，至少 1；最小批次仍超限则在设备初始化前拒绝，由调用方执行配置的回退策略。该模型不含驱动/编译器内部资源和 CPU 内存，仅适用于新建生产 direct-shell exact 求值，不声称覆盖实验 tiled/reduced 或任意已有高水位管线。旧 exact 网格硬限制仍独立存在。
+
+## CPU exact 规划器校准（PERF-07）
+
+release 5 个样本中位数（`exact_cost_model_calibration`，秒，同一网格上的 FFT 与直接法；旧固定规则对这些情况全部选择 FFT）：
+
+| 网格 | r_max | workers | FFT | 直接法 | 规划器选择 |
+|---|---:|---:|---:|---:|---|
+| 32³ | 2 | 1 | 0.006317 | 0.001014 | 直接法 |
+| 32³ | 8 | 1 | 0.006575 | 0.025101 | FFT |
+| 64³ | 2 | 1 | 0.085595 | 0.007118 | 直接法 |
+| 64³ | 6 | 1 | 0.079422 | 0.090754 | FFT |
+| 96³ | 3 | 1 | 0.427821 | 0.050650 | 直接法 |
+| 128×128×32 | 4 | 1 | 0.197231 | 0.065435 | 直接法 |
+| 32³ | 2 | 4 | 0.006848 | 0.000456 | 直接法 |
+| 32³ | 8 | 4 | 0.006947 | 0.009020 | FFT |
+| 64³ | 2 | 4 | 0.117273 | 0.003751 | 直接法 |
+| 64³ | 6 | 4 | 0.139758 | 0.051895 | 直接法 |
+| 96³ | 3 | 4 | 0.498781 | 0.033485 | 直接法 |
+| 128×128×32 | 4 | 4 | 0.319237 | 0.042846 | 直接法 |
+
+使用拟合常数后，规划器在全部 12 种情况都选中更快的内核。主机与其他任务共享，4 worker FFT 数据（相对 1 worker 无加速）可能低估空闲机器上的 FFT 扩展性；因此模型不给 FFT 并行加成，仅在两者接近时偏向 FFT。
+
+平滑填充（`smooth_padding_benchmark`，4 workers，5 次中位数，正变换+功率谱+逆变换秒数，2N-1 -> 平滑）：50³ 0.024585 -> 0.023407；64³ 0.086713 -> 0.076775；71×67×53 0.074856 -> 0.073318；100×100×20 0.052879 -> 0.036489。

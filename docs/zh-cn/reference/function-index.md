@@ -309,6 +309,13 @@
 | `trim_volume_border` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:287` | 从体数据的 XY 面裁去固定数量的边界体素。 |
 | `detect_background_mode` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:317` | 将体数据边界上的众数体素值检测为背景值。 |
 | `estimate_pca_bbox` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:351` | 计算 PCA 旋转、质心以及旋转坐标系下的前景包围盒。 |
+| `MomentState` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 运行中的计数、均值与中心化二阶矩。 |
+| `MomentState::from_row` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 单个前景行段的精确矩。 |
+| `MomentState::merge` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 矩状态的 Chan 并行合并。 |
+| `pca_frame` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 排序、定号、右手系且近重根特征空间取规范基的 PCA 坐标系。 |
+| `projected_bounds` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 固定分块求旋转坐标系前景边界。 |
+| `foreground_row_blocks` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 按连续行段的固定分块扫描。 |
+| `estimate_pca_bbox_three_pass` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 仅测试使用的原三遍 PCA oracle。 |
 | `rotate_and_crop` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:459` | CPU 上基于 rayon 并行的体数据旋转裁剪，输出为轴对齐结果。 |
 | `rotate_and_crop_gpu` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:520` | 通过 `GpuVolumeTransformPipeline` 实现的 GPU 加速旋转裁剪（特性 `gpu`）。 |
 | `CropPipeline::run` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:598` | 编排加载 → 背景检测 → PCA 包围盒 → 旋转+裁剪（GPU 或 CPU） → 边缘裁剪 → 保存 TIFF 的整个流程。 |
@@ -766,6 +773,26 @@
 | `with_fft_correlation` | Geometry Analysis | `src/geometry/s2.rs:489` | Evaluate occupancy FFT with bounded cache retention. |
 
 | `FFT_RETAIN_BYTES` | Geometry Analysis | `src/geometry/s2.rs:332` | Maximum retained FFT array bytes per calling thread. |
+| `smooth_fft_length` | Geometry Analysis | `src/geometry/s2.rs` | 不小于给定值的最小 2,3,5-平滑长度。 |
+| `padded_fft_dims` | Geometry Analysis | `src/geometry/s2.rs` | 各轴 >= 2N-1 的平滑填充。 |
+| `ExactCpuMethod` | Geometry Analysis | `src/geometry/s2.rs` | CPU exact 内核选择（Fft/Direct）。 |
+| `ExactCpuPlan` | Geometry Analysis | `src/geometry/s2.rs` | 模型成本、工作集与所选 CPU exact 内核。 |
+| `ExactCpuPlan::selected_bytes` | Geometry Analysis | `src/geometry/s2.rs` | 所选内核的工作集。 |
+| `ExactCpuPlan::fits_budget` | Geometry Analysis | `src/geometry/s2.rs` | 所选内核是否满足预算。 |
+| `ExactCpuPlan::describe` | Geometry Analysis | `src/geometry/s2.rs` | 单行可观测计划描述。 |
+| `exact_shell_work` | Geometry Analysis | `src/geometry/s2.rs` | 域内偏移数、精确直接配对工作量、最大壳。 |
+| `fft_working_set_bytes` | Geometry Analysis | `src/geometry/s2.rs` | checked FFT 峰值字节估计。 |
+| `direct_working_set_bytes` | Geometry Analysis | `src/geometry/s2.rs` | checked 直接法峰值字节估计。 |
+| `plan_exact_cpu` | Geometry Analysis | `src/geometry/s2.rs` | 按成本模型/预算在 FFT 与直接法间选择。 |
+| `cached_exact_plan` | Geometry Analysis | `src/geometry/s2.rs` | 每个键复用并记录一次 exact 计划。 |
+| `offset_in_domain` | Geometry Analysis | `src/geometry/s2.rs` | 位移是否留下合法体素对。 |
+| `direct_pair_counts` | Geometry Analysis | `src/geometry/s2.rs` | 按 z 段统计单个位移的整数 (hits, valid)。 |
+| `finish_exact_curve` | Geometry Analysis | `src/geometry/s2.rs` | 汇总、插值并固定 S2(0)。 |
+| `VoxelS2::calculate_exact_with` | Geometry Analysis | `src/geometry/s2.rs` | 指定 CPU 内核计算 exact S2。 |
+| `DEFAULT_CPU_EXACT_BUDGET_BYTES` | Geometry Analysis | `src/geometry/s2.rs` | 默认 CPU exact 工作集预算（768 MiB）。 |
+| `NS_PER_FFT_UNIT` | Geometry Analysis | `src/geometry/s2.rs` | 校准的每 P*log2(P) 单位 FFT 成本（ns）。 |
+| `NS_PER_DIRECT_PAIR` | Geometry Analysis | `src/geometry/s2.rs` | 校准的每访问配对直接法成本（ns）。 |
+| `DIRECT_PARALLEL_EFFICIENCY` | Geometry Analysis | `src/geometry/s2.rs` | 直接法并行效率模型参数。 |
 
 | `GpuShellS2Pipeline::resize_batch_buffers` | `src/gpu/s2_shell.rs:193` | Shell batch buffer capacity management; occupancy retained. |
 
@@ -830,7 +857,7 @@
 
 | Function | Source | Contract |
 |---|---|---|
-| `shell_offset_iter` | `src/geometry/s2.rs:213` | Lazy ordered shell enumeration with constant cursor storage; GPU exact streaming and tests. |
+| `shell_offset_iter` | `src/geometry/s2.rs:213` | Lazy ordered shell enumeration with constant cursor storage; GPU exact streaming, both CPU exact kernels, and tests. |
 
 | Symbol | Source | Contract |
 |---|---|---|

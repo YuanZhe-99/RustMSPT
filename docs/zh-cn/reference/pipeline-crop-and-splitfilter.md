@@ -25,6 +25,13 @@
 | `trim_volume_border` | `src/pipeline/crop.rs:287` | 从体数据的 XY 面裁剪固定数量的边界体素。 |
 | `detect_background_mode` | `src/pipeline/crop.rs:317` | 将体数据边界上的众数体素值检测为背景值。 |
 | `estimate_pca_bbox` | `src/pipeline/crop.rs:351` | 计算 PCA 旋转、质心以及旋转坐标系下的前景包围盒。 |
+| `MomentState` | `src/pipeline/crop.rs` | 运行中的计数、均值与中心化二阶矩矩阵。 |
+| `MomentState::from_row` | `src/pipeline/crop.rs` | 由整数和得到单个前景行段的精确矩。 |
+| `MomentState::merge` | `src/pipeline/crop.rs` | 两个矩状态的 Chan 并行合并。 |
+| `pca_frame` | `src/pipeline/crop.rs` | 排序、定号、右手系且近重根特征空间取规范基的 PCA 坐标系。 |
+| `projected_bounds` | `src/pipeline/crop.rs` | 固定分块求旋转坐标系下的前景边界。 |
+| `foreground_row_blocks` | `src/pipeline/crop.rs` | 固定分块扫描，把连续行段交给累加器。 |
+| `estimate_pca_bbox_three_pass` | `src/pipeline/crop.rs` | 仅测试使用的原三遍固定分块 PCA oracle。 |
 | `rotate_and_crop` | `src/pipeline/crop.rs:459` | CPU 上、基于 rayon 并行的旋转+裁剪，将体数据重采样为轴对齐输出。 |
 | `rotate_and_crop_gpu` | `src/pipeline/crop.rs:520` | 通过 `GpuVolumeTransformPipeline` 实现的 GPU 加速旋转+裁剪（`gpu` 特性）。 |
 | `CropPipeline::run` | `src/pipeline/crop.rs:598` | 编排加载 → 背景检测 → PCA 包围盒 → 旋转+裁剪（GPU 或 CPU）→ 边缘裁剪 → 保存 TIFF。 |
@@ -214,13 +221,13 @@ CT 体数据裁剪流水线。加载体数据、检测背景强度、计算基�
 - **用途：** 计算一个主成分旋转，将前景的主轴与坐标轴对齐，并求出该旋转坐标系下前景的包围盒。
 - **参数：** `volume`、`background`——要排除为背景的值。
 - **返回值：** `Ok((rot, centroid, min_v, max_v, count))`：
-  - `rot: Matrix3<f64>`——正交旋转矩阵（各列为前景体素协方差的特征向量，按特征值降序排序，并强制为右手系）。
+  - `rot: Matrix3<f64>`——来自 `pca_frame` 的正交旋转矩阵（各列为协方差特征向量，按特征值降序排序、定号，近重根特征空间取规范基，并强制为右手系）。
   - `centroid: Vector3<f64>`——前景体素的平均位置。
   - `min_v`/`max_v: Vector3<f64>`——旋转坐标系下的前景包围盒（即对每个前景体素 `p`，计算 `rot^T * (p - centroid)`）。
   - `count: usize`——前景体素数量。
   - 若未找到前景体素（所有体素均等于 `background`），则返回 `Err(InvalidConfig)`。
-- **副作用：** 无。对体数据进行三次完整遍历：(1) 累加质心，(2) 累加关于质心的协方差，(3) 将每个前景体素投影到旋转坐标系以求出 `min_v`/`max_v`。
-- **说明：** 协方差通过 `nalgebra::SymmetricEigen` 进行特征分解；特征值按降序排序，对应的特征向量列重新组装为 `rot`。若 `det(rot) < 0`（反射而非旋转），则对第三列取负以强制为右手系。未做并行化；O(体数据大小)，需三次完整遍历，此处未使用 rayon（与并行的 `rotate_and_crop` 形成对比）。
+- **副作用：** 无。两遍：(1) 单遍 count/mean/M2 矩统计（固定分块内以 Chan 公式合并逐行精确整数矩，块间按序合并），(2) `projected_bounds`。
+- **说明：** 见下文“单遍矩统计与规范 PCA 坐标系”。分块与结果不受 worker 数影响。
 - **另请参阅：** 算法说明见 [../algorithms/pca-volume-alignment-crop.md](../algorithms/pca-volume-alignment-crop.md)。
 
 > **算法：** 见 [../algorithms/pca-volume-alignment-crop.md](../algorithms/pca-volume-alignment-crop.md)。
@@ -380,7 +387,7 @@ CT 体数据裁剪流水线。加载体数据、检测背景强度、计算基�
 `SplitFilterConfig.cpu_max` bounds one pool for loading, splitting, metric preparation, filtering and saving (`-1`/absent: available workers). `prepare_particle_metrics` computes immutable volume/aspect/area records in component order. At least 32 components use indexed parallel collection; smaller sets remain serial. Each component uses the original geometry functions and reduction order. Bbox is only requested by the aspect filter; area is only computed for sharpness candidates that survive the aspect and positive-volume gates. Filtering reads those records in its original order, and lognormal RNG/deletions remain serial. Before/after reporting shares the immutable volume array instead of cloning it. STL writes run in batches of at most two in the same pool, with names and errors consumed in rank order; an error may leave another file in its current batch written.
 
 
-`foreground_blocks` maps foreground voxels in fixed 65,536-voxel chunks, collecting partials in block order. `estimate_pca_bbox` uses it for count/sum, centered covariance and projected min/max. `detect_background_mode` scans boundary faces only and resolves tied counts by smallest value. The original serial PCA is retained only under tests for numerical comparison.
+`foreground_blocks` maps foreground voxels in fixed 65,536-voxel chunks, collecting partials in block order. `estimate_pca_bbox` 用 `foreground_row_blocks` 统计矩，用 `foreground_blocks`（其逐体素包装）求投影边界；三遍形式只作为测试 oracle 保留。 `detect_background_mode` scans boundary faces only and resolves tied counts by smallest value. The original serial PCA is retained only under tests for numerical comparison.
 
 PCA task grain: for the parallel branch, `foreground_blocks` sets a minimum number of blocks per Rayon job using a workload-derived task budget, `min(workers, ceil(N/1,048,576))`; fixed block boundaries and ordered collection remain unchanged.
 
@@ -391,3 +398,11 @@ PCA task grain: for the parallel branch, `foreground_blocks` sets a minimum numb
 ### 背景稠密计数（2026-09-23）
 
 `for_each_boundary_value` 只访问边界面，棱和角只计数一次。U8/I8 使用 256 个 usize 计数；至少 65,536 体素的 U16/I16 体数据使用 65,536 个计数，在 64 位主机最多 512 KiB。更小的 16 位以及所有 32 位数据保持 HashMap 路径。checked 索引将声明范围外的值放入稀疏 spill 表，不依赖元数据截断或拒绝任意 i64 值。两种计数共同维护当前众数，平票仍选择最小值，无需最后扫描整张稠密表。计数局部持有，PCA 前释放。独立全网格有序表 oracle 覆盖退化维度、整数极值、有符号范围和元数据不一致。真实输入端到端证据见 PLAN.Performance.md §62。
+
+### 单遍矩统计与规范 PCA 坐标系（PERF-14）
+
+`estimate_pca_bbox` 现在只做一遍统计加一遍投影边界。`foreground_row_blocks` 遍历相同的固定 65,536 体素分块，把每个连续行段 `(x0, y, z, values)` 交给累加器。对一行而言，前景计数、`Σx` 和 `Σx²` 都是精确整数（`u64`/`u128`），因此 `MomentState::from_row` 能得到该行精确的均值与中心化二阶矩（y、z 为常数，只有 xx 项非零）。各行用 Chan 并行公式并入块内运行状态 `(count, mean, M2)`（`MomentState::merge`：`mean += δ·nb/n`，`M2 += M2b + δδᵀ·na·nb/n`），块状态再按块编号升序合并，因此任意 worker 数结果相同，并避免 `E[x²]-E[x]²` 的消减误差。协方差为 `M2/count`。这是按行粒度应用的 Welford 在线更新（Welford 即 Chan 合并 `nb = 1` 的情形）。`estimate_pca_bbox_three_pass` 保留原质心 + 中心化协方差 + 边界三遍实现作为测试 oracle；`online_moments_match_three_pass_and_workers` 在斜向样本上要求坐标系误差 < 1e-10、质心 < 1e-11、边界 < 1e-8、nearest 裁剪输出完全相同，且 1/2/8 workers 结果逐位一致。
+
+`pca_frame(cov)` 按特征值降序排序，并把相邻差值不超过最大模 `PCA_DEGENERATE_REL_TOL = 1e-3` 倍的特征值归为一组。三重组直接取扫描轴。二重组按 x、y、z 顺序把扫描轴投影到该特征空间并 Gram-Schmidt 正交化，只接受残差范数不小于 0.5 的轴（总能找到两个），因此基不再依赖求解器噪声。非退化列定号为绝对值最大分量为正（恰好相等时取最低轴），行列式为负时翻转第 2 列。测试：立方体和球（含与不含额外一个体素）得到单位坐标系；沿 z、x 的圆柱（含与不含额外体素）分别得到 `[z, x, y]` 与单位阵；倾斜的二重协方差加 1e-9 噪声后坐标系不变。
+
+非退化列的定号约定是必要的：普通斜向样本的三遍与单遍协方差仅末位不同，`SymmetricEigen` 的特征向量符号就发生了翻转。这是行为变化：在仓库真实 CT RAW 数据上，原坐标系第 1、2 列相对新坐标系取反（绕第一主轴旋转 180 度），因此该裁剪输出相对旧版本改变朝向；边界值集合相同，只是第 1、2 轴取反。
