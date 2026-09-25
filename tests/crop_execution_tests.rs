@@ -359,3 +359,74 @@ fn crop_gpu_budget_executes_tiles() {
         }
     }
 }
+
+// AI-FUNC-SUMMARY: Write an oblique-bar RAW stack of the given integer type/byte order and crop it through the CLI; returns the loaded output volume; writes temporary files.
+fn crop_oblique_bar(root: &std::path::Path, bits: u8, signed: bool, big: bool, fg: i64, interpolation: &str) -> rustmspt::io::Volume3D {
+    let (w, h, d) = (26usize, 20usize, 12usize);
+    let raw = root.join("raw");
+    std::fs::create_dir_all(&raw).unwrap();
+    let dir = [1.0f64, 0.5, 0.2];
+    let n = (dir.iter().map(|v| v * v).sum::<f64>()).sqrt();
+    for z in 0..d {
+        let mut bytes = Vec::new();
+        for y in 0..h {
+            for x in 0..w {
+                let p = [x as f64 - 12.5, y as f64 - 9.5, z as f64 - 5.5];
+                let t = (p[0] * dir[0] + p[1] * dir[1] + p[2] * dir[2]) / n;
+                let q = [p[0] - t * dir[0] / n, p[1] - t * dir[1] / n, p[2] - t * dir[2] / n];
+                let inside = t.abs() < 11.0 && (q[0] * q[0] + q[1] * q[1] + q[2] * q[2]).sqrt() < 2.6;
+                let v = if inside { fg } else { 0 };
+                match bits {
+                    8 => bytes.push(v as i8 as u8),
+                    16 => bytes.extend_from_slice(&if big { (v as u16).to_be_bytes() } else { (v as u16).to_le_bytes() }),
+                    _ => bytes.extend_from_slice(&if big { (v as u32).to_be_bytes() } else { (v as u32).to_le_bytes() }),
+                }
+            }
+        }
+        std::fs::write(raw.join(format!("{z:03}.raw")), bytes).unwrap();
+    }
+    let path = root.join("output.tiff");
+    let config = serde_json::json!({"input":{"type":"raw","path":raw,"raw":{"width":w,"height":h,"bits":bits,"signed":signed,"byte_order": if big {"big"} else {"little"}}},
+        "output":{"path":path},"interpolation":interpolation,"edge_trim":0,"cpu_max":2,"acceleration":{"mode":"cpu"}});
+    let file = root.join("config.json");
+    std::fs::write(&file, serde_json::to_vec(&config).unwrap()).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_rustmspt")).args(["crop", "--config"]).arg(&file).env("RUSTMSPT_ACCELERATION", "cpu").output().unwrap();
+    assert!(out.status.success(), "{bits}-bit signed={signed} big={big}: {}", String::from_utf8_lossy(&out.stderr));
+    load_tiff_or_folder(&path).unwrap()
+}
+
+// AI-FUNC-SUMMARY: End-to-end crop over every integer type (8/16/32-bit, signed and unsigned, little and big endian) with nearest and trilinear: the output keeps the input's type, nearest yields the identical foreground mask for every type, and every value stays within [min(0, fg), max(0, fg)]; writes temporary files.
+#[test]
+fn crop_handles_every_integer_type_end_to_end() {
+    use rustmspt::io::volume::VolumeNumericType as T;
+    let cases = [
+        (8u8, false, false, 200i64, T::U8),
+        (8, true, false, -100, T::I8),
+        (16, false, false, 60_000, T::U16),
+        (16, false, true, 60_000, T::U16),
+        (16, true, false, -30_000, T::I16),
+        (16, true, true, -30_000, T::I16),
+        (32, false, false, 4_000_000_000, T::U32),
+        (32, true, true, -2_000_000_000, T::I32),
+    ];
+    for interpolation in ["nearest", "trilinear"] {
+        let mut masks: Vec<Vec<bool>> = Vec::new();
+        for (bits, signed, big, fg, ty) in cases {
+            let root = tempfile::tempdir().unwrap();
+            let out = crop_oblique_bar(root.path(), bits, signed, big, fg, interpolation);
+            assert_eq!(out.numeric_type, ty, "{interpolation} {bits}-bit signed={signed}: output keeps the input type");
+            let (lo, hi) = (fg.min(0), fg.max(0));
+            assert!(out.data.iter().all(|&v| v >= lo && v <= hi), "{interpolation} {ty:?}: value outside [{lo}, {hi}]");
+            assert!(out.data.iter().any(|&v| v != 0), "{interpolation} {ty:?}: foreground survives the crop");
+            if interpolation == "nearest" {
+                assert!(out.data.iter().all(|&v| v == 0 || v == fg), "{ty:?}: nearest only copies input values");
+                masks.push(out.data.iter().map(|&v| v != 0).collect());
+            }
+        }
+        if let Some((first, rest)) = masks.split_first() {
+            for mask in rest {
+                assert_eq!(mask, first, "nearest: the same geometry gives the same mask for every type and byte order");
+            }
+        }
+    }
+}

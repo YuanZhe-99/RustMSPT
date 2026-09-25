@@ -265,6 +265,7 @@ CT 体数据裁剪流水线。加载体数据、检测背景强度、计算基�
 - **副作用：** 初始化 `GpuVolumeTransformPipeline`，同时按预算和设备单缓冲上限（`min(max_buffer_size, max_storage_buffer_binding_size)`）规划，一次性把源/输出/staging 缓冲预留到计划最大值；随后逐块把子块 `i64 → i32`（带检查）、调用 `transform_tile`、把块内各行写回主机输出。打印 `"[Info] GPU volume transform: {s}s, {src} -> {out}, tiles=N tile=WxHxD peak_bytes=B"`。
 - **说明：** 两种插值都与单次 dispatch 的 GPU 路径逐字节一致：着色器按绝对输出索引（`f32(tile_offset + local)`）重算每个体素，并按完整源尺寸判断越界，子块只改变体内数值的读取位置。运行时守卫字会把任何落在已上传子块之外的体内读取变成错误而非数值。无预算且设备上限充足时计划为单块，其子块是输出对应的源 AABB（不一定是整个源体）。最近邻在斜旋转下仅在 f32/f64 坐标恰处 `.5` 平局而舍入不同之处与 CPU 不同；三线性的 f32 混合不宣称与 CPU f64 逐位一致。
 - **另请参阅：** `GpuVolumeTransformPipeline` 及底层 WGSL 计算着色器见 [gpu.md](gpu.md)；CPU 回退路径见 `rotate_and_crop`；GPU/CPU 选择逻辑与失败回退行为见 `CropPipeline::run`。
+- **分块：**分块（§79）：输出放得下时 `plan_crop_gpu_tiles` 返回单块；否则原有的分级搜索（`plan_crop_gpu_levels`：z 板、行组、x 段）与近立方块（边长为 2 的幂、最小 4、至多 65,536 块）按总上传源体素数（`CropTilePlan::upload_voxels`，平局取块数少者）竞争。512x512x256 的 16 位体、旋转长条、64 MiB 预算下，由 2,178 个 461x7x1 块、上传 72.2 GB，变为 4 个 128x121x121 块、上传 71 MB，软件适配器上的变换由 90.6 s 降至 8.5 s。`transform_tile` 也不再把整个源体对照缓冲上限检查——只上传 halo 子块——此前恰恰拒绝了分块本来要处理的大体积；源尺寸只需在 i32 范围内。
 
 #### Crop GPU 分块规划（`CropSourceBlock`、`CropTilePlan`、`CropTilePlanError`、`crop_tile_source_block`、`crop_gpu_peak_bytes`、`for_each_crop_tile`、`evaluate_crop_tiling`、`plan_crop_gpu_tiles`）
 

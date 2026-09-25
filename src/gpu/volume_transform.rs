@@ -236,7 +236,12 @@ impl GpuVolumeTransformPipeline {
         interp_mode: u32,
     ) -> Result<Vec<i32>, String> {
         let limits = self.device.limits();
-        super::runtime::grid_plan(tile.source_dims, 1, &limits)?;
+        // Only the halo block is uploaded and the shader indexes it block-locally; the full source's
+        // dimensions are merely compared as i32 bounds. Checking the whole source against the buffer limit
+        // (as this once did) refused exactly the large volumes tiling exists for.
+        if tile.source_dims.contains(&0) || tile.source_dims.iter().any(|&d| d > i32::MAX as u32) {
+            return Err("crop GPU source dimensions must be positive and fit i32".into());
+        }
         let output = super::runtime::grid_plan(tile.tile_dims, WORKGROUP_SIZE, &limits)?;
         let block_voxels = tile
             .block_dims

@@ -851,6 +851,8 @@ struct CropTilePlan {
     max_block_voxels: u64,
     max_tile_voxels: u64,
     peak_bytes: u64,
+    /// Source voxels uploaded over all tiles: each tile uploads its own halo block.
+    upload_voxels: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -973,6 +975,7 @@ fn evaluate_crop_tiling(
         max_block_voxels: 0,
         max_tile_voxels: 0,
         peak_bytes: 0,
+        upload_voxels: 0,
     };
     for_each_crop_tile(out_dims, tile_dims, |lo, hi| {
         let block = crop_tile_source_block(src_dims, rot, centroid, origin, lo, hi)
@@ -1002,6 +1005,7 @@ fn evaluate_crop_tiling(
         plan.max_block_voxels = max_block;
         plan.max_tile_voxels = max_tile;
         plan.peak_bytes = peak;
+        plan.upload_voxels = plan.upload_voxels.saturating_add(block_voxels);
         plan.tiles += 1;
         Ok(())
     })?;
@@ -1009,13 +1013,56 @@ fn evaluate_crop_tiling(
 }
 
 // AI-FUNC-SUMMARY:
-// Purpose: Choose the largest GPU output tiling that fits the logical budget and device buffer limit.
+// Purpose: Choose the GPU output tiling that fits the logical budget and device buffer limit and uploads the fewest source voxels.
 // Inputs: source dims, transform, integer output origin, output dims, optional byte budget, optional single-buffer limit.
 // Returns: A plan (one tile when the whole output fits) or an error carrying a lower bound on the minimal tile requirement.
 // Side effects: None.
-// Notes: Prefers z slabs of full xy extent, then y row groups of one slice, then x runs of one row; within a level it binary-searches
+// Notes: One tile when the whole output fits. Otherwise the level search (below) competes with roughly cubic tiles on total
+//        uploaded source voxels (ties: fewer tiles). The level search prefers z slabs of full xy extent, then y row groups of one slice, then x runs of one row; within a level it binary-searches
 //        the extent, and every returned plan was evaluated over all of its tiles, so it fits even if cost is not monotone.
 fn plan_crop_gpu_tiles(
+    src_dims: [usize; 3],
+    rot: &Matrix3<f64>,
+    centroid: &Vector3<f64>,
+    origin: [isize; 3],
+    out_dims: [usize; 3],
+    budget: Option<u64>,
+    buffer_limit: Option<u64>,
+) -> std::result::Result<CropTilePlan, CropTilePlanError> {
+    let levelled = plan_crop_gpu_levels(src_dims, rot, centroid, origin, out_dims, budget, buffer_limit);
+    if matches!(&levelled, Ok(plan) if plan.tiles == 1) {
+        return levelled;
+    }
+    // Thin slabs of a rotated output reach across most of the source, so every one of them re-uploads a
+    // large halo block: a 512x512x256 volume at a 64 MiB budget uploaded 72 GB in 461x7x1 tiles. Roughly
+    // cubic tiles keep each block close to its tile, so they compete on total uploaded voxels.
+    let mut best = levelled.as_ref().ok().copied();
+    let largest = *out_dims.iter().max().unwrap_or(&1);
+    let mut side = largest.next_power_of_two();
+    while side >= 4 {
+        let tile = [side.min(out_dims[0]), side.min(out_dims[1]), side.min(out_dims[2])];
+        let count: usize = (0..3).map(|a| out_dims[a].div_ceil(tile[a])).product();
+        if count <= CROP_TILE_CANDIDATE_MAX_TILES {
+            if let Ok(plan) = evaluate_crop_tiling(src_dims, rot, centroid, origin, out_dims, tile, budget, buffer_limit) {
+                let better = best.is_none_or(|b| (plan.upload_voxels, plan.tiles) < (b.upload_voxels, b.tiles));
+                if better {
+                    best = Some(plan);
+                }
+            }
+        }
+        side /= 2;
+    }
+    match best {
+        Some(plan) => Ok(plan),
+        None => levelled,
+    }
+}
+
+/// Largest tile count a cubic candidate may have before the planner stops evaluating it.
+const CROP_TILE_CANDIDATE_MAX_TILES: usize = 1 << 16;
+
+// AI-FUNC-SUMMARY: The original level search: the largest z slab, then row group, then x run that fits; returns that plan or the minimal-tile error; side effects: none.
+fn plan_crop_gpu_levels(
     src_dims: [usize; 3],
     rot: &Matrix3<f64>,
     centroid: &Vector3<f64>,
@@ -1091,13 +1138,13 @@ fn rotate_and_crop_gpu(
     interpolation_mode: InterpolationMode,
     budget: Option<u64>,
 ) -> std::result::Result<(Volume3D, usize), String> {
-    rotate_and_crop_gpu_with(volume, background, rot, centroid, min_v, max_v, interpolation_mode, budget, 0)
+    rotate_and_crop_gpu_with(volume, background, rot, centroid, min_v, max_v, interpolation_mode, budget, 0, None)
         .map(|(volume, tiles, _)| (volume, tiles))
 }
 
-// AI-FUNC-SUMMARY: rotate_and_crop_gpu with `first_block_shrink` voxels removed from the high x side of every tile's first source block; returns the volume, tile count and halo-retry count; side effects: as rotate_and_crop_gpu.
-// Notes: Production passes 0. A positive value makes the planned blocks deliberately too small so tests can drive
-// the halo-guard retry path, which the planner's conservative margin otherwise never reaches.
+// AI-FUNC-SUMMARY: rotate_and_crop_gpu with `first_block_shrink` voxels removed from the high x side of every tile's first source block and an optional forced tile shape; returns the volume, tile count and halo-retry count; side effects: as rotate_and_crop_gpu.
+// Notes: Production passes 0 and None. A positive shrink makes the planned blocks deliberately too small so tests can
+// drive the halo-guard retry path; a forced tile lets tests cover every tile shape whatever the planner prefers.
 #[cfg(feature = "gpu")]
 #[allow(clippy::too_many_arguments)]
 fn rotate_and_crop_gpu_with(
@@ -1110,6 +1157,7 @@ fn rotate_and_crop_gpu_with(
     interpolation_mode: InterpolationMode,
     budget: Option<u64>,
     first_block_shrink: usize,
+    forced_tile: Option<[usize; 3]>,
 ) -> std::result::Result<(Volume3D, usize, usize), String> {
     let eps = 1e-3;
     let (x0, x1) = float_bounds_to_inclusive_i64(min_v.x, max_v.x, eps);
@@ -1146,15 +1194,10 @@ fn rotate_and_crop_gpu_with(
         .min(u64::from(limits.max_storage_buffer_binding_size));
     let origin_i = [x0, y0, z0];
     let out_usize = out_dims.map(|d| d as usize);
-    let plan = plan_crop_gpu_tiles(
-        src_dims,
-        rot,
-        centroid,
-        origin_i,
-        out_usize,
-        budget,
-        Some(buffer_limit),
-    )
+    let plan = match forced_tile {
+        Some(tile) => evaluate_crop_tiling(src_dims, rot, centroid, origin_i, out_usize, tile, budget, Some(buffer_limit)),
+        None => plan_crop_gpu_tiles(src_dims, rot, centroid, origin_i, out_usize, budget, Some(buffer_limit)),
+    }
     .map_err(|error| match error.needed {
         Some(needed) => format!(
             "{}; no single minimal tile fits (needs at least {needed} bytes)",
@@ -2035,15 +2078,21 @@ mod gpu_tile_plan_tests {
             (max.y.ceil() - min.y.floor()) as usize + 1,
             (max.z.ceil() - min.z.floor()) as usize + 1,
         ];
-        let plan = |budget, limit| plan_crop_gpu_tiles(src, &rot, &centroid, origin, out, budget, limit);
+        // The level search on its own must still walk z slabs, row groups and x runs as the budget shrinks;
+        // the full planner may prefer cubic tiles, but never uploads more than the level search and always fits.
+        let plan = |budget, limit| plan_crop_gpu_levels(src, &rot, &centroid, origin, out, budget, limit);
+        let chosen = |budget, limit| plan_crop_gpu_tiles(src, &rot, &centroid, origin, out, budget, limit);
         let full = plan(None, None).unwrap();
         assert_eq!((full.tiles, full.tile_dims), (1, out));
+        assert_eq!(chosen(None, None).unwrap(), full);
         let mut levels = [false; 3];
         let mut budget = full.peak_bytes;
         loop {
             match plan(Some(budget), None) {
                 Ok(p) => {
                     assert!(p.peak_bytes <= budget);
+                    let best = chosen(Some(budget), None).unwrap();
+                    assert!(best.peak_bytes <= budget && best.upload_voxels <= p.upload_voxels);
                     let covered: usize = p.tile_dims.iter().product();
                     assert!(p.tiles >= out.iter().product::<usize>().div_ceil(covered));
                     if p.tile_dims[0] == out[0] && p.tile_dims[1] == out[1] && p.tiles > 1 {
@@ -2201,6 +2250,27 @@ mod gpu_tile_tests {
                         ));
                         budget = budget * ratio / 100;
                     }
+                    // The planner now picks the shape that uploads least, so it no longer walks through every
+                    // shape kind as the budget shrinks; force each kind explicitly so all stay covered.
+                    for tile in [
+                        [out[0], out[1], 1],
+                        [out[0], 2.min(out[1]), 1],
+                        [3.min(out[0]), 1, 1],
+                        [out[0], out[1], 2.min(out[2])],
+                        [5.min(out[0]), 4.min(out[1]), 3.min(out[2])],
+                    ] {
+                        let (forced, _, _) = rotate_and_crop_gpu_with(
+                            &volume, background, &rot, &centroid, &min, &max, mode, None, 0, Some(tile),
+                        )
+                        .unwrap();
+                        assert_eq!(forced.data, reference, "{name} {kind:?} {mode:?} forced tile {tile:?}");
+                        shapes.insert((
+                            tile[2] == 1,
+                            tile[0] == out[0] && tile[1] < out[1],
+                            tile[0] < out[0],
+                            (0..3).any(|axis| !out[axis].is_multiple_of(tile[axis])),
+                        ));
+                    }
                     let refused = rotate_and_crop_gpu(
                         &volume, background, &rot, &centroid, &min, &max, mode, Some(budget.min(200)),
                     )
@@ -2238,6 +2308,32 @@ mod gpu_tile_tests {
     }
 
 
+    // AI-FUNC-SUMMARY: Under a tight budget on a rotated output the planner's choice uploads no more source voxels than the level search alone, and strictly fewer on an oblique bar where thin slabs re-upload most of the source; pure planning, no GPU.
+    #[test]
+    fn the_planner_minimises_uploaded_source_voxels() {
+        let src = [160usize, 140, 90];
+        let rot = axis_rotation([1.0, 0.45, 0.25], 0.9);
+        let centroid = Vector3::new(80.0, 70.0, 45.0);
+        let (min, max) = covering_bounds(src, &rot, &centroid, 0.0);
+        let out = [
+            (max.x.floor() - min.x.floor()) as usize + 1,
+            (max.y.floor() - min.y.floor()) as usize + 1,
+            (max.z.floor() - min.z.floor()) as usize + 1,
+        ];
+        let origin = [min.x.floor() as isize, min.y.floor() as isize, min.z.floor() as isize];
+        let full = plan_crop_gpu_tiles(src, &rot, &centroid, origin, out, None, None).unwrap();
+        let budget = Some(full.peak_bytes / 16);
+        let chosen = plan_crop_gpu_tiles(src, &rot, &centroid, origin, out, budget, None).unwrap();
+        let levelled = plan_crop_gpu_levels(src, &rot, &centroid, origin, out, budget, None).unwrap();
+        assert!(chosen.peak_bytes <= budget.unwrap());
+        assert!(chosen.upload_voxels <= levelled.upload_voxels);
+        assert!(
+            chosen.upload_voxels < levelled.upload_voxels,
+            "cubic tiles should beat thin slabs here: {} vs {} ({:?} vs {:?})",
+            chosen.upload_voxels, levelled.upload_voxels, chosen.tile_dims, levelled.tile_dims
+        );
+    }
+
     // AI-FUNC-SUMMARY: Force every tile's first source block to miss voxels its samples need; the halo guard trips, the tile reruns with a grown block, and the result still equals the untiled dispatch for nearest and trilinear, whole-volume and budget-tiled plans; no file output.
     #[test]
     fn halo_guard_retries_with_a_grown_block_and_keeps_the_result() {
@@ -2263,11 +2359,11 @@ mod gpu_tile_tests {
             let full = plan_crop_gpu_tiles(src, &rot, &centroid, origin, out, None, None).unwrap();
             for budget in [None, Some(full.peak_bytes / 2)] {
                 let (plain, tiles, retries) =
-                    rotate_and_crop_gpu_with(&volume, 3, &rot, &centroid, &min, &max, mode, budget, 0).unwrap();
+                    rotate_and_crop_gpu_with(&volume, 3, &rot, &centroid, &min, &max, mode, budget, 0, None).unwrap();
                 assert_eq!(plain.data, reference);
                 assert_eq!(retries, 0, "the planner's margin never trips the guard");
                 let (shrunk, shrunk_tiles, retries) =
-                    rotate_and_crop_gpu_with(&volume, 3, &rot, &centroid, &min, &max, mode, budget.map(|b| b * 2), 3).unwrap();
+                    rotate_and_crop_gpu_with(&volume, 3, &rot, &centroid, &min, &max, mode, budget.map(|b| b * 2), 3, None).unwrap();
                 if budget.is_none() {
                     assert_eq!(shrunk_tiles, tiles, "no budget: same single-tile plan");
                 }
