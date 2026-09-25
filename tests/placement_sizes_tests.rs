@@ -571,3 +571,38 @@ fn the_source_digest_matches_the_file_on_disk() {
     assert_eq!(lib.sources[0].sha256, rustmspt::io::sha256_bytes(&bytes));
     assert_eq!(lib.sources[0].bytes, bytes.len() as u64);
 }
+
+// AI-FUNC-SUMMARY: A 40-shell library takes the parallel preparation path and still keeps shell order, per-shell digests and in-order rejections, and reports the first defective shell in order when several are defective; writes temporary files.
+#[test]
+fn a_large_library_is_prepared_in_shell_order() {
+    use rustmspt::config::placement::ShapeFilters;
+    let tmp = tempfile::tempdir().unwrap();
+    let shells: Vec<_> = (0..40)
+        .map(|i| {
+            let mut s = icosphere_mesh(Vec3::new(10.0 * i as f64, 0.0, 0.0), 1.0 + 0.02 * i as f64, 1);
+            if i % 7 == 3 {
+                for v in &mut s.vertices {
+                    v.x = 10.0 * i as f64 + (v.x - 10.0 * i as f64) * 5.0;
+                }
+            }
+            s
+        })
+        .collect();
+    let path = write_library(tmp.path(), "many.stl", &shells);
+    let filters = ShapeFilters { max_aspect_ratio: Some(3.0), max_sharpness_ratio: None };
+    let lib = load_shape_library(std::slice::from_ref(&path), &["many.stl".to_string()], Some(&filters)).unwrap();
+    let kept: Vec<usize> = lib.shells.iter().map(|s| s.shell_index).collect();
+    let rejected: Vec<usize> = lib.rejected.iter().map(|r| r.shell_index).collect();
+    assert_eq!(rejected, (0..40).filter(|i| i % 7 == 3).collect::<Vec<_>>(), "rejections in shell order");
+    assert_eq!(kept, (0..40).filter(|i| i % 7 != 3).collect::<Vec<_>>(), "kept shells in shell order");
+    let again = load_shape_library(std::slice::from_ref(&path), &["many.stl".to_string()], Some(&filters)).unwrap();
+    let digests = |l: &rustmspt::pipeline::placement_library::ShapeLibrary| l.shells.iter().map(|s| s.shell_sha256.clone()).collect::<Vec<_>>();
+    assert_eq!(digests(&lib), digests(&again));
+
+    let mut broken = shells.clone();
+    broken[33].faces.pop();
+    broken[12].faces.pop();
+    let bad = write_library(tmp.path(), "broken.stl", &broken);
+    let err = load_shape_library(std::slice::from_ref(&bad), &["broken.stl".to_string()], None).unwrap_err().to_string();
+    assert!(err.contains("shell 12"), "the first defective shell in order is reported: {err}");
+}

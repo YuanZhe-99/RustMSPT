@@ -117,7 +117,7 @@ selects the original loop instead, which is documented in
 | `ShapeSource` | `src/pipeline/placement_library.rs:41` | A source file the library was built from, with its digest and shell counts. |
 | `RejectedShell` | `src/pipeline/placement_library.rs:53` | A shell read but not kept, and why. |
 | `ShapeLibrary` | `src/pipeline/placement_library.rs:61` | Every shape a run may draw from, plus what was read and not kept. |
-| `load_shape_library` | `src/pipeline/placement_library.rs:85` | Loads, splits, measures and filters the shape files. |
+| `load_shape_library` | `src/pipeline/placement_library.rs:95` | Loads, splits, measures and filters the shape files. Shells of a file with at least 32 (`LIBRARY_PARALLEL_MIN_SHELLS`) are prepared in parallel into an indexed buffer walked in shell order, so order, rejections and the first reported defect are those of a serial scan (§79). |
 | `filter_reason` | `src/pipeline/placement_library.rs:234` | Says which library filter a shell failed, if any. |
 | `shell_geometry_sha256` | `src/pipeline/placement_library.rs:274` | Digests a shell's geometry so a re-ordered file is detectable. |
 | `particle_at_prepared` | `src/pipeline/placement_labels.rs:326` | First particle in ordered cached candidates. |

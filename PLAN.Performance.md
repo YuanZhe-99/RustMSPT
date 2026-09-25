@@ -1642,3 +1642,5 @@ forge 把整个网格作为一个元素传给 `volume_fraction_of_meshes_in_bbox
 
 **第 (5) 项：MC 按预算缩小半径批（已实施；样本编号 u32 上限保留）。** `check_evaluation_budget` 改为规划：`mc_largest_batch` 二分出峰值（`mc_evaluation_peak_batched`）在上限内的最大半径批并保存，计数派发使用它；只有每次一个半径仍超限才报错（交由既有回退策略）。measure 的 GPU 可行性估计与优化器启动检查改用单半径峰值；measure 在求值前先规划批大小。u32 逻辑样本编号上限是着色器随机数键的一部分，放宽会改变所有样本流，而它只在约 43 亿样本以上才起作用，保留为显式错误（写入文档）。测试：`largest_batch_is_the_exact_budget_boundary`（纯算术：无上限取 128，紧预算下 peak(b) ≤ 上限 < peak(b+1)，零预算报错）、`a_tight_budget_shrinks_the_radius_batch_and_keeps_the_counts`（GPU：1 MiB、r_max 140、30 万样本，批 < 128，计数与无预算逐项相同）。`mc_evaluation_peak`/`mc_largest_batch` 只在 GPU 构建与测试中编译。
 
+**第 (7) 项：placement 形状库并行准备（已实施）。** `load_shape_library` 中每个壳层的准备（闭合与朝向检查、度量、体积质心、包围盒、过滤、规范副本与几何摘要）彼此独立：文件内壳层数 ≥ `LIBRARY_PARALLEL_MIN_SHELLS = 32` 时并行计算到按序索引的缓冲，再按壳层顺序遍历，第一个出错的壳层（按顺序）即串行时会报告的那个，保留/拒绝顺序不变。以 1,755 壳层的 `dense_particles.stl` 为形状库：库阶段 8 worker 1.64 → 0.72 s（1 worker 在噪声内），新旧二进制在 1/8 线程下的记录、STL、尺寸 CSV 逐字节一致。测试 `a_large_library_is_prepared_in_shell_order`（40 壳层走并行路径：保留与拒绝均按壳层顺序、摘要可重复、两个坏壳层时报告较早的那个）。
+

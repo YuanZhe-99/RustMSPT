@@ -485,7 +485,7 @@
 | `ShapeSource` | Pipeline — Packing | `src/pipeline/placement_library.rs:41` | 构成形状库的源文件，附带摘要与壳数统计。 |
 | `RejectedShell` | Pipeline — Packing | `src/pipeline/placement_library.rs:53` | 读入但未保留的壳，以及未保留的原因。 |
 | `ShapeLibrary` | Pipeline — Packing | `src/pipeline/placement_library.rs:61` | 运行可抽取的全部形状，以及读入但未保留的部分。 |
-| `load_shape_library` | Pipeline — Packing | `src/pipeline/placement_library.rs:85` | 加载、拆分、度量并过滤形状文件。 |
+| `load_shape_library` | Pipeline — Packing | `src/pipeline/placement_library.rs:95` | 加载、拆分、度量并过滤形状文件。壳层数不少于 32（`LIBRARY_PARALLEL_MIN_SHELLS`）的文件并行准备各壳层，写入按序索引的缓冲后按壳层顺序遍历，因此顺序、拒绝与首个报告的缺陷都与串行扫描相同（§79）。 |
 | `filter_reason` | Pipeline — Packing | `src/pipeline/placement_library.rs:234` | 指出某个壳未通过哪条形状库过滤规则。 |
 | `shell_geometry_sha256` | Pipeline — Packing | `src/pipeline/placement_library.rs:274` | 对壳的几何计算摘要，使文件重排可被察觉。 |
 | `TARGET_BIN_PROBES` | Pipeline — Packing | `src/pipeline/pack.rs:27` | 某个选定分箱在被排除出本轮重新选择之前，可容忍的最大连续放置失败次数。 |

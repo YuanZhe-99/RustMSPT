@@ -1,3 +1,4 @@
+use rayon::prelude::*;
 use crate::config::placement::ShapeFilters;
 use crate::error::{Result, RustMsptError};
 use crate::geometry::{
@@ -69,6 +70,15 @@ pub struct ShapeLibrary {
     pub max_extent_ratio: f64,
 }
 
+/// Shells in one source file from which their preparation runs in parallel.
+const LIBRARY_PARALLEL_MIN_SHELLS: usize = 32;
+
+/// What preparing one shell concluded.
+enum ShellOutcome {
+    Kept(ShapeShell),
+    Rejected(RejectedShell),
+}
+
 // AI-FUNC-SUMMARY:
 // Purpose: Load every listed STL, split it into closed shells, measure them, and apply the library filters.
 // Inputs: the resolved shape file paths, the paths as written, and the optional filters.
@@ -106,77 +116,92 @@ pub fn load_shape_library(
             )));
         }
 
-        let mut kept = 0usize;
-        for (shell_index, shell) in granules.into_iter().enumerate() {
-            if let Err(reason) = mesh_closedness(&shell) {
-                return Err(RustMsptError::InvalidMesh(format!(
-                    "{}, shell {shell_index}: {reason}. Every shape must be a closed solid: its \
-                     volume, centroid and equivalent diameter are what the size distribution and \
-                     the placement record are built from, so a shell that has none of them cannot \
-                     be quietly skipped without changing what the run drew from.",
-                    path.display()
-                )));
-            }
-            let signed = mesh_signed_volume(&shell);
-            if signed <= 0.0 {
-                return Err(RustMsptError::InvalidMesh(format!(
-                    "{}, shell {shell_index}: signed volume is {signed}, so its faces wind inward. \
-                     Placement needs outward-facing shells; re-export the file with consistent \
-                     outward orientation.",
-                    path.display()
-                )));
-            }
-            let Some(metrics) = mesh_metrics(&shell) else {
-                return Err(RustMsptError::InvalidMesh(format!(
-                    "{}, shell {shell_index}: closed, but its volume or surface area is not a \
-                     usable positive number",
-                    path.display()
-                )));
-            };
-            let Some(centroid) = mesh_volume_centroid(&shell) else {
-                return Err(RustMsptError::InvalidMesh(format!(
-                    "{}, shell {shell_index}: has no volume centroid",
-                    path.display()
-                )));
-            };
-            let Some(bbox) = mesh_bbox(&shell) else {
-                return Err(RustMsptError::InvalidMesh(format!(
-                    "{}, shell {shell_index}: has no bounding box",
-                    path.display()
-                )));
-            };
+        // Shells are independent, so they are prepared in parallel into an indexed buffer and then walked
+        // in shell order: the first error in that order is the one a serial scan would return, and kept and
+        // rejected shells keep their order, so the library and its record are unchanged.
+        let prepare = |shell_index: usize, shell: Mesh| -> Result<ShellOutcome> {
+                if let Err(reason) = mesh_closedness(&shell) {
+                    return Err(RustMsptError::InvalidMesh(format!(
+                        "{}, shell {shell_index}: {reason}. Every shape must be a closed solid: its \
+                         volume, centroid and equivalent diameter are what the size distribution and \
+                         the placement record are built from, so a shell that has none of them cannot \
+                         be quietly skipped without changing what the run drew from.",
+                        path.display()
+                    )));
+                }
+                let signed = mesh_signed_volume(&shell);
+                if signed <= 0.0 {
+                    return Err(RustMsptError::InvalidMesh(format!(
+                        "{}, shell {shell_index}: signed volume is {signed}, so its faces wind inward. \
+                         Placement needs outward-facing shells; re-export the file with consistent \
+                         outward orientation.",
+                        path.display()
+                    )));
+                }
+                let Some(metrics) = mesh_metrics(&shell) else {
+                    return Err(RustMsptError::InvalidMesh(format!(
+                        "{}, shell {shell_index}: closed, but its volume or surface area is not a \
+                         usable positive number",
+                        path.display()
+                    )));
+                };
+                let Some(centroid) = mesh_volume_centroid(&shell) else {
+                    return Err(RustMsptError::InvalidMesh(format!(
+                        "{}, shell {shell_index}: has no volume centroid",
+                        path.display()
+                    )));
+                };
+                let Some(bbox) = mesh_bbox(&shell) else {
+                    return Err(RustMsptError::InvalidMesh(format!(
+                        "{}, shell {shell_index}: has no bounding box",
+                        path.display()
+                    )));
+                };
 
-            if let Some(reason) = filter_reason(filters, bbox, &metrics) {
-                rejected.push(RejectedShell {
+                if let Some(reason) = filter_reason(filters, bbox, &metrics) {
+                    return Ok(ShellOutcome::Rejected(RejectedShell {
+                        source_index,
+                        shell_index,
+                        reason,
+                    }));
+                }
+
+                let mut canonical = shell.clone();
+                translate_mesh(&mut canonical, centroid.scale(-1.0));
+                let bounding_radius = canonical
+                    .vertices
+                    .iter()
+                    .map(|v| v.dot(*v).sqrt())
+                    .fold(0.0f64, f64::max);
+
+                Ok(ShellOutcome::Kept(ShapeShell {
                     source_index,
                     shell_index,
-                    reason,
-                });
-                continue;
+                    shell_sha256: shell_geometry_sha256(&shell),
+                    centroid,
+                    volume: metrics.volume,
+                    surface_area: metrics.surface_area,
+                    equivalent_diameter: metrics.equivalent_diameter,
+                    sphericity: metrics.sphericity,
+                    bounding_radius,
+                    bbox,
+                    canonical,
+                }))
+        };
+        let outcomes: Vec<Result<ShellOutcome>> = if granules.len() >= LIBRARY_PARALLEL_MIN_SHELLS {
+            granules.into_par_iter().enumerate().map(|(i, shell)| prepare(i, shell)).collect()
+        } else {
+            granules.into_iter().enumerate().map(|(i, shell)| prepare(i, shell)).collect()
+        };
+        let mut kept = 0usize;
+        for outcome in outcomes {
+            match outcome? {
+                ShellOutcome::Kept(shell) => {
+                    shells.push(shell);
+                    kept += 1;
+                }
+                ShellOutcome::Rejected(reason) => rejected.push(reason),
             }
-
-            let mut canonical = shell.clone();
-            translate_mesh(&mut canonical, centroid.scale(-1.0));
-            let bounding_radius = canonical
-                .vertices
-                .iter()
-                .map(|v| v.dot(*v).sqrt())
-                .fold(0.0f64, f64::max);
-
-            shells.push(ShapeShell {
-                source_index,
-                shell_index,
-                shell_sha256: shell_geometry_sha256(&shell),
-                centroid,
-                volume: metrics.volume,
-                surface_area: metrics.surface_area,
-                equivalent_diameter: metrics.equivalent_diameter,
-                sphericity: metrics.sphericity,
-                bounding_radius,
-                bbox,
-                canonical,
-            });
-            kept += 1;
         }
 
         sources.push(ShapeSource {

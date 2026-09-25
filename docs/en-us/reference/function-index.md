@@ -494,7 +494,7 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `ShapeSource` | Pipeline — Packing | `src/pipeline/placement_library.rs:41` | A source file the library was built from, with its digest and shell counts. |
 | `RejectedShell` | Pipeline — Packing | `src/pipeline/placement_library.rs:53` | A shell read but not kept, and why. |
 | `ShapeLibrary` | Pipeline — Packing | `src/pipeline/placement_library.rs:61` | Every shape a run may draw from, plus what was read and not kept. |
-| `load_shape_library` | Pipeline — Packing | `src/pipeline/placement_library.rs:85` | Loads, splits, measures and filters the shape files. |
+| `load_shape_library` | Pipeline — Packing | `src/pipeline/placement_library.rs:95` | Loads, splits, measures and filters the shape files. Shells of a file with at least 32 (`LIBRARY_PARALLEL_MIN_SHELLS`) are prepared in parallel into an indexed buffer walked in shell order, so order, rejections and the first reported defect are those of a serial scan (§79). |
 | `filter_reason` | Pipeline — Packing | `src/pipeline/placement_library.rs:234` | Says which library filter a shell failed, if any. |
 | `shell_geometry_sha256` | Pipeline — Packing | `src/pipeline/placement_library.rs:274` | Digests a shell's geometry so a re-ordered file is detectable. |
 | `TARGET_BIN_PROBES` | Pipeline — Packing | `src/pipeline/pack.rs:27` | Max consecutive placement failures tolerated for a chosen bin before it is excluded from this round's re-selection. |
