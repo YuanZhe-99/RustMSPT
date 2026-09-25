@@ -45,7 +45,7 @@ impl Pipeline for MeasurePipeline {
     // Inputs: MeasurementConfig with stl_path, bounding box, S2 method/samples/pitch, and output path.
     // Returns: Ok(()) or error.
     // Side effects: Reads STL from disk; writes measurement report to disk; prints summary to stdout.
-    // Notes: Supports exact/MC/both under one worker pool; exact over the safety limit returns an error without substituting MC.
+    // Notes: Supports exact/MC/both under one worker pool; exact whose CPU working set (occupancy plus the cheaper fitting FFT/direct kernel) exceeds the default budget returns an error without substituting MC.
     fn run(&self) -> Result<()> {
         let params = &self.config.measurement;
 
@@ -134,19 +134,29 @@ impl MeasurePipeline {
         };
         let size = bbox.size();
         let mut voxel_count = 1usize;
-        for extent in [size.x, size.y, size.z] {
+        let mut dims = [1usize; 3];
+        for (axis, extent) in [size.x, size.y, size.z].into_iter().enumerate() {
             let n = (extent / pitch).ceil().max(1.0);
             if !extent.is_finite() || extent <= 0.0 || !n.is_finite() || n >= usize::MAX as f64 {
                 return Err(RustMsptError::InvalidConfig(
                     "measurement grid dimensions are unsupported".into(),
                 ));
             }
+            dims[axis] = n as usize;
             voxel_count = voxel_count.checked_mul(n as usize).ok_or_else(|| {
                 RustMsptError::InvalidConfig("measurement grid count overflow".into())
             })?;
         }
-        if requested_method != "monte_carlo" && voxel_count > 1_500_000 {
-            return Err(RustMsptError::InvalidConfig("exact measurement exceeds the current 1,500,000-cell safety limit; increase voxel_pitch (exact is never silently replaced by MC)".into()));
+        if requested_method != "monte_carlo" {
+            let budget = crate::geometry::s2::DEFAULT_CPU_EXACT_BUDGET_BYTES;
+            if voxel_count as u64 > budget {
+                return Err(RustMsptError::InvalidConfig(format!("exact measurement occupancy of {voxel_count} voxels alone exceeds the {budget}-byte CPU exact working-set budget; increase voxel_pitch (exact is never silently replaced by MC)")));
+            }
+            let plan = crate::geometry::s2::plan_exact_cpu(dims, params.r_max, pitch.max(1e-9), rayon::current_num_threads(), budget);
+            println!("[Info] CPU exact working-set plan: grid={dims:?} {}", plan.describe());
+            if !plan.fits_budget() {
+                return Err(RustMsptError::InvalidConfig(format!("exact measurement has no CPU kernel within the {budget}-byte working-set budget ({}); increase voxel_pitch (exact is never silently replaced by MC)", plan.describe())));
+            }
         }
         let methods: &[&str] = if requested_method == "both" {
             &["exact", "monte_carlo"]

@@ -25,6 +25,13 @@ Covers the `crop` pipeline (`src/pipeline/crop.rs`) — background detection, PC
 | `trim_volume_border` | `src/pipeline/crop.rs:287` | Trims a fixed number of border voxels from the XY faces of a volume. |
 | `detect_background_mode` | `src/pipeline/crop.rs:317` | Detects the background value as the modal voxel value on the volume boundary. |
 | `estimate_pca_bbox` | `src/pipeline/crop.rs:351` | Computes PCA rotation, centroid, and rotated-frame foreground bounding box. |
+| `MomentState` | `src/pipeline/crop.rs` | Running count, mean and centered second-moment matrix. |
+| `MomentState::from_row` | `src/pipeline/crop.rs` | Exact moments of one foreground row segment from integer sums. |
+| `MomentState::merge` | `src/pipeline/crop.rs` | Chan parallel merge of two moment states. |
+| `pca_frame` | `src/pipeline/crop.rs` | Sorted, sign-fixed, right-handed PCA frame with canonical near-degenerate eigenspaces. |
+| `projected_bounds` | `src/pipeline/crop.rs` | Fixed-block rotated-frame foreground bounds. |
+| `foreground_row_blocks` | `src/pipeline/crop.rs` | Fixed-block scan handing contiguous row segments to an accumulator. |
+| `estimate_pca_bbox_three_pass` | `src/pipeline/crop.rs` | Test-only previous three-pass fixed-block PCA oracle. |
 | `rotate_and_crop` | `src/pipeline/crop.rs:459` | CPU, rayon-parallel rotate-and-crop of the volume into an axis-aligned output. |
 | `rotate_and_crop_gpu` | `src/pipeline/crop.rs:520` | GPU-accelerated rotate-and-crop via `GpuVolumeTransformPipeline` (feature `gpu`). |
 | `CropPipeline::run` | `src/pipeline/crop.rs:598` | Orchestrates load → background detect → PCA bbox → rotate+crop (GPU or CPU) → edge trim → save TIFF. |
@@ -214,13 +221,13 @@ CT-volume crop pipeline. Loads a volume, detects the background intensity, compu
 - **Purpose:** Compute a principal-component rotation that aligns the foreground's dominant axes to the coordinate axes, and the foreground's bounding box in that rotated frame.
 - **Parameters:** `volume`, `background` — the value to exclude as background.
 - **Returns:** `Ok((rot, centroid, min_v, max_v, count))`:
-  - `rot: Matrix3<f64>` — orthonormal rotation matrix (columns = eigenvectors of the foreground voxel covariance, sorted by descending eigenvalue, forced right-handed).
+  - `rot: Matrix3<f64>` — orthonormal rotation matrix from `pca_frame` (columns = covariance eigenvectors sorted by descending eigenvalue, sign-fixed, canonical basis for near-degenerate eigenspaces, forced right-handed).
   - `centroid: Vector3<f64>` — mean position of foreground voxels.
   - `min_v`/`max_v: Vector3<f64>` — foreground bounding box in the rotated frame (i.e. `rot^T * (p - centroid)` for every foreground voxel `p`).
   - `count: usize` — number of foreground voxels.
   - `Err(InvalidConfig)` if no foreground voxels are found (all voxels equal `background`).
-- **Side effects:** None. Three full passes over the volume: (1) accumulate centroid, (2) accumulate covariance about the centroid, (3) project every foreground voxel into the rotated frame to find `min_v`/`max_v`.
-- **Notes:** Covariance is eigendecomposed with `nalgebra::SymmetricEigen`; eigenvalues are sorted descending and the corresponding eigenvector columns reassembled into `rot`. If `det(rot) < 0` (a reflection rather than a rotation), the third column is negated to force a right-handed frame. Three fixed-block parallel passes with block-index-ordered merges; partitioning and results are independent of worker count.
+- **Side effects:** None. Two passes: (1) one-pass count/mean/M2 moments (exact per-row integer moments merged with Chan's formula within fixed blocks, blocks merged in order), (2) `projected_bounds`.
+- **Notes:** See *One-pass moments and canonical PCA frame* below. Partitioning and results are independent of worker count.
 - **See also:** [../algorithms/pca-volume-alignment-crop.md](../algorithms/pca-volume-alignment-crop.md) for the algorithm write-up.
 
 > **Algorithm:** See [../algorithms/pca-volume-alignment-crop.md](../algorithms/pca-volume-alignment-crop.md).
@@ -380,7 +387,7 @@ Connected-component split and geometric/statistical filtering pipeline. Splits o
 `SplitFilterConfig.cpu_max` bounds one pool for loading, splitting, metric preparation, filtering and saving (`-1`/absent: available workers). `prepare_particle_metrics` computes immutable volume/aspect/area records in component order. At least 32 components use indexed parallel collection; smaller sets remain serial. Each component uses the original geometry functions and reduction order. Bbox is only requested by the aspect filter; area is only computed for sharpness candidates that survive the aspect and positive-volume gates. Filtering reads those records in its original order, and lognormal RNG/deletions remain serial. Before/after reporting shares the immutable volume array instead of cloning it. STL writes run in batches of at most two in the same pool, with names and errors consumed in rank order; an error may leave another file in its current batch written.
 
 
-`foreground_blocks` maps foreground voxels in fixed 65,536-voxel chunks, collecting partials in block order. `estimate_pca_bbox` uses it for count/sum, centered covariance and projected min/max. `detect_background_mode` scans boundary faces only and resolves tied counts by smallest value. The original serial PCA is retained only under tests for numerical comparison.
+`foreground_blocks` maps foreground voxels in fixed 65,536-voxel chunks, collecting partials in block order. `estimate_pca_bbox` uses `foreground_row_blocks` for moments and `foreground_blocks` (a per-voxel wrapper over it) for projected min/max; the three-pass form survives only as a test oracle. `detect_background_mode` scans boundary faces only and resolves tied counts by smallest value. The original serial PCA is retained only under tests for numerical comparison.
 
 PCA task grain: for the parallel branch, `foreground_blocks` sets a minimum number of blocks per Rayon job using a workload-derived task budget, `min(workers, ceil(N/1,048,576))`; fixed block boundaries and ordered collection remain unchanged.
 
@@ -395,3 +402,11 @@ Successful stages emit `[Timing] crop stage=<name> seconds=<wall_seconds>` for `
 ### Shared stage timer (2026-09-25)
 
 Crop now emits its stage lines through `pipeline::timing::StageTimer` with the same names, order, nine-decimal format and stage boundaries as before (`restart` excludes the same untimed gaps), and appends `[Timing] crop workers=<n>` and `[Timing] crop peak_rss_bytes=<n|unavailable>`. Split-filter emits `load`, `split`, `metrics`, `filter`, `write_stl`, `write_report` and `total_in_pool`; a folder input is now loaded completely before splitting (each source mesh is still dropped as soon as it is split). See `pipeline-core.md` for the helper.
+
+### One-pass moments and canonical PCA frame (PERF-14)
+
+`estimate_pca_bbox` now makes one statistics pass plus the projected-bounds pass. `foreground_row_blocks` walks the same fixed 65,536-voxel blocks and hands each contiguous row segment `(x0, y, z, values)` to the accumulator. For a row, the foreground count, `Σx` and `Σx²` are exact integers (`u64`/`u128`), so `MomentState::from_row` builds that row's exact mean and centered second moment (only the xx entry is nonzero, since y and z are constant). Rows are merged into the block's running `(count, mean, M2)` with Chan's parallel formula (`MomentState::merge`: `mean += δ·nb/n`, `M2 += M2b + δδᵀ·na·nb/n`), and block states are merged in ascending block order, so results are identical for any worker count and avoid the `E[x²]-E[x]²` cancellation. The covariance is `M2/count`. This is Welford's online update applied at row granularity (Welford is the `nb = 1` case of Chan's merge). `estimate_pca_bbox_three_pass` keeps the previous centroid + centered covariance + bounds implementation as a test oracle; `online_moments_match_three_pass_and_workers` requires frame < 1e-10, centroid < 1e-11, bounds < 1e-8 and identical nearest crop output on oblique samples, and bit-identical results at 1/2/8 workers.
+
+`pca_frame(cov)` sorts eigenpairs by descending eigenvalue and groups adjacent eigenvalues whose gap is at most `PCA_DEGENERATE_REL_TOL = 1e-3` times the largest magnitude. A three-fold group yields exactly the scan axes. A two-fold group uses the scan axes x, y, z in order, projected into the eigenspace and Gram-Schmidt orthonormalized, accepting an axis only when its residual norm is at least 0.5 (two such axes always exist), so the basis no longer depends on solver noise. A non-degenerate column is sign-fixed so its largest-magnitude component is positive (lowest axis on exact ties), and a negative determinant flips column 2. Tests: cube and sphere give the identity frame with and without an added voxel; cylinders along z and x give `[z, x, y]` and the identity with and without an added voxel; a tilted two-fold covariance with 1e-9 noise keeps the same frame.
+
+The non-degenerate sign convention was needed because `SymmetricEigen`'s eigenvector signs flipped between the three-pass and one-pass covariance of an ordinary oblique sample (last-bit differences). It is a behavior change: on the repository's real CT RAW stack the original frame had columns 1 and 2 negated relative to the new one (a 180-degree turn about the first principal axis), so that crop output is reoriented relative to earlier versions; bounds are the same set of values with axes 1 and 2 swapped in sign.

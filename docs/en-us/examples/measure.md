@@ -39,7 +39,7 @@ fresh checkout. This walkthrough instead measures the real, already-present
 | `stl_bounding_box` / `bounding_box` | Region to measure over. Precedence is `bounding_box` (explicit) > `stl_bounding_box` > mesh-derived bbox > unit-cube fallback. Here it restricts measurement to the `[0,0,0]`–`[50,50,50]` corner of the packed domain rather than the whole ~105-unit mesh. |
 | `r_max` | Maximum correlation radius (in voxel units) the S2 curve is evaluated out to; produces `r_max + 1` points (`r = 0..=r_max`). |
 | `voxel_pitch` | Voxel edge length for discretization; smaller = finer/slower. `1.0` over a `50x50x50` box gives 125,000 voxels. |
-| `mc_method` | `"exact"` (voxel-grid ray casting), `"monte_carlo"` (random sampling), or `"both"` (runs both and reports their L2 distance). `"exact"` auto-downgrades to Monte Carlo if the voxel grid exceeds 1,500,000 voxels. |
+| `mc_method` | `"exact"` (voxel-grid ray casting), `"monte_carlo"` (random sampling), or `"both"` (runs both and reports their L2 distance). `"exact"` is never downgraded: it is refused with an error when no CPU exact kernel fits the 768 MiB working-set budget (see `[Info] CPU exact working-set plan` on stdout). |
 | `mc_samples` | Number of Monte Carlo sample points per radius; accepts underscore-separated literals like `40_000`. |
 | `cpu_max` | Thread count for the dedicated Rayon pool; `-1` uses all available cores. |
 | `acceleration.mode` | `auto`/`cpu`/`gpu`. `auto` only selects GPU when the workload (voxel count) clears `gpu_min_voxels` (default 250,000) — below that, it silently falls back to CPU, as seen in this run's 125,000-voxel workload. |
@@ -138,7 +138,7 @@ S2 Values [monte_carlo]:
 ```
 
 This ran in `real 0m0.093s` — the 50x50x50 ROI at `voxel_pitch: 1.0` is only 125,000 voxels, well
-under both the exact-method 1,500,000-voxel downgrade threshold and the 250,000-voxel GPU
+within the exact-method 768 MiB working-set budget and under the 250,000-voxel GPU
 threshold, so it ran fully "exact" on CPU alongside the 40,000-sample Monte Carlo estimate.
 
 ## Notes
@@ -160,10 +160,11 @@ threshold, so it ran fully "exact" on CPU alongside the 40,000-sample Monte Carl
   particular config always runs on CPU even with `acceleration.mode: auto` and even on a machine
   with a working GPU backend — increase the ROI or decrease `voxel_pitch` to exceed the threshold
   if you want to exercise the GPU path (see `../reference/gpu.md`).
-- `mc_method: 'exact'` alone (or as part of `'both'`) is silently downgraded to Monte Carlo only
-  if the voxel grid exceeds 1,500,000 voxels (e.g. a much larger bbox or much finer
-  `voxel_pitch`); watch stdout for the corresponding `[Warning]` line when tuning these values on
-  larger domains.
+- `mc_method: 'exact'` alone (or as part of `'both'`) is never replaced by Monte Carlo. Before
+  voxelizing, the pipeline prints `[Info] CPU exact working-set plan: ...` with the FFT/direct
+  choice, modeled times and working sets; if no kernel fits the 768 MiB budget (e.g. a much larger
+  bbox or much finer `voxel_pitch`) the run fails with an explicit error instead. Output values do
+  not depend on which kernel is chosen.
 
 ### Timing lines (added 2026-09-25)
 

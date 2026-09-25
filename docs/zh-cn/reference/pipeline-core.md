@@ -189,7 +189,7 @@
 
 #### MeasurePipeline::run / run_in_pool
 
-`run() -> Result<()>` 将整次测量安装在配置的 Rayon 池内，包括读取、准备和 GPU 失败后的 CPU 回退。`run_in_pool() -> Result<()>` 一次解析 `RUSTMSPT_ACCELERATION`，检查有限 pitch/尺寸，并对 exact/MC/both 分别选择后端。正 pitch MC 保持 voxel MC，不调用连续 GPU 内核；只为请求的方法分配管线。GPU 错误遵守 `cpu_fallback`，报告记录各方法回退后的实际后端，全部方法成功才写输出。当前 1,500,000 体素的 exact 保护上限改为明确报错，不再替换为 MC；成本/内存模型替代此上限属于 PERF-07。worker 数和索引在运行池内观察。
+`run() -> Result<()>` 将整次测量安装在配置的 Rayon 池内，包括读取、准备和 GPU 失败后的 CPU 回退。`run_in_pool() -> Result<()>` 一次解析 `RUSTMSPT_ACCELERATION`，检查有限 pitch/尺寸，并对 exact/MC/both 分别选择后端。正 pitch MC 保持 voxel MC，不调用连续 GPU 内核；只为请求的方法分配管线。GPU 错误遵守 `cpu_fallback`，报告记录各方法回退后的实际后端，全部方法成功才写输出。exact（单独或属于 `both`）在网格占据字节本身超过 `DEFAULT_CPU_EXACT_BUDGET_BYTES`（768 MiB），或 `plan_exact_cpu` 找不到工作集不超过该预算的 CPU 内核时明确报错，绝不替换为 MC；报错前先打印计划行（`[Info] CPU exact working-set plan: ...`）。这取代了原固定的 1,500,000 体素上限（PERF-07）。该预算只约束内存：体素化时间以及大网格上直接内核的运行时间不设上限，计划行会报告模型内核时间。worker 数和索引在运行池内观察。
 
 
 ### Owned CPU transforms (PERF-16)

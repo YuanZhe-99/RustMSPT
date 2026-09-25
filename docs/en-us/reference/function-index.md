@@ -304,6 +304,13 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `trim_volume_border` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:287` | Trims a fixed number of border voxels from the XY faces of a volume. |
 | `detect_background_mode` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:317` | Detects the background value as the modal voxel value on the volume boundary. |
 | `estimate_pca_bbox` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:351` | Computes PCA rotation, centroid, and rotated-frame foreground bounding box. |
+| `MomentState` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | Running count, mean and centered second moments. |
+| `MomentState::from_row` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | Exact moments of one foreground row segment. |
+| `MomentState::merge` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | Chan parallel merge of moment states. |
+| `pca_frame` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | Sorted, sign-fixed, right-handed PCA frame with canonical near-degenerate eigenspaces. |
+| `projected_bounds` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | Fixed-block rotated-frame foreground bounds. |
+| `foreground_row_blocks` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | Fixed-block scan over contiguous row segments. |
+| `estimate_pca_bbox_three_pass` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | Test-only previous three-pass PCA oracle. |
 | `rotate_and_crop` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:459` | CPU, rayon-parallel rotate-and-crop of the volume into an axis-aligned output. |
 | `rotate_and_crop_gpu` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:520` | GPU-accelerated rotate-and-crop via `GpuVolumeTransformPipeline` (feature `gpu`). |
 | `CropPipeline::run` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:598` | Orchestrates load → background detect → PCA bbox → rotate+crop (GPU or CPU) → edge trim → save TIFF. |
@@ -826,6 +833,26 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `with_fft_correlation` | Geometry Analysis | `src/geometry/s2.rs:489` | Evaluate occupancy FFT with bounded cache retention. |
 
 | `FFT_RETAIN_BYTES` | Geometry Analysis | `src/geometry/s2.rs:332` | Maximum retained FFT array bytes per calling thread. |
+| `smooth_fft_length` | Geometry Analysis | `src/geometry/s2.rs` | Smallest 2,3,5-smooth length >= a minimum. |
+| `padded_fft_dims` | Geometry Analysis | `src/geometry/s2.rs` | Per-axis smooth padding >= 2N-1. |
+| `ExactCpuMethod` | Geometry Analysis | `src/geometry/s2.rs` | CPU exact kernel selector (Fft/Direct). |
+| `ExactCpuPlan` | Geometry Analysis | `src/geometry/s2.rs` | Modeled cost, working sets and chosen CPU exact kernel. |
+| `ExactCpuPlan::selected_bytes` | Geometry Analysis | `src/geometry/s2.rs` | Working set of the selected kernel. |
+| `ExactCpuPlan::fits_budget` | Geometry Analysis | `src/geometry/s2.rs` | Whether the selected kernel fits the budget. |
+| `ExactCpuPlan::describe` | Geometry Analysis | `src/geometry/s2.rs` | One-line observable plan description. |
+| `exact_shell_work` | Geometry Analysis | `src/geometry/s2.rs` | In-domain offsets, exact direct pair work, largest shell. |
+| `fft_working_set_bytes` | Geometry Analysis | `src/geometry/s2.rs` | Checked FFT peak-byte estimate. |
+| `direct_working_set_bytes` | Geometry Analysis | `src/geometry/s2.rs` | Checked direct peak-byte estimate. |
+| `plan_exact_cpu` | Geometry Analysis | `src/geometry/s2.rs` | Cost-model/budget choice between FFT and direct. |
+| `cached_exact_plan` | Geometry Analysis | `src/geometry/s2.rs` | Reuse and log the exact plan once per key. |
+| `offset_in_domain` | Geometry Analysis | `src/geometry/s2.rs` | Whether a shift leaves a valid voxel pair. |
+| `direct_pair_counts` | Geometry Analysis | `src/geometry/s2.rs` | Integer (hits, valid) for one shift via z runs. |
+| `finish_exact_curve` | Geometry Analysis | `src/geometry/s2.rs` | Assemble, interpolate and pin S2(0). |
+| `VoxelS2::calculate_exact_with` | Geometry Analysis | `src/geometry/s2.rs` | Exact S2 with a forced CPU kernel. |
+| `DEFAULT_CPU_EXACT_BUDGET_BYTES` | Geometry Analysis | `src/geometry/s2.rs` | Default CPU exact working-set budget (768 MiB). |
+| `NS_PER_FFT_UNIT` | Geometry Analysis | `src/geometry/s2.rs` | Calibrated FFT cost per P*log2(P) unit (ns). |
+| `NS_PER_DIRECT_PAIR` | Geometry Analysis | `src/geometry/s2.rs` | Calibrated direct cost per visited pair (ns). |
+| `DIRECT_PARALLEL_EFFICIENCY` | Geometry Analysis | `src/geometry/s2.rs` | Modeled direct parallel efficiency. |
 
 | `GpuShellS2Pipeline::resize_batch_buffers` | `src/gpu/s2_shell.rs:193` | Shell batch buffer capacity management; occupancy retained. |
 
@@ -890,7 +917,7 @@ Master index of every documented function, struct, enum, and constant across `sr
 
 | Function | Source | Contract |
 |---|---|---|
-| `shell_offset_iter` | `src/geometry/s2.rs:213` | Lazy ordered shell enumeration with constant cursor storage; GPU exact streaming and tests. |
+| `shell_offset_iter` | `src/geometry/s2.rs:213` | Lazy ordered shell enumeration with constant cursor storage; GPU exact streaming, both CPU exact kernels, and tests. |
 
 | Symbol | Source | Contract |
 |---|---|---|

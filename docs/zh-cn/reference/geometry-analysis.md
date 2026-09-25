@@ -45,6 +45,24 @@
 | `FftWorkspace::array_bytes` | `src/geometry/s2.rs:363` | Report retained complex-array capacities. |
 | `with_fft_correlation` | `src/geometry/s2.rs:489` | Evaluate occupancy FFT with bounded cache retention. |
 | `FFT_RETAIN_BYTES` | `src/geometry/s2.rs:332` | Maximum retained FFT array bytes per calling thread. |
+| `smooth_fft_length` | `src/geometry/s2.rs` | 不小于给定值的最小 2,3,5-平滑长度。 |
+| `padded_fft_dims` | `src/geometry/s2.rs` | 各轴 >= 2N-1 的平滑填充。 |
+| `ExactCpuMethod` | `src/geometry/s2.rs` | CPU exact 内核选择（Fft/Direct）。 |
+| `ExactCpuPlan` | `src/geometry/s2.rs` | 单个网格的模型成本、工作集与所选内核。 |
+| `ExactCpuPlan::selected_bytes` | `src/geometry/s2.rs` | 所选内核的工作集。 |
+| `ExactCpuPlan::fits_budget` | `src/geometry/s2.rs` | 所选内核是否满足预算。 |
+| `ExactCpuPlan::describe` | `src/geometry/s2.rs` | 单行可观测计划描述。 |
+| `exact_shell_work` | `src/geometry/s2.rs` | 域内偏移数 K、精确配对工作量 W、最大壳。 |
+| `fft_working_set_bytes` | `src/geometry/s2.rs` | checked FFT 峰值字节估计。 |
+| `direct_working_set_bytes` | `src/geometry/s2.rs` | checked 直接法峰值字节估计。 |
+| `plan_exact_cpu` | `src/geometry/s2.rs` | 按成本模型/预算在 FFT 与直接法间选择。 |
+| `cached_exact_plan` | `src/geometry/s2.rs` | 复用计划，每个键只记录一次。 |
+| `offset_in_domain` | `src/geometry/s2.rs` | 位移是否留下合法体素对。 |
+| `direct_pair_counts` | `src/geometry/s2.rs` | 按连续 z 段统计单个位移的整数 (hits, valid)。 |
+| `finish_exact_curve` | `src/geometry/s2.rs` | 汇总、插值并固定 S2(0)。 |
+| `VoxelS2::calculate_exact_with` | `src/geometry/s2.rs` | 指定 CPU 内核计算 exact S2。 |
+| `DEFAULT_CPU_EXACT_BUDGET_BYTES` | `src/geometry/s2.rs` | 默认 CPU exact 工作集预算（768 MiB）。 |
+| `NS_PER_FFT_UNIT` / `NS_PER_DIRECT_PAIR` / `DIRECT_PARALLEL_EFFICIENCY` | `src/geometry/s2.rs` | 校准后的成本模型常数。 |
 
 ---
 
@@ -177,7 +195,7 @@
 - **说明——方法路由（本函数的核心逻辑）：**
   1. **`voxel_pitch <= 0.0` 且 `method != "exact"`** → 直接路由至 `calculate_s2_monte_carlo_mesh`，该函数直接针对网格的三角形对点对进行采样，完全不做体素化（最精确，但每样本最慢，因为每个样本都要对完整三角形列表调用两次 `point_inside_mesh`）。
   2. **否则**，先通过 `build_bbox_occupancy`（被其余两个分支共用）对网格进行一次体素化，生成占据网格和体积分数 `vf`。如果网格中占据体素数为零，则立即返回全零向量。
-  3. **`method == "exact"`** → 计算填充后的 FFT 网格大小 `(2nx-1)(2ny-1)(2nz-1)`，并与一个固定阈值 **24,000,000 个单元格**（`max_fft_cells`）进行比较。若填充后的网格超过该阈值，则回退至 `calculate_s2_exact_direct`（直接的 O(壳层大小 × 网格大小) 点对枚举，避免大规模 FFT 内存分配）；否则使用 `calculate_s2_exact_fft`（基于 FFT 的自相关，对大网格渐近更快）。
+  3. **`method == "exact"`** → `VoxelS2::calculate` 通过 `cached_exact_plan`（见下文“CPU exact 内核规划”）在工作集不超过 `DEFAULT_CPU_EXACT_BUDGET_BYTES` 的内核中按模型时间选择 `calculate_s2_exact_fft` 或 `calculate_s2_exact_direct`，并对每个计划键记录一次选择。两个内核结果逐位相同，选择只影响时间与内存。
   4. **任何其他 `method` 值**（体素化蒙特卡洛路径）→ 对于每个半径 `1..=r_max`，先通过 `shell_offsets_for_distance` 预先计算一次壳层偏移量，然后为每个半径抽取 `samples.max(200)` 个随机体素对样本（随机体素 + 该半径壳层中的随机偏移），并以在界内点对中的命中比例估计 `S2(r)`。不受支持的半径（空壳层，或零个有效点对）随后通过 `fill_missing_s2_with_smooth_interpolation` 填补。
 - **另请参阅：** `calculate_s2_monte_carlo_mesh`、`build_bbox_occupancy`、`calculate_s2_exact_direct`、`calculate_s2_exact_fft`、`fill_missing_s2_with_smooth_interpolation`、`calculate_s2_with_gpu`（本函数的 GPU 加速封装）、[GPU 参考](gpu.md)。
 
@@ -280,7 +298,7 @@
 
 #### FftWorkspace::transform
 
-`FftWorkspace::transform(inverse)` applies cached dimension-specific forward/inverse axis plans to its complex grid. The task count is min(current pool workers, ceil(padded cells / 65536)), at least one. One task uses serial axis gathers and one shared scratch buffer, without allocating a transpose array. Multiple tasks use a lazily allocated persistent transpose buffer and task-local `process_with_scratch` storage, with axis-specific minimum chunk lengths. Filling, power spectrum and normalization use the same task budget. Inverse normalization and the power-spectrum pass execute under the caller's Rayon pool. Padding remains exactly 2N-1.
+`FftWorkspace::transform(inverse)` applies cached dimension-specific forward/inverse axis plans to its complex grid. The task count is min(current pool workers, ceil(padded cells / 65536)), at least one. One task uses serial axis gathers and one shared scratch buffer, without allocating a transpose array. Multiple tasks use a lazily allocated persistent transpose buffer and task-local `process_with_scratch` storage, with axis-specific minimum chunk lengths. Filling, power spectrum and normalization use the same task budget. Inverse normalization and the power-spectrum pass execute under the caller's Rayon pool. 填充尺寸为不小于 2N-1 的最小 2,3,5-平滑长度（`padded_fft_dims`）。
 
 #### with_fft_correlation
 
@@ -296,7 +314,7 @@
   - `nx`、`ny`、`nz` — 网格维度。
 - **返回值：** `(corr, [fx, fy, fz])`——填充后 FFT 维度上的一维 `f64` 相关计数网格，以及这些填充后的维度本身。
 - **副作用：** 无（分配并返回新的缓冲区；不修改 `occ`）。
-- **说明：** 在变换之前将每个轴填充到 `2N-1`（`fx = 2*nx-1` 等），以避免会破坏网格边界附近相关计数的循环卷积回绕伪影。经过 FFT → 共轭平方 → IFFT 的往返变换后，取实部并钳制到 `>= 0.0`（自相关计数应为非负；此钳制是为了防止微小的负浮点噪声）。负偏移量通过调用方（`calculate_s2_exact_fft` 的 `get_corr` 闭包）中的回绕索引从填充网格中恢复。
+- **说明：** 在变换之前将每个轴填充到不小于 `2N-1` 的最小 2,3,5-平滑长度（`padded_fft_dims`），以避免会破坏网格边界附近相关计数的循环卷积回绕伪影。经过 FFT → 共轭平方 → IFFT 的往返变换后，取实部并钳制到 `>= 0.0`（自相关计数应为非负；此钳制是为了防止微小的负浮点噪声）。负偏移量通过调用方（`calculate_s2_exact_fft` 的 `wrap` 闭包，下标 `L-|d|`）中的回绕索引从填充网格中恢复；生产路径把每个值四舍五入为整数计数。
 - **另请参阅：** `FftWorkspace::transform`、`calculate_s2_exact_fft`（唯一调用方）。
 
 #### calculate_s2_exact_direct
@@ -310,8 +328,8 @@
   - `voxel_pitch` — 体素边长，用于将物理半径 `r` 转换为体素空间的 `r_vox = r / voxel_pitch`。
   - `vf` — 体积分数，直接作为 `S2(0)` 使用。
 - **返回值：** 长度为 `r_max + 1` 的 `Vec<f64>`，每个半径对应一个 S2 值，不受支持的半径通过 `fill_missing_s2_with_smooth_interpolation` 填补。
-- **副作用：** 无（纯计算）；通过 rayon 的 `into_par_iter` 并行化外层半径循环。
-- **说明：** 对每个半径，通过 `shell_offsets_for_distance` 计算壳层偏移量，然后针对每个偏移遍历网格的完整有效重叠区域（`x_start..x_end` 等，考虑偏移量的符号），统计 `valid_pairs` 和 `hit_pairs`（两端均被占据），并在壳层内所有偏移上对命中比例取平均。每个半径的开销为 `O(壳层大小 × 网格大小)`——对于大半径/大网格而言，逐半径开销比 FFT 方法更高，但避免了 FFT 的 `O((2n)^3)` 内存占用，这正是 `calculate_s2` 在填充网格超过 2400 万个单元格时选择该路径的原因。
+- **副作用：** 无（纯计算）；在半径之间以及半径内部的偏移之间并行。
+- **说明：** 对每个半径收集 `shell_offset_iter` 的域内偏移（顺序与 `shell_offsets_for_distance` 相同），用 `direct_pair_counts` 并行计数（按索引收集），再按偏移顺序平均 `hits/valid`。工作量为 `W = Σ 合法配对数`；内存为占据场加每个并发半径的一份偏移列表。结果与 `calculate_s2_exact_fft` 逐位相同。当其模型时间更低或 FFT 工作集超出预算时由 `plan_exact_cpu` 选择。
 - **另请参阅：** `shell_offsets_for_distance`、`fill_missing_s2_with_smooth_interpolation`、`calculate_s2`（唯一调用方，"exact" 大网格分支）、`calculate_s2_exact_fft`（针对较小网格的 FFT 替代方案）。
 
 #### calculate_s2_exact_fft
@@ -322,7 +340,7 @@
 - **参数：** 与 `calculate_s2_exact_direct` 相同。
 - **返回值：** 长度为 `r_max + 1` 的 `Vec<f64>`，每个半径对应一个 S2 值，不受支持的半径通过 `fill_missing_s2_with_smooth_interpolation` 填补。
 - **副作用：** 无（纯计算）；通过 rayon 并行化外层半径循环。
-- **说明：** 由于相关网格是预先一次性计算好的（摊销后的 `O((2n)^3 log n)` FFT 开销），而不是逐偏移计算，因此对于大半径范围，这比 `calculate_s2_exact_direct` 在渐近意义上便宜得多，代价是填充网格的内存分配——这正是 `calculate_s2` 在选择该路径前通过 2400 万单元格阈值所权衡的取舍。绝对值会超出网格维度的偏移量（`adx >= nx` 等）会被视为该壳层条目不受支持而跳过，因为在该偏移处不存在有效点对。
+- **说明：** 相关网格一次性计算（平滑填充下 `O(P log P)`），而非逐偏移计算，因此对大半径范围比 `calculate_s2_exact_direct` 便宜，代价是填充网格内存——这正是 `plan_exact_cpu` 所建模的取舍。每个相关值取整为最近整数计数，结果与直接内核逐位相同。任一轴 `|d| >= N` 的偏移没有合法配对而被跳过。
 - **另请参阅：** `autocorrelation_counts_fft`、`shell_offsets_for_distance`、`fill_missing_s2_with_smooth_interpolation`、`calculate_s2`（唯一调用方，"exact" 小网格分支）、`calculate_s2_exact_direct`（针对大网格的直接枚举替代方案）。
 
 #### calculate_s2_monte_carlo_mesh
@@ -347,7 +365,7 @@
 
 `calculate_s2_mesh_mc_seeded(mesh, bbox, r_max, samples, seed, prepared)` returns continuous MC S2. Radius/sample blocks of 2048 use independent ChaCha12 streams derived from radius and block, with integer reductions. Results are reproducible across worker counts; `prepared=false` uses full-scan containment for differential benchmarks. Ordinary mesh MC chooses a fresh base seed and uses prepared queries. This changes the old unseeded RNG draw protocol, not the point/direction distribution.
 
-`VoxelS2::new(mesh, bbox, pitch)` owns one voxelization at a positive pitch (minimum 1e-9). `calculate(r_max, method, samples)` reuses it for exact or voxel MC, reporting occupancy VF. Measure lazily retains this object across CPU methods/fallbacks; continuous MC remains independent. Voxelization prepares per-component queries and reuses per-worker hit scratch. Components below the domain have their upper index clamped before unsigned conversion.
+`VoxelS2::new(mesh, bbox, pitch)` owns one voxelization at a positive pitch (minimum 1e-9). `calculate(r_max, method, samples)` reuses it for exact or voxel MC, reporting occupancy VF；exact 通过 `cached_exact_plan` 选择内核，`calculate_exact_with(r_max, method)`（crate 内部）强制指定 FFT 或直接法。 Measure lazily retains this object across CPU methods/fallbacks; continuous MC remains independent. Voxelization prepares per-component queries and reuses per-worker hit scratch. Components below the domain have their upper index clamped before unsigned conversion.
 
 GPU exact 现将 shell 构造在 voxel 的同一 Device/Queue 上，直接绑定其 occupancy 缓冲。shell 不再选择适配器或申请第二个设备，也不再为占据场分配和上传副本。两阶段顺序运行，各自配对错误作用域。Voxel 现于设备端计数，仅为 VF 回读 4 字节；上层 backend 能力探测仍独立计数。独立主机占据场 API 保留上传行为，之后的主机求值不会覆盖借用的 voxel 缓冲。
 
@@ -359,4 +377,21 @@ GPU exact 现使用 shell_offset_iter，单个半径内部也只保留嵌套范�
 
 | Function | Source | Contract |
 |---|---|---|
-| `shell_offset_iter` | `src/geometry/s2.rs:213` | Lazy ordered shell enumeration with constant cursor storage; GPU exact streaming and tests. |
+| `shell_offset_iter` | `src/geometry/s2.rs:213` | 惰性有序壳枚举，只保留游标；用于 GPU exact 流式、两个 CPU exact 内核和测试。 |
+
+## CPU exact 内核规划与平滑填充（PERF-07）
+
+`padded_fft_dims(dims)` 将每个轴填充到 `smooth_fft_length(2N-1)`，即不小于 `2N-1` 的最小 2,3,5-平滑长度（`smooth_fft_length` 以 checked 算术枚举 `2^a·3^b·5^c`，溢出返回 `None`）。任何 `L >= 2N-1` 都使零填充网格的循环相关在所有 `|d| <= N-1` 位移上等于线性相关，负位移 `-d` 仍在下标 `L-d` 读取。`with_fft_correlation`、`FftWorkspace` 与保留规则均使用该填充尺寸。
+
+`calculate_s2_exact_fft` 在除以解析合法配对数之前，把每个相关值四舍五入为整数配对计数；两个 CPU 内核都用 `shell_offset_iter` 并按 `offset_in_domain` 过滤枚举每个半径，按相同顺序累加 `hits/valid`。因此 FFT 与直接内核对任何网格、填充和 worker 数返回逐位相同的曲线（测试：`forced_kernels_are_selection_independent`，以及覆盖所有正负位移、FFT 不友好轴长与长薄网格的整数 oracle `fft_scratch_matches_integer_pairs`）。取整要求 FFT 绝对误差小于 0.5，对允许规模的 f64 网格有数量级余量。
+
+`calculate_s2_exact_direct` 现在在半径之间并行，并在每个半径内部对其域内偏移并行（按索引收集后按序求和）；`direct_pair_counts` 按连续 z 段计数。`finish_exact_curve` 是共用尾部（插值、`S2(0)=vf`）。
+
+`plan_exact_cpu(dims, r_max, pitch, workers, budget)` 返回 `ExactCpuPlan`：
+
+- `exact_shell_work` 只枚举一次域内偏移球的一个卦限（符号副本按重数加权，循环在 `r_max` 处截断），使用与壳迭代器相同的半开浮点边界，返回域内偏移数 `K`、精确直接工作量 `W = Σ (nx-|dx|)(ny-|dy|)(nz-|dz|)` 以及最大单半径偏移数；单元测试与暴力壳枚举对照。
+- 模型时间：FFT 为 `NS_PER_FFT_UNIT·P·log2 P`（P 为填充后单元数，不计并行加速）；直接法为 `NS_PER_DIRECT_PAIR·W / (1 + DIRECT_PARALLEL_EFFICIENCY·(min(workers,K)-1))`。常数（2.0 ns、0.36 ns、1/3）来自被忽略的 release 测试 `exact_cost_model_calibration` 的单 worker 拟合；该主机 4 worker 时 FFT 无加速，直接法约 2 倍。
+- 工作集（checked `u64`）：FFT = 占据场 + 复数网格 + 转置（变换多于一个任务时）+ 每 worker 行/scratch + 轴 plan + 输出；直接法 = 占据场 + 每个并发半径的域内偏移及逐偏移计数 + 输出。不包含 plan 内部不透明存储及其他线程保留的 16 MiB 缓存。
+- 只有工作集不超过预算的内核可选，取模型时间更小者（相等取 FFT）；都不满足时报告直接法，原因为 `no kernel fits budget`。
+
+`DEFAULT_CPU_EXACT_BUDGET_BYTES` 为 768 MiB，相当于旧 24,000,000 填充单元 FFT 上限的网格加转置大小，因此不会有配置比以前分配明显更多内存。`VoxelS2::calculate` 使用 `cached_exact_plan`：相同 `(dims, r_max, pitch, workers, budget)` 复用上次计划，只在键变化时打印 `[Info] CPU exact S2 plan: ... method=... reason=...`。`VoxelS2::calculate_exact_with` 为测试和基准强制指定内核。

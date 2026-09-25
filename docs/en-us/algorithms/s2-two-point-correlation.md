@@ -110,12 +110,23 @@ for `r`, not a random sample — via one of two equivalent algorithms:
   position, checking occupancy at both `(x,y,z)` and `(x,y,z)+offset` directly — no FFT, but O(shell
   size × grid size) per radius, parallelized over radii via rayon.
 
-`calculate_s2` picks between them automatically based on the **padded FFT grid size**: it
-computes `fx * fy * fz` and compares against a fixed threshold of **24,000,000 cells**. Below the
-threshold, the FFT path is used (fast, and its cost is independent of `r_max` once computed).
-Above it — i.e. for large voxel grids where the padded `2N-1` cube would blow up memory and FFT
-runtime — it falls back to direct enumeration, which is slower per radius but has no large
-upfront memory allocation.
+`calculate_s2` picks between them with a **cost model under a memory budget** (`plan_exact_cpu`,
+PERF-07). FFT time is modeled as `c_fft · P · log2 P` for `P` padded cells; direct time as
+`c_pair · W`, where `W` is the exact number of voxel pairs the direct kernel visits (the sum over
+in-domain shell offsets of their overlap volumes, at most `K · N`). Only kernels whose peak
+working set (checked arithmetic: occupancy, complex grid, transpose, per-worker scratch for FFT;
+occupancy and per-radius offset lists for direct) fits the default 768 MiB budget are eligible,
+and the cheaper one wins. The budget equals the grid-plus-transpose size of the old fixed
+24,000,000-padded-cell limit. FFT correlation values are rounded to integer pair counts and both
+kernels sum shell terms in the same order, so the two return **bit-identical** curves: the choice
+changes only time and memory. The chosen method, both modeled times, both working sets and the
+reason are printed once per plan.
+
+In practice FFT wins when `r_max` is large relative to the grid (its cost does not grow with
+`r_max`), and direct wins for small `r_max` on large grids, where `W` stays near `K · N` with small
+`K`. Padding uses the smallest 2,3,5-smooth length `>= 2N-1` per axis rather than exactly `2N-1`;
+any length `>= 2N-1` is wrap-free for every shift `|d| <= N-1`, and smooth lengths avoid slow
+prime-size transforms (e.g. 127 -> 128, 199 -> 200).
 
 ## Shell offsets: `shell_offsets_for_distance`
 
@@ -248,7 +259,7 @@ CPU mesh MC and voxelization now cache geometry queries through `PreparedMeshQue
 
 ### Reusable exact FFT storage
 
-CPU exact FFT now reuses forward/inverse axis plans, complex grid and transpose storage for repeated same-dimension evaluations on a calling thread. It fills and normalizes under the current pool, reads shell counts directly from the complex correlation grid, and releases oversized workspaces after use. Retention is capped at 16 MiB of arrays per thread and padded axes <=4096; opaque FFT plan memory is additional. Nested evaluations take separate owned workspaces without holding a thread-local borrow. This does not replace the pending complete memory/cost planner or change 2N-1 padding.
+CPU exact FFT now reuses forward/inverse axis plans, complex grid and transpose storage for repeated same-dimension evaluations on a calling thread. It fills and normalizes under the current pool, reads shell counts directly from the complex correlation grid, and releases oversized workspaces after use. Retention is capped at 16 MiB of arrays per thread and padded axes <=4096; opaque FFT plan memory is additional. Nested evaluations take separate owned workspaces without holding a thread-local borrow. The memory/cost planner and smooth padding described above were added later (PERF-07).
 
 ### GPU MC workgroup integer reduction
 
@@ -277,3 +288,26 @@ GPU exact now lazily generates one shell-radius Vec at a time and passes its off
 GPU exact now uses `shell_offset_iter`, retaining only nested range cursors even within one radius. It preserves the original x/y/z order, origin special case and half-open squared-distance test; the public Vec API remains unchanged for random-access consumers. Support is detected with a peekable iterator and every generated offset is counted as consumed. Safe ordinary integer norms match the Vec implementation; larger norms use u128 to avoid signed multiplication overflow. Enumeration still scans the enclosing cube, so this reduces allocation without changing its O(radius³) search complexity.
 
 Fresh resident GPU exact evaluations use `ExactMemoryPlan` for both backend selection and execution. With triangle storage T=max(36*faces,4), occupancy M=4*cells, and B partial slots, the conservative logical peak is 2T+M+128+80B. This includes pending triangle/offset uploads and simultaneous old/new batch buffers; the 128-byte allowance covers fixed parameter/count/placeholder resources. B is reduced from 200,000 to fit an optional MiB budget, with a minimum of one. If even that does not fit, execution rejects before GPU initialization and the caller applies its fallback policy. The model excludes driver/compiler internals and CPU memory, applies to a fresh production direct-shell evaluation, and does not claim to budget experimental tiled/reduced or arbitrary retained pipelines. Existing hard exact-grid limits remain independent.
+
+## CPU exact planner calibration (PERF-07)
+
+Release medians of five samples (`exact_cost_model_calibration`, seconds, FFT vs direct on the same grid; the old fixed rule would have chosen FFT for all of them):
+
+| grid | r_max | workers | FFT | direct | planner choice |
+|---|---:|---:|---:|---:|---|
+| 32³ | 2 | 1 | 0.006317 | 0.001014 | direct |
+| 32³ | 8 | 1 | 0.006575 | 0.025101 | FFT |
+| 64³ | 2 | 1 | 0.085595 | 0.007118 | direct |
+| 64³ | 6 | 1 | 0.079422 | 0.090754 | FFT |
+| 96³ | 3 | 1 | 0.427821 | 0.050650 | direct |
+| 128×128×32 | 4 | 1 | 0.197231 | 0.065435 | direct |
+| 32³ | 2 | 4 | 0.006848 | 0.000456 | direct |
+| 32³ | 8 | 4 | 0.006947 | 0.009020 | FFT |
+| 64³ | 2 | 4 | 0.117273 | 0.003751 | direct |
+| 64³ | 6 | 4 | 0.139758 | 0.051895 | direct |
+| 96³ | 3 | 4 | 0.498781 | 0.033485 | direct |
+| 128×128×32 | 4 | 4 | 0.319237 | 0.042846 | direct |
+
+With the fitted constants the planner picks the faster kernel in all twelve cases. The host is shared with other jobs, so the 4-worker FFT figures (no speedup over 1 worker) may understate FFT scaling on an idle machine; the model therefore gives FFT no parallel credit, which errs toward FFT only when direct is close.
+
+Smooth padding (`smooth_padding_benchmark`, 4 workers, medians of five, forward+power+inverse seconds, 2N-1 -> smooth): 50³ 0.024585 -> 0.023407; 64³ 0.086713 -> 0.076775; 71×67×53 0.074856 -> 0.073318; 100×100×20 0.052879 -> 0.036489.
