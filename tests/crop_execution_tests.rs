@@ -260,3 +260,102 @@ fn crop_gpu_values_rounding_and_errors() {
     );
     assert_eq!(cpu.data, actual.data);
 }
+
+// AI-FUNC-SUMMARY: Run crop on a larger synthetic RAW-u16 box volume whose GPU working set exceeds a 1-2 MiB budget; returns the process output and TIFF path.
+#[cfg(feature = "gpu")]
+fn run_tiled_crop(
+    root: &std::path::Path,
+    acceleration: serde_json::Value,
+    interpolation: &str,
+) -> (Output, std::path::PathBuf) {
+    let (width, height, depth) = (160usize, 120usize, 41usize);
+    let raw = root.join("raw");
+    std::fs::create_dir_all(&raw).unwrap();
+    for z in 0..depth {
+        let mut bytes = Vec::with_capacity(width * height * 2);
+        for y in 0..height {
+            for x in 0..width {
+                let inside =
+                    (10..=150).contains(&x) && (10..=110).contains(&y) && (5..=35).contains(&z);
+                let v: u16 = if inside {
+                    1 + ((x * 7 + y * 13 + z * 29) % 4000) as u16
+                } else {
+                    0
+                };
+                bytes.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        std::fs::write(raw.join(format!("{z:03}.raw")), bytes).unwrap();
+    }
+    let path = root.join("output.tiff");
+    let config = serde_json::json!({"input":{"type":"raw","path":raw,"raw":{"width":width,"height":height,"bits":16,"signed":false}},"output":{"path":path},"interpolation":interpolation,"edge_trim":0,"cpu_max":2,"acceleration":acceleration});
+    let file = root.join("config.json");
+    std::fs::write(&file, serde_json::to_vec(&config).unwrap()).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_rustmspt"))
+        .args(["crop", "--config"])
+        .arg(file)
+        .env_remove("RUSTMSPT_ACCELERATION")
+        .output()
+        .unwrap();
+    (output, path)
+}
+
+// AI-FUNC-SUMMARY: Verify budgeted GPU crop executes as several output tiles (gpu and auto modes, both interpolations) and matches the untiled GPU run and, for nearest, the CPU run; skip when no adapter initializes.
+#[cfg(feature = "gpu")]
+#[test]
+fn crop_gpu_budget_executes_tiles() {
+    if rustmspt::gpu::volume_transform::GpuVolumeTransformPipeline::new().is_err() {
+        eprintln!("SKIP no GPU");
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    for interpolation in ["nearest", "trilinear"] {
+        let run = |name: &str, acceleration: serde_json::Value| {
+            let (output, path) = run_tiled_crop(
+                &root.path().join(format!("{interpolation}-{name}")),
+                acceleration,
+                interpolation,
+            );
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            assert!(
+                output.status.success(),
+                "{name}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let tiles = stdout
+                .split("tiles=")
+                .nth(2)
+                .and_then(|rest| rest.split_whitespace().next())
+                .and_then(|n| n.parse::<usize>().ok());
+            (stdout, tiles, load_tiff_or_folder(&path).unwrap())
+        };
+        let (cpu_out, _, cpu) = run("cpu", serde_json::json!({"mode":"cpu"}));
+        assert!(cpu_out.contains("backend=cpu"));
+        let (whole_out, whole_tiles, whole) =
+            run("whole", serde_json::json!({"mode":"gpu","cpu_fallback":false}));
+        assert!(whole_out.contains("backend=gpu"), "{whole_out}");
+        assert_eq!(whole_tiles, Some(1), "{whole_out}");
+        for (name, acceleration) in [
+            (
+                "gpu2",
+                serde_json::json!({"mode":"gpu","cpu_fallback":false,"gpu_memory_limit_mb":2}),
+            ),
+            (
+                "auto1",
+                serde_json::json!({"mode":"auto","gpu_min_voxels":0,"gpu_memory_limit_mb":1}),
+            ),
+        ] {
+            let (out, tiles, volume) = run(name, acceleration);
+            assert!(out.contains("backend=gpu"), "{name}: {out}");
+            assert!(tiles.unwrap_or(0) > 1, "{name}: {out}");
+            assert_eq!(
+                (volume.width, volume.height, volume.depth),
+                (whole.width, whole.height, whole.depth)
+            );
+            assert_eq!(volume.data, whole.data, "{name} {interpolation}");
+        }
+        if interpolation == "nearest" {
+            assert_eq!(cpu.data, whole.data);
+        }
+    }
+}

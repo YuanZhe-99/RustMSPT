@@ -325,7 +325,20 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `foreground_row_blocks` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | Fixed-block scan over contiguous row segments. |
 | `estimate_pca_bbox_three_pass` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | Test-only previous three-pass PCA oracle. |
 | `rotate_and_crop` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:459` | CPU, rayon-parallel rotate-and-crop of the volume into an axis-aligned output. |
-| `rotate_and_crop_gpu` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:520` | GPU-accelerated rotate-and-crop via `GpuVolumeTransformPipeline` (feature `gpu`). |
+| `rotate_and_crop_gpu` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | Budget-planned, output-tiled GPU rotate-and-crop (feature `gpu`). |
+| `CropSourceBlock` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | Clamped source sub-block one output tile may read. |
+| `CropTilePlan` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | Chosen tile shape, count, retained maxima and peak GPU bytes. |
+| `CropTilePlanError` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | Planning refusal with an optional lower bound on required bytes. |
+| `crop_tile_source_block` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | Tile corner source AABB plus interpolation halo and f32 margin. |
+| `crop_gpu_peak_bytes` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | Logical GPU peak for retained block/tile, upload, staging, params, guard. |
+| `for_each_crop_tile` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | Visits whole-output tiles in z, y, x order. |
+| `evaluate_crop_tiling` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | Checks one tile shape against budget and device buffer limit. |
+| `plan_crop_gpu_tiles` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | Largest z-slab / row / x-run tiling fitting the budget and limits. |
+| `TransformTile` | GPU | `src/gpu/volume_transform.rs` | Output tile plus uploaded source sub-block descriptor. |
+| `GpuVolumeTransformPipeline::device_limits` | GPU | `src/gpu/volume_transform.rs` | Device limits bounding per-tile buffers. |
+| `GpuVolumeTransformPipeline::reserve_capacity` | GPU | `src/gpu/volume_transform.rs` | Pre-size source and output/staging buffers to a plan's maxima. |
+| `GpuVolumeTransformPipeline::transform_tile` | GPU | `src/gpu/volume_transform.rs` | Transform one output tile from a halo source block with single-dispatch arithmetic and a halo guard. |
+| `GpuVolumeTransformPipeline::resize_source_buffer` | GPU | `src/gpu/volume_transform.rs` | Replace the retained source-block buffer. |
 | `CropPipeline::run` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:598` | Orchestrates load → background detect → PCA bbox → rotate+crop (GPU or CPU) → edge trim → save TIFF. |
 | `SplitFilterPipeline` (struct) | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:13` | Holds `SplitFilterConfig` for the split-filter pipeline. |
 | `VolumeStats` (struct) | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:18` | Min/max/mean/median summary of kept-particle volumes. |

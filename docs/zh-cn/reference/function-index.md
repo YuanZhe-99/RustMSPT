@@ -316,7 +316,20 @@
 | `foreground_row_blocks` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 按连续行段的固定分块扫描。 |
 | `estimate_pca_bbox_three_pass` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 仅测试使用的原三遍 PCA oracle。 |
 | `rotate_and_crop` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:459` | CPU 上基于 rayon 并行的体数据旋转裁剪，输出为轴对齐结果。 |
-| `rotate_and_crop_gpu` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:520` | 通过 `GpuVolumeTransformPipeline` 实现的 GPU 加速旋转裁剪（特性 `gpu`）。 |
+| `rotate_and_crop_gpu` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 按预算规划、按输出分块的 GPU 旋转裁剪（`gpu` 特性）。 |
+| `CropSourceBlock` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 单个输出块可读取的已裁剪源子块。 |
+| `CropTilePlan` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 块形状、块数、保留最大值与 GPU 峰值字节。 |
+| `CropTilePlanError` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 规划拒绝原因及所需字节的可选下界。 |
+| `crop_tile_source_block` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 块角点的源 AABB，加插值 halo 与 f32 余量。 |
+| `crop_gpu_peak_bytes` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 保留块/输出、上传、staging、参数和守卫的逻辑 GPU 峰值。 |
+| `for_each_crop_tile` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 按 z、y、x 顺序遍历输出块。 |
+| `evaluate_crop_tiling` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 检查某块形状是否满足预算与设备缓冲上限。 |
+| `plan_crop_gpu_tiles` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs` | 满足预算与上限的最大 z 板/行/x 段分块。 |
+| `TransformTile` | GPU | `src/gpu/volume_transform.rs` | 输出块及其上传源子块的描述。 |
+| `GpuVolumeTransformPipeline::device_limits` | GPU | `src/gpu/volume_transform.rs` | 限制每块缓冲的设备上限。 |
+| `GpuVolumeTransformPipeline::reserve_capacity` | GPU | `src/gpu/volume_transform.rs` | 把源和输出/staging 缓冲预留到计划最大值。 |
+| `GpuVolumeTransformPipeline::transform_tile` | GPU | `src/gpu/volume_transform.rs` | 用 halo 源子块按单次 dispatch 算术变换一个输出块，并带 halo 守卫。 |
+| `GpuVolumeTransformPipeline::resize_source_buffer` | GPU | `src/gpu/volume_transform.rs` | 替换保留的源子块缓冲。 |
 | `CropPipeline::run` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:598` | 编排加载 → 背景检测 → PCA 包围盒 → 旋转+裁剪（GPU 或 CPU） → 边缘裁剪 → 保存 TIFF 的整个流程。 |
 | `SplitFilterPipeline`（结构体） | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:13` | 持有拆分过滤流水线所需的 `SplitFilterConfig`。 |
 | `VolumeStats`（结构体） | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:18` | 保留颗粒体积的最小/最大/均值/中位数摘要。 |
