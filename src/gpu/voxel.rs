@@ -10,6 +10,7 @@ pub struct GpuVoxelPipeline {
     pipeline: wgpu::ComputePipeline,
     counter: Option<(wgpu::ComputePipeline, wgpu::Buffer)>,
     triangle_buffer: wgpu::Buffer,
+    tri_const_buffer: wgpu::Buffer,
     params_buffer: wgpu::Buffer,
     occupancy_buffer: wgpu::Buffer,
     staging_buffer: wgpu::Buffer,
@@ -176,6 +177,16 @@ impl GpuVoxelPipeline {
                             },
                             count: None,
                         },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 4,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
                     ],
                 });
 
@@ -204,6 +215,20 @@ impl GpuVoxelPipeline {
                 mapped_at_creation: false,
             });
             queue.write_buffer(&triangle_buffer, 0, tri_bytes);
+            let const_data = super::certify::triangle_constants(&tri_data);
+            let const_bytes = bytemuck::cast_slice::<f32, u8>(&const_data);
+            if const_bytes.len() as u64 > device.limits().max_buffer_size
+                || const_bytes.len() as u64 > u64::from(device.limits().max_storage_buffer_binding_size)
+            {
+                return Err("GPU voxel triangle constants exceed device limits".into());
+            }
+            let tri_const_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("triangle_constants"),
+                size: (const_bytes.len() as u64).max(16),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            queue.write_buffer(&tri_const_buffer, 0, const_bytes);
 
             let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("params"),
@@ -234,6 +259,7 @@ impl GpuVoxelPipeline {
                 pipeline,
                 counter: None,
                 triangle_buffer,
+                tri_const_buffer,
                 params_buffer,
                 occupancy_buffer,
                 staging_buffer,
@@ -514,6 +540,10 @@ impl GpuVoxelPipeline {
                     binding: 3,
                     resource: self.uncertain_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: self.tri_const_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -556,6 +586,10 @@ impl GpuVoxelPipeline {
                     wgpu::BindGroupEntry {
                         binding: 3,
                         resource: self.uncertain_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: self.tri_const_buffer.as_entire_binding(),
                     },
                 ],
             });

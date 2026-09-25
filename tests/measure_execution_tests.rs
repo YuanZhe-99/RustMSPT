@@ -145,12 +145,14 @@ fn gpu_exact_shrinks_batches_to_one_mib() {
     let result=Command::new(env!("CARGO_BIN_EXE_rustmspt")).args(["measure","--config"]).arg(&config).env("RUSTMSPT_ACCELERATION","gpu").output().unwrap();
     let stdout=String::from_utf8_lossy(&result.stdout);
     assert!(result.status.success(),"{stdout} {}",String::from_utf8_lossy(&result.stderr));
-    assert!(stdout.contains("batch_partials=11353"),"{stdout}");
+    // (1 MiB - (12 triangles x (36 raw + 64 certification constants) x 2 + 32^3 x 4 occupancy + 128 + planned
+    // uncertain list and staging 2 x 4 x 1025 + 64)) / 80 bytes per partial.
+    assert!(stdout.contains("batch_partials=11333"),"{stdout}");
     let text=std::fs::read_to_string(output).unwrap();
     assert!(text.contains("exact=gpu"),"{text}");
     for r in 0..=16 { assert!(text.contains(&format!("{r}: 1.000000")),"{text}"); }
     let generated: usize = (1..=16).map(|r| rustmspt::geometry::s2::shell_offsets_for_distance(r as f64,0.5).len()).sum();
-    assert!(generated>11353);
+    assert!(generated>11333, "enough offsets to cross one planned batch");
 }
 
 // AI-FUNC-SUMMARY: Verify the working-set budget replaced the fixed 1,500,000-cell exact ceiling: a 2,197,000-voxel-scale grid now runs and logs its plan, while a grid whose occupancy alone exceeds the budget is refused before voxelization without writing output.

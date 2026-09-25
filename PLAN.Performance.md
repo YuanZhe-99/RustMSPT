@@ -1603,3 +1603,13 @@ forge 把整个网格作为一个元素传给 `volume_fraction_of_meshes_in_bbox
 改动：多任务路径的 x 轴改为按 y 平面分带处理，每带约 `FFT_X_BAND_BYTES = 8 MiB`：带内并行收集（按 y 平面，只读网格）→ 并行变换 x 行 → 并行按 x 切片写回（每个任务只写自己连续的切片），全部安全代码。每条 x 行的输入与所用 plan 都与原来相同，因此结果逐位一致。`fft_working_set_bytes` 相应改为只计一个带而不是整网格，规划器的 FFT/直接法选择对大网格不再过于保守。新增 `banded_parallel_fft_matches_serial_bit_for_bit`：60×48×50 网格（确保走并行路径），1/5/48 平面的带与串行变换正反向逐位相同，且收集缓冲恰为一个带。
 
 结果（同一输入、仅 exact，对照 `78f13c1` 的二进制）：峰值 RSS 1 worker 130.8 → 131.2 MiB，2 worker 254.8 → 140.9 MiB，8 worker 267.0 → 153.1 MiB（−43%）；耗时 2.65/2.05/0.96 s → 2.29/1.47/0.88 s（没有变慢）；`measured_s2.txt` 六次运行 SHA 全部相同。8 worker 相对 1 worker 剩余的约 22 MiB 为每 worker 行/scratch 缓冲与线程栈。
+
+## 77. PERF-05：认证测试的逐三角形常量预计算（§67 第 5 项后半，2026-09-25，本地）
+
+负责人确认：GPU 部分以结果正确为准，性能在本机（llvmpipe）只做理论与方向性判断。
+
+**做法。** 认证 MC 与体素着色器对每个（查询点，三角形）对都重新计算与查询点无关的量：`m`（坐标幅值界）、`e1 = b − a`、`e2 = c − a`、`es`、`h = d × e2`、`det = e1·h` 与其误差界 `eps_det`——而射线方向 `d` 在每次派发中是常量。新增 `certify::triangle_constants`：主机按着色器的同一公式在 f32 中逐三角形计算这些项，布局为 16 个 f32（`a, m, e1, es, e2, eps_det, h, det`，4 个 vec4）。MC 着色器在 binding 5、体素着色器在 binding 4 读取 `tri_const`；binding 0 的原始 9 浮点缓冲保留，供冻结的未认证基准着色器与逐样本参考着色器使用（生产着色器不再读取它）。体素的计数归约管线共用同一绑定布局，因此其绑定组也补上 binding 4。MC 的 `update_mesh` 把每个变更的三角形区间同步写入常量缓冲（字节范围 ×64），整体上传时两者都写。内存规划 `TRIANGLE_BYTES = 36 + 64`（`mc_memory` 与 `exact_memory`），上传统计也计入常量字节。
+
+**正确性论证。** 误差界是针对任意求值顺序、正确舍入的 f32 运算推导的，主机端计算满足同一前提；即使主机与 GPU 的 f32 结果在末位不同，已认证的判定仍等于 CPU f64 参考，未认证的仍在 CPU 重算，最终计数不变。验证：新增 `precomputed_terms_respect_their_error_bounds`（全部对抗性 fixture × 两种偏移 + 3,000 个随机三角形：f32 `det` 与同一 f32 顶点的 f64 行列式之差 ≤ `eps_det`，`m`、`es` 确为幅值上界，`a` 原样保存）；`partial_triangle_upload_matches_full_upload` 在每一步回读常量缓冲，与整体重算逐字节一致；既有的 `certified_voxels_equal_cpu_reference`、MC 认证与 1e9 偏移/薄片/共享面等对抗性测试全部通过；预算与上传字节测试的期望值按 36 + 64 更新。
+
+**性能（llvmpipe，仅作方向参考）：** `certification_overhead_benchmark`（5 次交替）认证/未认证耗时比，particles.stl：MC 由 §66 的 3.98/1.65 s = 2.41× 降到 2.15/1.60 s = 1.34×，体素由 4.66/2.22 s = 2.10× 降到 3.75/2.39 s = 1.57×；球体上认证版已快于未认证版（MC 0.18 对 0.24 s，体素 0.42 对 0.67 s）。所有计数与未认证版一致（`radii_with_different_counts=0`、体素计数相同），重算比例 1.4e-3～1.3e-2 与此前同量级。理论上每次三角形测试在首个拒绝前的算术约减半，但每次读取 64 字节常量而非 36 字节原始顶点；硬件 GPU 上所有 lane 同时读同一三角形、可由缓存广播，预期受 ALU 限制而受益，需硬件验证。原始输出：`data/output/performance/20260925-local-matrix/cert-constants-bench.log`。

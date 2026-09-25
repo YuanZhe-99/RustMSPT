@@ -253,6 +253,7 @@
 | `GpuCertificationStats`（含 `recompute_ratio`、`describe`、`accumulate`） | GPU | `src/gpu/certify.rs` | 累计认证计数与 CPU 重算比例。 |
 | `CertReference`（含 `new`、`params_tail`、`classify`） | GPU | `src/gpu/certify.rs` | 原点平移的 f64 CPU 参考与精确 f32 提前排除界。 |
 | `f32_at_least` / `f32_at_most` | GPU | `src/gpu/certify.rs` | 定向 f64→f32 舍入。 |
+| `triangle_constants` / `TRI_CONST_FLOATS` | GPU | `src/gpu/certify.rs` | 主机预计算的、与查询无关的认证测试项，每个三角形 16 个 f32（`a, m, e1, es, e2, eps_det, h, det`），对应固定射线方向。 |
 | `GpuS2Pipeline::certification_stats` | GPU | `src/gpu/s2.rs` | MC 累计认证计数。 |
 | `GpuS2Pipeline::dispatch_batch` | GPU | `src/gpu/s2.rs` | dispatch 一个半径批次并读取不确定计数器。 |
 | `GpuS2Pipeline::resolve_uncertain` | GPU | `src/gpu/s2.rs` | 在精确 GPU 点上 CPU 重算不确定样本。 |

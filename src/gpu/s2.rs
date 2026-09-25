@@ -26,6 +26,7 @@ pub struct GpuS2Pipeline {
     queue: wgpu::Queue,
     pipeline: wgpu::ComputePipeline,
     triangle_buffer: wgpu::Buffer,
+    tri_const_buffer: wgpu::Buffer,
     params_buffer: wgpu::Buffer,
     out_hits_buffer: wgpu::Buffer,
     out_valids_buffer: wgpu::Buffer,
@@ -56,6 +57,9 @@ pub struct GpuS2Pipeline {
     upload_stats: GpuUploadStats,
     bind_group_layout: wgpu::BindGroupLayout,
 }
+
+/// Bytes per triangle in the certified shader's constants buffer (binding 5).
+const CONST_BYTES_PER_TRIANGLE: usize = super::certify::TRI_CONST_FLOATS * 4;
 
 // AI-FUNC-SUMMARY: Build f32 triangle position buffer with coordinates normalized to bbox origin.
 // Inputs: mesh reference, bounding box for normalization.
@@ -302,6 +306,16 @@ impl GpuS2Pipeline {
                                 },
                                 count: None,
                             },
+                            wgpu::BindGroupLayoutEntry {
+                                binding: 5,
+                                visibility: wgpu::ShaderStages::COMPUTE,
+                                ty: wgpu::BindingType::Buffer {
+                                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                    has_dynamic_offset: false,
+                                    min_binding_size: None,
+                                },
+                                count: None,
+                            },
                         ],
                     });
 
@@ -331,7 +345,17 @@ impl GpuS2Pipeline {
                 mapped_at_creation: false,
             });
             queue.write_buffer(&triangle_buffer, 0, tri_bytes);
-            let initial_bytes = tri_bytes.len() as u64;
+            let const_data = super::certify::triangle_constants(&tri_data);
+            let const_bytes = bytemuck::cast_slice::<f32, u8>(&const_data);
+            check_buffer_size(const_bytes.len() as u64, &device.limits())?;
+            let tri_const_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("triangle_constants"),
+                size: (const_bytes.len() as u64).max(16),
+                usage: triangle_usage(),
+                mapped_at_creation: false,
+            });
+            queue.write_buffer(&tri_const_buffer, 0, const_bytes);
+            let initial_bytes = (tri_bytes.len() + const_bytes.len()) as u64;
 
             let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("params"),
@@ -374,6 +398,7 @@ impl GpuS2Pipeline {
                 queue,
                 pipeline,
                 triangle_buffer,
+                tri_const_buffer,
                 params_buffer,
                 out_hits_buffer,
                 out_valids_buffer,
@@ -428,7 +453,7 @@ impl GpuS2Pipeline {
         limit_mb: Option<u64>,
     ) -> Result<(), String> {
         let peak = crate::compute::mc_memory::mc_evaluation_peak(
-            self.triangle_buffer.size(),
+            self.triangle_buffer.size() + self.tri_const_buffer.size(),
             self.out_hits_buffer.size(),
             self.pending_upload_bytes,
             self.uncertain_buffer.size(),
@@ -453,12 +478,24 @@ impl GpuS2Pipeline {
         super::runtime::scoped(&self.device.clone(), || {
             let tri_data = build_triangle_buffer(mesh, bbox);
             let tri_bytes = bytemuck::cast_slice::<f32, u8>(&tri_data);
+            let const_data = super::certify::triangle_constants(&tri_data);
+            let const_bytes = bytemuck::cast_slice::<f32, u8>(&const_data);
+            check_buffer_size(const_bytes.len() as u64, &self.device.limits())?;
             let needed = tri_bytes.len() as u64;
             let mut grown = false;
             if needed > self.triangle_buffer.size() {
                 self.triangle_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("triangles"),
                     size: needed,
+                    usage: triangle_usage(),
+                    mapped_at_creation: false,
+                });
+                grown = true;
+            }
+            if const_bytes.len() as u64 > self.tri_const_buffer.size() {
+                self.tri_const_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("triangle_constants"),
+                    size: const_bytes.len() as u64,
                     usage: triangle_usage(),
                     mapped_at_creation: false,
                 });
@@ -472,7 +509,8 @@ impl GpuS2Pipeline {
             let written = match &runs {
                 None => {
                     self.queue.write_buffer(&self.triangle_buffer, 0, tri_bytes);
-                    needed
+                    self.queue.write_buffer(&self.tri_const_buffer, 0, const_bytes);
+                    needed + const_bytes.len() as u64
                 }
                 Some(runs) => {
                     let mut bytes = 0u64;
@@ -484,6 +522,13 @@ impl GpuS2Pipeline {
                             &tri_bytes[range.clone()],
                         );
                         bytes += range.len() as u64;
+                        let consts = run.start * CONST_BYTES_PER_TRIANGLE..run.end * CONST_BYTES_PER_TRIANGLE;
+                        self.queue.write_buffer(
+                            &self.tri_const_buffer,
+                            consts.start as u64,
+                            &const_bytes[consts.clone()],
+                        );
+                        bytes += consts.len() as u64;
                     }
                     bytes
                 }
@@ -710,7 +755,7 @@ impl GpuS2Pipeline {
                     check_buffer_size(bytes, &self.device.limits())?;
                     if let Some(limit) = self.memory_limit_mb {
                         let retained = crate::compute::mc_memory::mc_evaluation_peak(
-                            self.triangle_buffer.size(),
+                            self.triangle_buffer.size() + self.tri_const_buffer.size(),
                             self.out_hits_buffer.size(),
                             self.pending_upload_bytes,
                             self.uncertain_buffer.size(),
@@ -814,6 +859,10 @@ impl GpuS2Pipeline {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: self.uncertain_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: self.tri_const_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -1077,16 +1126,16 @@ mod execution_tests {
                 return;
             }
         };
-        assert_eq!(gpu.pending_upload_bytes, 432);
+        assert_eq!(gpu.pending_upload_bytes, 12 * (36 + 64), "raw triangles plus their certification constants");
         let original = gpu.out_hits_buffer.clone();
         assert!(gpu.check_evaluation_budget(&mesh, 0, 200, Some(0)).is_err());
         assert_eq!(original, gpu.out_hits_buffer);
         gpu.update_mesh(&mesh, bbox).unwrap();
-        assert_eq!(gpu.pending_upload_bytes, 432, "an unchanged mesh uploads nothing");
+        assert_eq!(gpu.pending_upload_bytes, 12 * (36 + 64), "an unchanged mesh uploads nothing");
         let mut moved = mesh.clone();
         crate::geometry::translate_mesh(&mut moved, Vec3::new(0.25, 0.0, 0.0));
         gpu.update_mesh(&moved, bbox).unwrap();
-        assert_eq!(gpu.pending_upload_bytes, 864);
+        assert_eq!(gpu.pending_upload_bytes, 2 * 12 * (36 + 64));
         assert!(gpu.check_evaluation_budget(&mesh, 0, 200, Some(1)).is_ok());
         gpu.calculate_s2_gpu(bbox, 0, 200).unwrap();
         assert_eq!(gpu.pending_upload_bytes, 0);
@@ -1303,7 +1352,16 @@ mod batching_and_upload_tests {
 
     // AI-FUNC-SUMMARY: Read the resident triangle buffer prefix back as raw u32 words for byte-exact oracles; returns the words or a mapping error.
     fn resident_words(gpu: &GpuS2Pipeline) -> Result<Vec<u32>, String> {
-        let bytes = u64::from(gpu.num_triangles) * 36;
+        buffer_words(gpu, &gpu.triangle_buffer, u64::from(gpu.num_triangles) * 36)
+    }
+
+    // AI-FUNC-SUMMARY: Read the resident certification-constants buffer prefix back as raw u32 words; returns the words or a mapping error.
+    fn resident_constant_words(gpu: &GpuS2Pipeline) -> Result<Vec<u32>, String> {
+        buffer_words(gpu, &gpu.tri_const_buffer, u64::from(gpu.num_triangles) * CONST_BYTES_PER_TRIANGLE as u64)
+    }
+
+    // AI-FUNC-SUMMARY: Copy a buffer's first `bytes` to a staging buffer and return them as u32 words; returns the words or a mapping error.
+    fn buffer_words(gpu: &GpuS2Pipeline, source: &wgpu::Buffer, bytes: u64) -> Result<Vec<u32>, String> {
         super::super::runtime::scoped(&gpu.device, || {
             let staging = gpu.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("triangle oracle"),
@@ -1314,7 +1372,7 @@ mod batching_and_upload_tests {
             let mut encoder = gpu
                 .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-            encoder.copy_buffer_to_buffer(&gpu.triangle_buffer, 0, &staging, 0, bytes);
+            encoder.copy_buffer_to_buffer(source, 0, &staging, 0, bytes);
             gpu.queue.submit(Some(encoder.finish()));
             super::super::runtime::read_u32_prefix(&gpu.device, &staging, bytes)
         })
@@ -1384,7 +1442,7 @@ mod batching_and_upload_tests {
         };
         let full_bytes = base.faces.len() as u64 * 36;
         assert_eq!(gpu.upload_stats().full_uploads, 1);
-        let particle_bytes = 12 * 36;
+        let particle_bytes = 12 * (36 + 64);
         let mut last = base.clone();
         for (step, shift) in [3.5, -7.25, 0.0, 11.0, 11.0].into_iter().enumerate() {
             let next = two_boxes(shift);
@@ -1401,6 +1459,11 @@ mod batching_and_upload_tests {
                 .map(f32::to_bits)
                 .collect();
             assert_eq!(words, oracle, "step {step}");
+            let constants: Vec<u32> = super::super::certify::triangle_constants(&build_triangle_buffer(&next, bbox))
+                .into_iter()
+                .map(f32::to_bits)
+                .collect();
+            assert_eq!(resident_constant_words(&gpu).unwrap(), constants, "step {step}: constants follow partial uploads");
             let mut fresh = GpuS2Pipeline::new(&next, bbox).unwrap();
             assert_eq!(
                 gpu.calculate_s2_gpu_counts(bbox, 140, 300, 99).unwrap(),
@@ -1422,7 +1485,7 @@ mod batching_and_upload_tests {
         });
         gpu.update_mesh(&single, bbox).unwrap();
         assert_eq!(gpu.upload_stats().full_uploads, 2);
-        assert_eq!(gpu.upload_stats().last_bytes, 12 * 36);
+        assert_eq!(gpu.upload_stats().last_bytes, 12 * (36 + 64));
         let moved_bbox = BoundingBox {
             min: Vec3::new(-1.0, 0.0, 0.0),
             max: Vec3::new(400.0, 400.0, 400.0),

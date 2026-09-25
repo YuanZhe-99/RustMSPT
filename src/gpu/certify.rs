@@ -287,3 +287,93 @@ pub(crate) mod fixtures {
         (mesh, bbox)
     }
 }
+
+/// Floats per triangle in the certified shaders' constants buffer: `a, m, e1, es, e2, eps_det, h, det`.
+pub(crate) const TRI_CONST_FLOATS: usize = 16;
+
+// AI-FUNC-SUMMARY:
+// Purpose: Precompute the query-independent part of the certified f32 Moller-Trumbore test for every triangle.
+// Inputs: the raw 9-float-per-triangle buffer the shaders also receive.
+// Returns: 16 floats per triangle - vertex a and its magnitude bound m, edge e1 and the edge bound es, edge e2
+// and the determinant's error bound, h = d x e2 and det = e1 . h - for the fixed f32 ray direction.
+// Side effects: None.
+// Notes: The shaders recomputed all of these for every (query, triangle) pair although the ray direction is
+// one constant. They are computed here in f32 with the shaders' formulas; the bounds are derived for correctly
+// rounded f32 operations, so they hold for this evaluation as they do for the shader's, and any query the GPU
+// still cannot certify is recomputed on the CPU - the final counts equal the CPU reference either way.
+pub(crate) fn triangle_constants(raw: &[f32]) -> Vec<f32> {
+    const U: f32 = 5.960_464_5e-8;
+    const SAFETY: f32 = 2.0;
+    const TINY: f32 = 1e-36;
+    let (dx, dy, dz) = crate::geometry::s2::RAY_DIR_GPU;
+    let d = [dx as f32, dy as f32, dz as f32];
+    let max3 = |v: [f32; 3]| v[0].max(v[1].max(v[2]));
+    let abs3 = |v: [f32; 3]| [v[0].abs(), v[1].abs(), v[2].abs()];
+    let sub = |p: [f32; 3], q: [f32; 3]| [p[0] - q[0], p[1] - q[1], p[2] - q[2]];
+    let mut out = Vec::with_capacity(raw.len() / 9 * TRI_CONST_FLOATS);
+    for t in raw.chunks_exact(9) {
+        let a = [t[0], t[1], t[2]];
+        let b = [t[3], t[4], t[5]];
+        let c = [t[6], t[7], t[8]];
+        let (aa, ab, ac) = (abs3(a), abs3(b), abs3(c));
+        let m = max3([aa[0].max(ab[0]).max(ac[0]), aa[1].max(ab[1]).max(ac[1]), aa[2].max(ab[2]).max(ac[2])]) * (1.0 + U);
+        let e1 = sub(b, a);
+        let e2 = sub(c, a);
+        let eps_e = 4.0 * U * m;
+        let es = max3(abs3(e1)).max(max3(abs3(e2))) + eps_e;
+        let h = [d[1] * e2[2] - d[2] * e2[1], d[2] * e2[0] - d[0] * e2[2], d[0] * e2[1] - d[1] * e2[0]];
+        let eps_h = 6.0 * U * es + 2.0 * eps_e;
+        let hs = 2.0 * (1.0 + U) * es + eps_h;
+        let det = e1[0] * h[0] + e1[1] * h[1] + e1[2] * h[2];
+        let eps_det = SAFETY * (9.0 * U * es * hs + 3.0 * (eps_e * hs + es * eps_h)) + TINY;
+        out.extend_from_slice(&[a[0], a[1], a[2], m, e1[0], e1[1], e1[2], es, e2[0], e2[1], e2[2], eps_det, h[0], h[1], h[2], det]);
+    }
+    out
+}
+
+#[cfg(test)]
+mod triangle_constant_tests {
+    use super::*;
+
+    // AI-FUNC-SUMMARY: The host-precomputed f32 determinant lies within its bound eps_det of the f64 determinant of the same f32 vertices, the edges and h are the f32 differences and cross product the shader formerly formed, and m/es bound the magnitudes they claim to; covers every adversarial fixture at two offsets plus random triangles; no file output.
+    #[test]
+    fn precomputed_terms_respect_their_error_bounds() {
+        let (dx, dy, dz) = crate::geometry::s2::RAY_DIR_GPU;
+        let d = [dx as f32 as f64, dy as f32 as f64, dz as f32 as f64];
+        let mut raw: Vec<f32> = Vec::new();
+        for (_, mesh) in fixtures::adversarial_meshes(0.25) {
+            for origin in [0.0f64, 3.0] {
+                for f in &mesh.faces {
+                    for v in [mesh.vertices[f.a], mesh.vertices[f.b], mesh.vertices[f.c]] {
+                        raw.extend_from_slice(&[(v.x + origin) as f32, (v.y + origin) as f32, (v.z + origin) as f32]);
+                    }
+                }
+            }
+        }
+        let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
+        for _ in 0..3000 {
+            for _ in 0..9 {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                raw.push(((state >> 11) as f64 / (1u64 << 53) as f64 * 8.0 - 4.0) as f32);
+            }
+        }
+        let k = triangle_constants(&raw);
+        assert_eq!(k.len(), raw.len() / 9 * TRI_CONST_FLOATS);
+        for (t, c) in raw.chunks_exact(9).zip(k.chunks_exact(TRI_CONST_FLOATS)) {
+            let v = |i: usize| [t[3 * i] as f64, t[3 * i + 1] as f64, t[3 * i + 2] as f64];
+            let (a, b, cc) = (v(0), v(1), v(2));
+            let e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            let e2 = [cc[0] - a[0], cc[1] - a[1], cc[2] - a[2]];
+            let h = [d[1] * e2[2] - d[2] * e2[1], d[2] * e2[0] - d[0] * e2[2], d[0] * e2[1] - d[1] * e2[0]];
+            let det = e1[0] * h[0] + e1[1] * h[1] + e1[2] * h[2];
+            assert_eq!([c[0], c[1], c[2]], [t[0], t[1], t[2]], "a is stored verbatim");
+            assert!(((c[15] as f64) - det).abs() <= c[11] as f64, "det {} vs exact {det}, bound {}", c[15], c[11]);
+            let mag = a.iter().chain(b.iter()).chain(cc.iter()).fold(0.0f64, |m, x| m.max(x.abs()));
+            assert!(c[3] as f64 >= mag, "m bounds every coordinate");
+            let edge = e1.iter().chain(e2.iter()).fold(0.0f64, |m, x| m.max(x.abs()));
+            assert!(c[7] as f64 >= edge, "es bounds every edge component");
+        }
+    }
+}

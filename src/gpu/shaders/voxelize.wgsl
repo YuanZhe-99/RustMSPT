@@ -22,6 +22,7 @@ struct Params {
 @group(0) @binding(1) var<storage, read> params: Params;
 @group(0) @binding(2) var<storage, read_write> occupancy: array<u32>;
 @group(0) @binding(3) var<storage, read_write> uncertain: array<atomic<u32>>;
+@group(0) @binding(4) var<storage, read> tri_const: array<vec4<f32>>;
 
 const CERT_U: f32 = 5.9604645e-8;
 const CERT_SAFETY: f32 = 2.0;
@@ -58,24 +59,31 @@ fn cert_ratio_err(eps_n: f32, r: f32, eps_det: f32, den: f32) -> f32 {
 }
 
 // AI-FUNC-SUMMARY: Certified Moller-Trumbore test mirroring the CPU thresholds (1e-10 on det, u, v, u+v, t); a division-free numerator test first proves |u| or |v| exceeds 1 for near-parallel far triangles; returns a certain miss, a certain hit with distance and its error bound, or CERT_UNKNOWN.
-fn cert_ray_triangle(o: vec3<f32>, d: vec3<f32>, a: vec3<f32>, b: vec3<f32>, c: vec3<f32>, pm: f32) -> CertHit {
+fn cert_ray_triangle(o: vec3<f32>, d: vec3<f32>, i: u32, pm: f32) -> CertHit {
     var r: CertHit;
     r.t = -1.0;
     r.err = 0.0;
     r.state = CERT_FALSE;
-    let m = max3(max(max(abs(a), abs(b)), abs(c))) * (1.0 + CERT_U);
-    let e1 = b - a;
-    let e2 = c - a;
+    // Query-independent terms, precomputed per triangle on the host (certify::triangle_constants) for the
+    // one fixed ray direction; the shader formerly recomputed them for every (query, triangle) pair.
+    let k0 = tri_const[i * 4u];
+    let k1 = tri_const[i * 4u + 1u];
+    let k2 = tri_const[i * 4u + 2u];
+    let k3 = tri_const[i * 4u + 3u];
+    let a = k0.xyz;
+    let m = k0.w;
+    let e1 = k1.xyz;
+    let es = k1.w;
+    let e2 = k2.xyz;
     let eps_e = 4.0 * CERT_U * m;
-    let es = max(max3(abs(e1)), max3(abs(e2))) + eps_e;
     let s = o - a;
     let eps_s = CERT_U * (pm + 2.0 * m);
     let ss = max3(abs(s)) + eps_s;
-    let h = cross(d, e2);
+    let h = k3.xyz;
     let eps_h = 6.0 * CERT_U * es + 2.0 * eps_e;
     let hs = 2.0 * (1.0 + CERT_U) * es + eps_h;
-    let det = dot(e1, h);
-    let eps_det = CERT_SAFETY * (9.0 * CERT_U * es * hs + 3.0 * (eps_e * hs + es * eps_h)) + CERT_TINY;
+    let det = k3.w;
+    let eps_det = k2.w;
     let adet = abs(det);
     let det_state = cert_ge(adet, eps_det, CPU_EPS);
     if (det_state == CERT_FALSE) { return r; }
@@ -127,13 +135,9 @@ fn cert_ray_triangle(o: vec3<f32>, d: vec3<f32>, a: vec3<f32>, b: vec3<f32>, c: 
     return r;
 }
 
-// AI-FUNC-SUMMARY: Load triangle i from the flat f32 buffer and run the certified test with the precomputed query magnitude pm; returns CertHit.
+// AI-FUNC-SUMMARY: Run the certified test for triangle i from its precomputed constants with the precomputed query magnitude pm; returns CertHit.
 fn cert_triangle(i: u32, point: vec3<f32>, dir: vec3<f32>, pm: f32) -> CertHit {
-    let base = i * 9u;
-    let a = vec3<f32>(triangles[base], triangles[base + 1u], triangles[base + 2u]);
-    let b = vec3<f32>(triangles[base + 3u], triangles[base + 4u], triangles[base + 5u]);
-    let c = vec3<f32>(triangles[base + 6u], triangles[base + 7u], triangles[base + 8u]);
-    return cert_ray_triangle(point, dir, a, b, c, pm);
+    return cert_ray_triangle(point, dir, i, pm);
 }
 
 // AI-FUNC-SUMMARY: Recover certified parity after more than 64 raw hits with constant storage: one bound pass, then repeated nearest selection that proves every consecutive gap exceeds the CPU 1e-8 dedup band; returns 0/1 or CERT_UNKNOWN.

@@ -1,5 +1,8 @@
 //! Logical MC GPU peak accounting, including retained capacity and pending uploads.
 
+/// GPU bytes per triangle: the raw 9-float buffer (36) plus the certified shaders' 16-float constants (64).
+pub(crate) const TRIANGLE_BYTES: u64 = 36 + 64;
+
 pub(crate) const MC_BLOCK_SAMPLES: usize = 256;
 pub(crate) const MC_RADIUS_BATCH: usize = 128;
 pub(crate) const MC_PARAMS_BYTES: u64 = 608;
@@ -26,7 +29,7 @@ pub(crate) fn mc_evaluation_peak(
     let overflow = || "GPU MC working-set size overflow".to_string();
     let triangles = u64::try_from(faces)
         .ok()
-        .and_then(|n| n.checked_mul(36))
+        .and_then(|n| n.checked_mul(TRIANGLE_BYTES))
         .ok_or_else(overflow)?;
     let output = r_max
         .checked_add(1)
@@ -93,15 +96,15 @@ mod tests {
     fn mc_budget_counts_growth_and_pending_uploads() {
         assert_eq!(
             mc_evaluation_peak(4, 4, 0, 0, 2, 1, 200).unwrap(),
-            4 + 72 + 4 * (4 + 8) + 72 + 1216 + 2 * (4 + 28 * 1024)
+            4 + 200 + 4 * (4 + 8) + 200 + 1216 + 2 * (4 + 28 * 1024)
         );
         assert_eq!(
             mc_evaluation_peak(720, 3200, 144, 0, 1, 0, 200).unwrap(),
-            720 + 4 * 3200 + 144 + 36 + 1216 + 2 * (4 + 28 * 1024)
+            720 + 4 * 3200 + 144 + 100 + 1216 + 2 * (4 + 28 * 1024)
         );
         assert_eq!(
             mc_evaluation_peak(720, 3200, 144, 1_000_000, 1, 0, 200).unwrap(),
-            720 + 4 * 3200 + 144 + 36 + 1216 + 2_000_000
+            720 + 4 * 3200 + 144 + 100 + 1216 + 2_000_000
         );
         assert!(mc_evaluation_peak(4, 4, u64::MAX, 0, 0, 0, 200).is_err());
         assert!(mc_evaluation_peak(4, 4, 0, 0, usize::MAX, 0, 200).is_err());

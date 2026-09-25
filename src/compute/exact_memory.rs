@@ -1,5 +1,8 @@
 //! Conservative logical working-set planning for one fresh resident GPU exact evaluation.
 
+/// GPU bytes per triangle: the raw 9-float buffer (36) plus the certified shaders' 16-float constants (64).
+const TRIANGLE_BYTES: u64 = 36 + 64;
+
 pub(crate) const EXACT_MAX_PARTIALS: usize = 200_000;
 pub(crate) const VOXEL_UNCERTAIN_INITIAL: usize = 1024;
 pub(crate) const VOXEL_UNCERTAIN_PER_CELLS: usize = 64;
@@ -28,7 +31,7 @@ impl ExactMemoryPlan {
         let overflow = || "GPU exact working-set size overflow".to_string();
         let triangles = u64::try_from(faces)
             .ok()
-            .and_then(|n| n.checked_mul(36))
+            .and_then(|n| n.checked_mul(TRIANGLE_BYTES))
             .ok_or_else(overflow)?
             .max(4);
         let occupancy = u64::try_from(cells)
@@ -85,7 +88,7 @@ mod tests {
     // AI-FUNC-SUMMARY: Check known resource components, batch shrinking, minimum infeasibility and overflow without allocating GPU resources.
     #[test]
     fn exact_budget_selects_bounded_batches() {
-        let base = 12 * 36 * 2 + 1000 * 4 + 128 + 2 * 4 * 1025 + 64;
+        let base = 12 * (36 + 64) * 2 + 1000 * 4 + 128 + 2 * 4 * 1025 + 64;
         assert_eq!(exact_cert_bytes(1000), 2 * 4 * 1025 + 64);
         assert_eq!(exact_cert_bytes(640_000), 2 * 4 * 10_001 + 64);
         let full = ExactMemoryPlan::new(12, 1000, None).unwrap();

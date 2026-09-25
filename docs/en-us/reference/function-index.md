@@ -265,6 +265,7 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `GpuCertificationStats` (+ `recompute_ratio`, `describe`, `accumulate`) | GPU | `src/gpu/certify.rs` | Cumulative certification counters and CPU recompute ratio. |
 | `CertReference` (+ `new`, `params_tail`, `classify`) | GPU | `src/gpu/certify.rs` | Origin-shifted f64 CPU reference and exact f32 early-out bounds. |
 | `f32_at_least` / `f32_at_most` | GPU | `src/gpu/certify.rs` | Directed f64-to-f32 rounding. |
+| `triangle_constants` / `TRI_CONST_FLOATS` | GPU | `src/gpu/certify.rs` | Host-precomputed query-independent certified-test terms, 16 f32 per triangle (`a, m, e1, es, e2, eps_det, h, det`) for the fixed ray direction. |
 | `GpuS2Pipeline::certification_stats` | GPU | `src/gpu/s2.rs` | Cumulative MC certification counters. |
 | `GpuS2Pipeline::dispatch_batch` | GPU | `src/gpu/s2.rs` | Dispatch one radius batch and read the uncertain counter. |
 | `GpuS2Pipeline::resolve_uncertain` | GPU | `src/gpu/s2.rs` | CPU re-evaluation of uncertain samples at exact GPU points. |

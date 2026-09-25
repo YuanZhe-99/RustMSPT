@@ -262,6 +262,8 @@ GPU exact 现使用 shell_offset_iter，单个半径内部也只保留嵌套范�
 
 MC 着色器（`s2_monte_carlo.wgsl`）与体素化着色器（`voxelize.wgsl`）不再直接采用 f32 奇偶判定。每个查询被分为**确定在外**、**确定在内**或**不确定**三类；所有不确定查询由主机用未改动的 CPU f64 判定（`point_inside_mesh` / `PreparedMeshQuery::contains_point`）在**同一点**重新计算。因此认证后的 GPU 结果与 CPU 参考逐查询完全一致。
 
+**逐三角形常量（§77）。** 每次派发的射线方向固定，因此测试中不涉及查询点的部分——边 `e1`、`e2`，幅值界 `m` 与 `es`，`h = d x e2`，`det = e1 . h` 与 `eps_det`——在主机上按三角形计算一次（`certify::triangle_constants`），着色器从每三角形 16 个浮点的缓冲读取。误差界是针对任意求值顺序下正确舍入的 f32 运算推导的，对主机计算与着色器计算同样成立；`precomputed_terms_respect_their_error_bounds` 在所有对抗性 fixture 上检查 f32 行列式与其 f64 值的差不超过该界。已认证的答案仍与 CPU 完全一致，不确定的查询仍在 CPU 上重算。
+
 **参考定义。** 参考是 CPU 判定作用于以 GPU 原点（`bbox.min`）在 f64 中平移后的网格（`CertReference`），查询点是 GPU 实际使用的 f32 点提升为 f64。MC 点即着色器自身的 `p`/`q`（每个不确定样本都回传其位模式）；体素中心为 `(f32(i) + 0.5) * pitch`，两次均为正确舍入运算，主机 `voxel_center` 逐位复现。着色器与 CPU 阈值完全一致：`|det| > 1e-10`、`u ∈ [-1e-10, 1+1e-10]`、`v >= -1e-10`、`u+v <= 1+1e-10`、`t > 1e-10`、锚定 `1e-8` 命中去重，以及 `网格 bbox ± 1e-9` 提前排除。原 GPU 专用的 `1e-6` 容差已删除。
 
 **精确提前排除。** 主机把 f64 阈值 `bb.min - 1e-9` 向上、`bb.max + 1e-9` 向下舍入到 f32（`f32_at_least`/`f32_at_most`）。对任意 f32 点 `p`，`p < ceil32(L)` 当且仅当 `p < L`，`p > floor32(H)` 当且仅当 `p > H`，因此该测试是精确的，而非有界近似。

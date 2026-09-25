@@ -39,6 +39,7 @@
 | `GpuCertificationStats`（含 `recompute_ratio`、`describe`、`accumulate`） | `src/gpu/certify.rs` | 累计认证计数与 CPU 重算比例。 |
 | `CertReference`（含 `new`、`params_tail`、`classify`、仅测试的 `mesh`） | `src/gpu/certify.rs` | 原点平移的 f64 CPU 参考与精确 f32 提前排除界。 |
 | `f32_at_least` / `f32_at_most` | `src/gpu/certify.rs` | 定向 f64→f32 舍入，使 f32 比较等价于 f64 比较。 |
+| `triangle_constants` / `TRI_CONST_FLOATS` | `src/gpu/certify.rs` | 主机预计算的、与查询无关的认证测试项，每个三角形 16 个 f32（`a, m, e1, es, e2, eps_det, h, det`），对应固定射线方向。 |
 | `GpuS2Pipeline::certification_stats` | `src/gpu/s2.rs` | MC 累计认证计数。 |
 | `GpuS2Pipeline::dispatch_batch` | `src/gpu/s2.rs` | 清零不确定计数器、dispatch 一个半径批次、复制结果与列表并读取计数器。 |
 | `GpuS2Pipeline::resolve_uncertain` | `src/gpu/s2.rs` | 在精确 GPU 点上用 CPU 判定重算不确定样本。 |
@@ -259,7 +260,8 @@ MC bbox 尺寸转为 f32 后必须有限且为正。这里检查设备限制，�
 
 - `point_inside(point: vec3<f32>) -> u32`：返回 0（外）、1（内）或 `CERT_UNKNOWN`（2）。先做精确 f32 网格 bbox 排除，再逐三角形认证命中（`cert_triangle`）；任一三角形不确定则查询不确定。保留排序 64 次命中的快速路径，并要求排序后每个相邻间隔超过 `1e-8 + 2 max(err_t) + u t`。在**第 65 次确定命中**时调用 `point_inside_overflow`。容量计数包含重复三角形命中。
 - `point_inside_overflow(point, dir, pm) -> u32`：一轮计算最大命中距离误差界；之后每步选择上一个之后的最近命中，并统计其去重带内的命中数，多于一个即不确定。辅助空间为常数，工作量 O(T x U)。
-- `cert_ray_triangle(o, d, a, b, c, pm) -> CertHit {t, err, state}`：采用 CPU 阈值与前向误差界的 Moller-Trumbore；先用无除法分子测试排除近平行远处三角形。误差界推导见算法文档“GPU 射线奇偶性的 f32 认证”。
+- `cert_ray_triangle(o, d, i, pm) -> CertHit {t, err, state}`：采用 CPU 阈值与前向误差界的 Moller-Trumbore；先用无除法分子测试排除近平行远处三角形。误差界推导见算法文档“GPU 射线奇偶性的 f32 认证”。
+- 自 PLAN.Performance.md §77 起，认证 MC（binding 5）与体素（binding 4）着色器读取 `tri_const`——由 `certify::triangle_constants` 预计算的每三角形 16 个 f32，不再对每个（查询，三角形）对重复计算与查询无关的项（边、幅值界、`h = d x e2`、`det` 及其误差界）；每次派发的射线方向是一个常量。binding 0 的原始 9 浮点缓冲仍保留，供冻结的未认证着色器与逐样本参考着色器使用。误差界针对正确舍入的 f32 运算推导，对主机端计算同样成立，GPU 无法认证的查询仍由 CPU 重算，因此计数始终等于 CPU 参考。MC 管线的部分三角形上传会同步写入常量缓冲；内存规划按每三角形 36 + 64 字节计。llvmpipe 上 particles.stl 的认证/未认证耗时比：MC 2.41× → 1.34×，体素 2.10× → 1.57×；硬件 GPU 预期在此处受 ALU 限制，但未实测。
 
 去重规则与 GPU 快速路径相同：比较的是上一个**保留**距离，而非上一个原始距离。CPU 的 `1e-8` 容差和 f64 判定仍有区别。
 恢复不丢弃、不重抽 MC 样本，MC 的 bbox 预筛仍保留。T 个三角形、U 个不同正向命中的恢复成本为 O(T×U)，最坏 O(T²)；复杂场景可能明显变慢。这是正确性恢复，不代表通用 GPU 提速，也未解决设备或 map 错误。
