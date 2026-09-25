@@ -4,13 +4,60 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
+/// Whether an adapter is real graphics hardware or a software rasterizer running on the CPU.
+///
+/// Results on a software adapter are as correct as on hardware - certification recomputes anything
+/// uncertain - but its timings say nothing about GPU performance, so every report and test says which it was.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AdapterClass {
+    Software,
+    Hardware,
+}
+
+impl AdapterClass {
+    // AI-FUNC-SUMMARY: Lowercase name of the class for logs; returns "software" or "hardware"; side effects: none.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AdapterClass::Software => "software",
+            AdapterClass::Hardware => "hardware",
+        }
+    }
+}
+
+// AI-FUNC-SUMMARY: Classify an adapter as software (CPU device type, or a known software rasterizer by name) or hardware; returns AdapterClass; side effects: none.
+// Notes: Some software drivers report DeviceType::Other, so the name check covers llvmpipe, lavapipe, SwiftShader,
+// softpipe and the Microsoft Basic Render Driver as well.
+pub fn classify_adapter(info: &wgpu::AdapterInfo) -> AdapterClass {
+    let name = info.name.to_lowercase();
+    let software_name = ["llvmpipe", "lavapipe", "swiftshader", "softpipe", "microsoft basic render"]
+        .iter()
+        .any(|n| name.contains(n));
+    if info.device_type == wgpu::DeviceType::Cpu || software_name {
+        AdapterClass::Software
+    } else {
+        AdapterClass::Hardware
+    }
+}
+
 pub struct GpuContext {
     adapter_name: String,
+    adapter_class: AdapterClass,
+    adapter_backend: String,
     max_buffer_size: u64,
     max_storage_buffer_binding_size: u64,
 }
 
 impl GpuContext {
+    // AI-FUNC-SUMMARY: Whether the probed adapter is software or hardware; returns AdapterClass; side effects: none.
+    pub fn adapter_class(&self) -> AdapterClass {
+        self.adapter_class
+    }
+
+    // AI-FUNC-SUMMARY: One-line description of the probed adapter (name, backend, class); returns String; side effects: none.
+    pub fn describe(&self) -> String {
+        format!("name={} backend={} class={}", self.adapter_name, self.adapter_backend, self.adapter_class.as_str())
+    }
+
     // AI-FUNC-SUMMARY: Return capabilities for this GPU context; returns BackendCaps; side effects: None.
     pub fn caps(&self) -> BackendCaps {
         BackendCaps {
@@ -151,6 +198,7 @@ fn shared_device_for(filter: Option<String>) -> Result<Arc<SharedGpuDevice>, Str
         }
         cache.remove(&filter);
     }
+    let started = std::time::Instant::now();
     let adapter = select_adapter(filter.as_deref())?;
     let info = adapter.get_info();
     let limits = adapter.limits();
@@ -159,6 +207,16 @@ fn shared_device_for(filter: Option<String>) -> Result<Arc<SharedGpuDevice>, Str
     let flag = lost.clone();
     device.set_device_lost_callback(move |_, _| flag.store(true, Ordering::Release));
     DEVICE_CREATIONS.fetch_add(1, Ordering::Relaxed);
+    super::runtime::record_init(started.elapsed());
+    let class = classify_adapter(&info);
+    println!(
+        "[Info] GPU adapter: name={} backend={:?} type={:?} class={}{}",
+        info.name,
+        info.backend,
+        info.device_type,
+        class.as_str(),
+        if class == AdapterClass::Software { " (results exact; timings not representative of GPU hardware)" } else { "" }
+    );
     let shared = Arc::new(SharedGpuDevice {
         device,
         queue,
@@ -181,6 +239,8 @@ pub fn try_init_gpu() -> Result<GpuContext, GpuInitError> {
     let shared = shared_gpu_device()?;
     Ok(GpuContext {
         adapter_name: shared.info.name.clone(),
+        adapter_class: classify_adapter(&shared.info),
+        adapter_backend: format!("{:?}", shared.info.backend),
         max_buffer_size: shared.limits.max_buffer_size,
         max_storage_buffer_binding_size: shared.limits.max_storage_buffer_binding_size as u64,
     })

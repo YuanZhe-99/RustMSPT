@@ -253,6 +253,10 @@
 | `point_inside_overflow` (voxelize.wgsl) | GPU | `src/gpu/shaders/voxelize.wgsl` | 认证的超 64 命中恢复，证明每个间隔超过 CPU 去重带。 |
 | `cert_ray_triangle` / `cert_triangle` / `cert_ge` / `cert_ratio_err` / `max3`（MC 与体素着色器） | GPU | `src/gpu/shaders/*.wgsl` | 带前向误差界的 Moller-Trumbore，将每个 CPU 阈值判为真/假/未知。 |
 | `record_uncertain` (s2_monte_carlo.wgsl) | GPU | `src/gpu/shaders/s2_monte_carlo.wgsl` | 将（逻辑 id、精确 p、精确 q）追加到不确定列表。 |
+| `AdapterClass` / `classify_adapter` | GPU | `src/gpu/context.rs` | 区分软件适配器（CPU 设备类型或已知软件光栅化器名：llvmpipe、lavapipe、SwiftShader、softpipe、Microsoft Basic Render）与硬件适配器。 |
+| `GpuContext::adapter_class` / `GpuContext::describe` | GPU | `src/gpu/context.rs` | 探测到的适配器类别与一行 `name= backend= class=` 描述。 |
+| `GpuTransferStats` / `gpu_transfer_stats` | GPU | `src/gpu/runtime.rs` | 进程级上传字节/次数、回读字节/次数、阻塞等待回读的时间（执行加传输，不是内核时间）与设备初始化时间；`describe()` 即 `main` 在任何 GPU 运行后打印的 `[Timing] gpu ...` 行。 |
+| `CountedWrite::write_counted` | GPU | `src/gpu/runtime.rs` | 会计数的 `queue.write_buffer`；crate 内所有 GPU 上传都经过它。 |
 | `GpuCertificationStats`（含 `recompute_ratio`、`describe`、`accumulate`） | GPU | `src/gpu/certify.rs` | 累计认证计数与 CPU 重算比例。 |
 | `CertReference`（含 `new`、`params_tail`、`classify`） | GPU | `src/gpu/certify.rs` | 原点平移的 f64 CPU 参考与精确 f32 提前排除界。 |
 | `f32_at_least` / `f32_at_most` | GPU | `src/gpu/certify.rs` | 定向 f64→f32 舍入。 |
@@ -894,6 +898,8 @@
 | `SceneRenderMemory::check_buffers` | `src/compute/render_memory.rs:93` | Checked scene preview workset, budget and buffer planning without allocation. |
 
 | `mc_evaluation_peak` | `src/compute/mc_memory.rs:4` | Check logical MC peak including retained capacity and pending uploads. |
+| `mc_evaluation_peak_batched` | `src/compute/mc_memory.rs:4` | `src/compute/mc_memory.rs` | 以半径批大小（每次派发的半径数）为参数的 `mc_evaluation_peak`。 |
+| `mc_largest_batch` | `src/compute/mc_memory.rs:4` | `src/compute/mc_memory.rs` | MC 峰值在 MiB 上限内的最大半径批（1..=128）；只有每次派发一个半径仍放不下时才报错。 |
 
 | `check_mc_budget` | `src/compute/mc_memory.rs:44` | Check logical MC peak including retained capacity and pending uploads. |
 

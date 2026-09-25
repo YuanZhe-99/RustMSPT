@@ -172,8 +172,11 @@ impl MeasurePipeline {
             let estimated = if method == "exact" {
                 crate::compute::exact_memory::ExactMemoryPlan::new(mesh.faces.len(), voxel_count, params.acceleration.gpu_memory_limit_mb).ok().map(|plan| plan.peak_bytes)
             } else {
-                crate::compute::mc_memory::mc_evaluation_peak(
-                    4, 4, 0, 0, mesh.faces.len(), params.r_max, samples,
+                // The smallest feasible working set: one radius per dispatch. The pipeline then plans the
+                // largest radius batch the budget allows, so a tight budget shrinks batches instead of
+                // sending the whole method to the CPU.
+                crate::compute::mc_memory::mc_evaluation_peak_batched(
+                    4, 4, 0, 0, mesh.faces.len(), params.r_max, samples, 1,
                 ).ok()
             };
             let supports_gpu =
@@ -204,6 +207,7 @@ impl MeasurePipeline {
                     crate::gpu::GpuS2Pipeline::new(&mesh, bbox)
                         .and_then(|mut gpu| {
                             gpu.set_memory_limit_mb(params.acceleration.gpu_memory_limit_mb);
+                            gpu.check_evaluation_budget(&mesh, params.r_max, samples, params.acceleration.gpu_memory_limit_mb)?;
                             let s2 = gpu.calculate_s2_gpu(bbox, params.r_max, samples)?;
                             println!("[Info] measure {method} GPU {}", gpu.certification_stats().describe());
                             Ok(s2)

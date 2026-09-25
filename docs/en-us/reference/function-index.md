@@ -265,6 +265,10 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `point_inside_overflow` (voxelize.wgsl) | GPU | `src/gpu/shaders/voxelize.wgsl` | Certified >64-hit recovery proving every gap exceeds the CPU dedup band. |
 | `cert_ray_triangle` / `cert_triangle` / `cert_ge` / `cert_ratio_err` / `max3` (MC and voxel shaders) | GPU | `src/gpu/shaders/*.wgsl` | Moller-Trumbore with forward error bounds deciding each CPU threshold as true/false/unknown. |
 | `record_uncertain` (s2_monte_carlo.wgsl) | GPU | `src/gpu/shaders/s2_monte_carlo.wgsl` | Append (logical id, exact p, exact q) to the uncertain list. |
+| `AdapterClass` / `classify_adapter` | GPU | `src/gpu/context.rs` | Software (CPU device type or a known software rasterizer name: llvmpipe, lavapipe, SwiftShader, softpipe, Microsoft Basic Render) vs hardware adapter. |
+| `GpuContext::adapter_class` / `GpuContext::describe` | GPU | `src/gpu/context.rs` | The probed adapter's class and a one-line `name= backend= class=` description. |
+| `GpuTransferStats` / `gpu_transfer_stats` | GPU | `src/gpu/runtime.rs` | Process-wide upload bytes/calls, readback bytes/calls, blocked readback wait (execution plus transfer, not kernel time) and device init time; `describe()` is the `[Timing] gpu ...` line `main` prints after any GPU run. |
+| `CountedWrite::write_counted` | GPU | `src/gpu/runtime.rs` | `queue.write_buffer` that counts the upload; every GPU upload in the crate uses it. |
 | `GpuCertificationStats` (+ `recompute_ratio`, `describe`, `accumulate`) | GPU | `src/gpu/certify.rs` | Cumulative certification counters and CPU recompute ratio. |
 | `CertReference` (+ `new`, `params_tail`, `classify`) | GPU | `src/gpu/certify.rs` | Origin-shifted f64 CPU reference and exact f32 early-out bounds. |
 | `f32_at_least` / `f32_at_most` | GPU | `src/gpu/certify.rs` | Directed f64-to-f32 rounding. |
@@ -967,6 +971,8 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `SceneRenderMemory::check_buffers` | `src/compute/render_memory.rs:93` | Checked scene preview workset, budget and buffer planning without allocation. |
 
 | `mc_evaluation_peak` | `src/compute/mc_memory.rs:4` | Check logical MC peak including retained capacity and pending uploads. |
+| `mc_evaluation_peak_batched` | `src/compute/mc_memory.rs:4` | `src/compute/mc_memory.rs` | `mc_evaluation_peak` with the radius batch (radii per dispatch) as a parameter. |
+| `mc_largest_batch` | `src/compute/mc_memory.rs:4` | `src/compute/mc_memory.rs` | Largest radius batch (1..=128) whose MC peak fits the MiB limit; errors only when one radius per dispatch does not fit. |
 
 | `check_mc_budget` | `src/compute/mc_memory.rs:44` | Check logical MC peak including retained capacity and pending uploads. |
 

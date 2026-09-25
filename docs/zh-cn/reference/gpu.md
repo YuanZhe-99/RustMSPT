@@ -37,6 +37,10 @@
 | `point_inside_overflow` (voxelize.wgsl) | `src/gpu/shaders/voxelize.wgsl` | 认证的超 64 命中恢复，证明每个相邻间隔超过 CPU 去重带。 |
 | `cert_ray_triangle` / `cert_triangle` / `cert_ge` / `cert_ratio_err` / `max3`（两个着色器） | `src/gpu/shaders/*.wgsl` | 带前向误差界的 Moller-Trumbore，将每个 CPU 阈值判为真/假/未知。 |
 | `record_uncertain` (s2_monte_carlo.wgsl) | `src/gpu/shaders/s2_monte_carlo.wgsl` | 将（逻辑 id、精确 p、精确 q）追加到不确定列表。 |
+| `AdapterClass` / `classify_adapter` | `src/gpu/context.rs` | 区分软件适配器（CPU 设备类型或已知软件光栅化器名：llvmpipe、lavapipe、SwiftShader、softpipe、Microsoft Basic Render）与硬件适配器。 |
+| `GpuContext::adapter_class` / `GpuContext::describe` | `src/gpu/context.rs` | 探测到的适配器类别与一行 `name= backend= class=` 描述。 |
+| `GpuTransferStats` / `gpu_transfer_stats` | `src/gpu/runtime.rs` | 进程级上传字节/次数、回读字节/次数、阻塞等待回读的时间（执行加传输，不是内核时间）与设备初始化时间；`describe()` 即 `main` 在任何 GPU 运行后打印的 `[Timing] gpu ...` 行。 |
+| `CountedWrite::write_counted` | `src/gpu/runtime.rs` | 会计数的 `queue.write_buffer`；crate 内所有 GPU 上传都经过它。 |
 | `GpuCertificationStats`（含 `recompute_ratio`、`describe`、`accumulate`） | `src/gpu/certify.rs` | 累计认证计数与 CPU 重算比例。 |
 | `CertReference`（含 `new`、`params_tail`、`classify`、仅测试的 `mesh`） | `src/gpu/certify.rs` | 原点平移的 f64 CPU 参考与精确 f32 提前排除界。 |
 | `f32_at_least` / `f32_at_most` | `src/gpu/certify.rs` | 定向 f64→f32 舍入，使 f32 比较等价于 f64 比较。 |
@@ -618,9 +622,13 @@ checked planner 按可见三角形每面 120、启用 segment 每条 64、marker
 
 优化器的共享 GPU MC 管线以空几何启动，各阶段上传实际求值网格。mc_evaluation_peak 保守计算 triangle、四个 output/readback、608 字节参数缓冲、不确定样本列表及其 staging、待执行队列上传以及本次几何/参数上传；增长时计入旧容量加新容量。启动按输入面数和最大配置阶段样本数检查，每次求值在同一 GPU mutex 内重新检查实际保留容量后才上传。因此更大的参考网格或保留峰值也可能触发原有同方法 CPU 回退或严格阶段错误。待上传字节仅在成功回读后清零。驱动内部及 CPU 网格/读回向量不属于逻辑 GPU 预算；分批和自动缩容仍待完成，release_output_capacity 提供显式释放。本节取代早先“显式预算始终回退”的说明。
 
+**按预算确定半径批（PLAN.Performance.md §79 第 5 项）。** `GpuS2Pipeline::check_evaluation_budget` 不再只做接受/拒绝：它保存峰值在上限内的最大半径批（`mc_largest_batch`，每次派发 1..=128 个半径），派发使用该批大小。计数对任意批大小都相同（逻辑样本编号是全局的），因此预算紧张时缩小批次而不是把该方法交给 CPU；只有每次派发一个半径仍超限时才拒绝。measure 与优化器启动检查出于同一原因按单半径峰值判断 GPU 是否可行，measure 并在求值前先规划批大小。逻辑样本编号 `radius * samples + sample` 按设计保持 u32——它是着色器随机数的键，放宽会改变所有样本流——因此 `(r_max + 1) * samples > u32::MAX` 仍是显式错误。测试：`a_tight_budget_shrinks_the_radius_batch_and_keeps_the_counts`（1 MiB 迫使批小于 128；计数与无预算时相同）与 `largest_batch_is_the_exact_budget_boundary`。
+
 证书列表的扩容现在也纳入预算（PLAN.Performance.md §72）。`GpuS2Pipeline::set_memory_limit_mb` 保存调用方的上限（optimize 与 measure 在 `check_evaluation_budget` 旁设置）；在扩容溢出的不确定列表之前，管线检查 `mc_regrowth_peak(retained_peak, entries)`——保留峰值加上新列表及其 staging（旧的一对此时仍存活）——超出则返回带 `certification list regrowth` 字样的错误，由调用方的回退策略处理。体素管线新增 `GpuVoxelPipeline::set_regrowth_headroom`，exact 路径把它设为预算减去计划峰值；超出计划列表的扩容最多只能增加这么多字节。测试：`mc_uncertain_list_regrowth_respects_the_budget`、`uncertain_list_regrowth_respects_the_budget_headroom`。
 
 | `mc_evaluation_peak` | `src/compute/mc_memory.rs:4` | Check logical MC peak including retained capacity and pending uploads. |
+| `mc_evaluation_peak_batched` | `src/compute/mc_memory.rs` | 以半径批大小（每次派发的半径数）为参数的 `mc_evaluation_peak`。 |
+| `mc_largest_batch` | `src/compute/mc_memory.rs` | MC 峰值在 MiB 上限内的最大半径批（1..=128）；只有每次派发一个半径仍放不下时才报错。 |
 
 | `check_mc_budget` | `src/compute/mc_memory.rs:44` | Check logical MC peak including retained capacity and pending uploads. |
 

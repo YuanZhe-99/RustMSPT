@@ -17,6 +17,7 @@ pub(crate) fn mc_uncertain_bytes(entries: usize) -> u64 {
 }
 
 // AI-FUNC-SUMMARY: Bound an update-plus-evaluation peak using current triangle/output/uncertain-list capacity, queued upload bytes and next workload; outputs are sized for one radius batch of at most MC_RADIUS_BATCH radii; the certification list and its staging count at their retained size or the initial capacity; count old plus new allocations conservatively on growth and reject arithmetic overflow without allocating. List regrowth after an uncertain overflow is checked separately against the same budget with mc_regrowth_peak when the pipeline has one (GpuS2Pipeline::set_memory_limit_mb).
+#[cfg(any(feature = "gpu", test))]
 pub(crate) fn mc_evaluation_peak(
     triangle_capacity: u64,
     output_capacity: u64,
@@ -26,6 +27,21 @@ pub(crate) fn mc_evaluation_peak(
     r_max: usize,
     samples: usize,
 ) -> Result<u64, String> {
+    mc_evaluation_peak_batched(triangle_capacity, output_capacity, pending_upload, uncertain_capacity, faces, r_max, samples, MC_RADIUS_BATCH)
+}
+
+// AI-FUNC-SUMMARY: mc_evaluation_peak with the radius batch (radii per dispatch, 1..=MC_RADIUS_BATCH) as a parameter; returns the peak or an overflow error; side effects: none.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn mc_evaluation_peak_batched(
+    triangle_capacity: u64,
+    output_capacity: u64,
+    pending_upload: u64,
+    uncertain_capacity: u64,
+    faces: usize,
+    r_max: usize,
+    samples: usize,
+    batch: usize,
+) -> Result<u64, String> {
     let overflow = || "GPU MC working-set size overflow".to_string();
     let triangles = u64::try_from(faces)
         .ok()
@@ -33,7 +49,7 @@ pub(crate) fn mc_evaluation_peak(
         .ok_or_else(overflow)?;
     let output = r_max
         .checked_add(1)
-        .map(|n| n.min(MC_RADIUS_BATCH))
+        .map(|n| n.min(batch.clamp(1, MC_RADIUS_BATCH)))
         .and_then(|n| n.checked_mul(samples.max(200).div_ceil(MC_BLOCK_SAMPLES)))
         .and_then(|n| u64::try_from(n).ok())
         .and_then(|n| n.checked_mul(4))
@@ -73,6 +89,44 @@ pub(crate) fn mc_regrowth_peak(retained_peak: u64, entries: usize) -> Result<u64
         .ok_or_else(|| "GPU MC working-set size overflow".to_string())
 }
 
+// AI-FUNC-SUMMARY: The largest radius batch (1..=MC_RADIUS_BATCH) whose evaluation peak fits the MiB limit, or MC_RADIUS_BATCH without one; returns the batch or the one-radius error; side effects: none.
+// Notes: Counts are identical for every batch size (logical sample ids are global), so shrinking the batch is
+// always preferable to falling back; only a peak that one radius per dispatch still exceeds is an error.
+#[allow(clippy::too_many_arguments)]
+#[cfg(any(feature = "gpu", test))]
+pub(crate) fn mc_largest_batch(
+    triangle_capacity: u64,
+    output_capacity: u64,
+    pending_upload: u64,
+    uncertain_capacity: u64,
+    faces: usize,
+    r_max: usize,
+    samples: usize,
+    limit_mb: Option<u64>,
+) -> Result<usize, String> {
+    let fits = |batch: usize| -> Result<bool, String> {
+        let peak = mc_evaluation_peak_batched(triangle_capacity, output_capacity, pending_upload, uncertain_capacity, faces, r_max, samples, batch)?;
+        Ok(check_mc_budget(peak, limit_mb).is_ok())
+    };
+    if fits(MC_RADIUS_BATCH)? {
+        return Ok(MC_RADIUS_BATCH);
+    }
+    if !fits(1)? {
+        let peak = mc_evaluation_peak_batched(triangle_capacity, output_capacity, pending_upload, uncertain_capacity, faces, r_max, samples, 1)?;
+        return check_mc_budget(peak, limit_mb).map(|()| 1);
+    }
+    let (mut lo, mut hi) = (1usize, MC_RADIUS_BATCH);
+    while hi - lo > 1 {
+        let mid = (lo + hi) / 2;
+        if fits(mid)? {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    Ok(lo)
+}
+
 // AI-FUNC-SUMMARY: Check a logical GPU MC peak against an optional MiB cap; equality is allowed, cap conversion overflow and excess return errors without GPU probing.
 pub(crate) fn check_mc_budget(peak: u64, limit_mb: Option<u64>) -> Result<(), String> {
     if let Some(mb) = limit_mb {
@@ -91,6 +145,20 @@ pub(crate) fn check_mc_budget(peak: u64, limit_mb: Option<u64>) -> Result<(), St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // AI-FUNC-SUMMARY: mc_largest_batch returns the full batch when it fits, the exact boundary batch under a tight budget (peak(b) fits, peak(b+1) does not), and the one-radius error when nothing fits.
+    #[test]
+    fn largest_batch_is_the_exact_budget_boundary() {
+        let peak = |b: usize| mc_evaluation_peak_batched(4, 4, 0, 0, 100, 300, 300_000, b).unwrap();
+        assert_eq!(mc_largest_batch(4, 4, 0, 0, 100, 300, 300_000, None).unwrap(), MC_RADIUS_BATCH);
+        let limit_mb = 1u64;
+        let limit = limit_mb * 1024 * 1024;
+        assert!(peak(MC_RADIUS_BATCH) > limit && peak(1) <= limit, "fixture must straddle the budget");
+        let b = mc_largest_batch(4, 4, 0, 0, 100, 300, 300_000, Some(limit_mb)).unwrap();
+        assert!(b >= 1 && b < MC_RADIUS_BATCH);
+        assert!(peak(b) <= limit && peak(b + 1) > limit, "batch {b}: {} / {}", peak(b), peak(b + 1));
+        assert!(mc_largest_batch(4, 4, 0, 0, 100, 300, 300_000, Some(0)).is_err());
+    }
     // AI-FUNC-SUMMARY: Verify cold growth, retained high-water capacities, queued uploads, exact budget edges and oversized arithmetic using independent byte counts.
     #[test]
     fn mc_budget_counts_growth_and_pending_uploads() {

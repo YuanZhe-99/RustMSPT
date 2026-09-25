@@ -1,3 +1,5 @@
+use super::runtime::CountedWrite;
+
 const WORKGROUP_SIZE: u32 = 256;
 const MAX_OFFSETS: usize = crate::compute::exact_memory::EXACT_MAX_PARTIALS;
 
@@ -500,7 +502,7 @@ impl GpuShellS2Pipeline {
                     });
                 }
                 self.queue
-                    .write_buffer(&self.occupancy_buffer, 0, occ_bytes);
+                    .write_counted(&self.occupancy_buffer, 0, occ_bytes);
             }
 
             let mut shell_sums = vec![0.0f64; r_max + 1];
@@ -521,7 +523,7 @@ impl GpuShellS2Pipeline {
                 let entries = build_offset_buffer(shell_offsets);
                 let entries_bytes = bytemuck::cast_slice::<OffsetEntry, u8>(&entries);
                 self.queue
-                    .write_buffer(&self.offsets_buffer, 0, entries_bytes);
+                    .write_counted(&self.offsets_buffer, 0, entries_bytes);
 
                 let mut param_data = Vec::with_capacity(24);
                 param_data.extend_from_slice(&total_offsets.to_le_bytes());
@@ -530,7 +532,7 @@ impl GpuShellS2Pipeline {
                 param_data.extend_from_slice(&nz.to_le_bytes());
                 param_data.extend_from_slice(&tiles.to_le_bytes());
                 param_data.extend_from_slice(&tile_voxels.to_le_bytes());
-                self.queue.write_buffer(&self.params_buffer, 0, &param_data);
+                self.queue.write_counted(&self.params_buffer, 0, &param_data);
 
                 let reduce = self.reduce_tiles && tiles > 1;
                 let output_tiles = if reduce { 1 } else { tiles };

@@ -1,5 +1,83 @@
 static SCOPE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Process-wide GPU transfer accounting (PERF-00): every upload through `CountedWrite`, every mapped readback,
+/// the time spent blocked waiting for a readback (GPU execution plus transfer, never reported as kernel time)
+/// and shared-device initialization.
+static UPLOAD_BYTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static UPLOAD_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static READBACK_BYTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static READBACK_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static WAIT_NANOS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static INIT_NANOS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// A snapshot of the process-wide GPU transfer counters.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GpuTransferStats {
+    pub upload_bytes: u64,
+    pub upload_calls: u64,
+    pub readback_bytes: u64,
+    pub readback_calls: u64,
+    pub wait_nanos: u64,
+    pub init_nanos: u64,
+}
+
+impl GpuTransferStats {
+    // AI-FUNC-SUMMARY: One `[Timing] gpu ...` line with every counter (wait = blocked on readback: execution plus transfer); returns String; side effects: none.
+    pub fn describe(&self) -> String {
+        format!(
+            "[Timing] gpu init_seconds={:.6} upload_bytes={} upload_calls={} readback_bytes={} readback_calls={} readback_wait_seconds={:.6}",
+            self.init_nanos as f64 * 1e-9,
+            self.upload_bytes,
+            self.upload_calls,
+            self.readback_bytes,
+            self.readback_calls,
+            self.wait_nanos as f64 * 1e-9
+        )
+    }
+}
+
+// AI-FUNC-SUMMARY: Snapshot the process-wide GPU transfer counters; returns GpuTransferStats; side effects: none.
+pub fn gpu_transfer_stats() -> GpuTransferStats {
+    use std::sync::atomic::Ordering::Relaxed;
+    GpuTransferStats {
+        upload_bytes: UPLOAD_BYTES.load(Relaxed),
+        upload_calls: UPLOAD_CALLS.load(Relaxed),
+        readback_bytes: READBACK_BYTES.load(Relaxed),
+        readback_calls: READBACK_CALLS.load(Relaxed),
+        wait_nanos: WAIT_NANOS.load(Relaxed),
+        init_nanos: INIT_NANOS.load(Relaxed),
+    }
+}
+
+// AI-FUNC-SUMMARY: Add one readback (bytes, blocked wait) to the process counters; returns nothing; side effects: atomic adds.
+pub(super) fn record_readback(bytes: u64, wait: std::time::Duration) {
+    use std::sync::atomic::Ordering::Relaxed;
+    READBACK_BYTES.fetch_add(bytes, Relaxed);
+    READBACK_CALLS.fetch_add(1, Relaxed);
+    WAIT_NANOS.fetch_add(wait.as_nanos() as u64, Relaxed);
+}
+
+// AI-FUNC-SUMMARY: Add shared-device initialization time to the process counters; returns nothing; side effects: atomic add.
+pub(super) fn record_init(elapsed: std::time::Duration) {
+    INIT_NANOS.fetch_add(elapsed.as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// `queue.write_buffer` that also counts the upload; every GPU upload in the crate goes through it.
+pub(super) trait CountedWrite {
+    fn write_counted(&self, buffer: &wgpu::Buffer, offset: wgpu::BufferAddress, data: &[u8]);
+}
+
+impl CountedWrite for wgpu::Queue {
+    // AI-FUNC-SUMMARY: Queue the write and count its bytes; returns nothing; side effects: queues a GPU upload, atomic adds.
+    fn write_counted(&self, buffer: &wgpu::Buffer, offset: wgpu::BufferAddress, data: &[u8]) {
+        use std::sync::atomic::Ordering::Relaxed;
+        UPLOAD_BYTES.fetch_add(data.len() as u64, Relaxed);
+        UPLOAD_CALLS.fetch_add(1, Relaxed);
+        self.write_buffer(buffer, offset, data);
+    }
+}
+
+
 thread_local! {
     static SCOPE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
@@ -71,6 +149,7 @@ pub(super) fn read_u32_prefix(
     }
     let slice = buffer.slice(..bytes);
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    let waited = std::time::Instant::now();
     slice.map_async(wgpu::MapMode::Read, move |result| {
         let _ = sender.send(result);
     });
@@ -79,6 +158,7 @@ pub(super) fn read_u32_prefix(
         .recv()
         .map_err(|error| format!("GPU map callback unavailable: {error}"))?
         .map_err(|error| format!("GPU readback failed: {error}"))?;
+    record_readback(bytes, waited.elapsed());
     let data = slice.get_mapped_range();
     let result = bytemuck::cast_slice(&data).to_vec();
     drop(data);

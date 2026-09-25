@@ -1,5 +1,6 @@
 use crate::geometry::render::{RenderCamera, RenderProjection, RenderSettings};
 use crate::types::{Mesh, RenderedImage};
+use super::runtime::CountedWrite;
 
 const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -255,7 +256,7 @@ impl GpuRenderPipeline {
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            self.queue.write_buffer(&vertex_buffer, 0, vertex_bytes);
+            self.queue.write_counted(&vertex_buffer, 0, vertex_bytes);
 
             let is_perspective = camera.projection == RenderProjection::Perspective;
             let uniforms = RenderUniforms {
@@ -292,7 +293,7 @@ impl GpuRenderPipeline {
                 mapped_at_creation: false,
             });
             self.queue
-                .write_buffer(&uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+                .write_counted(&uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
             let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("render_bg"),
@@ -398,6 +399,7 @@ impl GpuRenderPipeline {
 
             let slice = readback.slice(..);
             let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+            let waited = std::time::Instant::now();
             slice.map_async(wgpu::MapMode::Read, move |result| {
                 let _ = sender.send(result);
             });
@@ -407,6 +409,7 @@ impl GpuRenderPipeline {
                 .recv()
                 .map_err(|e| format!("render map callback unavailable: {e}"))?
                 .map_err(|e| format!("render readback failed: {e}"))?;
+            super::runtime::record_readback(readback.size(), waited.elapsed());
             let data = slice.get_mapped_range();
             let mut rgba = vec![0u8; unpadded_bpr * height];
             for row in 0..height {

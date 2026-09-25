@@ -190,11 +190,16 @@ fn pick_config_path(config: Option<PathBuf>, file_name: &str) -> PathBuf {
 // Inputs: process CLI arguments (via clap).
 // Returns: Ok(()) on success, or pipeline/config error.
 // Side effects: Reads YAML config from disk; may write output files via pipeline execution; prints progress to stdout.
-// Notes: Invoked once as the program entry point. With the gpu feature, cached shared GPU devices are released after the subcommand returns so logical devices are destroyed before process exit.
+// Notes: Invoked once as the program entry point. With the gpu feature, a run that created a GPU device prints one `[Timing] gpu ...` transfer line, then cached shared GPU devices are released so logical devices are destroyed before process exit.
 fn main() -> anyhow::Result<()> {
     let result = run_cli();
     #[cfg(feature = "gpu")]
-    rustmspt::gpu::release_shared_gpu_devices();
+    {
+        if rustmspt::gpu::gpu_device_creation_count() > 0 {
+            println!("{}", rustmspt::gpu::gpu_transfer_stats().describe());
+        }
+        rustmspt::gpu::release_shared_gpu_devices();
+    }
     result
 }
 

@@ -5,6 +5,7 @@ use crate::geometry::render::{RenderCamera, RenderProjection};
 use crate::geometry::scene_render::SceneRenderSettings;
 use crate::meshgen::render_scene::RenderScene;
 use crate::types::{RenderedImage, Vec3};
+use super::runtime::CountedWrite;
 
 const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -516,7 +517,7 @@ impl GpuScenePipeline {
             for (index, camera) in cameras.iter().enumerate() {
                 let uniforms = self.build_uniforms(camera, settings, options);
                 self.queue
-                    .write_buffer(&uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+                    .write_counted(&uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
                 let mut encoder =
                     self.device
                         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -583,6 +584,7 @@ impl GpuScenePipeline {
 
                 let slice = readback.slice(..);
                 let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+                let waited = std::time::Instant::now();
                 slice.map_async(wgpu::MapMode::Read, move |result| {
                     let _ = sender.send(result);
                 });
@@ -591,6 +593,7 @@ impl GpuScenePipeline {
                     .recv()
                     .map_err(|e| format!("scene map callback unavailable: {e}"))?
                     .map_err(|e| format!("scene readback failed: {e}"))?;
+                super::runtime::record_readback(readback.size(), waited.elapsed());
                 let data = slice.get_mapped_range();
                 let mut rgba = vec![0u8; unpadded_bpr * height];
                 for row in 0..height {
@@ -616,7 +619,7 @@ impl GpuScenePipeline {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        self.queue.write_buffer(&buffer, 0, bytes);
+        self.queue.write_counted(&buffer, 0, bytes);
         Some(buffer)
     }
 

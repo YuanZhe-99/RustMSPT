@@ -1,4 +1,5 @@
 use crate::types::{BoundingBox, Mesh};
+use super::runtime::CountedWrite;
 
 const WORKGROUP_SIZE: u32 = 64;
 const UNCERTAIN_INITIAL: usize = crate::compute::exact_memory::VOXEL_UNCERTAIN_INITIAL;
@@ -214,7 +215,7 @@ impl GpuVoxelPipeline {
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            queue.write_buffer(&triangle_buffer, 0, tri_bytes);
+            queue.write_counted(&triangle_buffer, 0, tri_bytes);
             let const_data = super::certify::triangle_constants(&tri_data);
             let const_bytes = bytemuck::cast_slice::<f32, u8>(&const_data);
             if const_bytes.len() as u64 > device.limits().max_buffer_size
@@ -228,7 +229,7 @@ impl GpuVoxelPipeline {
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            queue.write_buffer(&tri_const_buffer, 0, const_bytes);
+            queue.write_counted(&tri_const_buffer, 0, const_bytes);
 
             let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("params"),
@@ -395,7 +396,7 @@ impl GpuVoxelPipeline {
                 pitch,
                 &self.reference.params_tail(0),
             );
-            self.queue.write_buffer(&self.params_buffer, 0, &param_data);
+            self.queue.write_counted(&self.params_buffer, 0, &param_data);
 
             let needed = plan.bytes;
             if needed > self.occupancy_buffer.size() {
@@ -491,7 +492,7 @@ impl GpuVoxelPipeline {
                         end += 1;
                     }
                     let ones = vec![1u32; end - run];
-                    self.queue.write_buffer(
+                    self.queue.write_counted(
                         &self.occupancy_buffer,
                         u64::from(occupied[run]) * 4,
                         bytemuck::cast_slice(&ones),
@@ -519,7 +520,7 @@ impl GpuVoxelPipeline {
     // Side effects: Writes 4 bytes and submits one command buffer; staging buffers hold this dispatch's results.
     fn dispatch_voxels(&mut self, dispatch: [u32; 2], needed: u64, count_only: bool) -> Result<u32, String> {
         self.queue
-            .write_buffer(&self.uncertain_buffer, 0, &0u32.to_le_bytes());
+            .write_counted(&self.uncertain_buffer, 0, &0u32.to_le_bytes());
         let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("vox_bg"),
             layout: &self.bind_group_layout,

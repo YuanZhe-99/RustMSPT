@@ -1,4 +1,5 @@
 use crate::types::{BoundingBox, Mesh};
+use super::runtime::CountedWrite;
 
 const WORKGROUP_SIZE: u32 = crate::compute::mc_memory::MC_BLOCK_SAMPLES as u32;
 const MAX_RADII: usize = crate::compute::mc_memory::MC_RADIUS_BATCH;
@@ -52,6 +53,7 @@ pub struct GpuS2Pipeline {
     test_radius_batch: Option<usize>,
     pending_upload_bytes: u64,
     memory_limit_mb: Option<u64>,
+    radius_batch: usize,
     num_triangles: u32,
     resident: Vec<f32>,
     upload_stats: GpuUploadStats,
@@ -344,7 +346,7 @@ impl GpuS2Pipeline {
                 usage: triangle_usage(),
                 mapped_at_creation: false,
             });
-            queue.write_buffer(&triangle_buffer, 0, tri_bytes);
+            queue.write_counted(&triangle_buffer, 0, tri_bytes);
             let const_data = super::certify::triangle_constants(&tri_data);
             let const_bytes = bytemuck::cast_slice::<f32, u8>(&const_data);
             check_buffer_size(const_bytes.len() as u64, &device.limits())?;
@@ -354,7 +356,7 @@ impl GpuS2Pipeline {
                 usage: triangle_usage(),
                 mapped_at_creation: false,
             });
-            queue.write_buffer(&tri_const_buffer, 0, const_bytes);
+            queue.write_counted(&tri_const_buffer, 0, const_bytes);
             let initial_bytes = (tri_bytes.len() + const_bytes.len()) as u64;
 
             let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -424,6 +426,7 @@ impl GpuS2Pipeline {
                 test_radius_batch: None,
                 pending_upload_bytes: initial_bytes,
                 memory_limit_mb: None,
+                radius_batch: MAX_RADII,
                 num_triangles: mesh.faces.len() as u32,
                 resident: tri_data,
                 upload_stats: GpuUploadStats {
@@ -444,15 +447,15 @@ impl GpuS2Pipeline {
         self.memory_limit_mb = limit_mb;
     }
 
-    // AI-FUNC-SUMMARY: Check retained buffers, pending uploads and growth for the next mesh update/evaluation against an optional logical GPU budget before any allocation or upload.
+    // AI-FUNC-SUMMARY: Plan the next evaluation against an optional logical GPU budget before any allocation or upload: store the largest radius batch whose peak (retained buffers, pending uploads, growth) fits, erroring only when one radius per dispatch does not; results are identical for every batch.
     pub fn check_evaluation_budget(
-        &self,
+        &mut self,
         mesh: &Mesh,
         r_max: usize,
         samples: usize,
         limit_mb: Option<u64>,
     ) -> Result<(), String> {
-        let peak = crate::compute::mc_memory::mc_evaluation_peak(
+        self.radius_batch = crate::compute::mc_memory::mc_largest_batch(
             self.triangle_buffer.size() + self.tri_const_buffer.size(),
             self.out_hits_buffer.size(),
             self.pending_upload_bytes,
@@ -460,8 +463,9 @@ impl GpuS2Pipeline {
             mesh.faces.len(),
             r_max,
             samples,
+            limit_mb,
         )?;
-        crate::compute::mc_memory::check_mc_budget(peak, limit_mb)
+        Ok(())
     }
 
     // AI-FUNC-SUMMARY:
@@ -508,22 +512,22 @@ impl GpuS2Pipeline {
             };
             let written = match &runs {
                 None => {
-                    self.queue.write_buffer(&self.triangle_buffer, 0, tri_bytes);
-                    self.queue.write_buffer(&self.tri_const_buffer, 0, const_bytes);
+                    self.queue.write_counted(&self.triangle_buffer, 0, tri_bytes);
+                    self.queue.write_counted(&self.tri_const_buffer, 0, const_bytes);
                     needed + const_bytes.len() as u64
                 }
                 Some(runs) => {
                     let mut bytes = 0u64;
                     for run in runs {
                         let range = run.start * 36..run.end * 36;
-                        self.queue.write_buffer(
+                        self.queue.write_counted(
                             &self.triangle_buffer,
                             range.start as u64,
                             &tri_bytes[range.clone()],
                         );
                         bytes += range.len() as u64;
                         let consts = run.start * CONST_BYTES_PER_TRIANGLE..run.end * CONST_BYTES_PER_TRIANGLE;
-                        self.queue.write_buffer(
+                        self.queue.write_counted(
                             &self.tri_const_buffer,
                             consts.start as u64,
                             &const_bytes[consts.clone()],
@@ -675,7 +679,7 @@ impl GpuS2Pipeline {
         #[allow(unused_mut)]
         let mut limits = self.device.limits();
         #[allow(unused_mut)]
-        let mut batch = MAX_RADII;
+        let mut batch = self.radius_batch;
         #[cfg(test)]
         {
             if let Some(limit) = self.test_dispatch_limit {
@@ -752,7 +756,7 @@ impl GpuS2Pipeline {
                     .pending_upload_bytes
                     .checked_add(param_data.len() as u64)
                     .ok_or("GPU MC pending upload size overflow")?;
-                self.queue.write_buffer(&self.params_buffer, 0, &param_data);
+                self.queue.write_counted(&self.params_buffer, 0, &param_data);
                 self.pending_upload_bytes = pending;
 
                 let readback_size = u64::from(batch_outputs) * 4;
@@ -847,7 +851,7 @@ impl GpuS2Pipeline {
     // Side effects: Writes 4 bytes, submits one command buffer; hit/valid/list staging hold this batch's results.
     fn dispatch_batch(&mut self, dispatch: [u32; 2], readback_size: u64) -> Result<u32, String> {
         self.queue
-            .write_buffer(&self.uncertain_buffer, 0, &0u32.to_le_bytes());
+            .write_counted(&self.uncertain_buffer, 0, &0u32.to_le_bytes());
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("s2_mc_bg"),
             layout: &self.bind_group_layout,
@@ -1647,6 +1651,26 @@ mod certification_tests {
             gpu.uncertain_buffer.size(),
             crate::compute::mc_memory::mc_uncertain_bytes(crate::compute::mc_memory::MC_UNCERTAIN_INITIAL)
         );
+    }
+
+    // AI-FUNC-SUMMARY: A 1 MiB budget that cannot hold 128 radii per dispatch plans a smaller radius batch instead of failing, and the counts equal the unbudgeted evaluation for the same seed.
+    #[test]
+    fn a_tight_budget_shrinks_the_radius_batch_and_keeps_the_counts() {
+        if let Err(error) = super::super::context::try_init_gpu() {
+            eprintln!("SKIP: GPU device unavailable: {error:?}");
+            return;
+        }
+        let bbox = BoundingBox::from_size(Vec3::new(4.0, 4.0, 4.0));
+        let mesh = crate::geometry::box_mesh(BoundingBox { min: Vec3::new(0.5, 0.5, 0.5), max: Vec3::new(3.0, 2.5, 2.0) });
+        let (r_max, samples) = (140usize, 300_000usize);
+        let mut free = GpuS2Pipeline::new(&mesh, bbox).unwrap();
+        free.check_evaluation_budget(&mesh, r_max, samples, None).unwrap();
+        assert_eq!(free.radius_batch, MAX_RADII);
+        let expected = free.calculate_s2_gpu_counts(bbox, r_max, samples, 5).unwrap();
+        let mut tight = GpuS2Pipeline::new(&mesh, bbox).unwrap();
+        tight.check_evaluation_budget(&mesh, r_max, samples, Some(1)).unwrap();
+        assert!(tight.radius_batch < MAX_RADII, "1 MiB must force a smaller batch, got {}", tight.radius_batch);
+        assert_eq!(tight.calculate_s2_gpu_counts(bbox, r_max, samples, 5).unwrap(), expected);
     }
 
     // AI-FUNC-SUMMARY: A forced uncertain-list overflow is refused with a named error when the logical budget cannot hold the regrown list beside the old one, and succeeds with the exact counts under a generous budget.

@@ -10,9 +10,10 @@ pub mod voxel;
 
 pub use context::{
     gpu_device_creation_count, gpu_pipeline_build_count, release_shared_gpu_devices,
-    shared_gpu_device, try_init_gpu, GpuContext, SharedGpuDevice,
+    shared_gpu_device, try_init_gpu, classify_adapter, AdapterClass, GpuContext, SharedGpuDevice,
 };
 pub use render::GpuRenderPipeline;
+pub use runtime::{gpu_transfer_stats, GpuTransferStats};
 pub use certify::GpuCertificationStats;
 pub use s2::{GpuS2Pipeline, GpuUploadStats};
 pub use s2_shell::GpuShellS2Pipeline;

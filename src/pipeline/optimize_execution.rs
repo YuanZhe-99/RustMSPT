@@ -96,7 +96,7 @@ fn select_s2_backend(
             "optimizer GPU supports only backend=wgpu, gpu_precision=f32 and gpu_prefer_power=false".into()
         ));
     } else if let Err(error) =
-        crate::compute::mc_memory::mc_evaluation_peak(4, 4, 0, 0, faces, params.r_max, max_samples)
+        crate::compute::mc_memory::mc_evaluation_peak_batched(4, 4, 0, 0, faces, params.r_max, max_samples, 1)
             .and_then(|peak| {
                 crate::compute::mc_memory::check_mc_budget(peak, accel.gpu_memory_limit_mb)
             })

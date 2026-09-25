@@ -1,4 +1,5 @@
 use nalgebra::{Matrix3, Vector3};
+use super::runtime::CountedWrite;
 
 const WORKGROUP_SIZE: u32 = 64;
 const PARAMS_BYTES: u64 = 160;
@@ -289,13 +290,13 @@ impl GpuVolumeTransformPipeline {
             }
             if !tile.block.is_empty() {
                 self.queue
-                    .write_buffer(&self.src_buffer, 0, bytemuck::cast_slice::<i32, u8>(tile.block));
+                    .write_counted(&self.src_buffer, 0, bytemuck::cast_slice::<i32, u8>(tile.block));
             }
             let out_total = output.bytes;
             if out_total > self.current_out_size {
                 self.resize_output_buffers(out_total)?;
             }
-            self.queue.write_buffer(&self.guard_buffer, 0, &0u32.to_le_bytes());
+            self.queue.write_counted(&self.guard_buffer, 0, &0u32.to_le_bytes());
 
             let mut param_data = Vec::with_capacity(PARAMS_BYTES as usize);
             for value in tile.source_dims.iter().chain(tile.tile_dims.iter()) {
@@ -322,7 +323,7 @@ impl GpuVolumeTransformPipeline {
                 param_data.extend_from_slice(&0u32.to_le_bytes());
             }
             debug_assert_eq!(param_data.len() as u64, PARAMS_BYTES);
-            self.queue.write_buffer(&self.params_buffer, 0, &param_data);
+            self.queue.write_counted(&self.params_buffer, 0, &param_data);
 
             let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("vt_bg"),
