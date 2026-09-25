@@ -406,6 +406,7 @@ impl GpuScenePipeline {
     }
 
     // AI-FUNC-SUMMARY: Upload geometry once, reuse one target/staging set, and deliver each owned image in order; stop on rendering or consumer error.
+    #[allow(clippy::too_many_arguments)]
     pub fn render_views_to(
         &mut self,
         scene: &RenderScene,
@@ -426,7 +427,7 @@ impl GpuScenePipeline {
             return Err("scene resolution exceeds GPU texture limits".into());
         }
         let plan = SceneRenderMemory::plan(
-            scene.tris.iter().filter(|t| !(t.alpha <= 0.0)).count(),
+            scene.tris.iter().filter(|t| t.alpha > 0.0 || t.alpha.is_nan()).count(),
             if options.show_segments {
                 scene.segments.len()
             } else {
@@ -664,8 +665,9 @@ impl GpuScenePipeline {
         if let Some((first_row, rows, height)) = strip {
             let scale = height as f64 / rows as f64;
             let centre = 1.0 - 2.0 * (first_row as f64 + rows as f64 / 2.0) / height as f64;
-            for col in 0..4 {
-                view_proj[1][col] = scale * (view_proj[1][col] - centre * view_proj[3][col]);
+            let w_row = view_proj[3];
+            for (y, w) in view_proj[1].iter_mut().zip(w_row) {
+                *y = scale * (*y - centre * w);
             }
         }
         let is_perspective = camera.projection == RenderProjection::Perspective;

@@ -1077,8 +1077,8 @@ fn shifted_and_count(a: &[u64], b: &[u64], shift: usize, len: usize) -> usize {
             (lo >> bit_shift) | (b[i + word_shift + 1] << (64 - bit_shift))
         }
     };
-    for i in 0..full {
-        hits += (a[i] & fetch(i)).count_ones();
+    for (i, &word) in a.iter().enumerate().take(full) {
+        hits += (word & fetch(i)).count_ones();
     }
     let tail = len % 64;
     if tail != 0 {

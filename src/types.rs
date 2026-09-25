@@ -12,11 +12,13 @@ impl Vec3 {
     }
 
     // AI-FUNC-SUMMARY: Compute vector addition (self + other); returns summed Vec3; side effects: None.
+    #[allow(clippy::should_implement_trait)]
     pub fn add(self, other: Self) -> Self {
         Self::new(self.x + other.x, self.y + other.y, self.z + other.z)
     }
 
     // AI-FUNC-SUMMARY: Compute vector subtraction (self - other); returns difference Vec3; side effects: None.
+    #[allow(clippy::should_implement_trait)]
     pub fn sub(self, other: Self) -> Self {
         Self::new(self.x - other.x, self.y - other.y, self.z - other.z)
     }

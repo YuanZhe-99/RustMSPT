@@ -362,6 +362,7 @@ pub(super) fn run_island_batches<T: Send>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "gpu")]
     use crate::geometry::calculate_s2;
     use crate::geometry::box_mesh;
     use crate::types::Vec3;

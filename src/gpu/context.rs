@@ -338,7 +338,7 @@ mod tests {
         });
         let filter = "definitely-no-shared-instance-adapter";
         for _ in 0..2 {
-            let error = select_adapter(Some(filter)).err().expect("unavailable selector must fail, even after instance initialization");
+            let error = select_adapter(Some(filter)).expect_err("unavailable selector must fail, even after instance initialization");
             assert!(error.contains(filter));
         }
     }

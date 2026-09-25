@@ -1107,3 +1107,5 @@ Mesh-render CPU prints `[mesh-render] cpu scene_qbvh_builds=<n> views=<n> max_li
 GPU scene preview under a budget renders in horizontal strips: `scene_strip_rows` picks the tallest strip that fits, `GpuSceneOptions::strip_rows` re-targets clip-space y per strip (f64 composition, depth untouched) with a per-strip viewport. Geometry is still uploaded whole; a budget below one row plus geometry is still refused.
 
 CPU exact direct counts pairs on packed rows (`OccupancyBits` + `direct_pair_counts_bits`, shifted AND + popcount, 4-10x the bool scan); the bool scan `direct_pair_counts` is test-only and must stay as the oracle. Rows carry one extra zero word and zero bits past nz, so shifted reads need no range mask; a negative dz swaps the two rows. Cost constants were refit for it (0.115 ns/pair, efficiencies 0.3/0.16); refit again with `exact_cost_model_calibration` whenever either kernel changes.
+
+clippy outside `src/meshgen`/`tests/meshgen_*` is at zero warnings with and without `--features gpu`; keep it there. `!(alpha <= 0.0)`-style NaN-inclusive tests are spelled `alpha > 0.0 || alpha.is_nan()`.

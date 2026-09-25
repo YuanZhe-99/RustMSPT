@@ -144,7 +144,7 @@ pub(super) fn read_u32_prefix(
     buffer: &wgpu::Buffer,
     bytes: u64,
 ) -> Result<Vec<u32>, String> {
-    if bytes == 0 || bytes % 4 != 0 || bytes > buffer.size() {
+    if bytes == 0 || !bytes.is_multiple_of(4) || bytes > buffer.size() {
         return Err("GPU readback prefix is empty, unaligned or exceeds capacity".into());
     }
     let slice = buffer.slice(..bytes);

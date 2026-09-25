@@ -379,6 +379,7 @@ impl GpuShellS2Pipeline {
     // Returns: S2 values or a dimension, capacity, execution or readback error.
     // Side effects: Dispatches GPU compute, maps staging buffers.
 
+    #[allow(clippy::too_many_arguments)]
     pub fn compute_s2_shell(
         &mut self,
         occ: &[u32],
@@ -404,6 +405,8 @@ impl GpuShellS2Pipeline {
     }
 
     // AI-FUNC-SUMMARY: Count pairs directly from a same-device occupancy buffer without upload; caller ensures completed voxelization and serial access for this evaluation.
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn compute_s2_shell_resident(
         &mut self,
         occupancy: &wgpu::Buffer,
@@ -452,6 +455,7 @@ impl GpuShellS2Pipeline {
     }
 
     // AI-FUNC-SUMMARY: Validate and execute shell counting from exactly one host or resident grid, preserving the same offset batching and reduction semantics.
+    #[allow(clippy::too_many_arguments)]
     fn compute_shell_input<I: Iterator<Item = (u32, [isize; 3])>>(
         &mut self,
         occ: Option<&[u32]>,
@@ -640,8 +644,8 @@ impl GpuShellS2Pipeline {
                     super::runtime::read_u32_prefix(&self.device, &self.staging_valid, out_needed)?;
                 let hits_u32 =
                     super::runtime::read_u32_prefix(&self.device, &self.staging_hits, out_needed)?;
-                for i in 0..total_offsets as usize {
-                    let ridx = shell_offsets[i].0 as usize;
+                for (i, &(radius, _)) in shell_offsets.iter().enumerate().take(total_offsets as usize) {
+                    let ridx = radius as usize;
                     let range = i * output_tiles as usize..(i + 1) * output_tiles as usize;
                     let valid: u64 = valid_u32[range.clone()].iter().map(|&n| u64::from(n)).sum();
                     let hits: u64 = hits_u32[range].iter().map(|&n| u64::from(n)).sum();

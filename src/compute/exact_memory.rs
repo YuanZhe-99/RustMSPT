@@ -18,6 +18,7 @@ pub(crate) fn exact_cert_bytes(cells: usize) -> u64 {
 }
 
 pub(crate) struct ExactMemoryPlan {
+    #[cfg_attr(not(feature = "gpu"), allow(dead_code))]
     pub batch_partials: usize,
     pub peak_bytes: u64,
 }
@@ -66,6 +67,7 @@ impl ExactMemoryPlan {
     }
 
     // AI-FUNC-SUMMARY: Reject a budget too small for even one partial or overflowing MiB conversion before any GPU initialization.
+    #[cfg_attr(not(feature = "gpu"), allow(dead_code))]
     pub fn check_budget(&self, limit_mb: Option<u64>) -> Result<(), String> {
         if let Some(mb) = limit_mb {
             let limit = mb

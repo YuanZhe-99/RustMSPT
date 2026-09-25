@@ -397,7 +397,7 @@ impl MeshRenderPipeline {
         timer.stage("cameras");
         let gpu_preflight = || -> std::result::Result<usize, String> {
             let (strip_rows, plan) = crate::compute::render_memory::scene_strip_rows(
-                scene.tris.iter().filter(|t| !(t.alpha <= 0.0)).count(),
+                scene.tris.iter().filter(|t| t.alpha > 0.0 || t.alpha.is_nan()).count(),
                 scene.segments.len(),
                 scene.markers.len(),
                 p.width,

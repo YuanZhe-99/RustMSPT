@@ -323,7 +323,7 @@ fn selective_prune_to_target_vf(
             target_vf,
             particles.len(),
         ));
-        if rounds % 5 == 0 || current_vf <= target_vf * (1.0 + tol) {
+        if rounds.is_multiple_of(5) || current_vf <= target_vf * (1.0 + tol) {
             println!(
                 "[Info] Pruning round {rounds:>3} | particles {} | VF {current_vf:.6} | Loss {current_loss:.6}",
                 particles.len(),
@@ -724,7 +724,7 @@ fn run_sa_island(
         let old_volume = volumes.as_mut().map(|cache| cache.replace(idx, &prepared[idx].mesh));
         if volumes.is_some() {
             volume_updates += 1;
-            if volume_updates % 64 == 0 {
+            if volume_updates.is_multiple_of(64) {
                 volumes = Some(IslandVolumes::new(prepared.iter().map(|p| &p.mesh), box_bounds));
             }
         }

@@ -2322,10 +2322,11 @@ mod gpu_tile_tests {
         ];
         let origin = [min.x.floor() as isize, min.y.floor() as isize, min.z.floor() as isize];
         let full = plan_crop_gpu_tiles(src, &rot, &centroid, origin, out, None, None).unwrap();
-        let budget = Some(full.peak_bytes / 16);
+        let limit = full.peak_bytes / 16;
+        let budget = Some(limit);
         let chosen = plan_crop_gpu_tiles(src, &rot, &centroid, origin, out, budget, None).unwrap();
         let levelled = plan_crop_gpu_levels(src, &rot, &centroid, origin, out, budget, None).unwrap();
-        assert!(chosen.peak_bytes <= budget.unwrap());
+        assert!(chosen.peak_bytes <= limit);
         assert!(chosen.upload_voxels <= levelled.upload_voxels);
         assert!(
             chosen.upload_voxels < levelled.upload_voxels,

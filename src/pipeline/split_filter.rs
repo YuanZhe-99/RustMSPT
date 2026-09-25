@@ -321,7 +321,7 @@ fn prepare_particle_metrics(particles: &[Mesh], max_aspect: Option<f64>, need_ar
             s.x.max(s.y).max(s.z) / s.x.min(s.y).min(s.z).max(1e-12)
         });
         let rejected = aspect.zip(max_aspect).is_some_and(|(value, limit)| value > limit);
-        let area = (need_area && !rejected && !(volume <= 1e-12)).then(|| mesh_surface_area(mesh));
+        let area = (need_area && !rejected && (volume > 1e-12 || volume.is_nan())).then(|| mesh_surface_area(mesh));
         ParticleMetrics { volume, aspect, area }
     };
     if particles.len() < 32 {
@@ -357,9 +357,7 @@ impl SplitFilterPipeline {
         let report_path = self
             .config
             .output
-            .report_path
-            .as_ref()
-            .map(|s| s.as_str())
+            .report_path.as_deref()
             .map(Path::new)
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| {

@@ -1043,7 +1043,7 @@ mod certification_tests {
             )
             .unwrap();
             let dims = [size.x, size.y, size.z].map(|s| ((s / pitch as f64).ceil() as u32).max(1));
-            let mut run = |gpu: &mut GpuVoxelPipeline| {
+            let run = |gpu: &mut GpuVoxelPipeline| {
                 let start = std::time::Instant::now();
                 let count = gpu.voxelize_count(dims[0], dims[1], dims[2], pitch).unwrap();
                 (start.elapsed().as_secs_f64(), count)

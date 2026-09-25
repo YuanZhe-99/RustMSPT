@@ -113,21 +113,18 @@ pub fn check_boundary_constraints_mode(
     let size_arr = [size.x, size.y, size.z];
 
     for i in 0..3 {
-        if min_arr[i] < 0.0 {
-            if min_arr[i].abs() < d2 || max_arr[i] < d2 {
+        if min_arr[i] < 0.0
+            && (min_arr[i].abs() < d2 || max_arr[i] < d2) {
                 return false;
             }
-        }
-        if max_arr[i] > size_arr[i] {
-            if (size_arr[i] - min_arr[i]) < d2 || (max_arr[i] - size_arr[i]) < d2 {
+        if max_arr[i] > size_arr[i]
+            && ((size_arr[i] - min_arr[i]) < d2 || (max_arr[i] - size_arr[i]) < d2) {
                 return false;
             }
-        }
-        if min_arr[i] >= 0.0 && max_arr[i] <= size_arr[i] {
-            if min_arr[i] < d1 || max_arr[i] > (size_arr[i] - d1) {
+        if min_arr[i] >= 0.0 && max_arr[i] <= size_arr[i]
+            && (min_arr[i] < d1 || max_arr[i] > (size_arr[i] - d1)) {
                 return false;
             }
-        }
     }
 
     true

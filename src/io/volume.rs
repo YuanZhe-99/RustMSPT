@@ -142,7 +142,7 @@ fn decode_raw_slice(bytes: &[u8], bits: u8, signed: bool, byte_order: ByteOrder)
             }
         }
         (16, false) => {
-            if bytes.len() % 2 != 0 {
+            if !bytes.len().is_multiple_of(2) {
                 return Err(RustMsptError::InvalidConfig(
                     "RAW byte length is not aligned to 16-bit samples".to_string(),
                 ));
@@ -157,7 +157,7 @@ fn decode_raw_slice(bytes: &[u8], bits: u8, signed: bool, byte_order: ByteOrder)
             }
         }
         (16, true) => {
-            if bytes.len() % 2 != 0 {
+            if !bytes.len().is_multiple_of(2) {
                 return Err(RustMsptError::InvalidConfig(
                     "RAW byte length is not aligned to 16-bit samples".to_string(),
                 ));
@@ -172,7 +172,7 @@ fn decode_raw_slice(bytes: &[u8], bits: u8, signed: bool, byte_order: ByteOrder)
             }
         }
         (32, false) => {
-            if bytes.len() % 4 != 0 {
+            if !bytes.len().is_multiple_of(4) {
                 return Err(RustMsptError::InvalidConfig(
                     "RAW byte length is not aligned to 32-bit samples".to_string(),
                 ));
@@ -191,7 +191,7 @@ fn decode_raw_slice(bytes: &[u8], bits: u8, signed: bool, byte_order: ByteOrder)
             }
         }
         (32, true) => {
-            if bytes.len() % 4 != 0 {
+            if !bytes.len().is_multiple_of(4) {
                 return Err(RustMsptError::InvalidConfig(
                     "RAW byte length is not aligned to 32-bit samples".to_string(),
                 ));

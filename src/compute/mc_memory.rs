@@ -155,7 +155,7 @@ mod tests {
         let limit = limit_mb * 1024 * 1024;
         assert!(peak(MC_RADIUS_BATCH) > limit && peak(1) <= limit, "fixture must straddle the budget");
         let b = mc_largest_batch(4, 4, 0, 0, 100, 300, 300_000, Some(limit_mb)).unwrap();
-        assert!(b >= 1 && b < MC_RADIUS_BATCH);
+        assert!((1..MC_RADIUS_BATCH).contains(&b));
         assert!(peak(b) <= limit && peak(b + 1) > limit, "batch {b}: {} / {}", peak(b), peak(b + 1));
         assert!(mc_largest_batch(4, 4, 0, 0, 100, 300, 300_000, Some(0)).is_err());
     }
