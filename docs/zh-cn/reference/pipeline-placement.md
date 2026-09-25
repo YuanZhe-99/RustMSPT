@@ -221,3 +221,7 @@ run_placement
 `write_voxel_labels` 不再整体分配 phase 与 particle-id 两个体数据。`write_label_stacks` 打开两个 TIFF，只准备一次 `LabelQuery`，按每块 `max(1, LABEL_SLAB_VOXELS / (nx*ny))` 个切片循环：用 `fill_slab` 填充两个复用的切片块缓冲（仍为 1024 体素 tile、void 优先、最小候选下标优先），再经 `TiffPageEncoder`（即 `save_tiff_or_folder` 使用的逐页循环）追加。标签峰值内存为两个切片块缓冲（大切片时最多约 64 MiB 的 `i64`；单个切片已超过目标时每块一个切片），而非 `2 * 8 * nx*ny*nz` 字节。文件字节、header、spacing/origin 及清单顺序不变：`slab_label_stacks_are_byte_identical_to_whole_volume_output` 在 28x20x30 网格、void 与颗粒重叠的场景下，将切片块大小 1、2、3、4、7、29、30、31、1000 的输出与整卷 `Volume3D` + `save_tiff_or_folder` 参考逐字节比较；1/2/8 worker 的 placement 标签测试仍通过。输出的 `bbox_tests` 同时报告 `slab_slices`；切片块边界未对齐 1024 体素时 tile 划分及该诊断计数可能与整卷略有不同。中途出错时两个 TIFF 可能只写了一部分。
 
 Shape library input now uses `load_stl_hashed` so geometry and source digest come from one byte stream. Binary raw-file buffering is bounded; ASCII is parsed line by line from the same stream. Source/shell order and digests are unchanged.
+
+### 阶段计时（PERF-00）
+
+`run_placement_in_pool` 向 stdout 打印 `[Timing] placement stage=<load|plan|place|write_outputs|report|total_in_pool> seconds=<f>`、`[Timing] placement workers=<n>` 和 `[Timing] placement peak_rss_bytes=<n|unavailable>`。这些行从不写入记录、报告或 CSV，因此跨线程数的逐字节输出比较不受影响；报告自身的 `elapsed` 字段不变。

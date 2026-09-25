@@ -151,3 +151,7 @@ packing:
   而不是原样接受，这一内容在 [`pack-target-distribution.md`](pack-target-distribution.md) 和
   [`../algorithms/packing-target-diameter-distribution.md`](../algorithms/packing-target-diameter-distribution.md)
   中有介绍。
+
+### 计时行（2026-09-25 新增）
+
+上面的捕获输出早于共享阶段计时器。当前版本还会为每个已完成阶段打印 `[Timing] pack stage=<name> seconds=<f>`，随后打印 `[Timing] pack workers=<n>` 与 `[Timing] pack peak_rss_bytes=<n|unavailable>`，以及一到两行 `[GridStats]`。阶段名称见 `../reference/pipeline-core.md`（`pipeline/timing.rs`）；输出文件不变。

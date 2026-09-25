@@ -724,24 +724,24 @@
 | `SpatialGrid::remove` | Geometry Core | `src/geometry/spatial.rs:59` | Remove all item cell references. |
 | `SpatialGrid::update` | Geometry Core | `src/geometry/spatial.rs:72` | Replace one item membership. |
 | `SpatialQueryScratch` | Geometry Core | `src/geometry/spatial.rs:5` | Retained neighbors and membership storage. |
-| `SpatialGrid::query_into` | Geometry Core | `src/geometry/spatial.rs:111` | Fill reusable query scratch. |
+| `SpatialGrid::query_into` | Geometry Core | `src/geometry/spatial.rs:136` | Fill reusable query scratch. |
 
-| `PackCollider` | Pipeline Packing | `src/pipeline/pack.rs:31` | 缓存的碰撞体 bbox 与形状。 |
-| `PackCollider::new` | Pipeline Packing | `src/pipeline/pack.rs:38` | 只准备一次碰撞形状。 |
-| `PackCollider::blocks` | Pipeline Packing | `src/pipeline/pack.rs:46` | 缓存的重叠或间隙判定。 |
-| `bbox_may_block` | Pipeline Packing | `src/pipeline/pack.rs:72` | 精确判定自身的 bbox 拒绝（可选 bbox）。 |
-| `periodic_image_shifts` | Pipeline Packing | `src/pipeline/pack.rs:83` | 按 `generate_periodic_ghosts` 顺序给出周期平移及平移后 bbox。 |
-| `PackImage` | Pipeline Packing | `src/pipeline/pack.rs:117` | 已接受颗粒或 `(particle_id, shift)` 镜像，碰撞体按需构建。 |
-| `PackScene` | Pipeline Packing | `src/pipeline/pack.rs:124` | 镜像存储、增量网格、无 bbox 列表与 ghost 构建计数。 |
-| `PackScene::new` | Pipeline Packing | `src/pipeline/pack.rs:133` | 创建使用 domain/8 网格的空存储。 |
-| `PackScene::build_ghost` | Pipeline Packing | `src/pipeline/pack.rs:144` | 平移并准备一个镜像（计数）。 |
-| `PackScene::collider` | Pipeline Packing | `src/pipeline/pack.rs:152` | 线程安全的惰性镜像碰撞体。 |
-| `PackScene::reachable` | Pipeline Packing | `src/pipeline/pack.rs:161` | bbox 在 gap 下可能阻挡查询的镜像。 |
-| `PackScene::blocks_any` | Pipeline Packing | `src/pipeline/pack.rs:179` | 对可达镜像串行/并行 any()。 |
-| `PackScene::candidate_images` | Pipeline Packing | `src/pipeline/pack.rs:197` | 完整旧版可行性判定，候选及已接受镜像均惰性实例化。 |
-| `PackScene::insert` | Pipeline Packing | `src/pipeline/pack.rs:228` | 记录已接受颗粒及其镜像描述。 |
-| `PackScene::image_stats` | Pipeline Packing | `src/pipeline/pack.rs:252` | 存储镜像数、已实例化 ghost 数、ghost 构建数。 |
-| `PackPipeline::run_in_pool` | Pipeline Packing | `src/pipeline/pack.rs:394` | Packing work under configured pool. |
+| `PackCollider` | Pipeline Packing | `src/pipeline/pack.rs:59` | 缓存的碰撞体 bbox 与形状。 |
+| `PackCollider::new` | Pipeline Packing | `src/pipeline/pack.rs:66` | 只准备一次碰撞形状。 |
+| `PackCollider::blocks` | Pipeline Packing | `src/pipeline/pack.rs:74` | 缓存的重叠或间隙判定；更新 PackQueryStats 计数。 |
+| `bbox_may_block` | Pipeline Packing | `src/pipeline/pack.rs:103` | 精确判定自身的 bbox 拒绝（可选 bbox）。 |
+| `periodic_image_shifts` | Pipeline Packing | `src/pipeline/pack.rs:114` | 按 `generate_periodic_ghosts` 顺序给出周期平移及平移后 bbox。 |
+| `PackImage` | Pipeline Packing | `src/pipeline/pack.rs:148` | 已接受颗粒或 `(particle_id, shift)` 镜像，碰撞体按需构建。 |
+| `PackScene` | Pipeline Packing | `src/pipeline/pack.rs:155` | 镜像存储、增量网格、无 bbox 列表与 ghost 构建计数。 |
+| `PackScene::new` | Pipeline Packing | `src/pipeline/pack.rs:164` | 创建使用 domain/8 网格的空存储。 |
+| `PackScene::build_ghost` | Pipeline Packing | `src/pipeline/pack.rs:175` | 平移并准备一个镜像（计数）。 |
+| `PackScene::collider` | Pipeline Packing | `src/pipeline/pack.rs:183` | 线程安全的惰性镜像碰撞体。 |
+| `PackScene::reachable` | Pipeline Packing | `src/pipeline/pack.rs:192` | bbox 在 gap 下可能阻挡查询的镜像；在 PackQueryStats 中计数。 |
+| `PackScene::blocks_any` | Pipeline Packing | `src/pipeline/pack.rs:219` | 对可达镜像串行/并行 any()。 |
+| `PackScene::candidate_images` | Pipeline Packing | `src/pipeline/pack.rs:244` | 完整旧版可行性判定，候选及已接受镜像均惰性实例化。 |
+| `PackScene::insert` | Pipeline Packing | `src/pipeline/pack.rs:276` | 记录已接受颗粒及其镜像描述。 |
+| `PackScene::image_stats` | Pipeline Packing | `src/pipeline/pack.rs:300` | 存储镜像数、已实例化 ghost 数、ghost 构建数。 |
+| `PackPipeline::run_in_pool` | Pipeline Packing | `src/pipeline/pack.rs:442` | Packing work under configured pool. |
 
 | `MeasurePipeline::run_in_pool` | Pipeline Core | `src/pipeline/measure.rs:83` | Method-specific measurement in configured pool. |
 
@@ -879,3 +879,23 @@
 | `consume_file_batches` | `src/io/volume.rs:47` | 当前池最多解码两文件，按源顺序消费/验证，失败后不启动后续批次。 |
 | `write_tiff_pages` | `src/io/volume.rs:552` | 借用 writer 顺序编码 TIFF，显式最终刷新并传播错误。 |
 | `for_each_boundary_value` | `src/pipeline/crop.rs:313` | 按 z 主序访问边界体素一次，供专用背景计数器使用。 |
+
+| `StageTimer` | Pipeline Core | `src/pipeline/timing.rs:3` | 每条流水线的总时钟与阶段时钟。 |
+| `StageTimer::start` | Pipeline Core | `src/pipeline/timing.rs:11` | 启动两个时钟。 |
+| `StageTimer::restart` | Pipeline Core | `src/pipeline/timing.rs:17` | 静默重置阶段时钟。 |
+| `StageTimer::stage` | Pipeline Core | `src/pipeline/timing.rs:22` | 打印阶段秒数并重启。 |
+| `StageTimer::report` | Pipeline Core | `src/pipeline/timing.rs:30` | 打印累计的阶段时长。 |
+| `StageTimer::total` | Pipeline Core | `src/pipeline/timing.rs:35` | 打印自启动以来的秒数。 |
+| `StageTimer::report_resources` | Pipeline Core | `src/pipeline/timing.rs:42` | 打印 worker 数与峰值 RSS。 |
+| `format_stage_line` | Pipeline Core | `src/pipeline/timing.rs:49` | 统一的 `[Timing]` 阶段行格式。 |
+| `report_workers` | Pipeline Core | `src/pipeline/timing.rs:54` | 打印当前 Rayon worker 数。 |
+| `report_peak_rss` | Pipeline Core | `src/pipeline/timing.rs:59` | 打印 VmHWM 字节数或 unavailable。 |
+| `peak_rss_bytes` | Pipeline Core | `src/pipeline/timing.rs:67` | 读取 VmHWM，不可用时为 None。 |
+| `parse_vm_hwm` | Pipeline Core | `src/pipeline/timing.rs:73` | 解析 VmHWM kB 行。 |
+| `GridStats` | Geometry Core | `src/geometry/spatial.rs:11` | 桶占用摘要。 |
+| `GridStats::summary_line` | Geometry Core | `src/geometry/spatial.rs:22` | 格式化 `[GridStats]` 行。 |
+| `SpatialGrid::stats` | Geometry Core | `src/geometry/spatial.rs:181` | 一遍扫描的占用统计。 |
+| `map_vertices_centroid` | Geometry Core | `src/geometry/mesh_ops.rs:265` | 顶点映射并返回逐位一致的映射后质心。 |
+| `split_mesh_into_granules_reference` | Geometry Core | `src/geometry/mesh_ops.rs:136` | 仅测试用的原颗粒拆分 oracle。 |
+| `PackQueryStats` | Pipeline Packing | `src/pipeline/pack.rs:32` | relaxed 原子碰撞计数。 |
+| `PackQueryStats::summary_line` | Pipeline Packing | `src/pipeline/pack.rs:44` | 格式化 pack 查询计数。 |

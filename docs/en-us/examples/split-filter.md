@@ -172,3 +172,7 @@ from 2 particles to 1.
 - For the full pipeline mechanics — including how connected components are detected during
   splitting and the exact aspect-ratio/sharpness-ratio definitions — see
   `../reference/pipeline-crop-and-splitfilter.md`.
+
+### Timing lines (added 2026-09-25)
+
+Captured output above predates the shared stage timer. Current builds also print `[Timing] split-filter stage=<name> seconds=<f>` for each completed stage, then `[Timing] split-filter workers=<n>` and `[Timing] split-filter peak_rss_bytes=<n|unavailable>`. Stage names are listed in `../reference/pipeline-core.md` (`pipeline/timing.rs`); output files are unchanged.

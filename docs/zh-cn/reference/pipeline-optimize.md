@@ -204,3 +204,7 @@ mesh-MC 岛现以 IslandVolumes 缓存每粒子连通分量的域内体积。可
 | `IslandVolumes::fraction` | `src/pipeline/optimize_volume.rs:46` | Sum cached scalars in merged component order, then clamp. |
 | `OptimizeS2::evaluate_with_vf` | `src/pipeline/optimize_execution.rs:242` | Evaluate mesh MC with optional validated VF; reject geometric cache for voxel methods. |
 | `calculate_s2_mesh_mc_seeded_with_vf` | `src/geometry/s2.rs:765` | Preserve fixed-seed mesh MC samples while using caller-provided VF. |
+
+### 网格统计与查询计数（PERF-13 观测）
+
+每个岛结束时，`run_sa_island` 打印 `SpatialGrid::stats()`（`[GridStats] optimize island=<id> buckets=..`）以及 `[GridStats] optimize island=<id> queries grid_queries=.. grid_candidates=.. bbox_rejects=.. narrow_phase=.. distance_checks=..`，统计串行碰撞循环中的候选与 ghost 查询、包围盒拒绝、精确重叠测试和精确距离测试。计数是紧挨现有分支递增的局部整数；不改变任何决策、RNG 抽样或历史记录。

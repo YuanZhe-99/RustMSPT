@@ -143,3 +143,7 @@ Volume histogram comparison (before vs after, 10 bins):
 - 将 `filter.volume.mode` 切换为 `"lognormal_rebalance"` 会用一种统计重平衡处理替代硬性的 `min`/`max` 截断，该处理依据拟合的对数正态分布来削减过度代表的尺寸区间（`filter.volume.bins`/`over_factor` 控制区间数量以及对过度代表区间的削减力度）——当目标是获得接近对数正态的尺寸分布而非硬性的体积上下限时非常有用。
 - `input.path` 也可以接受一个包含多个 STL 文件的文件夹（每个文件先合并再拆分），而不仅限于单个合并 STL——这在颗粒已经在早期阶段按文件单独导出时很方便。
 - 关于完整的流水线机制——包括拆分过程中如何检测连通分量，以及长径比/尖锐度比的确切定义——见 `../reference/pipeline-crop-and-splitfilter.md`。
+
+### 计时行（2026-09-25 新增）
+
+上面的捕获输出早于共享阶段计时器。当前版本还会为每个已完成阶段打印 `[Timing] split-filter stage=<name> seconds=<f>`，随后打印 `[Timing] split-filter workers=<n>` 与 `[Timing] split-filter peak_rss_bytes=<n|unavailable>`。阶段名称见 `../reference/pipeline-core.md`（`pipeline/timing.rs`）；输出文件不变。

@@ -89,3 +89,7 @@ RUSTMSPT_UPDATE_RENDER_BASELINES=1 cargo test --test mesh_visual_regression_test
 
 GPU 基线测试将不透明变体与 CPU 参考实现比较；无可用适配器时跳过。透明 GPU
 输出按设计排除，因为 CPU 路径才是精确透明度参考。
+
+### 计时行（2026-09-25 新增）
+
+上面的捕获输出早于共享阶段计时器。当前版本还会为每个已完成阶段打印 `[Timing] mesh-render stage=<name> seconds=<f>`，随后打印 `[Timing] mesh-render workers=<n>` 与 `[Timing] mesh-render peak_rss_bytes=<n|unavailable>`。阶段名称见 `../reference/pipeline-core.md`（`pipeline/timing.rs`）；输出文件不变。

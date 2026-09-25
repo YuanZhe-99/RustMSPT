@@ -145,3 +145,7 @@ Output translation: (8.8813,-27.0730,9.5485)
 - `axis_scale` 与 `lateral_scale` 如何由 `compression_ratio` 和 `bulge_factor` 推导得出的
   闭式推导，以及 `simulate_forging_ffd_with_tracking` 如何将单轴版本推广到任意压缩轴和
   调用方提供的 ROI/晶格包围盒，见 `../algorithms/ffd-forging.md`。
+
+### 计时行（2026-09-25 新增）
+
+上面的捕获输出早于共享阶段计时器。当前版本还会为每个已完成阶段打印 `[Timing] forge stage=<name> seconds=<f>`，随后打印 `[Timing] forge workers=<n>` 与 `[Timing] forge peak_rss_bytes=<n|unavailable>`。阶段名称见 `../reference/pipeline-core.md`（`pipeline/timing.rs`）；输出文件不变。

@@ -25,8 +25,36 @@ use std::collections::BTreeSet;
 use std::f64::consts::PI;
 use std::fs;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::OnceLock;
+
+#[derive(Default)]
+struct PackQueryStats {
+    collision_tests: AtomicU64,
+    direct_scans: AtomicU64,
+    grid_queries: AtomicU64,
+    grid_candidates: AtomicU64,
+    pair_tests: AtomicU64,
+    bbox_rejects: AtomicU64,
+    narrow_phase: AtomicU64,
+}
+
+impl PackQueryStats {
+    // AI-FUNC-SUMMARY: Format the collision counters as one `[GridStats] pack queries ...` line; counts under parallel short-circuiting `any` depend on scheduling and are diagnostic only; returns String; side effects: none.
+    fn summary_line(&self) -> String {
+        let get = |c: &AtomicU64| c.load(Ordering::Relaxed);
+        format!(
+            "[GridStats] pack queries collision_tests={} direct_scans={} grid_queries={} grid_candidates={} pair_tests={} bbox_rejects={} narrow_phase={}",
+            get(&self.collision_tests),
+            get(&self.direct_scans),
+            get(&self.grid_queries),
+            get(&self.grid_candidates),
+            get(&self.pair_tests),
+            get(&self.bbox_rejects),
+            get(&self.narrow_phase)
+        )
+    }
+}
 
 struct PackCollider {
     bbox: Option<BoundingBox>,
@@ -42,14 +70,17 @@ impl PackCollider {
         }
     }
 
-    // AI-FUNC-SUMMARY: Apply the legacy bbox rejection and solid-overlap/clearance predicate using cached shapes; missing geometry retains conservative behavior.
-    fn blocks(&self, other: &Self, gap: f64) -> bool {
+    // AI-FUNC-SUMMARY: Apply the legacy bbox rejection and solid-overlap/clearance predicate using cached shapes; missing geometry retains conservative behavior; increments the pair/bbox-reject/narrow-phase counters in stats (relaxed atomics, decisions unchanged).
+    fn blocks(&self, other: &Self, gap: f64, stats: &PackQueryStats) -> bool {
+        stats.pair_tests.fetch_add(1, Ordering::Relaxed);
         if let (Some(a), Some(b)) = (self.bbox, other.bbox) {
             let distance = bbox_distance(a, b);
             if (gap > 0.0 && distance >= gap) || (gap <= 0.0 && distance > 0.0) {
+                stats.bbox_rejects.fetch_add(1, Ordering::Relaxed);
                 return false;
             }
         }
+        stats.narrow_phase.fetch_add(1, Ordering::Relaxed);
         if gap > 0.0 {
             mesh_distance_exact_prepared(
                 self.bbox,
@@ -157,34 +188,50 @@ impl PackScene {
         })
     }
 
-    // AI-FUNC-SUMMARY: Collect accepted images whose (possibly uninstantiated) bbox can block a query bbox at the gap, scanning directly for small stores and via grid plus bbox-less entries otherwise; returns image indices; side effects: None.
-    fn reachable(&self, bbox: Option<BoundingBox>, gap: f64) -> Vec<usize> {
+    // AI-FUNC-SUMMARY: Collect accepted images whose (possibly uninstantiated) bbox can block a query bbox at the gap, scanning directly for small stores and via grid plus bbox-less entries otherwise; returns image indices; side effects: counts one collision test, a direct scan or grid query/candidates, and bbox-pruned pairs as pair tests and bbox rejects in stats.
+    fn reachable(&self, bbox: Option<BoundingBox>, gap: f64, stats: &PackQueryStats) -> Vec<usize> {
+        stats.collision_tests.fetch_add(1, Ordering::Relaxed);
         let Some(query) = bbox else {
+            stats.direct_scans.fetch_add(1, Ordering::Relaxed);
             return (0..self.images.len()).collect();
         };
         let mut indices = if self.images.len() < 32 {
+            stats.direct_scans.fetch_add(1, Ordering::Relaxed);
             (0..self.images.len()).collect::<Vec<_>>()
         } else {
             let mut n = self
                 .grid
                 .query_neighbors_with_margin(query, gap.max(0.0), usize::MAX);
+            stats.grid_queries.fetch_add(1, Ordering::Relaxed);
+            stats.grid_candidates.fetch_add(n.len() as u64, Ordering::Relaxed);
             n.extend_from_slice(&self.bbox_less);
             n
         };
+        let before = indices.len();
         indices.retain(|&i| bbox_may_block(Some(query), self.images[i].bbox, gap));
+        let pruned = (before - indices.len()) as u64;
+        stats.pair_tests.fetch_add(pruned, Ordering::Relaxed);
+        stats.bbox_rejects.fetch_add(pruned, Ordering::Relaxed);
         indices
     }
 
-    // AI-FUNC-SUMMARY: Decide whether a prepared query collider is blocked by any reachable accepted image, serial below 32 candidates and rayon any() above; returns bool; side effects: may lazily build ghost colliders.
-    fn blocks_any(&self, query: &PackCollider, reachable: &[usize], placed: &[Mesh], gap: f64) -> bool {
+    // AI-FUNC-SUMMARY: Decide whether a prepared query collider is blocked by any reachable accepted image, serial below 32 candidates and rayon any() above; returns bool; side effects: may lazily build ghost colliders and increments per-pair counters in stats.
+    fn blocks_any(
+        &self,
+        query: &PackCollider,
+        reachable: &[usize],
+        placed: &[Mesh],
+        gap: f64,
+        stats: &PackQueryStats,
+    ) -> bool {
         if reachable.len() < 32 {
             reachable
                 .iter()
-                .any(|&i| query.blocks(self.collider(i, placed), gap))
+                .any(|&i| query.blocks(self.collider(i, placed), gap, stats))
         } else {
             reachable
                 .par_iter()
-                .any(|&i| query.blocks(self.collider(i, placed), gap))
+                .any(|&i| query.blocks(self.collider(i, placed), gap, stats))
         }
     }
 
@@ -192,7 +239,7 @@ impl PackScene {
     // Purpose: Apply the legacy feasibility test (candidate and, in mode 3, every periodic candidate image against every accepted particle and periodic image) without instantiating images that cannot reach.
     // Inputs: accepted meshes, candidate mesh and its prepared collider, periodic domain (None outside mode 3), gap.
     // Returns: None when blocked; otherwise the candidate's periodic images as (shift, bbox, collider slot built only if it was needed) for insertion.
-    // Side effects: May lazily build accepted ghost colliders and counts candidate ghost builds.
+    // Side effects: May lazily build accepted ghost colliders, counts candidate ghost builds and updates the diagnostic query counters in stats (decisions unchanged).
     // Notes: bbox+shift equals the translated mesh bbox exactly because rounded addition is monotonic, so pruning matches the exact predicate's own bbox rejection; exact predicates run on the same translated coordinates as the former full ghost copies.
     fn candidate_images(
         &self,
@@ -201,9 +248,10 @@ impl PackScene {
         collider: &PackCollider,
         periodic: Option<BoundingBox>,
         gap: f64,
+        stats: &PackQueryStats,
     ) -> Option<Vec<CandidateImage>> {
-        let reachable = self.reachable(collider.bbox, gap);
-        if self.blocks_any(collider, &reachable, placed, gap) {
+        let reachable = self.reachable(collider.bbox, gap, stats);
+        if self.blocks_any(collider, &reachable, placed, gap, stats) {
             return None;
         }
         let Some(domain) = periodic else {
@@ -211,11 +259,11 @@ impl PackScene {
         };
         let mut images = Vec::new();
         for (shift, bbox) in periodic_image_shifts(collider.bbox, domain) {
-            let reachable = self.reachable(Some(bbox), gap);
+            let reachable = self.reachable(Some(bbox), gap, stats);
             let slot = OnceLock::new();
             if !reachable.is_empty() {
                 let ghost = slot.get_or_init(|| self.build_ghost(candidate, shift));
-                if self.blocks_any(ghost, &reachable, placed, gap) {
+                if self.blocks_any(ghost, &reachable, placed, gap, stats) {
                     return None;
                 }
             }
@@ -390,8 +438,9 @@ impl Pipeline for PackPipeline {
 }
 
 impl PackPipeline {
-    // AI-FUNC-SUMMARY: Execute loading, sequential proposal RNG, cached parallel feasibility and output under the configured Rayon worker budget.
+    // AI-FUNC-SUMMARY: Execute loading, sequential proposal RNG, cached parallel feasibility and output under the configured Rayon worker budget; prints load/pack_loop/merge_orient/write_stl/report timings, [GridStats] occupancy and query counters, workers and peak RSS.
     fn run_in_pool(&self) -> Result<()> {
+        let mut timer = crate::pipeline::timing::StageTimer::start("pack");
         let box_bounds = parse_box_dimensions(&self.config.r#box.dimensions)?;
         let box_volume = box_bounds.volume();
         if box_volume <= 0.0 {
@@ -487,6 +536,8 @@ impl PackPipeline {
                 .unwrap_or("any")
         );
 
+        timer.stage("load");
+        let query_stats = PackQueryStats::default();
         let mut rng = rand::thread_rng();
         let mut placed: Vec<Mesh> = Vec::new();
         let mut scene = PackScene::new(box_bounds);
@@ -722,6 +773,7 @@ impl PackPipeline {
                     &candidate_collider,
                     periodic,
                     min_neighbor,
+                    &query_stats,
                 ) else {
                     reject_candidate!();
                 };
@@ -785,6 +837,11 @@ impl PackPipeline {
         }
 
         progress.finish_with_message("Packing loop completed");
+        timer.stage("pack_loop");
+        if scene.images.len() >= 32 {
+            println!("{}", scene.grid.stats().summary_line("pack"));
+        }
+        println!("{}", query_stats.summary_line());
 
         if placed.is_empty() {
             return Err(RustMsptError::InvalidMesh(
@@ -803,11 +860,13 @@ impl PackPipeline {
         } else {
             (final_mesh.clone(), 0usize, 0usize)
         };
+        timer.stage("merge_orient");
         save_stl(
             Path::new(&self.config.output.path),
             &final_mesh_oriented,
             "packed_result",
         )?;
+        timer.stage("write_stl");
 
         let vf = (current_volume / box_volume).clamp(0.0, 1.0);
         println!("[Info] Packing completed.");
@@ -902,6 +961,9 @@ impl PackPipeline {
                 "[Info] Orientation fix: flipped {flipped_components}/{component_count} components to positive signed volume"
             );
         }
+        timer.stage("report");
+        timer.total("total_in_pool");
+        timer.report_resources();
         Ok(())
     }
 }
@@ -1027,6 +1089,7 @@ mod collider_tests {
                                 &PackCollider::new(candidate),
                                 periodic.then_some(domain),
                                 gap,
+                                &PackQueryStats::default(),
                             )
                             .is_none();
                         assert_eq!(actual, expected, "periodic={periodic} gap={gap} candidate={index}");
@@ -1058,13 +1121,14 @@ mod collider_tests {
         let sequence: Vec<Mesh> = sources.iter().chain(candidates.iter()).cloned().collect();
         for gap in [0.0, 0.3] {
             let mut scene = PackScene::new(domain);
+            let stats = PackQueryStats::default();
             let mut accepted: Vec<Mesh> = Vec::new();
             let mut eager_builds = 0usize;
             for (index, candidate) in sequence.iter().enumerate() {
                 let expected = eager_blocked(candidate, &accepted, domain, true, gap);
                 eager_builds += generate_periodic_ghosts(candidate, domain).len();
                 let collider = PackCollider::new(candidate);
-                let result = scene.candidate_images(&accepted, candidate, &collider, Some(domain), gap);
+                let result = scene.candidate_images(&accepted, candidate, &collider, Some(domain), gap, &stats);
                 assert_eq!(result.is_none(), expected, "gap={gap} step={index}");
                 if let Some(ghosts) = result {
                     scene.insert(accepted.len(), collider, ghosts);
@@ -1077,10 +1141,16 @@ mod collider_tests {
             assert!(builds < eager_builds, "lazy {builds} vs eager {eager_builds}");
             let first = scene.ghost_builds.load(Ordering::Relaxed);
             for candidate in &sequence {
-                let _ = scene.candidate_images(&accepted, candidate, &PackCollider::new(candidate), Some(domain), gap);
+                let _ = scene.candidate_images(&accepted, candidate, &PackCollider::new(candidate), Some(domain), gap, &stats);
             }
             let (_, instantiated_after, _) = scene.image_stats();
             assert!(instantiated_after >= instantiated && first == builds);
+            let tests = stats.collision_tests.load(Ordering::Relaxed);
+            assert!(tests >= sequence.len() as u64);
+            assert_eq!(
+                stats.pair_tests.load(Ordering::Relaxed),
+                stats.bbox_rejects.load(Ordering::Relaxed) + stats.narrow_phase.load(Ordering::Relaxed)
+            );
         }
     }
 }

@@ -159,3 +159,7 @@ instances, each a rotated/translated copy of one of the 14 candidate shells from
   diameter distribution instead of accepting them as-is is covered in
   [`pack-target-distribution.md`](pack-target-distribution.md) and
   [`../algorithms/packing-target-diameter-distribution.md`](../algorithms/packing-target-diameter-distribution.md).
+
+### Timing lines (added 2026-09-25)
+
+Captured output above predates the shared stage timer. Current builds also print `[Timing] pack stage=<name> seconds=<f>` for each completed stage, then `[Timing] pack workers=<n>` and `[Timing] pack peak_rss_bytes=<n|unavailable>` and one or two `[GridStats]` lines. Stage names are listed in `../reference/pipeline-core.md` (`pipeline/timing.rs`); output files are unchanged.

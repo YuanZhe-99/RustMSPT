@@ -391,3 +391,7 @@ PCA task grain: for the parallel branch, `foreground_blocks` sets a minimum numb
 ### 背景稠密计数（2026-09-23）
 
 `for_each_boundary_value` 只访问边界面，棱和角只计数一次。U8/I8 使用 256 个 usize 计数；至少 65,536 体素的 U16/I16 体数据使用 65,536 个计数，在 64 位主机最多 512 KiB。更小的 16 位以及所有 32 位数据保持 HashMap 路径。checked 索引将声明范围外的值放入稀疏 spill 表，不依赖元数据截断或拒绝任意 i64 值。两种计数共同维护当前众数，平票仍选择最小值，无需最后扫描整张稠密表。计数局部持有，PCA 前释放。独立全网格有序表 oracle 覆盖退化维度、整数极值、有符号范围和元数据不一致。真实输入端到端证据见 PLAN.Performance.md §62。
+
+### 共享阶段计时器（2026-09-25）
+
+crop 现通过 `pipeline::timing::StageTimer` 输出阶段行，名称、顺序、九位小数格式和阶段边界均与之前相同（`restart` 排除同样的不计时间隙），并追加 `[Timing] crop workers=<n>` 与 `[Timing] crop peak_rss_bytes=<n|unavailable>`。split-filter 输出 `load`、`split`、`metrics`、`filter`、`write_stl`、`write_report` 和 `total_in_pool`；文件夹输入现在先全部加载再拆分（每个源网格拆分后仍立即释放）。辅助模块见 `pipeline-core.md`。

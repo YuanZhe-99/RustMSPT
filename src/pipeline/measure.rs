@@ -79,7 +79,7 @@ impl Pipeline for MeasurePipeline {
 }
 
 impl MeasurePipeline {
-    // AI-FUNC-SUMMARY: Measure under the installed worker pool with method-specific backend decisions and same-method runtime fallback; write results only after all requested methods succeed.
+    // AI-FUNC-SUMMARY: Measure under the installed worker pool with method-specific backend decisions and same-method runtime fallback; write results only after all requested methods succeed; prints load/split_vf/s2_<method>/write/total_in_pool timings, workers and peak RSS.
     fn run_in_pool(&self) -> Result<()> {
         let params = &self.config.measurement;
         if !params.voxel_pitch.is_finite() || params.r_max == usize::MAX {
@@ -88,7 +88,9 @@ impl MeasurePipeline {
             ));
         }
         let requested = configured_mode(&params.acceleration)?;
+        let mut timer = crate::pipeline::timing::StageTimer::start("measure");
         let mesh = load_stl_or_merge_folder(Path::new(&params.stl_path))?;
+        timer.stage("load");
 
         let user_bbox = Self::parse_optional_bbox(&params.bounding_box)?;
         let stl_bbox = Self::parse_optional_bbox(&params.stl_bounding_box)?;
@@ -107,6 +109,7 @@ impl MeasurePipeline {
 
         let particle_count = split_mesh_into_granules(&mesh).len();
         let vf = volume_fraction_in_bbox(&mesh, bbox);
+        timer.stage("split_vf");
 
         let method_raw = params.mc_method.trim();
         let requested_method = if method_raw.eq_ignore_ascii_case("exact") {
@@ -153,6 +156,7 @@ impl MeasurePipeline {
         let mut curves = Vec::new();
         let mut backends = Vec::new();
         let mut cpu_voxels = None;
+        timer.restart();
         for &method in methods {
             let samples = params.mc_samples.unwrap_or(10_000);
             let estimated = if method == "exact" {
@@ -225,6 +229,7 @@ impl MeasurePipeline {
             println!("[Info] Measure execution: method={method}, backend={backend}, workers={}, worker_index={:?}", rayon::current_num_threads(), rayon::current_thread_index());
             backends.push(format!("{method}={backend}"));
             curves.push(curve);
+            timer.stage(&format!("s2_{method}"));
         }
         let mut output = format!(
             "Volume Fraction: {vf:.6}\nCompute Backend: {}\nMethod: {requested_method}\n",
@@ -256,10 +261,13 @@ impl MeasurePipeline {
             fs::create_dir_all(parent)?;
         }
         fs::write(&params.output_path, output)?;
+        timer.stage("write");
         println!(
             "[Info] Measurement completed: {particle_count} particles, VF {vf:.6}; output {}",
             params.output_path
         );
+        timer.total("total_in_pool");
+        timer.report_resources();
         Ok(())
     }
 }

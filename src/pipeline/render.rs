@@ -55,11 +55,13 @@ impl Pipeline for RenderPipeline {
 }
 
 impl RenderPipeline {
-    // AI-FUNC-SUMMARY: Load, select, render and save inside the configured pool, enforcing fallback policy.
+    // AI-FUNC-SUMMARY: Load, select, render and save inside the configured pool, enforcing fallback policy; prints load/prepare/render_and_backend/encode_write/total_in_pool timings, workers and peak RSS.
     fn run_in_pool(&self) -> Result<()> {
         let params = &self.config.render;
         let requested = configured_mode(&params.acceleration)?;
+        let mut timer = crate::pipeline::timing::StageTimer::start("render");
         let mesh = load_stl_or_merge_folder(Path::new(&params.stl_path))?;
+        timer.stage("load");
         println!(
             "[Info] STL file(s) loaded from: {} ({} vertices, {} faces)",
             params.stl_path,
@@ -133,6 +135,7 @@ impl RenderPipeline {
         }
 
         let settings = RenderSettings::default();
+        timer.stage("prepare");
 
         #[allow(unused_mut)]
         let mut gpu_image: Option<RenderedImage> = None;
@@ -162,16 +165,21 @@ impl RenderPipeline {
             }
         };
 
+        timer.stage("render_and_backend");
         println!(
             "[Info] Render execution: workers={}, worker_index={:?}",
             rayon::current_num_threads(),
             rayon::current_thread_index()
         );
+        timer.restart();
         save_image(Path::new(&params.output_path), &image)?;
+        timer.stage("encode_write");
         println!(
             "[Info] Rendered image ({}x{}) saved to: {}",
             image.width, image.height, params.output_path
         );
+        timer.total("total_in_pool");
+        timer.report_resources();
 
         Ok(())
     }

@@ -62,7 +62,7 @@ pub fn simulate_forging_ffd_with_tracking(
     )
 }
 
-// AI-FUNC-SUMMARY: Consume a mesh and apply the existing FFD/void/ROI mapping in place; preserves the public clone-returning wrapper and exact post-transform centroid accumulation order.
+// AI-FUNC-SUMMARY: Consume a mesh and apply the existing FFD/void/ROI mapping in place; preserves the public clone-returning wrapper and exact post-transform centroid accumulation order, fusing the void centroid sum into the transform pass when that pass is serial.
 pub fn forge_owned(
     mut out: Mesh,
     lattice_bbox: BoundingBox,
@@ -103,12 +103,12 @@ pub fn forge_owned(
         }
     };
 
-    super::mesh_ops::map_vertices(&mut out.vertices, transform_point);
-
     if mesh_type.eq_ignore_ascii_case("void") {
         let closure = (1.0 - 0.05 * compression_ratio * void_densification).clamp(0.85, 1.0);
-        let c = super::mesh_ops::mesh_centroid(&out);
+        let c = super::mesh_ops::map_vertices_centroid(&mut out.vertices, transform_point);
         super::mesh_ops::map_vertices(&mut out.vertices, |v| c.add(v.sub(c).scale(closure)));
+    } else {
+        super::mesh_ops::map_vertices(&mut out.vertices, transform_point);
     }
 
     let tracked = track_bbox.map(|tb| {
