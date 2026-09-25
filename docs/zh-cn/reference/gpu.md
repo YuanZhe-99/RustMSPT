@@ -29,6 +29,7 @@
 | `GpuS2Pipeline::update_mesh` | `src/gpu/s2.rs:277` | 无需重建流水线即可为新网格重新上传三角形数据。 |
 | `GpuS2Pipeline::ensure_output_capacity` | `src/gpu/s2.rs:302` | 若调用次数超出当前容量，则扩容输出缓冲区。 |
 | `GpuS2Pipeline::calculate_s2_gpu` | `src/gpu/s2.rs:351` | 针对所有半径分派蒙特卡洛 S2 内核并回读结果。 |
+| `GpuS2Pipeline::calculate_s2_gpu_seeded` | `src/gpu/s2.rs` | 带可选种子（折叠为内核 32 位种子）的 `calculate_s2_gpu`。 |
 | `OffsetEntry` | `src/gpu/s2_shell.rs:6` | 与 WGSL 布局匹配的打包 `(radius_idx, dx, dy, dz)` 壳层偏移记录。 |
 | `point_inside` (s2_monte_carlo.wgsl) | `src/gpu/shaders/s2_monte_carlo.wgsl` | 认证奇偶性：精确 bbox 排除、认证命中、证明互异的 64 命中路径；返回 0/1/不确定。 |
 | `point_inside_overflow` (s2_monte_carlo.wgsl) | `src/gpu/shaders/s2_monte_carlo.wgsl` | 认证的超 64 命中恢复，证明每个相邻间隔超过 CPU 去重带。 |

@@ -165,12 +165,14 @@ def case_definitions(repo, chain, large=False):
         t = load("forge_config.yaml")
         t = set_yaml_key(t, "forging.input_stl_path", str(chain / "dense_particles.stl" if large else chain / "optimized_structure.stl"))
         t = set_yaml_key(t, "forging.output_stl_path", str(run / "forged_mesh.stl"))
+        t = set_yaml_key(t, "forging.cpu_max", workers)
         return t, []
 
     def scale(run, workers):
         t = load("scale_config.yaml")
         t = set_yaml_key(t, "input.stl_path", str(chain / "dense_particles.stl" if large else chain / "optimized_structure.stl"))
         t = set_yaml_key(t, "output.stl_path", str(run / "scaled_mesh.stl"))
+        t = set_yaml_key(t, "scaling.cpu_max", workers)
         return t, []
 
     def render(run, workers):

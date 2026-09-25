@@ -2,7 +2,7 @@ use crate::compute::backend::{AccelerationMode, ComputeBackend};
 use crate::compute::policy::{select_backend, BackendSelection, FallbackReason};
 use crate::config::OptimizationParams;
 use crate::error::{Result, RustMsptError};
-use crate::geometry::calculate_s2;
+use crate::geometry::calculate_s2_seeded;
 use crate::geometry::s2::{VoxelCoverage, VoxelS2};
 use crate::types::{BoundingBox, Mesh};
 use rayon::prelude::*;
@@ -252,12 +252,14 @@ impl OptimizeS2 {
         r_max: usize,
         samples: usize,
         _stage: &'static str,
+        seed: Option<u64>,
     ) -> Result<Vec<f64>> {
-        self.evaluate_with_vf(mesh, bbox, r_max, samples, _stage, None)
+        self.evaluate_with_vf(mesh, bbox, r_max, samples, _stage, None, seed)
     }
 
     // AI-FUNC-SUMMARY: Evaluate the fixed S2 definition with optional cached geometric VF for mesh MC only; preserve GPU fallback and perform no cached-volume work under its mutex.
-    pub(super) fn evaluate_with_vf(&self, mesh: &Mesh, bbox: BoundingBox, r_max: usize, samples: usize, _stage: &'static str, vf: Option<f64>) -> Result<Vec<f64>> {
+#[allow(clippy::too_many_arguments)]
+    pub(super) fn evaluate_with_vf(&self, mesh: &Mesh, bbox: BoundingBox, r_max: usize, samples: usize, _stage: &'static str, vf: Option<f64>, seed: Option<u64>) -> Result<Vec<f64>> {
         if vf.is_some() && self.method != S2Method::MeshMc {
             return Err(RustMsptError::InvalidConfig("geometric VF cache cannot replace voxel S2 volume fraction".into()));
         }
@@ -277,7 +279,7 @@ impl OptimizeS2 {
                     gpu.set_memory_limit_mb(self.gpu_memory_limit_mb);
                     gpu.check_evaluation_budget(mesh, r_max, samples, self.gpu_memory_limit_mb)
                         .and_then(|()| gpu.update_mesh(mesh, bbox))
-                        .and_then(|()| gpu.calculate_s2_gpu(bbox, r_max, samples))
+                        .and_then(|()| gpu.calculate_s2_gpu_seeded(bbox, r_max, samples, seed))
                 });
                 if self.cpu_fallback && result.as_ref().is_some_and(|r| r.is_err()) {
                     state.take();
@@ -295,9 +297,9 @@ impl OptimizeS2 {
             }
         }
         if let Some(vf) = vf {
-            return Ok(crate::geometry::s2::calculate_s2_mesh_mc_seeded_with_vf(mesh, bbox, r_max, samples, rand::random(), true, vf));
+            return Ok(crate::geometry::s2::calculate_s2_mesh_mc_seeded_with_vf(mesh, bbox, r_max, samples, seed.unwrap_or_else(rand::random), true, vf));
         }
-        Ok(calculate_s2(
+        Ok(calculate_s2_seeded(
             mesh,
             bbox,
             r_max,
@@ -308,6 +310,7 @@ impl OptimizeS2 {
                 "monte_carlo"
             },
             samples,
+            seed,
         ))
     }
 
@@ -320,7 +323,7 @@ impl OptimizeS2 {
 
     // AI-FUNC-SUMMARY: Evaluate the fixed voxel S2 definition on an already maintained occupancy grid; returns S2 or InvalidConfig for mesh MC; records the test-only execution observation.
     // Notes: Equivalent to calculate_s2 on the merged mesh with the same pitch and method, minus the voxelization.
-    pub(super) fn evaluate_voxel_grid(&self, grid: &VoxelS2, r_max: usize, samples: usize, _stage: &'static str) -> Result<Vec<f64>> {
+    pub(super) fn evaluate_voxel_grid(&self, grid: &VoxelS2, r_max: usize, samples: usize, _stage: &'static str, seed: Option<u64>) -> Result<Vec<f64>> {
         if self.method == S2Method::MeshMc {
             return Err(RustMsptError::InvalidConfig("incremental voxel occupancy cannot evaluate mesh_mc S2".into()));
         }
@@ -330,10 +333,11 @@ impl OptimizeS2 {
             rayon::current_num_threads(),
             rayon::current_thread_index(),
         ));
-        Ok(grid.calculate(
+        Ok(grid.calculate_seeded(
             r_max,
             if self.method == S2Method::VoxelExact { "exact" } else { "monte_carlo" },
             samples,
+            seed,
         ))
     }
 }
@@ -358,6 +362,7 @@ pub(super) fn run_island_batches<T: Send>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geometry::calculate_s2;
     use crate::geometry::box_mesh;
     use crate::types::Vec3;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -522,8 +527,8 @@ mod tests {
                 let old = coverage.replace(index, &parts[index]);
                 let merged = crate::geometry::merge_meshes(&parts);
                 assert_eq!(
-                    evaluator.evaluate_voxel_grid(coverage.grid(), 4, 200, "candidate").unwrap(),
-                    evaluator.evaluate(&merged, bbox, 4, 200, "candidate").unwrap(),
+                    evaluator.evaluate_voxel_grid(coverage.grid(), 4, 200, "candidate", None).unwrap(),
+                    evaluator.evaluate(&merged, bbox, 4, 200, "candidate", None).unwrap(),
                     "{method} {pitch} step {step}"
                 );
                 if step % 2 == 1 {
@@ -534,7 +539,7 @@ mod tests {
         }
         let mesh_mc = OptimizeS2::new(&params("monte_carlo", 0.0), bbox, &merged).unwrap();
         assert!(mesh_mc.voxel_coverage(parts.iter(), bbox).is_none());
-        assert!(mesh_mc.evaluate_voxel_grid(&crate::geometry::s2::VoxelS2::new(&merged, bbox, 1.0), 0, 200, "candidate").is_err());
+        assert!(mesh_mc.evaluate_voxel_grid(&crate::geometry::s2::VoxelS2::new(&merged, bbox, 1.0), 0, 200, "candidate", None).is_err());
     }
 
     // AI-FUNC-SUMMARY: Compare actual CPU evaluation against exact/voxel/mesh reference VF and observe the execution pool for every stage; no file output.
@@ -567,7 +572,7 @@ mod tests {
                         "migration",
                         "final",
                     ] {
-                        let s2 = evaluator.evaluate(&mesh, bbox, 0, 200, stage).unwrap();
+                        let s2 = evaluator.evaluate(&mesh, bbox, 0, 200, stage, None).unwrap();
                         assert!((s2[0] - expected).abs() < 1e-12, "{method} {pitch}: {s2:?}");
                     }
                 });
@@ -648,7 +653,7 @@ mod tests {
             run_island_batches(5, |id| {
                 let mesh = if id % 2 == 0 { &small } else { &large };
                 let s2 = evaluator
-                    .evaluate(mesh, bbox, 1, 20_000, "candidate")
+                    .evaluate(mesh, bbox, 1, 20_000, "candidate", None)
                     .unwrap();
                 assert!((s2[0] - if id % 2 == 0 { 1.0 / 64.0 } else { 8.0 / 64.0 }).abs() < 1e-12);
                 assert!(
@@ -683,13 +688,13 @@ mod tests {
             }
             evaluator.cpu_fallback = fallback;
             let degenerate = BoundingBox::from_size(Vec3::new(1e-300, 1.0, 1.0));
-            let result = evaluator.evaluate(&mesh, degenerate, 1, 200, "candidate");
+            let result = evaluator.evaluate(&mesh, degenerate, 1, 200, "candidate", None);
             if fallback {
                 let result = result.unwrap();
                 assert_eq!(result.len(), 2);
                 assert!(evaluator.gpu.as_ref().unwrap().lock().unwrap().is_none());
                 assert_eq!(
-                    evaluator.evaluate(&mesh, bbox, 0, 200, "final").unwrap(),
+                    evaluator.evaluate(&mesh, bbox, 0, 200, "final", None).unwrap(),
                     vec![expected_vf]
                 );
             } else {
@@ -720,13 +725,13 @@ mod tests {
             p.acceleration.gpu_memory_limit_mb = Some(1);
             let evaluator = OptimizeS2::new(&p, bbox, &mesh).unwrap();
             assert!(evaluator.gpu.as_ref().unwrap().lock().unwrap().is_some());
-            let result = evaluator.evaluate(&large, bbox, 0, 200, "large-budget-stage");
+            let result = evaluator.evaluate(&large, bbox, 0, 200, "large-budget-stage", None);
             if fallback {
                 assert_eq!(result.unwrap(), large_expected);
                 assert!(evaluator.gpu.as_ref().unwrap().lock().unwrap().is_none());
                 assert_eq!(
                     evaluator
-                        .evaluate(&mesh, bbox, 0, 200, "after-budget-fallback")
+                        .evaluate(&mesh, bbox, 0, 200, "after-budget-fallback", None)
                         .unwrap(),
                     expected
                 );
@@ -739,7 +744,7 @@ mod tests {
                 assert!(evaluator.gpu.as_ref().unwrap().lock().unwrap().is_some());
                 assert_eq!(
                     evaluator
-                        .evaluate(&mesh, bbox, 0, 200, "after-budget-error")
+                        .evaluate(&mesh, bbox, 0, 200, "after-budget-error", None)
                         .unwrap(),
                     expected
                 );

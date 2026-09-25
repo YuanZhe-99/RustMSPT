@@ -31,6 +31,20 @@ pub trait Pipeline {
     fn run(&self) -> Result<()>;
 }
 
+// AI-FUNC-SUMMARY: Run `work` inside a dedicated Rayon pool sized from a `cpu_max` setting (absent or -1: every available worker, otherwise clamped to 1..available); returns work's result or a pool-construction error; side effects: builds and installs the pool.
+// Notes: Every parallel section of the run, and any CPU fallback inside it, then shares one worker budget
+// instead of the global pool (PERF-02).
+pub(crate) fn run_in_cpu_pool<T: Send>(label: &str, cpu_max: Option<i32>, work: impl FnOnce() -> Result<T> + Send) -> Result<T> {
+    let available = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    let requested = cpu_max.unwrap_or(-1);
+    let workers = if requested == -1 { available } else { (requested.max(1) as usize).min(available) };
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(workers)
+        .build()
+        .map_err(|e| crate::error::RustMsptError::InvalidConfig(format!("{label} worker pool: {e}")))?;
+    pool.install(work)
+}
+
 // AI-FUNC-SUMMARY:
 // Purpose: Build a standardized progress bar with tty-aware visibility.
 // Inputs: total length, template string, and progress characters.

@@ -64,6 +64,7 @@ a fresh checkout. This walkthrough instead points `forge` at the real, already-p
 
 | Field | Meaning |
 |---|---|
+| `cpu_max` (optional) | Worker budget for the run; absent or `-1` uses every available worker. |
 | `compression_ratio` | Fraction of the compression axis's extent removed. `0.5` means the compressed extent is 50% of the original, clamped internally to never fall below 1% of original (`axis_scale` floor of `0.01`). |
 | `compression_axis` | Which axis (`x`/`y`/`z`) is compressed; the other two receive lateral "bulge" expansion. Defaults to `z` if omitted. |
 | `bulge_factor` | Interpolates (in log space) between no lateral expansion (`0.0`) and volume-conserving lateral expansion (`1.0`). |

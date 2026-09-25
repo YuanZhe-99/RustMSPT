@@ -78,6 +78,7 @@ except for `optimization.max_iterations` and `output.path`, copied into a scratc
 
 | Field | Meaning |
 |---|---|
+| `seed` (optional) | Fixes every random decision of a single-island run, including Monte Carlo S2 noise, so the same seed reproduces the output on any worker count. Omit for fresh randomness each run. |
 | `target.type` / `target.s2_array` | `"manual_array"` supplies 11 target S2 values directly (for `r = 0..10`); `"reference_stl"` instead computes the target S2 curve from a reference mesh (`target.stl_path`). |
 | `box.dimensions` | The fixed-size box particles are packed/optimized within. |
 | `optimization.max_iterations` | Number of simulated-annealing iterations to run. The repository default is **5,000**; this example reduces it for demonstration (see Notes). |

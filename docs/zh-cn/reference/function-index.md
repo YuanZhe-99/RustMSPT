@@ -137,6 +137,8 @@
 | `calculate_s2_exact_fft` | Geometry — Analysis | `src/geometry/s2.rs:651` | 使用基于 FFT 的自相关计算精确 S2。 |
 | `calculate_s2_monte_carlo_mesh` | Geometry — Analysis | `src/geometry/s2.rs:730` | 直接在网格上采样进行蒙特卡洛 S2 估计（不体素化）。 |
 | `calculate_s2` | Geometry — Analysis | `src/geometry/s2.rs:785` | 顶层 S2 调度器；路由到精确法（FFT 或直接法）或体素化蒙特卡洛法。 |
+| `calculate_s2_seeded` | Geometry — Analysis | `src/geometry/s2.rs` | 带可选种子的 `calculate_s2`：网格 MC 走 `calculate_s2_mesh_mc_seeded`，体素 MC 每个半径一条固定随机流；`None` 与 `calculate_s2` 完全相同。 |
+| `VoxelS2::calculate_seeded` | Geometry — Analysis | `src/geometry/s2.rs` | 带可选蒙特卡洛种子的 `VoxelS2::calculate`。 |
 | `approximate_s2` | Geometry — Analysis | `src/geometry/s2.rs:924` | 采用默认体素间距进行蒙特卡洛 S2 估计的便捷封装。 |
 | `l2_norm` | Geometry — Analysis | `src/geometry/s2.rs:929` | 两个 S2 向量在其共同长度前缀上的欧几里得距离。 |
 | `calculate_s2_with_gpu` | Geometry — Analysis | `src/geometry/s2.rs:948` | 针对蒙特卡洛/"both" 方法的 GPU 加速 S2，带 CPU 回退。*（特性 `gpu`）* |
@@ -243,6 +245,7 @@
 | `GpuS2Pipeline::update_mesh` | GPU | `src/gpu/s2.rs:277` | 为新网格重新上传三角形数据，而无需重建流水线。 |
 | `GpuS2Pipeline::ensure_output_capacity` | GPU | `src/gpu/s2.rs:302` | 若调用次数超过当前容量，则扩容输出缓冲区。 |
 | `GpuS2Pipeline::calculate_s2_gpu` | GPU | `src/gpu/s2.rs:351` | 为所有半径分派蒙特卡洛 S2 内核并回读结果。 |
+| `GpuS2Pipeline::calculate_s2_gpu_seeded` | GPU | `src/gpu/s2.rs` | 带可选种子（折叠为内核 32 位种子）的 `calculate_s2_gpu`。 |
 | `OffsetEntry` | GPU | `src/gpu/s2_shell.rs:6` | 与 WGSL 布局相匹配的打包 `(radius_idx, dx, dy, dz)` 球壳偏移记录。 |
 | `point_inside` (s2_monte_carlo.wgsl) | GPU | `src/gpu/shaders/s2_monte_carlo.wgsl` | 认证奇偶性，返回 0/1/不确定（精确 bbox 排除、证明互异命中）。 |
 | `point_inside_overflow` (s2_monte_carlo.wgsl) | GPU | `src/gpu/shaders/s2_monte_carlo.wgsl` | 认证的超 64 命中恢复，证明每个间隔超过 CPU 去重带。 |
@@ -312,6 +315,7 @@
 | `uniform_range` | Pipeline — Core | `src/pipeline/rng.rs:45` | 在 `[lo, hi)` 上抽取一个均匀值；退化区间返回 `lo`。 |
 | `uniform_index` | Pipeline — Core | `src/pipeline/rng.rs:62` | 从 `0..n` 中均匀抽取一个下标。 |
 | `create_progress_bar` | Pipeline — Core | `src/pipeline/mod.rs:37` | 用给定的模板和填充字符构建一个感知 tty 的 indicatif 进度条。 |
+| `run_in_cpu_pool` | Pipeline — Core | `src/pipeline/mod.rs` | 在按 `cpu_max`（缺省/-1：全部 worker）确定大小的专用 Rayon 池中运行；forge 与 scale 使用，使所有并行段共享一个预算。 |
 | `RotationMode`（枚举） | Pipeline — Core | `src/pipeline/rotation.rs:6` | 表示不旋转、固定轴或随机轴。 |
 | `parse_rotation_mode` | Pipeline — Core | `src/pipeline/rotation.rs:18` | 将 `none/x/y/z/vector/any` 配置字符串解析为一个 `RotationMode`。 |
 | `sample_rotation_axis` | Pipeline — Core | `src/pipeline/rotation.rs:57` | 为给定的 `RotationMode` 抽取一个具体的旋转轴向量。 |
@@ -386,6 +390,7 @@
 | `prune_progress_message` | Pipeline — Optimize | `src/pipeline/optimize.rs:91` | 格式化剪枝 loss、VF 与颗粒数。 |
 | `selective_prune_to_target_vf` | Pipeline — Optimize | `src/pipeline/optimize.rs:103` | 在当前线程池内使用统一 S2 定义进行剪枝。 |
 | `run_sa_island` | Pipeline — Optimize | `src/pipeline/optimize.rs:296` | 用固定求值器和完整迁移快照运行单岛 SA。 |
+| `stage_rng` / `fixed_eval_seed` | Pipeline — Optimize | `src/pipeline/optimize.rs` | 由（`optimization.seed`，阶段）固定、或由 `thread_rng` 播种的逐阶段 ChaCha12 随机流；target/input/final 的一次性 S2 种子。 |
 | `OptimizePipeline::run` | Pipeline — Optimize | `src/pipeline/optimize.rs:741` | 将全部 optimize 阶段安装到一个按配置创建的 Rayon 池。 |
 | `OptimizePipeline::run_in_pool` | Pipeline — Optimize | `src/pipeline/optimize.rs:768` | 解析执行策略、加载准备、剪枝、分批运行岛并复核保存最佳结果。 |
 | `S2Method` | Pipeline — Optimize | `src/pipeline/optimize_execution.rs:12` | 内部 voxel_exact、voxel_mc 与 mesh_mc 三种定义。 |

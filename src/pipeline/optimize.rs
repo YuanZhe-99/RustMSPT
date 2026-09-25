@@ -77,6 +77,29 @@ fn prepare_particle(mesh: crate::types::Mesh) -> ParticlePrepared {
 /// integers and exact, so the rebuild guards against a future bookkeeping error rather than drift.
 const COVERAGE_REFRESH_INTERVAL: usize = 64;
 
+/// Stage salts for derived generators and evaluation seeds; islands use ISLAND_STAGE + island id.
+const PRUNE_STAGE: u64 = 1;
+const TARGET_STAGE: u64 = 2;
+const INPUT_STAGE: u64 = 3;
+const FINAL_STAGE: u64 = 4;
+const ISLAND_STAGE: u64 = 100;
+
+// AI-FUNC-SUMMARY: The generator for one optimize stage: fixed by (seed, stage) when a seed is configured, else seeded from the thread-local generator; returns a ChaCha12 stream; side effects: draws from thread_rng when unseeded.
+// Notes: Every random decision of a stage - pruning order, moves, Metropolis tests, per-evaluation S2 seeds - comes
+// from this one stream, so a seeded single-island run is reproducible on any worker count.
+fn stage_rng(seed: Option<u64>, stage: u64) -> rand_chacha::ChaCha12Rng {
+    use rand::SeedableRng;
+    match seed {
+        Some(seed) => rand_chacha::ChaCha12Rng::seed_from_u64(seed ^ stage.wrapping_mul(0xd1b5_4a32_d192_ed03)),
+        None => rand_chacha::ChaCha12Rng::from_rng(rand::thread_rng()).expect("thread_rng never fails"),
+    }
+}
+
+// AI-FUNC-SUMMARY: The S2 seed for a one-off evaluation stage (target, input, final); returns None when unseeded; side effects: none.
+fn fixed_eval_seed(seed: Option<u64>, stage: u64) -> Option<u64> {
+    seed.map(|seed| seed ^ stage.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ 0x5bd1_e995)
+}
+
 // AI-FUNC-SUMMARY: Evaluate one SA stage from the island's maintained state: voxel coverage when present, otherwise the merged mesh with the optional cached mesh-MC VF; returns S2 or the evaluator's error; side effects: those of the evaluator.
 #[allow(clippy::too_many_arguments)]
 fn island_s2(
@@ -88,10 +111,11 @@ fn island_s2(
     stage: &'static str,
     volumes: Option<&IslandVolumes>,
     coverage: Option<&VoxelCoverage>,
+    seed: Option<u64>,
 ) -> Result<Vec<f64>> {
     match coverage {
-        Some(cache) => evaluator.evaluate_voxel_grid(cache.grid(), r_max, samples, stage),
-        None => evaluator.evaluate_with_vf(merged, bbox, r_max, samples, stage, volumes.map(IslandVolumes::fraction)),
+        Some(cache) => evaluator.evaluate_voxel_grid(cache.grid(), r_max, samples, stage, seed),
+        None => evaluator.evaluate_with_vf(merged, bbox, r_max, samples, stage, volumes.map(IslandVolumes::fraction), seed),
     }
 }
 
@@ -169,18 +193,19 @@ fn selective_prune_to_target_vf(
         .max(200);
     let eval_rmax = r_max.min(target_s2.len().saturating_sub(1));
 
-    let eval_loss = |parts: &[crate::types::Mesh]| -> Result<(f64, f64)> {
+    let eval_loss = |parts: &[crate::types::Mesh], seed: Option<u64>| -> Result<(f64, f64)> {
         let merged = merge_meshes(parts);
         let vf = volume_fraction_of_meshes_in_bbox(parts, box_bounds);
-        let s2 = evaluator.evaluate(&merged, box_bounds, eval_rmax, eval_samples, "prune")?;
+        let s2 = evaluator.evaluate(&merged, box_bounds, eval_rmax, eval_samples, "prune", seed)?;
         let loss = l2_norm(&s2, target_s2);
         Ok((vf, loss))
     };
 
-    let mut rng = rand::thread_rng();
+    let mut rng = stage_rng(params.seed, PRUNE_STAGE);
+    let seeded = params.seed.is_some();
     let mut rounds = 0usize;
     let mut current_vf = volume_fraction_of_meshes_in_bbox(particles, box_bounds);
-    let (_, mut current_loss) = eval_loss(particles)?;
+    let (_, mut current_loss) = eval_loss(particles, seeded.then(|| rng.gen::<u64>()))?;
 
     println!(
         "[Info] Pruning stage: initial VF {current_vf:.6}, target VF {target_vf:.6}"
@@ -231,7 +256,7 @@ fn selective_prune_to_target_vf(
                 continue;
             }
 
-            let (vf, loss) = eval_loss(&temp)?;
+            let (vf, loss) = eval_loss(&temp, seeded.then(|| rng.gen::<u64>()))?;
 
             let still_above_target = vf >= target_vf;
             scored.push((idx, still_above_target, loss, vf));
@@ -288,7 +313,7 @@ fn selective_prune_to_target_vf(
         }
 
         rounds += 1;
-        let (vf_now, loss_now) = eval_loss(particles)?;
+        let (vf_now, loss_now) = eval_loss(particles, seeded.then(|| rng.gen::<u64>()))?;
         current_vf = vf_now;
         current_loss = loss_now;
         progress.set_position(rounds as u64);
@@ -348,7 +373,8 @@ fn run_sa_island(
     migration_interval: usize,
     history_log: &mut Vec<String>,
 ) -> Result<IslandResult> {
-    let mut rng = rand::thread_rng();
+    let mut rng = stage_rng(params.seed, ISLAND_STAGE + island_id as u64);
+    let seeded = params.seed.is_some();
     let mut temperature = params.initial_temperature.max(1e-8);
     let cooling_rate = params.cooling_rate.clamp(0.8, 0.99999);
     let adaptive_window = params
@@ -374,7 +400,7 @@ fn run_sa_island(
     let mut volume_updates = 0usize;
     let mut coverage = evaluator.voxel_coverage(prepared.iter().map(|p| &p.mesh), box_bounds);
     let mut coverage_updates = 0usize;
-    let mut current_s2 = island_s2(evaluator, &merged, box_bounds, params.r_max, params.mc_samples.max(2000), "initial", volumes.as_ref(), coverage.as_ref())?;
+    let mut current_s2 = island_s2(evaluator, &merged, box_bounds, params.r_max, params.mc_samples.max(2000), "initial", volumes.as_ref(), coverage.as_ref(), seeded.then(|| rng.gen::<u64>()))?;
     let mut current_loss = l2_norm(&current_s2, target);
     push_history_s2(history_log, "Post-Pruning S2", &current_s2);
     history_log.push(format!("Post-Pruning Loss: {current_loss:.6}"));
@@ -709,7 +735,7 @@ fn run_sa_island(
                 coverage = evaluator.voxel_coverage(prepared.iter().map(|p| &p.mesh), box_bounds);
             }
         }
-        let candidate_s2 = island_s2(evaluator, &merged, box_bounds, params.r_max, iter_samples, "candidate", volumes.as_ref(), coverage.as_ref())?;
+        let candidate_s2 = island_s2(evaluator, &merged, box_bounds, params.r_max, iter_samples, "candidate", volumes.as_ref(), coverage.as_ref(), seeded.then(|| rng.gen::<u64>()))?;
         s2_time += s2_start.elapsed();
         let candidate_loss = l2_norm(&candidate_s2, target);
         let delta = candidate_loss - current_loss;
@@ -774,7 +800,7 @@ fn run_sa_island(
                     volume_updates = 0;
                     coverage = evaluator.voxel_coverage(prepared.iter().map(|p| &p.mesh), box_bounds);
                     coverage_updates = 0;
-                    current_s2 = island_s2(evaluator, &merged, box_bounds, params.r_max, params.mc_samples.max(2000), "migration", volumes.as_ref(), coverage.as_ref())?;
+                    current_s2 = island_s2(evaluator, &merged, box_bounds, params.r_max, params.mc_samples.max(2000), "migration", volumes.as_ref(), coverage.as_ref(), seeded.then(|| rng.gen::<u64>()))?;
                     current_loss = l2_norm(&current_s2, target);
                     history_log.push(format!(
                         "Island {island_id} Iter {iter}: migrated best loss {:.6}", best.loss
@@ -916,7 +942,7 @@ impl OptimizePipeline {
                 } else {
                     mesh_bbox(&reference).unwrap_or(BoundingBox::from_size(Vec3::new(1.0, 1.0, 1.0)))
                 };
-                evaluator.evaluate(&reference, reference_bbox, params.r_max, params.mc_samples.max(1000), "target")?
+                evaluator.evaluate(&reference, reference_bbox, params.r_max, params.mc_samples.max(1000), "target", fixed_eval_seed(params.seed, TARGET_STAGE))?
             }
             other => {
                 return Err(RustMsptError::InvalidConfig(format!(
@@ -936,7 +962,7 @@ impl OptimizePipeline {
             params.voxel_pitch
         );
 
-        let input_s2 = evaluator.evaluate(&merged_input, box_bounds, params.r_max, params.mc_samples.max(1000), "input")?;
+        let input_s2 = evaluator.evaluate(&merged_input, box_bounds, params.r_max, params.mc_samples.max(1000), "input", fixed_eval_seed(params.seed, INPUT_STAGE))?;
         let input_vf = volume_fraction_of_meshes_in_bbox(&particles, box_bounds);
         let input_loss = l2_norm(&input_s2, &target);
         println!(
@@ -1004,7 +1030,7 @@ impl OptimizePipeline {
             (best_mesh.clone(), 0usize, 0usize)
         };
         let best_s2 = evaluator.evaluate(&best_mesh_oriented, box_bounds, params.r_max,
-            params.mc_samples.max(2000), "final")?;
+            params.mc_samples.max(2000), "final", fixed_eval_seed(params.seed, FINAL_STAGE))?;
         let best_loss = l2_norm(&best_s2, &target);
         history_log.push(format!("Selected Search Loss: {search_loss:.6}"));
         push_history_s2(&mut history_log, "Final Best S2", &best_s2);

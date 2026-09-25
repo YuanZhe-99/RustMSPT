@@ -68,6 +68,7 @@ output:
 
 | 字段 | 含义 |
 |---|---|
+| `seed`（可选） | 固定单岛运行的全部随机决定（含蒙特卡洛 S2 噪声），同一种子在任意 worker 数下复现同一输出。省略则每次运行随机不同。 |
 | `target.type` / `target.s2_array` | `"manual_array"` 直接提供 11 个目标 S2 值（对应 `r = 0..10`）；`"reference_stl"` 则从参考网格（`target.stl_path`）计算目标 S2 曲线。 |
 | `box.dimensions` | 颗粒进行堆积/优化所在的固定尺寸箱体。 |
 | `optimization.max_iterations` | 要运行的模拟退火迭代次数。代码仓库默认值为 **5,000**；本示例出于演示目的将其减少（见"说明"）。 |

@@ -11,6 +11,10 @@ pub struct PackingFilters {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct PackingParams {
+    /// Optional seed: the same seed, inputs and binary give the same packing on any worker count (the parallel
+    /// collision scan returns a boolean, never an order). Absent, randomness comes from the thread-local generator.
+    #[serde(default)]
+    pub seed: Option<u64>,
     pub target_volume_fraction: f64,
     pub mode: u8,
     pub max_attempts: usize,

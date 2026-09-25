@@ -9,14 +9,14 @@ pub struct ScalePipeline {
     pub config: ScaleConfig,
 }
 
-impl Pipeline for ScalePipeline {
+impl ScalePipeline {
     // AI-FUNC-SUMMARY:
     // Purpose: Execute scaling pipeline: load STL, apply unit conversion (factor, mm_per_voxel, or voxel_per_mm), optionally orient to positive volume, and save scaled STL.
     // Inputs: ScaleConfig with input/output, scaling type and value, and orient flag.
     // Returns: Ok(()) or error.
-    // Side effects: Reads STL from disk; writes scaled STL to disk; prints summary plus load/stats_before/transform/orient_stats_after/write_stl/total timings, global-pool workers and peak RSS to stdout.
+    // Side effects: Reads STL from disk; writes scaled STL to disk; prints summary plus load/stats_before/transform/orient_stats_after/write_stl/total timings, configured-pool workers and peak RSS to stdout.
     // Notes: Returns InvalidConfig for non-positive mm_per_voxel or voxel_per_mm values, or unknown scaling type.
-    fn run(&self) -> Result<()> {
+    fn run_in_pool(&self) -> Result<()> {
         let mut timer = crate::pipeline::timing::StageTimer::start("scale");
         let mut mesh = load_stl_or_merge_folder(Path::new(&self.config.input.stl_path))?;
         timer.stage("load");
@@ -108,5 +108,12 @@ impl Pipeline for ScalePipeline {
         timer.total("total");
         timer.report_resources();
         Ok(())
+    }
+}
+
+impl Pipeline for ScalePipeline {
+    // AI-FUNC-SUMMARY: Run the pipeline inside one pool sized by `cpu_max` (absent or -1: all available workers); returns run_in_pool's result; side effects: those of run_in_pool.
+    fn run(&self) -> Result<()> {
+        crate::pipeline::run_in_cpu_pool("scale", self.config.scaling.cpu_max, || self.run_in_pool())
     }
 }

@@ -33,6 +33,8 @@
 | `calculate_s2_exact_fft` | `src/geometry/s2.rs:651` | 使用基于 FFT 的自相关精确计算 S2。 |
 | `calculate_s2_monte_carlo_mesh` | `src/geometry/s2.rs:730` | 直接在网格上采样的蒙特卡洛 S2 估计（不做体素化）。 |
 | `calculate_s2` | `src/geometry/s2.rs:785` | 顶层 S2 调度函数；路由至精确方法（FFT 或直接法）或体素化蒙特卡洛。 |
+| `calculate_s2_seeded` | `src/geometry/s2.rs` | 带可选种子的 `calculate_s2`：网格 MC 走 `calculate_s2_mesh_mc_seeded`，体素 MC 每个半径一条固定随机流；`None` 与 `calculate_s2` 完全相同。 |
+| `VoxelS2::calculate_seeded` | `src/geometry/s2.rs` | 带可选蒙特卡洛种子的 `VoxelS2::calculate`。 |
 | `approximate_s2` | `src/geometry/s2.rs:924` | 使用默认体素间距的蒙特卡洛 S2 估计便捷封装函数。 |
 | `l2_norm` | `src/geometry/s2.rs:929` | 两个 S2 向量在其公共长度前缀上的欧氏距离。 |
 | `calculate_s2_with_gpu` | `src/geometry/s2.rs:948` | 针对蒙特卡洛/"both" 方法的 GPU 加速 S2，带 CPU 回退。*（特性 `gpu`）* |

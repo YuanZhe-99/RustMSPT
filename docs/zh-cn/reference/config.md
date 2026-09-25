@@ -138,6 +138,7 @@
 | `roi_bounding_box` | `Option<Vec<f64>>` | `roi_bounding_box` | — | 感兴趣区域包围盒（3 或 6 元素形式，约定与 `BoxConfig.dimensions` 相同），限制锻造施加的范围。 |
 | `mesh_type` | `Option<String>` | `mesh_type` | — | 用于选择锻造策略的网格分类/类型提示。 |
 | `void_densification` | `Option<f64>` | `void_densification` | — | 锻造过程中控制内部孔隙致密化程度的因子。 |
+| `cpu_max` | `Option<i32>` | `cpu_max` | 缺省（全部 worker） | 整个 forge 运行的 worker 预算（`-1` 或缺省：使用全部可用 worker；否则钳制到 1..可用数）。 |
 
 ### `ForgingConfig`
 
@@ -203,6 +204,7 @@
 | `min_boundary_dist` | `Option<f64>` | `min_boundary_dist` | — | 距离域边界所允许的最小距离。 |
 | `min_cross_boundary_depth` | `Option<f64>` | `min_cross_boundary_depth` | — | 特征跨越边界时所允许的最小穿透深度。 |
 | `prune_enabled` | `Option<bool>` | `prune_enabled` | — | 是否启用对拟合较差的解元素的周期性剪枝。 |
+| `seed` | `Option<u64>` | `seed` | 缺省 | 使单岛运行在任意 worker 数下可复现：剪枝、移动、Metropolis 判定与每次蒙特卡洛 S2 评估都取自由它固定的随机流（`stage_rng`）。多岛的迁移依赖线程时序，因此不可复现。缺省时与以前相同，使用线程本地随机源。 |
 | `prune_tolerance` | `Option<f64>` | `prune_tolerance` | — | 用于判定某元素是否被剪枝的容差阈值。 |
 | `prune_max_rounds` | `Option<usize>` | `prune_max_rounds` | `None` | 要运行的最大剪枝轮数（灵活 usize 解析）。 |
 | `prune_eval_samples` | `Option<usize>` | `prune_eval_samples` | `None` | 剪枝过程中用于评估候选项的样本数（灵活 usize 解析）。 |
@@ -239,6 +241,7 @@
 | 字段 | Rust 类型 | YAML 键 | 默认值 | 含义 |
 |---|---|---|---|---|
 | `target_volume_fraction` | `f64` | `target_volume_fraction` | — | 堆积体应达到的目标固相体积分数。 |
+| `seed` | `Option<u64>` | `seed` | 缺省 | 使旧版 pack 在任意 worker 数下可复现（其并行碰撞扫描只返回布尔值）。缺省时与以前相同，使用线程本地随机源。 |
 | `mode` | `u8` | `mode` | — | 数值型堆积模式选择器。 |
 | `max_attempts` | `usize` | `max_attempts` | — | 每个颗粒放置失败前的最大尝试次数。 |
 | `min_neighbor_distance` | `Option<f64>` | `min_neighbor_distance` | — | 相邻颗粒之间允许的最小距离。 |
@@ -358,6 +361,7 @@ map 缓冲，`deny_unknown_fields` 在该路径上不会触发——`{kind: logn
 | `r#type` | `String` | `type` | — | 缩放模式判别标识（例如按倍数缩放 vs. 缩放到目标尺寸/体积）。 |
 | `value` | `f64` | `value` | — | 缩放值，其含义取决于 `r#type`。 |
 | `orient_to_positive_volume` | `Option<bool>` | `orient_to_positive_volume` | — | 缩放前/后是否重新定向网格，使其带符号体积为正。 |
+| `cpu_max` | `Option<i32>` | `cpu_max` | 缺省（全部 worker） | 整个 scale 运行的 worker 预算（`-1` 或缺省：使用全部可用 worker）。 |
 
 ### `ScaleConfig`
 

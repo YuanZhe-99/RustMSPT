@@ -1239,8 +1239,26 @@ pub fn calculate_s2(
     method: &str,
     samples: usize,
 ) -> Vec<f64> {
+    calculate_s2_seeded(mesh, bbox, r_max, voxel_pitch, method, samples, None)
+}
+
+// AI-FUNC-SUMMARY: calculate_s2 with an optional seed for the Monte Carlo paths; returns S2 values; side effects: as calculate_s2.
+// Notes: With a seed, mesh MC and voxel MC draw from streams fixed by the seed (voxel MC: one stream per radius), so
+// the curve is reproducible on any worker count; exact is deterministic either way. None is calculate_s2 exactly.
+pub fn calculate_s2_seeded(
+    mesh: &Mesh,
+    bbox: BoundingBox,
+    r_max: usize,
+    voxel_pitch: f64,
+    method: &str,
+    samples: usize,
+    seed: Option<u64>,
+) -> Vec<f64> {
     if method != "exact" && voxel_pitch <= 0.0 {
-        return calculate_s2_monte_carlo_mesh(mesh, bbox, r_max, samples);
+        return match seed {
+            Some(seed) => calculate_s2_mesh_mc_seeded(mesh, bbox, r_max, samples, seed, true),
+            None => calculate_s2_monte_carlo_mesh(mesh, bbox, r_max, samples),
+        };
     }
 
     let effective_pitch = if voxel_pitch <= 0.0 {
@@ -1252,7 +1270,7 @@ pub fn calculate_s2(
         voxel_pitch
     };
 
-    VoxelS2::new(mesh, bbox, effective_pitch).calculate(r_max, method, samples)
+    VoxelS2::new(mesh, bbox, effective_pitch).calculate_seeded(r_max, method, samples, seed)
 }
 
 /// Immutable voxelization shared by exact and voxel Monte Carlo evaluations.
@@ -1293,11 +1311,11 @@ fn cached_mc_shells(r_max: usize, pitch: f64) -> McShells {
 
 // AI-FUNC-SUMMARY:
 // Purpose: Voxel Monte Carlo S2 hit ratios for radii 0..=r_max over an occupancy grid.
-// Inputs: occupancy, dims, per-radius shell offsets (index r-1), the occupancy VF, samples per radius, and whether radii run in parallel.
+// Inputs: occupancy, dims, per-radius shell offsets (index r-1), the occupancy VF, samples per radius, whether radii run in parallel, and an optional seed (one stream per radius, so the result does not depend on scheduling).
 // Returns: (value, supported) per radius; radius 0 is (vf, true), a radius with no offsets or no valid pair is (0.0, false).
-// Side effects: draws unseeded randomness.
+// Side effects: draws unseeded randomness when no seed is given.
 // Notes: The estimator is uniform voxel, uniform shell offset, hits over in-grid pairs; `parallel` changes only scheduling.
-fn voxel_mc_radii(occ: &[bool], dims: [usize; 3], shells: &[Vec<[isize; 3]>], vf: f64, mc_samples: usize, parallel: bool) -> Vec<(f64, bool)> {
+fn voxel_mc_radii(occ: &[bool], dims: [usize; 3], shells: &[Vec<[isize; 3]>], vf: f64, mc_samples: usize, parallel: bool, seed: Option<u64>) -> Vec<(f64, bool)> {
     let [nx, ny, nz] = dims;
     let radius = |r: usize| -> (f64, bool) {
         if r == 0 {
@@ -1309,7 +1327,13 @@ fn voxel_mc_radii(occ: &[bool], dims: [usize; 3], shells: &[Vec<[isize; 3]>], vf
         }
         let mut valid = 0usize;
         let mut hits = 0usize;
-        let mut rng = voxel_mc_rng();
+        let mut rng = match seed {
+            Some(seed) => {
+                use rand::SeedableRng;
+                rand::rngs::SmallRng::seed_from_u64(seed ^ (r as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15))
+            }
+            None => voxel_mc_rng(),
+        };
         let (ux, uy, uz) = (Uniform::new(0, nx), Uniform::new(0, ny), Uniform::new(0, nz));
         let uo = Uniform::new(0, offsets.len());
         for _ in 0..mc_samples {
@@ -1378,6 +1402,11 @@ impl VoxelS2 {
 
     // AI-FUNC-SUMMARY: Evaluate exact or voxel MC S2 on an immutable prepared grid without repeating mesh splitting or containment queries; exact picks FFT or direct through the cached cost/memory plan (logged once per plan key); returns the occupancy VF at radius zero.
     pub fn calculate(&self, r_max: usize, method: &str, samples: usize) -> Vec<f64> {
+        self.calculate_seeded(r_max, method, samples, None)
+    }
+
+    // AI-FUNC-SUMMARY: VoxelS2::calculate with an optional Monte Carlo seed (one fixed stream per radius); returns S2 values; side effects: as calculate.
+    pub fn calculate_seeded(&self, r_max: usize, method: &str, samples: usize, seed: Option<u64>) -> Vec<f64> {
     let [nx, ny, nz] = self.dims;
     let occ = &self.occupancy;
     let effective_pitch = self.pitch;
@@ -1400,7 +1429,7 @@ impl VoxelS2 {
             let pitch = effective_pitch.max(1e-9);
             let shells = cached_mc_shells(r_max, pitch);
             let parallel = mc_samples.saturating_mul(r_max) >= VOXEL_MC_PARALLEL_MIN_SAMPLES;
-            let results = voxel_mc_radii(occ, self.dims, &shells, vf, mc_samples, parallel);
+            let results = voxel_mc_radii(occ, self.dims, &shells, vf, mc_samples, parallel, seed);
 
             let mut out = vec![0.0; r_max + 1];
             let mut has_support = vec![false; r_max + 1];
@@ -1973,7 +2002,7 @@ mod voxel_coverage_tests {
         let vf = exact[0];
         let shells = cached_mc_shells(6, 1.0);
         for parallel in [false, true] {
-            let mc = voxel_mc_radii(&grid.occupancy, grid.dims, &shells, vf, 200_000, parallel);
+            let mc = voxel_mc_radii(&grid.occupancy, grid.dims, &shells, vf, 200_000, parallel, None);
             assert_eq!(mc.len(), 7);
             assert_eq!(mc[0], (vf, true));
             for r in 1..=6 {

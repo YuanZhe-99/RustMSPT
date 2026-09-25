@@ -185,3 +185,93 @@ fn optimize_one_mib_gpu_budget_executes() {
     assert!(dir.path().join("output.stl").exists());
     assert!(text.contains("Optimize GPU mesh_mc f32 certification:"), "{text}");
 }
+
+// AI-FUNC-SUMMARY: Run a seeded single-island optimize on three moving boxes with the given S2 method, seed and worker count; returns the output STL bytes; writes fixtures in `dir`.
+fn seeded_optimize(dir: &Path, method: &str, pitch: f64, seed: u64, workers: usize) -> Vec<u8> {
+    let parts: Vec<_> = [0.3, 1.5, 2.6]
+        .iter()
+        .map(|&x| box_mesh(BoundingBox { min: Vec3::new(x, 0.4, 0.5), max: Vec3::new(x + 0.8, 1.3, 1.2) }))
+        .collect();
+    save_stl(&dir.join("input.stl"), &rustmspt::geometry::merge_meshes(&parts), "boxes").unwrap();
+    let target = box_mesh(BoundingBox { min: Vec3::new(0.5, 0.5, 0.5), max: Vec3::new(2.5, 2.0, 1.8) });
+    save_stl(&dir.join("target.stl"), &target, "target").unwrap();
+    let config = serde_json::json!({
+        "input": {"stl_path": dir.join("input.stl")}, "output": {"path": dir.join("output.stl")},
+        "box": {"dimensions": [0,0,0,4,4,4]},
+        "target": {"type": "reference_stl", "stl_path": dir.join("target.stl"), "stl_bounding_box": [0,0,0,4,4,4]},
+        "optimization": {
+            "seed": seed,
+            "max_iterations": 40, "initial_temperature": 0.05, "cooling_rate": 0.98,
+            "r_max": 3, "voxel_pitch": pitch, "mc_method": method, "mc_samples": 1500,
+            "max_translation": 0.3, "max_rotation_deg": 20.0, "rotation_mode": "any",
+            "prune_enabled": true, "cpu_max": workers, "islands": 1,
+            "acceleration": {"mode": "cpu"}
+        }
+    });
+    let config_path = dir.join("config.json");
+    std::fs::write(&config_path, serde_json::to_vec(&config).unwrap()).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_rustmspt"))
+        .args(["optimize", "--config"])
+        .arg(config_path)
+        .env_remove("RUSTMSPT_ACCELERATION")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    std::fs::read(dir.join("output.stl")).unwrap()
+}
+
+// AI-FUNC-SUMMARY: A seeded single-island optimize is reproducible across runs and worker counts for voxel MC and mesh MC, and a different seed changes the result; writes temporary files.
+#[test]
+fn a_seeded_single_island_optimize_is_reproducible_on_any_worker_count() {
+    for (method, pitch) in [("monte_carlo", 0.25), ("monte_carlo", 0.0)] {
+        let tmp = tempfile::tempdir().unwrap();
+        let run = |name: &str, seed: u64, workers: usize| {
+            let dir = tmp.path().join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            seeded_optimize(&dir, method, pitch, seed, workers)
+        };
+        let one = run("one", 42, 1);
+        assert_eq!(one, run("again", 42, 1), "{method} pitch {pitch}: same seed, same workers");
+        assert_eq!(one, run("four", 42, 4), "{method} pitch {pitch}: same seed, four workers");
+        assert_ne!(one, run("other", 43, 1), "{method} pitch {pitch}: the seed must matter");
+    }
+}
+
+// AI-FUNC-SUMMARY: A seeded legacy pack gives byte-identical output on 1 and 4 workers and differs under another seed; writes temporary files.
+#[test]
+fn a_seeded_legacy_pack_is_reproducible_on_any_worker_count() {
+    let tmp = tempfile::tempdir().unwrap();
+    let parts: Vec<_> = (0..6)
+        .map(|i| {
+            let s = 0.6 + 0.15 * i as f64;
+            rustmspt::geometry::icosphere_mesh(Vec3::new(3.0 * i as f64, 0.0, 0.0), s, 2)
+        })
+        .collect();
+    save_stl(&tmp.path().join("particles.stl"), &rustmspt::geometry::merge_meshes(&parts), "particles").unwrap();
+    let run = |name: &str, seed: u64, workers: i64| {
+        let out = tmp.path().join(format!("{name}.stl"));
+        let config = serde_json::json!({
+            "input": {"path": tmp.path().join("particles.stl")},
+            "output": {"path": out},
+            "box": {"dimensions": [20.0, 20.0, 20.0]},
+            "packing": {
+                "seed": seed, "target_volume_fraction": 0.08, "mode": 2, "max_attempts": 3000,
+                "min_neighbor_distance": 0.3, "rotation_mode": "any", "rotation_axis_vector": [0.0, 0.0, 1.0],
+                "min_boundary_dist": 0.2, "min_cross_boundary_depth": 0.5, "cpu_max": workers,
+                "orient_to_positive_volume": false, "target_diameter_distribution_csv": null,
+                "target_mean_sphericity": null, "mean_sphericity_tolerance": null,
+                "filters": {"min_volume": 0.01, "max_aspect_ratio": 3.0, "max_sharpness_ratio": 2.0}
+            }
+        });
+        let config_path = tmp.path().join(format!("{name}.json"));
+        std::fs::write(&config_path, serde_json::to_vec(&config).unwrap()).unwrap();
+        let result = Command::new(env!("CARGO_BIN_EXE_rustmspt")).args(["pack", "--config"]).arg(&config_path).output().unwrap();
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        std::fs::read(out).unwrap()
+    };
+    let one = run("one", 7, 1);
+    assert!(!one.is_empty());
+    assert_eq!(one, run("four", 7, 4), "same seed, four workers");
+    assert_eq!(one, run("again", 7, 1), "same seed, same workers");
+    assert_ne!(one, run("other", 8, 1), "the seed must matter");
+}

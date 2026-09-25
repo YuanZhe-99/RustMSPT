@@ -81,6 +81,7 @@ packing:
 
 | 字段 | 含义 |
 |---|---|
+| `seed`（可选） | 相同种子、输入与二进制在任意 worker 数下得到相同的堆积。省略则每次运行随机不同。 |
 | `target_volume_fraction` | 堆积应达到的固体体积分数（本例中 `0.02` = 填充 2%——刻意设得很小，以便本演示能在远低于一秒的时间内完成；生产环境的运行通常以更高的分数为目标，耗时也会相应增加）。 |
 | `mode` | `1` 严格（不允许越界），`2` 宽松（允许越界，忽略墙体），`3` 周期（允许越界 + 周期镜像碰撞检查）。本示例使用 `2`。模式 3 还会在 `Final count` 之后输出 `[Info] Periodic images: N stored, M accepted ghosts instantiated, K ghost TriMesh builds`。 |
 | `max_attempts` | 在流水线放弃并报告已达到的体积分数之前，允许的放置尝试次数。 |

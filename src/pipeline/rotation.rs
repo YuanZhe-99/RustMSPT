@@ -1,6 +1,5 @@
 use crate::error::{Result, RustMsptError};
 use crate::types::Vec3;
-use rand::Rng;
 
 #[derive(Clone)]
 pub enum RotationMode {
@@ -50,11 +49,11 @@ pub fn parse_rotation_mode(prefix: &str, mode: Option<&str>, axis_vec: Option<&V
 
 // AI-FUNC-SUMMARY:
 // Purpose: Sample a rotation axis based on the rotation mode.
-// Inputs: RNG and RotationMode.
+// Inputs: any RNG (thread-local or a seeded stream) and RotationMode.
 // Returns: Some(Vec3) axis for Axis/Any modes, None for None mode.
 // Side effects: None.
 // Notes: "Any" mode generates a random 3D vector (not normalized on unit sphere, but random in cube).
-pub fn sample_rotation_axis(rng: &mut rand::rngs::ThreadRng, mode: &RotationMode) -> Option<Vec3> {
+pub fn sample_rotation_axis<R: rand::Rng + ?Sized>(rng: &mut R, mode: &RotationMode) -> Option<Vec3> {
     match mode {
         RotationMode::None => None,
         RotationMode::Axis(axis) => Some(*axis),

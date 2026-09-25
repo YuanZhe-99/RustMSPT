@@ -11,6 +11,7 @@
 | `RenderPipeline::run_in_pool` | `src/pipeline/render.rs:59` | Execute render stages and fallback within the configured pool. |
 | `Pipeline::run`（trait） | `src/pipeline/mod.rs:17` | 每个流水线结构体实现的 trait 方法，用于端到端执行。 |
 | `create_progress_bar` | `src/pipeline/mod.rs:37` | 使用给定模板和填充字符构建一个能感知 tty 的 indicatif 进度条。 |
+| `run_in_cpu_pool` | `src/pipeline/mod.rs` | 在按 `cpu_max`（缺省/-1：全部 worker）确定大小的专用 Rayon 池中运行；forge 与 scale 使用，使所有并行段共享一个预算。 |
 | `RotationMode`（枚举） | `src/pipeline/rotation.rs:6` | 表示不旋转、固定轴旋转或随机轴旋转。 |
 | `parse_rotation_mode` | `src/pipeline/rotation.rs:18` | 将 `none/x/y/z/vector/any` 配置字符串解析为 `RotationMode`。 |
 | `sample_rotation_axis` | `src/pipeline/rotation.rs:57` | 为给定的 `RotationMode` 抽取一个具体的旋转轴向量。 |

@@ -35,6 +35,7 @@ scaling:
 
 | 字段 | 含义 |
 |---|---|
+| `scaling.cpu_max`（可选） | 本次运行的 worker 预算；缺省或 `-1` 使用全部可用 worker。 |
 | `scaling.type` | `"mm_per_voxel"` 和 `"voxel_per_mm"` 是单位换算模式；`"factor"` 则直接将 `value` 作为乘数应用。`"voxel_per_mm"` 会在应用前对 `value` 取倒数（`factor = 1.0 / value`）。 |
 | `scaling.value` | 对于 `mm_per_voxel`/`voxel_per_mm` 必须 `> 0`（会进行校验；非正值属于配置错误）。在 `"factor"` 模式下直接被解释为缩放因子。 |
 | `scaling.orient_to_positive_volume` | 为 `true` 时，会在缩放后运行 `orient_components_to_positive_volume`，并报告有多少网格分量被翻转。此处保留为 `false` 以跳过这一额外开销。 |

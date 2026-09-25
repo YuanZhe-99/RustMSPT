@@ -148,6 +148,7 @@ Not structs — this file provides plain functions and `deserialize_with` helper
 | `roi_bounding_box` | `Option<Vec<f64>>` | `roi_bounding_box` | — | Region-of-interest bounding box (3- or 6-element form, same convention as `BoxConfig.dimensions`) restricting where forging is applied. |
 | `mesh_type` | `Option<String>` | `mesh_type` | — | Mesh classification/type hint used to select a forging strategy. |
 | `void_densification` | `Option<f64>` | `void_densification` | — | Factor controlling densification of internal voids during forging. |
+| `cpu_max` | `Option<i32>` | `cpu_max` | absent (all workers) | Worker budget for the whole forge run (`-1` or absent: every available worker; otherwise clamped to 1..available). |
 
 ### `ForgingConfig`
 
@@ -213,6 +214,7 @@ Not structs — this file provides plain functions and `deserialize_with` helper
 | `min_boundary_dist` | `Option<f64>` | `min_boundary_dist` | — | Minimum allowed distance from the domain boundary. |
 | `min_cross_boundary_depth` | `Option<f64>` | `min_cross_boundary_depth` | — | Minimum penetration depth allowed when a feature crosses the boundary. |
 | `prune_enabled` | `Option<bool>` | `prune_enabled` | — | Whether periodic pruning of poorly-fitting solution elements is enabled. |
+| `seed` | `Option<u64>` | `seed` | absent | Makes a single-island run reproducible on any worker count: pruning, moves, Metropolis tests and every Monte Carlo S2 evaluation draw from streams fixed by it (`stage_rng`). Several islands migrate on thread timing, so they are not reproducible. Absent: thread-local randomness, as before. |
 | `prune_tolerance` | `Option<f64>` | `prune_tolerance` | — | Tolerance threshold used to decide whether an element is pruned. |
 | `prune_max_rounds` | `Option<usize>` | `prune_max_rounds` | `None` | Maximum number of pruning rounds to run (flexible usize parsing). |
 | `prune_eval_samples` | `Option<usize>` | `prune_eval_samples` | `None` | Number of samples used to evaluate candidates during pruning (flexible usize parsing). |
@@ -249,6 +251,7 @@ Not structs — this file provides plain functions and `deserialize_with` helper
 | Field | Rust type | YAML key | Default | Meaning |
 |---|---|---|---|---|
 | `target_volume_fraction` | `f64` | `target_volume_fraction` | — | Target solid volume fraction the pack should reach. |
+| `seed` | `Option<u64>` | `seed` | absent | Makes the legacy pack reproducible on any worker count (its parallel collision scan returns only a boolean). Absent: thread-local randomness, as before. |
 | `mode` | `u8` | `mode` | — | Numeric packing-mode selector. |
 | `max_attempts` | `usize` | `max_attempts` | — | Maximum placement attempts per particle before giving up. |
 | `min_neighbor_distance` | `Option<f64>` | `min_neighbor_distance` | — | Minimum allowed distance between neighboring particles. |
@@ -374,6 +377,7 @@ that path -- `{kind: lognormal, mediann: 12}` would be accepted with `median` si
 | `r#type` | `String` | `type` | — | Scaling mode discriminator (e.g. scale by factor vs. scale to target size/volume). |
 | `value` | `f64` | `value` | — | Scaling value whose interpretation depends on `r#type`. |
 | `orient_to_positive_volume` | `Option<bool>` | `orient_to_positive_volume` | — | Whether to reorient the mesh so its signed volume is positive before/after scaling. |
+| `cpu_max` | `Option<i32>` | `cpu_max` | absent (all workers) | Worker budget for the whole scale run (`-1` or absent: every available worker). |
 
 ### `ScaleConfig`
 

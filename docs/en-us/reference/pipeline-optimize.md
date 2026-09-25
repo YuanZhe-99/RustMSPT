@@ -16,6 +16,7 @@
 | `prune_progress_message` | `src/pipeline/optimize.rs:91` | Format pruning loss, VF and particle count. |
 | `selective_prune_to_target_vf` | `src/pipeline/optimize.rs:103` | Prune with the run-wide S2 definition under the installed pool. |
 | `run_sa_island` | `src/pipeline/optimize.rs:296` | Run one SA island with the fixed evaluator and coherent migration. |
+| `stage_rng` / `fixed_eval_seed` | `src/pipeline/optimize.rs` | Per-stage ChaCha12 stream fixed by (`optimization.seed`, stage) or seeded from `thread_rng`; one-off S2 seeds for target/input/final. |
 | `OptimizePipeline::run` | `src/pipeline/optimize.rs:741` | Install every optimize stage in one configured Rayon pool. |
 | `OptimizePipeline::run_in_pool` | `src/pipeline/optimize.rs:768` | Resolve execution, load/prepare, prune, batch islands and verify/save the winner. |
 | `S2Method` | `src/pipeline/optimize_execution.rs:12` | Internal voxel_exact, voxel_mc and mesh_mc definitions. |
@@ -100,6 +101,8 @@ to its own curve, which can differ from the re-evaluation under MC noise. The gl
 before geometry preparation/S2 work, so nested Rayon work cannot wait on that same held lock.
 Returns the best snapshot and candidate-stage timings; mutates history/global state and prints progress.
 
+
+**Seeded runs (PLAN.Performance.md §79).** `optimization.seed` makes a single-island run reproducible on any worker count. `stage_rng(seed, stage)` gives pruning (stage 1) and each island (stage 100 + id) a ChaCha12 stream; every S2 evaluation takes a seed drawn from that stream (only when seeded, so unseeded streams are unchanged) and passes it to `calculate_s2_seeded`, `VoxelS2::calculate_seeded` or `calculate_s2_gpu_seeded`; target, input and final evaluations use `fixed_eval_seed`. Voxel MC seeds one generator per radius, so parallel scheduling cannot change a curve. Several islands exchange snapshots on thread timing and stay non-reproducible. Test: `a_seeded_single_island_optimize_is_reproducible_on_any_worker_count` (voxel MC and mesh MC, 1 and 4 workers, and a different seed must differ).
 #### OptimizePipeline::run
 
 `fn run(&self) -> Result<()>` resolves `cpu_max` using the existing clamp to available parallelism,

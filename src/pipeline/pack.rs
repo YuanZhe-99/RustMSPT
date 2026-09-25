@@ -540,7 +540,15 @@ impl PackPipeline {
 
         timer.stage("load");
         let query_stats = PackQueryStats::default();
-        let mut rng = rand::thread_rng();
+        // One stream for every draw: fixed by `packing.seed` when set (the parallel collision scan only ever
+        // returns a boolean, so the run is reproducible on any worker count), else seeded from thread_rng.
+        let mut rng = {
+            use rand::SeedableRng;
+            match self.config.packing.seed {
+                Some(seed) => rand_chacha::ChaCha12Rng::seed_from_u64(seed),
+                None => rand_chacha::ChaCha12Rng::from_rng(rand::thread_rng()).expect("thread_rng never fails"),
+            }
+        };
         let mut placed: Vec<Mesh> = Vec::new();
         let mut scene = PackScene::new(box_bounds);
         let periodic = (self.config.packing.mode == 3).then_some(box_bounds);

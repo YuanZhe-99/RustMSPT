@@ -47,13 +47,13 @@ impl ForgePipeline {
     }
 }
 
-impl Pipeline for ForgePipeline {
+impl ForgePipeline {
     // AI-FUNC-SUMMARY:
     // Purpose: Execute forging pipeline: load STL, apply FFD compression along configured axis with bulge and optional void densification, translate output to align ROI, save forged STL and report.
     // Inputs: ForgingConfig with input/output, compression ratio/axis, bulge factor, ROI bbox, mesh_type, and void_densification.
     // Returns: Ok(()) or error.
-    // Side effects: Reads STL from disk; writes forged STL and report .txt to disk; prints diagnostics plus load/vf_before/transform/vf_after/orient_shift/write_stl/write_report/total timings, global-pool workers and peak RSS to stdout.
-    fn run(&self) -> Result<()> {
+    // Side effects: Reads STL from disk; writes forged STL and report .txt to disk; prints diagnostics plus load/vf_before/transform/vf_after/orient_shift/write_stl/write_report/total timings, configured-pool workers and peak RSS to stdout.
+    fn run_in_pool(&self) -> Result<()> {
         let params = &self.config.forging;
         let input = Path::new(&params.input_stl_path);
         let output = Path::new(
@@ -251,5 +251,12 @@ impl Pipeline for ForgePipeline {
         timer.report_resources();
 
         Ok(())
+    }
+}
+
+impl Pipeline for ForgePipeline {
+    // AI-FUNC-SUMMARY: Run the pipeline inside one pool sized by `cpu_max` (absent or -1: all available workers); returns run_in_pool's result; side effects: those of run_in_pool.
+    fn run(&self) -> Result<()> {
+        crate::pipeline::run_in_cpu_pool("forge", self.config.forging.cpu_max, || self.run_in_pool())
     }
 }

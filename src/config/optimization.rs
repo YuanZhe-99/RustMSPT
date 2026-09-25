@@ -12,6 +12,11 @@ pub struct TargetConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct OptimizationParams {
+    /// Optional seed. With one island a seeded run is reproducible on any worker count: moves, pruning and every
+    /// Monte Carlo S2 evaluation draw from streams fixed by it. Several islands migrate on thread timing, so their
+    /// runs are not. Absent, randomness is drawn from the thread-local generator as before.
+    #[serde(default)]
+    pub seed: Option<u64>,
     #[serde(deserialize_with = "deserialize_usize_flexible")]
     pub max_iterations: usize,
     pub initial_temperature: f64,

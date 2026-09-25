@@ -629,7 +629,19 @@ impl GpuS2Pipeline {
         r_max: usize,
         samples: usize,
     ) -> Result<Vec<f64>, String> {
-        self.calculate_s2_gpu_counts(bbox, r_max, samples, rand::random::<u32>())
+        self.calculate_s2_gpu_seeded(bbox, r_max, samples, None)
+    }
+
+    // AI-FUNC-SUMMARY: calculate_s2_gpu with an optional seed (folded to the kernel's 32-bit seed); returns the S2 curve or the same errors; side effects: as calculate_s2_gpu.
+    pub fn calculate_s2_gpu_seeded(
+        &mut self,
+        bbox: BoundingBox,
+        r_max: usize,
+        samples: usize,
+        seed: Option<u64>,
+    ) -> Result<Vec<f64>, String> {
+        let seed = seed.map_or_else(rand::random::<u32>, |s| (s ^ (s >> 32)) as u32);
+        self.calculate_s2_gpu_counts(bbox, r_max, samples, seed)
             .map(|counts| {
                 counts
                     .into_iter()

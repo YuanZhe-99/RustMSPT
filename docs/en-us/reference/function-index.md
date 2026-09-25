@@ -144,6 +144,8 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `calculate_s2_exact_fft` | Geometry — Analysis | `src/geometry/s2.rs:651` | Exact S2 using FFT-based autocorrelation. |
 | `calculate_s2_monte_carlo_mesh` | Geometry — Analysis | `src/geometry/s2.rs:730` | Monte Carlo S2 estimation sampling directly on the mesh (no voxelization). |
 | `calculate_s2` | Geometry — Analysis | `src/geometry/s2.rs:785` | Top-level S2 dispatcher; routes to exact (FFT or direct) or voxelized Monte Carlo. |
+| `calculate_s2_seeded` | Geometry — Analysis | `src/geometry/s2.rs` | `calculate_s2` with an optional seed: mesh MC via `calculate_s2_mesh_mc_seeded`, voxel MC with one fixed stream per radius; `None` is `calculate_s2` exactly. |
+| `VoxelS2::calculate_seeded` | Geometry — Analysis | `src/geometry/s2.rs` | `VoxelS2::calculate` with an optional Monte Carlo seed. |
 | `approximate_s2` | Geometry — Analysis | `src/geometry/s2.rs:924` | Convenience wrapper for Monte Carlo S2 estimation with a default voxel pitch. |
 | `l2_norm` | Geometry — Analysis | `src/geometry/s2.rs:929` | Euclidean distance between two S2 vectors over their common-length prefix. |
 | `calculate_s2_with_gpu` | Geometry — Analysis | `src/geometry/s2.rs:948` | GPU-accelerated S2 for Monte Carlo/"both" methods, with CPU fallback. *(feature `gpu`)* |
@@ -255,6 +257,7 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `triangle_usage` | GPU | `src/gpu/s2.rs` | Triangle storage usage flags (storage, copy dst/src). |
 | `GpuS2Pipeline::ensure_output_capacity` | GPU | `src/gpu/s2.rs:302` | Grows the output buffers if the invocation count exceeds current capacity. |
 | `GpuS2Pipeline::calculate_s2_gpu` | GPU | `src/gpu/s2.rs` | Dispatches the Monte Carlo S2 kernel in radius batches of at most 128 and reads back results. |
+| `GpuS2Pipeline::calculate_s2_gpu_seeded` | GPU | `src/gpu/s2.rs` | `calculate_s2_gpu` with an optional seed folded to the kernel's 32-bit seed. |
 | `OffsetEntry` | GPU | `src/gpu/s2_shell.rs:6` | Packed `(radius_idx, dx, dy, dz)` shell-offset record matching the WGSL layout. |
 | `point_inside` (s2_monte_carlo.wgsl) | GPU | `src/gpu/shaders/s2_monte_carlo.wgsl` | Certified parity returning 0/1/uncertain (exact bbox early-out, proven-distinct hits). |
 | `point_inside_overflow` (s2_monte_carlo.wgsl) | GPU | `src/gpu/shaders/s2_monte_carlo.wgsl` | Certified >64-hit recovery proving every gap exceeds the CPU dedup band. |
@@ -321,6 +324,7 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `uniform_range` | Pipeline — Core | `src/pipeline/rng.rs:45` | One uniform in `[lo, hi)`; degenerate ranges yield `lo`. |
 | `uniform_index` | Pipeline — Core | `src/pipeline/rng.rs:62` | One index uniformly from `0..n`. |
 | `create_progress_bar` | Pipeline — Core | `src/pipeline/mod.rs:37` | Builds a tty-aware indicatif progress bar with a given template and fill characters. |
+| `run_in_cpu_pool` | Pipeline — Core | `src/pipeline/mod.rs` | Runs work in a dedicated Rayon pool sized from a `cpu_max` setting (absent/-1: all workers); used by forge and scale so every parallel section shares one budget. |
 | `RotationMode` (enum) | Pipeline — Core | `src/pipeline/rotation.rs:6` | Represents no rotation, a fixed axis, or a random axis. |
 | `parse_rotation_mode` | Pipeline — Core | `src/pipeline/rotation.rs:18` | Parses `none/x/y/z/vector/any` config strings into a `RotationMode`. |
 | `sample_rotation_axis` | Pipeline — Core | `src/pipeline/rotation.rs:57` | Draws a concrete rotation axis vector for a given `RotationMode`. |
@@ -395,6 +399,7 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `prune_progress_message` | Pipeline — Optimize | `src/pipeline/optimize.rs:91` | Format pruning loss, VF and particle count. |
 | `selective_prune_to_target_vf` | Pipeline — Optimize | `src/pipeline/optimize.rs:103` | Prune with the run-wide S2 definition under the installed pool. |
 | `run_sa_island` | Pipeline — Optimize | `src/pipeline/optimize.rs:296` | Run one SA island with the fixed evaluator and coherent migration. |
+| `stage_rng` / `fixed_eval_seed` | Pipeline — Optimize | `src/pipeline/optimize.rs` | Per-stage ChaCha12 stream fixed by (`optimization.seed`, stage) or seeded from `thread_rng`; one-off S2 seeds for target/input/final. |
 | `OptimizePipeline::run` | Pipeline — Optimize | `src/pipeline/optimize.rs:741` | Install every optimize stage in one configured Rayon pool. |
 | `OptimizePipeline::run_in_pool` | Pipeline — Optimize | `src/pipeline/optimize.rs:768` | Resolve execution, load/prepare, prune, batch islands and verify/save the winner. |
 | `S2Method` | Pipeline — Optimize | `src/pipeline/optimize_execution.rs:12` | Internal voxel_exact, voxel_mc and mesh_mc definitions. |

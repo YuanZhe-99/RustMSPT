@@ -33,6 +33,8 @@ This page documents `src/geometry/metrics.rs` (mesh manifold validation and volu
 | `calculate_s2_exact_fft` | `src/geometry/s2.rs:651` | Exact S2 using FFT-based autocorrelation. |
 | `calculate_s2_monte_carlo_mesh` | `src/geometry/s2.rs:730` | Monte Carlo S2 estimation sampling directly on the mesh (no voxelization). |
 | `calculate_s2` | `src/geometry/s2.rs:785` | Top-level S2 dispatcher; routes to exact (FFT or direct) or voxelized Monte Carlo. |
+| `calculate_s2_seeded` | `src/geometry/s2.rs` | `calculate_s2` with an optional seed: mesh MC via `calculate_s2_mesh_mc_seeded`, voxel MC with one fixed stream per radius; `None` is `calculate_s2` exactly. |
+| `VoxelS2::calculate_seeded` | `src/geometry/s2.rs` | `VoxelS2::calculate` with an optional Monte Carlo seed. |
 | `approximate_s2` | `src/geometry/s2.rs:924` | Convenience wrapper for Monte Carlo S2 estimation with a default voxel pitch. |
 | `l2_norm` | `src/geometry/s2.rs:929` | Euclidean distance between two S2 vectors over their common-length prefix. |
 | `calculate_s2_with_gpu` | `src/geometry/s2.rs:948` | GPU-accelerated S2 for Monte Carlo/"both" methods, with CPU fallback. *(feature `gpu`)* |

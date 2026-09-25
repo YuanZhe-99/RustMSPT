@@ -37,6 +37,7 @@ This module implements wgpu compute pipelines plus offscreen STL rasterization, 
 | `changed_face_runs` | `src/gpu/s2.rs` | Host diff of resident vs new triangle bits into coalesced face runs, or `None` for a full write. |
 | `GpuS2Pipeline::ensure_output_capacity` | `src/gpu/s2.rs:302` | Grows the output buffers if the invocation count exceeds current capacity. |
 | `GpuS2Pipeline::calculate_s2_gpu` | `src/gpu/s2.rs` | Dispatches the Monte Carlo S2 kernel in radius batches of at most 128 and reads back results. |
+| `GpuS2Pipeline::calculate_s2_gpu_seeded` | `src/gpu/s2.rs` | `calculate_s2_gpu` with an optional seed folded to the kernel's 32-bit seed. |
 | `OffsetEntry` | `src/gpu/s2_shell.rs:6` | Packed `(radius_idx, dx, dy, dz)` shell-offset record matching the WGSL layout. |
 | `point_inside` (s2_monte_carlo.wgsl) | `src/gpu/shaders/s2_monte_carlo.wgsl` | Certified parity: exact bbox early-out, certified hits, proven-distinct 64-hit path; returns 0/1/uncertain. |
 | `point_inside_overflow` (s2_monte_carlo.wgsl) | `src/gpu/shaders/s2_monte_carlo.wgsl` | Certified >64-hit recovery proving every consecutive gap exceeds the CPU dedup band. |

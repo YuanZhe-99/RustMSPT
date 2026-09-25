@@ -9,6 +9,7 @@ Covers the `Pipeline` trait infrastructure and the simpler/support pipelines: `r
 | `RenderPipeline::run_in_pool` | `src/pipeline/render.rs:59` | Execute render stages and fallback within the configured pool. |
 | `Pipeline::run` (trait) | `src/pipeline/mod.rs:17` | Trait method every pipeline struct implements to execute end-to-end. |
 | `create_progress_bar` | `src/pipeline/mod.rs:37` | Builds a tty-aware indicatif progress bar with a given template and fill characters. |
+| `run_in_cpu_pool` | `src/pipeline/mod.rs` | Runs work in a dedicated Rayon pool sized from a `cpu_max` setting (absent/-1: all workers); used by forge and scale so every parallel section shares one budget. |
 | `RotationMode` (enum) | `src/pipeline/rotation.rs:6` | Represents no rotation, a fixed axis, or a random axis. |
 | `parse_rotation_mode` | `src/pipeline/rotation.rs:18` | Parses `none/x/y/z/vector/any` config strings into a `RotationMode`. |
 | `sample_rotation_axis` | `src/pipeline/rotation.rs:57` | Draws a concrete rotation axis vector for a given `RotationMode`. |

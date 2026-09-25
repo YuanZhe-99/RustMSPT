@@ -40,6 +40,7 @@ fn forging_pipeline_smoke() {
     let pipeline = ForgePipeline {
         config: ForgingConfig {
             forging: ForgingParams {
+                cpu_max: None,
                 input_stl_path: input.to_string_lossy().to_string(),
                 output_stl_path: Some(output.to_string_lossy().to_string()),
                 compression_ratio: Some(0.2),
@@ -103,6 +104,7 @@ fn scale_pipeline_smoke() {
                 stl_path: output.to_string_lossy().to_string(),
             },
             scaling: ScalingParams {
+                cpu_max: None,
                 r#type: "factor".to_string(),
                 value: 2.0,
                 orient_to_positive_volume: Some(false),
@@ -133,6 +135,7 @@ fn packing_pipeline_smoke() {
                 dimensions: vec![0.0, 0.0, 0.0, 10.0, 10.0, 10.0],
             },
             packing: PackingParams {
+                seed: None,
                 target_volume_fraction: 0.0001,
                 mode: 1,
                 max_attempts: 100,
@@ -185,6 +188,7 @@ fn packing_pipeline_scales_to_diameter_distribution() {
                 dimensions: vec![0.0, 0.0, 0.0, 10.0, 10.0, 10.0],
             },
             packing: PackingParams {
+                seed: None,
                 target_volume_fraction: 0.0001,
                 mode: 1,
                 max_attempts: 100,
@@ -240,6 +244,7 @@ fn packing_pipeline_accepts_mean_sphericity_target_without_blocking_vf() {
                 dimensions: vec![0.0, 0.0, 0.0, 10.0, 10.0, 10.0],
             },
             packing: PackingParams {
+                seed: None,
                 target_volume_fraction: 0.0001,
                 mode: 1,
                 max_attempts: 100,
@@ -290,6 +295,7 @@ fn packing_pipeline_falls_back_from_unplaceable_diameter_bin() {
                 dimensions: vec![0.0, 0.0, 0.0, 10.0, 10.0, 10.0],
             },
             packing: PackingParams {
+                seed: None,
                 target_volume_fraction: 0.0001,
                 mode: 1,
                 max_attempts: 100,
@@ -395,6 +401,7 @@ fn optimization_pipeline_smoke() {
                 dimensions: vec![0.0, 0.0, 0.0, 10.0, 10.0, 10.0],
             },
             optimization: OptimizationParams {
+                seed: None,
                 max_iterations: 10,
                 initial_temperature: 0.1,
                 cooling_rate: 0.95,
@@ -531,6 +538,7 @@ fn packing_pipeline_never_nests_particles() {
                 dimensions: vec![0.0, 0.0, 0.0, 20.0, 20.0, 20.0],
             },
             packing: PackingParams {
+                seed: None,
                 target_volume_fraction: 0.12,
                 mode: 1,
                 max_attempts: 600,
@@ -607,4 +615,39 @@ fn packing_pipeline_never_nests_particles() {
         mesh_collision_exact(guest, &host),
         "the packing loop's own collision call accepted a particle buried inside another"
     );
+}
+
+// AI-FUNC-SUMMARY: forge and scale install a pool sized by their cpu_max: the worker count they report from inside the run is the configured one (1 and 2), and an absent setting uses every available worker; writes temporary files.
+#[test]
+fn forge_and_scale_run_in_a_pool_sized_by_cpu_max() {
+    let tmp = tempfile::tempdir().unwrap();
+    let input = tmp.path().join("in.stl");
+    let mesh = rustmspt::geometry::icosphere_mesh(rustmspt::types::Vec3::new(10.0, 10.0, 10.0), 4.0, 2);
+    rustmspt::io::save_stl(&input, &mesh, "sphere").unwrap();
+    let available = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    let run = |sub: &str, config: serde_json::Value| -> String {
+        let path = tmp.path().join(format!("{sub}.json"));
+        std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_rustmspt"))
+            .args([sub, "--config"])
+            .arg(&path)
+            .env_remove("RAYON_NUM_THREADS")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    for (cpu_max, expected) in [(Some(1), 1usize), (Some(2), 2usize.min(available)), (None, available)] {
+        let forge = run("forge", serde_json::json!({"forging": {
+            "input_stl_path": input, "output_stl_path": tmp.path().join("forged.stl"),
+            "compression_ratio": 0.5, "compression_axis": "y", "bulge_factor": 0.5,
+            "roi_bounding_box": [0, 0, 0, 20, 20, 20], "mesh_type": "solid", "cpu_max": cpu_max
+        }}));
+        assert!(forge.contains(&format!("[Timing] forge workers={expected}")), "cpu_max {cpu_max:?}: {forge}");
+        let scale = run("scale", serde_json::json!({
+            "input": {"stl_path": input}, "output": {"stl_path": tmp.path().join("scaled.stl")},
+            "scaling": {"type": "factor", "value": 2.0, "cpu_max": cpu_max}
+        }));
+        assert!(scale.contains(&format!("[Timing] scale workers={expected}")), "cpu_max {cpu_max:?}: {scale}");
+    }
 }

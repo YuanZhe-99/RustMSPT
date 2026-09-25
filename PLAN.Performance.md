@@ -1621,3 +1621,16 @@ forge 把整个网格作为一个元素传给 `volume_fraction_of_meshes_in_bbox
 验证：新增 `halo_guard_retries_with_a_grown_block_and_keeps_the_result`——通过内部参数 `first_block_shrink`（生产为 0，`rotate_and_crop_gpu_with`）让每块首个子块在高 x 侧少 3 个体素，斜向旋转、最近邻与三线性、不分块与按预算分块，守卫均触发（`retries > 0`）且输出与不分块派发逐体素一致；未缩小时 `retries == 0`，说明规划器的余量本身足够。既有 `tiled_gpu_matches_untiled_and_cpu` 通过。
 
 未做：传输/派发/回读的流水重叠——需要双份源/输出/staging 缓冲，会使规划峰值翻倍并改变所有分块方案，而在 llvmpipe 上无法测得收益，留待硬件 GPU。主机端输出分块写出也未做（输出整卷仍驻留）。
+
+## 79. 全面审计、GPU 错误作用域锁结论、optimize/pack 种子（2026-09-25，本地）
+
+负责人要求“继续，直到 Plan Performance 覆盖的内容全部完成”。先做了一次逐条审计：§5 中所有 `- [ ]` 与各 PERF 验收段，逐项对照 §10～§78 的记录，并在 `src/`、`tests/` 中确认所引用的函数/测试确实存在。结论：大量 `- [ ]` 已在后续批次实现但从未勾选；真正剩余的本地可做事项按价值排序为：(1) optimize/旧版 pack 种子；(2) forge/scale 的 `cpu_max` 与专用池；(3) GPU 测试区分“跳过/软件适配器/硬件适配器”；(4) GPU 各阶段计时与下载字节计数；(5) MC 按预算分批采样；(6) 设备丢失测试；(7) placement 形状库并行准备；(8) placement 标签的 bbox 检查计数与 `[GridStats]`；(9) crop dtype×旋转×插值矩阵与大体积 RSS；(10) crop 输出分块写出；(11) CPU direct 分块/位集实验；(12) scene 渲染按预算分块；(13) 二进制 STL 载入剖析；(14) mesh-render QBVH 构建与在途图像计数；(15) 文档行号刷新与 clippy。仅能在硬件 GPU 上完成的验收（PERF-08/09 性能、PERF-19 硬件基准、GPU 分块传输重叠的收益）保持开放并标注原因。需要负责人决定的见本节末尾。§5 的勾选状态在全部完成后统一更新。
+
+**`runtime::scoped` 的进程级锁（§67 第 8 项）：结论为不需要改。** 设备按 `RUSTMSPT_GPU_DEVICE` 选择器缓存，该选择器在一个进程内固定，生产代码只会有一个设备；按设备分锁在单设备下与全局锁等价，反而在跨设备嵌套作用域时引入死锁风险（A 持 1 等 2、B 持 2 等 1）。串行化的根源是 wgpu 24 的错误作用域按设备而非按线程，锁的形式改变不了它。
+
+**第 (1) 项：optimize 与旧版 pack 的种子（已实施）。** `optimization.seed`、`packing.seed`（`Option<u64>`，serde 缺省为无，旧配置不变）。optimize：`stage_rng(seed, stage)`——剪枝（阶段 1）与每个岛（阶段 100 + id）各一条 ChaCha12 流，有种子时由 (seed, stage) 固定，否则由 `thread_rng` 播种；每次 S2 评估的种子从该流抽取（只在有种子时抽，因此无种子时的随机流与此前一致）并传入新增的 `calculate_s2_seeded`、`VoxelS2::calculate_seeded`（体素 MC 每半径一条固定流，调度无关）、`calculate_s2_gpu_seeded`，网格 MC 走既有 `calculate_s2_mesh_mc_seeded`；target/input/final 用 `fixed_eval_seed`。`sample_rotation_axis` 改为泛型 `Rng`（抽样不变）。旧版 pack 的主流程随机源改为按种子固定或由 `thread_rng` 播种的 ChaCha12。单岛 optimize 在任意 worker 数下可复现；多岛因迁移依赖线程时序仍不可复现（已写入配置文档）。测试：`a_seeded_single_island_optimize_is_reproducible_on_any_worker_count`（体素 MC 与网格 MC、1/4 worker、重复运行相同、换种子必须不同）、`a_seeded_legacy_pack_is_reproducible_on_any_worker_count`（1/4 worker、换种子必须不同）。这解除了 §68/§72 中 optimize 与 pack A/B 只能靠中位数压噪声的限制，也是 PERF-10 固定动作序列重放的前提。
+
+**需要负责人决定（汇总）：** (a) measure exact 是否需要墙钟上限（当前只有 768 MiB 内存预算）；(b) CPU mesh-render 的“渲染与写出重叠”实测无可靠收益（0.95～1.23），保留还是回退；(c) 是否修改 mesh-render `gpu_min_pixels` 默认值（会改变 auto 模式选到的后端与图像）；(d) GPU 写出线程是否改为 Rayon（云端认为无法证明阻塞/回退次序等价）。
+
+**第 (2) 项：forge/scale 的 `cpu_max` 与专用池（已实施）。** 新增 `forging.cpu_max`、`scaling.cpu_max`（`Option<i32>`，缺省或 -1 使用全部可用 worker，其余钳制到 1..可用数）与共享的 `pipeline::run_in_cpu_pool`；两个管线的原 `run` 主体成为 `run_in_pool`，在该池中执行，因此其并行段（顶点变换、VF 分量并行、方向修正）都在同一预算内，`[Timing] <p> workers=` 报告的是实际池大小。`perf_matrix.py` 改为显式设置这两个字段。测试 `forge_and_scale_run_in_a_pool_sized_by_cpu_max`：CLI 运行中读回的 worker 数分别为 1、2（或可用上限）与全部可用。至此 PERF-02 第 1 项（每次运行的 CPU 执行上下文）覆盖全部 CPU 管线。
+

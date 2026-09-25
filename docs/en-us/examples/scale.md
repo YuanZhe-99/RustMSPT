@@ -37,6 +37,7 @@ expected output of the `optimize` pipeline. For this walkthrough we instead poin
 
 | Field | Meaning |
 |---|---|
+| `scaling.cpu_max` (optional) | Worker budget for the run; absent or `-1` uses every available worker. |
 | `scaling.type` | `"mm_per_voxel"` and `"voxel_per_mm"` are unit-conversion modes; `"factor"` applies `value` directly as a multiplier. `"voxel_per_mm"` inverts `value` (`factor = 1.0 / value`) before applying it. |
 | `scaling.value` | Must be `> 0` for `mm_per_voxel`/`voxel_per_mm` (validated; a non-positive value is a config error). Interpreted directly as the factor for `"factor"` mode. |
 | `scaling.orient_to_positive_volume` | When `true`, runs `orient_components_to_positive_volume` after scaling and reports how many mesh components were flipped. Left `false` here to skip the extra cost. |

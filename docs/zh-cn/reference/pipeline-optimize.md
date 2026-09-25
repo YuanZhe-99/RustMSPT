@@ -16,6 +16,7 @@
 | `prune_progress_message` | `src/pipeline/optimize.rs:91` | 格式化剪枝 loss、VF 与颗粒数。 |
 | `selective_prune_to_target_vf` | `src/pipeline/optimize.rs:103` | 在当前线程池内使用统一 S2 定义进行剪枝。 |
 | `run_sa_island` | `src/pipeline/optimize.rs:296` | 用固定求值器和完整迁移快照运行单岛 SA。 |
+| `stage_rng` / `fixed_eval_seed` | `src/pipeline/optimize.rs` | 由（`optimization.seed`，阶段）固定、或由 `thread_rng` 播种的逐阶段 ChaCha12 随机流；target/input/final 的一次性 S2 种子。 |
 | `OptimizePipeline::run` | `src/pipeline/optimize.rs:741` | 将全部 optimize 阶段安装到一个按配置创建的 Rayon 池。 |
 | `OptimizePipeline::run_in_pool` | `src/pipeline/optimize.rs:768` | 解析执行策略、加载准备、剪枝、分批运行岛并复核保存最佳结果。 |
 | `S2Method` | `src/pipeline/optimize_execution.rs:12` | 内部 voxel_exact、voxel_mc 与 mesh_mc 三种定义。 |
@@ -94,6 +95,8 @@ Metropolis 规则见算法文档。候选 MC 样本数为 `round(mc_samples * (0
 历史最佳仍绑定其自身曲线；MC 噪声可使该曲线与复核不同。几何准备和 S2 求值前释放全局锁，
 避免嵌套 Rayon 工作等待调用方持有的同一把锁。返回最佳快照和候选阶段计时，修改历史及全局状态，打印进度。
 
+
+**带种子的运行（PLAN.Performance.md §79）。** `optimization.seed` 使单岛运行在任意 worker 数下可复现。`stage_rng(seed, stage)` 为剪枝（阶段 1）与各岛（阶段 100 + id）提供 ChaCha12 随机流；每次 S2 评估从该流取一个种子（仅在设了种子时抽取，因此未设种子时随机流不变），传给 `calculate_s2_seeded`、`VoxelS2::calculate_seeded` 或 `calculate_s2_gpu_seeded`；target、input、final 评估使用 `fixed_eval_seed`。体素 MC 每个半径一条随机流，并行调度无法改变曲线。多岛依线程时序交换快照，仍不可复现。测试：`a_seeded_single_island_optimize_is_reproducible_on_any_worker_count`（体素 MC 与网格 MC，1 与 4 worker，另一种子必须不同）。
 #### OptimizePipeline::run
 
 `fn run(&self) -> Result<()>` 保留 `cpu_max` 到可用并行度的钳制规则，创建一个 Rayon 池并安装

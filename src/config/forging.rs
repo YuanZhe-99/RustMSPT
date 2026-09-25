@@ -11,6 +11,8 @@ pub struct ForgingParams {
     pub roi_bounding_box: Option<Vec<f64>>,
     pub mesh_type: Option<String>,
     pub void_densification: Option<f64>,
+    /// Worker budget for the whole run: absent or -1 uses every available worker.
+    pub cpu_max: Option<i32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
