@@ -101,14 +101,13 @@ fn select_s2_backend(
             })
     {
         Some(error)
-    } else if params.r_max >= 128
-        || params
+    } else if params
             .r_max
             .checked_add(1)
             .and_then(|n| n.checked_mul(max_samples))
             .is_none_or(|n| n > u32::MAX as usize)
     {
-        Some("optimizer GPU MC radius/logical sample capacity exceeded; retaining the mesh_mc CPU evaluator".into())
+        Some("optimizer GPU MC logical sample capacity exceeded; retaining the mesh_mc CPU evaluator".into())
     } else {
         None
     };
@@ -427,15 +426,19 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("injected init failure"));
-        for radius in [128, usize::MAX] {
-            p.r_max = radius;
-            assert!(
-                select_s2_backend(&p, AccelerationMode::Gpu, 1, 0, || panic!(
-                    "capacity guard probed GPU"
-                ))
-                .is_err()
-            );
-        }
+        p.r_max = usize::MAX;
+        assert!(
+            select_s2_backend(&p, AccelerationMode::Gpu, 1, 0, || panic!(
+                "capacity guard probed GPU"
+            ))
+            .is_err()
+        );
+        p.r_max = 300;
+        assert!(select_s2_backend(&p, AccelerationMode::Gpu, 1, 0, probe)
+            .unwrap_err()
+            .to_string()
+            .contains("injected init failure"));
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
         p.r_max = 1;
         p.prune_eval_samples = Some(usize::MAX);
         assert!(
@@ -599,12 +602,11 @@ mod tests {
                 return;
             }
             evaluator.cpu_fallback = fallback;
-            let result = evaluator.evaluate(&mesh, bbox, 128, 200, "candidate");
+            let degenerate = BoundingBox::from_size(Vec3::new(1e-300, 1.0, 1.0));
+            let result = evaluator.evaluate(&mesh, degenerate, 1, 200, "candidate");
             if fallback {
                 let result = result.unwrap();
-                assert_eq!(result.len(), 129);
-                assert_eq!(result[0], expected_vf);
-                assert_eq!(result[128], 0.0);
+                assert_eq!(result.len(), 2);
                 assert!(evaluator.gpu.as_ref().unwrap().lock().unwrap().is_none());
                 assert_eq!(
                     evaluator.evaluate(&mesh, bbox, 0, 200, "final").unwrap(),
@@ -612,7 +614,7 @@ mod tests {
                 );
             } else {
                 let error = result.unwrap_err().to_string();
-                assert!(error.contains("candidate") && error.contains("r_max"));
+                assert!(error.contains("candidate") && error.contains("bbox"), "{error}");
                 assert!(evaluator.gpu.as_ref().unwrap().lock().unwrap().is_some());
             }
         }

@@ -9,7 +9,7 @@ struct Params {
     samples_per_radius: u32,
     seed: u32,
     bbox_min: vec3<f32>,
-    _pad0: u32,
+    radius_base: u32,
     bbox_max: vec3<f32>,
     _pad1: u32,
     ray_dir: vec3<f32>,
@@ -134,10 +134,8 @@ fn point_inside(point: vec3<f32>) -> bool {
     return (unique & 1u) == 1u;
 }
 
-// AI-FUNC-SUMMARY: Evaluate one original logical sample id, returning hit/valid flags without output writes or workgroup synchronization.
-fn sample_counts(idx: u32) -> vec2<u32> {
-    let r_idx = idx / params.samples_per_radius;
-    let s_idx = idx % params.samples_per_radius;
+// AI-FUNC-SUMMARY: Evaluate one global logical sample id for a batch-local radius slot, returning hit/valid flags without output writes or workgroup synchronization.
+fn sample_counts(r_idx: u32, idx: u32) -> vec2<u32> {
 
     var rng = pcg_hash(params.seed ^ idx ^ 0x9e3779b9u);
 
@@ -175,8 +173,8 @@ fn sample_counts(idx: u32) -> vec2<u32> {
 }
 
 // AI-FUNC-SUMMARY: Reduce one radius/sample block to bounded u32 hit/valid partials using uniform barriers; padded lanes contribute zero.
-// Each workgroup owns one radius/sample block. Padded lanes contribute zero;
-// logical sample ids retain the original RNG stream independently of padding.
+// Each workgroup owns one radius/sample block of the current radius batch. Padded lanes contribute zero;
+// logical sample ids use the global radius (radius_base + slot), so the RNG stream is independent of padding and batching.
 var<workgroup> block_hits: array<u32, 256>;
 var<workgroup> block_valids: array<u32, 256>;
 
@@ -190,7 +188,7 @@ fn main(@builtin(local_invocation_index) lane: u32, @builtin(workgroup_id) group
     let sample = (block % blocks) * 256u + lane;
     var counts = vec2<u32>(0u, 0u);
     if (sample < params.samples_per_radius) {
-        counts = sample_counts(radius * params.samples_per_radius + sample);
+        counts = sample_counts(radius, (params.radius_base + radius) * params.samples_per_radius + sample);
     }
     block_hits[lane] = counts.x;
     block_valids[lane] = counts.y;

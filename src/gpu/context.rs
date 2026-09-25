@@ -1,5 +1,8 @@
 use crate::compute::backend::BackendCaps;
-use std::sync::{Mutex, OnceLock};
+use std::any::Any;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 pub struct GpuContext {
     adapter_name: String,
@@ -30,39 +33,162 @@ impl std::fmt::Display for GpuInitError {
 
 impl std::error::Error for GpuInitError {}
 
-// AI-FUNC-SUMMARY:
-// Purpose: Try to initialize a wgpu adapter/device and return a GpuContext with capabilities.
-// Inputs: None (uses environment variable RUSTMSPT_GPU_DEVICE for adapter selection).
-// Returns: Ok(GpuContext) on success, Err(GpuInitError) when no suitable GPU is available.
-// Side effects: Reuses the process GPU instance, selecting a fresh adapter and requesting a fresh logical device on each call.
-// Notes: Uses pollster::block_on and the default power preference; RUSTMSPT_GPU_DEVICE selects a name or index.
-pub fn try_init_gpu() -> Result<GpuContext, GpuInitError> {
-    let adapter = request_adapter().map_err(GpuInitError)?;
+type PipelineKey = (&'static str, String);
+type PipelineMap = HashMap<PipelineKey, Box<dyn Any + Send + Sync>>;
 
-    let adapter_info = adapter.get_info();
-    let adapter_name = adapter_info.name.clone();
+static DEVICE_CREATIONS: AtomicU64 = AtomicU64::new(0);
+static PIPELINE_BUILDS: AtomicU64 = AtomicU64::new(0);
 
-    let (_device, _queue) = request_device(&adapter, "rustmspt compute device").map_err(GpuInitError)?;
+pub struct SharedGpuDevice {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    info: wgpu::AdapterInfo,
+    limits: wgpu::Limits,
+    lost: Arc<AtomicBool>,
+    pipelines: Mutex<PipelineMap>,
+}
 
-    let limits = adapter.limits();
-    Ok(GpuContext {
-        adapter_name,
-        max_buffer_size: limits.max_buffer_size,
-        max_storage_buffer_binding_size: limits.max_storage_buffer_binding_size as u64,
-    })
+impl SharedGpuDevice {
+    // AI-FUNC-SUMMARY: Borrow the shared logical device; returns the device handle; side effects: None.
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    // AI-FUNC-SUMMARY: Borrow the shared submission queue; returns the queue handle; side effects: None.
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
+    }
+
+    // AI-FUNC-SUMMARY: Report the selected adapter identity; returns adapter info; side effects: None.
+    pub fn info(&self) -> &wgpu::AdapterInfo {
+        &self.info
+    }
+
+    // AI-FUNC-SUMMARY: Report whether wgpu signalled loss or destruction of this device; returns the flag; side effects: None.
+    pub fn is_lost(&self) -> bool {
+        self.lost.load(Ordering::Acquire)
+    }
+
+    // AI-FUNC-SUMMARY:
+    // Purpose: Return a compiled pipeline bundle for (kind, source) on this device, compiling it once under balanced error scopes.
+    // Inputs: kind names the layout/entry-point family; source is the full WGSL text; build creates the Clone-able pipeline bundle.
+    // Returns: A clone of the cached bundle, or the captured validation/allocation error.
+    // Side effects: Compiles and caches on first use and increments the process pipeline-build counter; failures are never cached.
+    // Notes: Runs inside runtime::scoped, so the process scope lock is always taken before the map lock; buffers are never cached here.
+    pub(crate) fn cached_pipeline<T: Clone + Send + Sync + 'static>(
+        &self,
+        kind: &'static str,
+        source: &str,
+        build: impl FnOnce(&wgpu::Device) -> T,
+    ) -> Result<T, String> {
+        super::runtime::scoped(&self.device, || {
+            let mut map = self
+                .pipelines
+                .lock()
+                .map_err(|_| "GPU pipeline cache lock poisoned".to_string())?;
+            let key = (kind, source.to_string());
+            if let Some(found) = map.get(&key).and_then(|v| v.downcast_ref::<T>()) {
+                return Ok(found.clone());
+            }
+            let built = super::runtime::scoped(&self.device, || Ok(build(&self.device)))?;
+            PIPELINE_BUILDS.fetch_add(1, Ordering::Relaxed);
+            map.insert(key, Box::new(built.clone()));
+            Ok(built)
+        })
+    }
+}
+
+// AI-FUNC-SUMMARY: Count logical devices created by the shared device cache in this process; returns the monotonic count; side effects: None.
+pub fn gpu_device_creation_count() -> u64 {
+    DEVICE_CREATIONS.load(Ordering::Relaxed)
+}
+
+// AI-FUNC-SUMMARY: Count compute/render pipeline bundles compiled through the shared pipeline cache in this process; returns the monotonic count; side effects: None.
+pub fn gpu_pipeline_build_count() -> u64 {
+    PIPELINE_BUILDS.load(Ordering::Relaxed)
 }
 
 // AI-FUNC-SUMMARY:
-// Purpose: Shared adapter/device request for GPU pipelines, honoring the RUSTMSPT_GPU_DEVICE filter.
-// Inputs: device label used for debugging/profiling tools.
-// Returns: Ok((Device, Queue)) on success, Err(message) describing the failure.
-// Side effects: Blocking wgpu adapter enumeration and device request (heavy first call).
-// Notes: RUSTMSPT_GPU_DEVICE selects an adapter by index (numeric) or name substring; unset uses
-// the default power preference. Requests empty features and default limits.
-pub(crate) fn request_adapter_device(label: &str) -> Result<(wgpu::Device, wgpu::Queue), String> {
-    let adapter = request_adapter()?;
+// Purpose: Return the process-wide shared device for the current RUSTMSPT_GPU_DEVICE selector, creating it lazily.
+// Inputs: None (reads RUSTMSPT_GPU_DEVICE on every call).
+// Returns: Arc to the cached device/queue/adapter info, or a selection/device-request error.
+// Side effects: May enumerate adapters and request one logical device, incrementing the device-creation counter.
+// Notes: Keyed by the exact selector value (unset is its own key). Failures are never cached; a device
+// reported lost is evicted and recreated. GL adapters keep their private-instance selection rules.
+pub fn shared_gpu_device() -> Result<Arc<SharedGpuDevice>, GpuInitError> {
+    let filter = std::env::var("RUSTMSPT_GPU_DEVICE").ok();
+    shared_device_for(filter).map_err(GpuInitError)
+}
 
-    request_device(&adapter, label)
+// AI-FUNC-SUMMARY: Return the process-wide selector-to-device cache; returns the static mutex; side effects: initializes it on first use.
+fn device_cache() -> &'static Mutex<HashMap<Option<String>, Arc<SharedGpuDevice>>> {
+    static CACHE: OnceLock<Mutex<HashMap<Option<String>, Arc<SharedGpuDevice>>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Drop every cached shared device so logical devices are destroyed before process exit, as they were when each pipeline owned its device.
+// Inputs: None.
+// Returns: None.
+// Side effects: Empties the device cache; devices still referenced by live pipelines are destroyed when those drop.
+// Notes: Called at the end of the CLI entry point; a later shared_gpu_device call recreates a device.
+pub fn release_shared_gpu_devices() {
+    let drained: Vec<_> = match device_cache().lock() {
+        Ok(mut cache) => cache.drain().map(|(_, device)| device).collect(),
+        Err(poisoned) => poisoned.into_inner().drain().map(|(_, device)| device).collect(),
+    };
+    drop(drained);
+}
+
+// AI-FUNC-SUMMARY: Look up or create the shared device for one selector under the cache lock, evicting lost entries; returns the device or an uncached error.
+fn shared_device_for(filter: Option<String>) -> Result<Arc<SharedGpuDevice>, String> {
+    let mut cache = device_cache()
+        .lock()
+        .map_err(|_| "GPU device cache lock poisoned".to_string())?;
+    if let Some(found) = cache.get(&filter) {
+        if !found.is_lost() {
+            return Ok(found.clone());
+        }
+        cache.remove(&filter);
+    }
+    let adapter = select_adapter(filter.as_deref())?;
+    let info = adapter.get_info();
+    let limits = adapter.limits();
+    let (device, queue) = request_device(&adapter, "rustmspt shared device")?;
+    let lost = Arc::new(AtomicBool::new(false));
+    let flag = lost.clone();
+    device.set_device_lost_callback(move |_, _| flag.store(true, Ordering::Release));
+    DEVICE_CREATIONS.fetch_add(1, Ordering::Relaxed);
+    let shared = Arc::new(SharedGpuDevice {
+        device,
+        queue,
+        info,
+        limits,
+        lost,
+        pipelines: Mutex::new(HashMap::new()),
+    });
+    cache.insert(filter, shared.clone());
+    Ok(shared)
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Probe the shared GPU device and return a GpuContext with capabilities.
+// Inputs: None (uses environment variable RUSTMSPT_GPU_DEVICE for adapter selection).
+// Returns: Ok(GpuContext) on success, Err(GpuInitError) when no suitable GPU is available.
+// Side effects: Creates the shared device on first use for this selector; later probes reuse it.
+// Notes: Uses pollster::block_on and the default power preference; RUSTMSPT_GPU_DEVICE selects a name or index.
+pub fn try_init_gpu() -> Result<GpuContext, GpuInitError> {
+    let shared = shared_gpu_device()?;
+    Ok(GpuContext {
+        adapter_name: shared.info.name.clone(),
+        max_buffer_size: shared.limits.max_buffer_size,
+        max_storage_buffer_binding_size: shared.limits.max_storage_buffer_binding_size as u64,
+    })
+}
+
+// AI-FUNC-SUMMARY: Return the shared device for pipeline constructors as a String-error result; honors RUSTMSPT_GPU_DEVICE and creates no device when one is cached.
+pub(crate) fn shared_device() -> Result<Arc<SharedGpuDevice>, String> {
+    shared_gpu_device().map_err(|e| e.0)
 }
 
 // AI-FUNC-SUMMARY: Request one logical device from a fresh adapter, returning the request error without caching failures.
@@ -80,19 +206,13 @@ fn request_device(adapter: &wgpu::Adapter, label: &str) -> Result<(wgpu::Device,
     })
 }
 
-// AI-FUNC-SUMMARY: Reuse one backend instance for the process; adapters remain fresh because each can create only one logical device.
+// AI-FUNC-SUMMARY: Reuse one backend instance for the process; adapters remain fresh because each can create only one logical device, and devices are cached by shared_device_for.
 fn shared_instance() -> &'static wgpu::Instance {
     static INSTANCE: OnceLock<wgpu::Instance> = OnceLock::new();
     INSTANCE.get_or_init(|| wgpu::Instance::new(&wgpu::InstanceDescriptor {
         backends: wgpu::Backends::all(),
         ..Default::default()
     }))
-}
-
-// AI-FUNC-SUMMARY: Select a fresh adapter using the current environment, never memoizing a failed selector.
-fn request_adapter() -> Result<wgpu::Adapter, String> {
-    let filter = std::env::var("RUSTMSPT_GPU_DEVICE").ok();
-    select_adapter(filter.as_deref())
 }
 
 // AI-FUNC-SUMMARY: Select one adapter using the shared name/index/default policy; return an explicit error for an unavailable selector.
@@ -162,6 +282,62 @@ mod tests {
             assert!(error.contains(filter));
         }
     }
+    // AI-FUNC-SUMMARY: Verify a pipeline family compiles once per device, repeated lookups return the same object, and an invalid shader errors on every call without being cached.
+    #[test]
+    fn pipeline_cache_reuses_success_and_never_caches_failure() {
+        let shared = match shared_device_for(None) {
+            Ok(shared) => shared,
+            Err(error) => {
+                eprintln!("SKIP: GPU unavailable: {error}");
+                return;
+            }
+        };
+        let again = shared_device_for(None).unwrap();
+        assert!(Arc::ptr_eq(&shared, &again));
+        let source = "@compute @workgroup_size(1) fn main() {}";
+        let build = |device: &wgpu::Device| {
+            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("cache probe"),
+                source: wgpu::ShaderSource::Wgsl(source.into()),
+            });
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("cache probe"),
+                layout: None,
+                module: &module,
+                entry_point: Some("main"),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        let first = shared.cached_pipeline("cache_probe", source, build).unwrap();
+        let second = shared
+            .cached_pipeline("cache_probe", source, |_| -> wgpu::ComputePipeline {
+                panic!("cached pipeline was rebuilt")
+            })
+            .unwrap();
+        assert_eq!(first, second);
+        let invalid = "@compute @workgroup_size(1) fn main() { let x: u32 = 1.5; }";
+        for _ in 0..2 {
+            let result = shared.cached_pipeline("cache_probe_invalid", invalid, |device| {
+                let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("invalid probe"),
+                    source: wgpu::ShaderSource::Wgsl(invalid.into()),
+                });
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("invalid probe"),
+                    layout: None,
+                    module: &module,
+                    entry_point: Some("main"),
+                    compilation_options: Default::default(),
+                    cache: None,
+                })
+            });
+            assert!(result.is_err(), "invalid WGSL must fail and must not be cached");
+        }
+        let map = shared.pipelines.lock().unwrap();
+        assert!(!map.keys().any(|(kind, _)| *kind == "cache_probe_invalid"));
+    }
+
     // AI-FUNC-SUMMARY: Exercise concurrent logical-device initialization on isolated GL adapters when the backend supports default device limits.
     #[test]
     fn gl_devices_keep_private_instances() {

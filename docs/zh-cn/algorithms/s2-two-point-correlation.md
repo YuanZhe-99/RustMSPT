@@ -280,3 +280,5 @@ release 5 个样本中位数（`exact_cost_model_calibration`，秒，同一网�
 使用拟合常数后，规划器在全部 12 种情况都选中更快的内核。主机与其他任务共享，4 worker FFT 数据（相对 1 worker 无加速）可能低估空闲机器上的 FFT 扩展性；因此模型不给 FFT 并行加成，仅在两者接近时偏向 FFT。
 
 平滑填充（`smooth_padding_benchmark`，4 workers，5 次中位数，正变换+功率谱+逆变换秒数，2N-1 -> 平滑）：50³ 0.024585 -> 0.023407；64³ 0.086713 -> 0.076775；71×67×53 0.074856 -> 0.073318；100×100×20 0.052879 -> 0.036489。
+
+**半径分批与共享设备（PERF-03/05/08）。** GPU MC 不再限制 `r_max < 128`：按每批最多 128 个半径（WGSL `radii` 数组长度）分批求值，每批传入 `radius_base`；着色器以全局编号 `radius * samples + sample` 作为随机数键，因此固定种子下的整数计数与批大小无关，也与 `r_max` 无关。唯一约束是 `(r_max + 1) * samples <= u32::MAX`。CPU 合并工作组部分和的代价为 O((r_max+1) * ceil(samples/256))。所有 GPU 管线现按 `RUSTMSPT_GPU_DEVICE` 选择器共享一个进程级逻辑设备，并在每个设备上只编译一次各着色器；见 `reference/gpu.md` 的“共享设备与管线缓存（PERF-03）”。measure 与 optimize 对任意 `r_max` 均可使用 GPU MC。

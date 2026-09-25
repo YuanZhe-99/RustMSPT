@@ -1314,8 +1314,7 @@ pub(crate) fn try_calculate_s2_gpu_exact_limited(mesh: &Mesh, bbox: BoundingBox,
         has_support[r] = shell.peek().is_some();
         shell.map(move |off| (r as u32, off))
     }).inspect(|_| offset_count += 1);
-    let (device, queue) = vox_pipeline.device_queue();
-    let mut shell_pipeline = crate::gpu::s2_shell::GpuShellS2Pipeline::with_device(device, queue)?;
+    let mut shell_pipeline = crate::gpu::s2_shell::GpuShellS2Pipeline::with_device(vox_pipeline.shared_device())?;
     shell_pipeline.set_batch_partial_limit(memory.batch_partials)?;
     let mut result = shell_pipeline.compute_s2_shell_resident_stream(
         &vox_pipeline.occupancy_buffer(), dims, offsets, r_max, pitch_f64, vf,

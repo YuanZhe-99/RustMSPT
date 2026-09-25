@@ -1,6 +1,6 @@
 # GPU Module (`src/gpu/`)
 
-> **待翻译：** `request_adapter_device` 与 `GpuRenderPipeline` 的详细契约见[英文 GPU 参考](../../en-us/reference/gpu.md#renderrs--gpurenderpipeline)。
+> **待翻译：** `GpuRenderPipeline` 的详细契约见[英文 GPU 参考](../../en-us/reference/gpu.md#renderrs--gpurenderpipeline)。
 
 > **特性门控：** 整个 `src/gpu/` 模块需要 `cargo build --features gpu`。以下文档中记录的所有函数和类型在默认（仅 CPU）构建中均不可用。
 
@@ -107,7 +107,7 @@ pub struct GpuInitError(String);
   - 若未设置，则正常请求默认的 `wgpu::PowerPreference::default()` 适配器（不强制回退适配器）。
   - 若设置且可解析为 `usize`，则视为 `instance.enumerate_adapters(wgpu::Backends::all())` 结果中的**索引**；索引越界会产生 `GpuInitError`，报告所请求的索引及找到的适配器数量。
   - 若设置但不是有效整数，则视为**区分大小写的子串**，与每个已枚举适配器的 `AdapterInfo.name` 进行匹配；使用第一个匹配项。若无匹配则产生 `GpuInitError`。
-- **说明：** 此处获得的设备/队列（`_device`、`_queue`）在读取适配器/设备限制之后就故意不再使用——本函数是一个**能力探测器**，而非流水线构造函数。下文四个流水线构造函数（`GpuS2Pipeline::new`、`GpuShellS2Pipeline::new`、`GpuVoxelPipeline::new`、`GpuVolumeTransformPipeline::new`）各自独立执行自己的适配器/设备请求，**不会**复用 `try_init_gpu` 返回的上下文；四个构造函数均遵循 `RUSTMSPT_GPU_DEVICE`，其中体素化、shell S2 和体积变换使用公共 `request_adapter_device`。
+- **说明：** 自 PERF-03 起通过 `shared_gpu_device()` 探测：某选择器的首次探测创建进程级逻辑设备，之后的探测及所有流水线构造函数（`GpuS2Pipeline`、`GpuShellS2Pipeline`、`GpuVoxelPipeline`、`GpuVolumeTransformPipeline`、`GpuRenderPipeline`、`GpuScenePipeline`）复用该设备；失败的选择器从不缓存。见下文“共享设备与管线缓存（PERF-03）”。
 
 ---
 
@@ -148,7 +148,7 @@ pub struct GpuS2Pipeline {
 | `num_triangles` | `u32` | 当前三角形数量，用于打包参数时使用。 |
 | `bind_group_layout` | `wgpu::BindGroupLayout` | 描述上述四个存储缓冲区绑定的布局。 |
 
-模块级常量：`WORKGROUP_SIZE: u32 = 256`，`MAX_RADII: usize = 128`（着色器 `Params.radii` 数组固定大小为 128 项；执行入口在参数打包前拒绝 r_max >= 128）。
+模块级常量：`WORKGROUP_SIZE: u32 = 256`，`MAX_RADII: usize = MC_RADIUS_BATCH = 128`（着色器 `Params.radii` 数组固定为 128 项，因此按每批最多 128 个半径求值；只要 `(r_max + 1) * samples` 不超过 u32 即接受任意 `r_max`），`COALESCE_FACES = 8`，`MAX_UPLOAD_RUNS = 64`（局部上传比较限制）。
 
 #### build_triangle_buffer (s2.rs)
 
@@ -228,7 +228,7 @@ pub struct GpuS2Pipeline {
 
 `GpuS2Pipeline::new`、`update_mesh` 和 `calculate_s2_gpu` 使用配对的 wgpu validation、out-of-memory、internal 错误作用域。后两个接口改为返回 `Result`。映射回调成功后才访问映射内存；不捕获 Rust panic。
 
-- `dispatch_plan(r_max, samples, limits) -> Result<(u32,u32,[u32;2]), String>`：在输出分配及半径数组构造前检查 `r_max < 128`、采样数转换、调用数乘法、工作组数量、存储绑定和单缓冲区限制；仍至少 200 个样本。
+- `dispatch_plan(r_max, samples, batch, limits) -> Result<(u32,u32,[u32;2]), String>`：检查批大小（1..=128）、`(r_max + 1) * samples` 是否落在 u32 逻辑编号空间内，以及最大一批的工作组数量、存储绑定和单缓冲区限制；仍至少 200 个样本，不再拒绝 `r_max >= 128`。
 - `check_buffer_size(bytes, limits) -> Result<(), String>`：检查存储绑定和单缓冲区字节限制。
 - `check_mesh_capacity(mesh, limits) -> Result<(), String>`：展开三角形前检查数量及字节运算；空几何使用四字节占位缓冲区。
 - `runtime::scoped<T>(device, work) -> Result<T,String>`：收集三个错误类别，即使操作返回错误也弹出全部作用域。调用者须串行访问设备；这里不捕获 panic。
@@ -535,7 +535,7 @@ The constructor honors `RUSTMSPT_GPU_DEVICE` through the common adapter selector
 GPU selection regression: direct voxel and shell constructors are tested in child processes with nonexistent adapter names and out-of-range indices. Both must report the requested selector; default-device substitution is forbidden. Common selection does not yet imply shared device or compiled-pipeline caching.
 
 
-`context::request_adapter` is the single adapter-selection implementation for capability probing and all GPU pipeline constructors. `request_adapter_device` requests a fresh logical device using that adapter. MC, voxel, shell, transforms and renderers therefore share name/index/default semantics. This refactor does not cache devices.
+`context::select_adapter` 是能力探测与所有 GPU 构造函数共用的唯一适配器选择实现；`shared_device_for` 对每个选择器只请求并缓存一个逻辑设备（见下文 PERF-03 节）。
 
 
 ### Backend instance lifetime (PERF-03)
@@ -626,7 +626,7 @@ GPU shell 在排除超出任意轴的位移后，以 (nx−|dx|)×(ny−|dy|)×(
 | `GpuShellS2Pipeline::build_on_device` | `src/gpu/s2_shell.rs:96` | Compile shell resources on supplied handles with balanced GPU error scopes. |
 | `GpuShellS2Pipeline::compute_s2_shell_resident` | `src/gpu/s2_shell.rs:385` | Read a same-device occupancy buffer directly; caller serializes producer and consumer. |
 | `GpuShellS2Pipeline::compute_shell_input` | `src/gpu/s2_shell.rs:410` | Shared execution for host-uploaded or resident occupancy with identical offset semantics. |
-| `GpuVoxelPipeline::device_queue` | `src/gpu/voxel.rs:59` | Clone device/queue handles for sequential stages; no device creation. |
+| `GpuVoxelPipeline::shared_device` | `src/gpu/voxel.rs` | 为后续阶段共享进程设备句柄（`Arc<SharedGpuDevice>`）；不创建设备。 |
 | `GpuVoxelPipeline::occupancy_buffer` | `src/gpu/voxel.rs:54` | Clone completed occupancy storage handle; producer must not overwrite while consumed. |
 
 GPU exact 现将 shell 构造在 voxel 的同一 Device/Queue 上，直接绑定其 occupancy 缓冲。shell 不再选择适配器或申请第二个设备，也不再为占据场分配和上传副本。两阶段顺序运行，各自配对错误作用域。Voxel 现于设备端计数，仅为 VF 回读 4 字节；上层 backend 能力探测仍独立计数。独立主机占据场 API 保留上传行为，之后的主机求值不会覆盖借用的 voxel 缓冲。
@@ -648,3 +648,23 @@ GPU exact 现逐半径延迟生成一个 shell Vec，经 compute_s2_shell_reside
 GPU exact 现使用 shell_offset_iter，单个半径内部也只保留嵌套范围游标；保持原 x/y/z 顺序、原点特殊情况和半开平方距离判定。需要随机访问的公共 Vec API 保持不变。用 peekable 判定该半径是否有支持，生成数量在消费时累计。普通范围沿用原整数范数，更大范数用 u128 避免有符号乘法溢出。仍扫描包围立方体，降低分配并未改变 O(半径³) 搜索复杂度。
 
 新建的驻留 GPU exact 求值在后端选择和执行中共用 ExactMemoryPlan。设 T=max(36×faces,4)、M=4×cells、B 为批次部分结果槽数，保守逻辑峰值为 2T+M+128+80B，计入待完成三角/offset 上传和批次增长时同时存在的新旧缓冲；128 字节覆盖固定参数/计数/占位资源。B 从 200000 按 MiB 预算缩小，至少 1；最小批次仍超限则在设备初始化前拒绝，由调用方执行配置的回退策略。该模型不含驱动/编译器内部资源和 CPU 内存，仅适用于新建生产 direct-shell exact 求值，不声称覆盖实验 tiled/reduced 或任意已有高水位管线。旧 exact 网格硬限制仍独立存在。
+
+### 共享设备与管线缓存（PERF-03）
+
+wgpu 24 中一个 `Adapter` 只能创建一个逻辑设备，因此缓存位于适配器选择之上：`shared_device_for(selector)` 维护进程级 `HashMap<Option<String>, Arc<SharedGpuDevice>>`，键为 `RUSTMSPT_GPU_DEVICE` 的原值（未设置单独成键）。首次请求时通过未改动的 `select_adapter` 选择适配器（共享 Instance 串行枚举；选中的 GL 适配器仍来自私有 Instance），以空特性/默认限制请求一个设备，注册设备丢失回调并递增 `gpu_device_creation_count()`。创建在缓存锁内进行，并发构造只创建一个设备。错误直接返回、从不写入缓存，无效选择器持续报错且不影响之后的有效请求。报告丢失（驱动丢失或 `Device::destroy`）的条目在下次请求时被剔除并重建。
+
+`SharedGpuDevice::cached_pipeline(kind, source, build)` 在该设备上按 `(kind, WGSL 源文本)` 保存一个可克隆的管线组合（管线加绑定组布局，或场景的两条管线）。编译在 `runtime::scoped` 内以独立错误作用域执行，因此总是先取作用域锁再取映射锁；编译失败（校验错误）直接返回、不缓存。`gpu_pipeline_build_count()` 统计成功编译次数。缓冲、绑定组、staging 与 uniform 仍为每实例独立；队列共享，但不共享任何可变缓冲。
+
+`runtime::scoped`：wgpu 24 的错误作用域按设备而非线程划分，而设备现已进程级共享，因此每个线程最外层的 `scoped` 获取进程级锁（同线程嵌套通过线程局部深度重入），防止其他线程的 push/pop 截获本线程错误。
+
+`GpuVoxelPipeline::shared_device()` 与 `GpuShellS2Pipeline::with_device(Arc<SharedGpuDevice>)` 取代原 `device_queue()`/`with_device(device, queue)`。`release_shared_gpu_devices()` 清空缓存；CLI 在子命令返回后调用，使逻辑设备仍在进程退出前销毁。`try_init_gpu` 现在探测共享设备，不再每次创建并丢弃设备；`request_adapter_device` 已删除。
+
+测试：`context::tests::pipeline_cache_reuses_success_and_never_caches_failure` 与单测试集成二进制 `tests/gpu_device_cache_tests.rs`（各类构造器重复四轮并 8 线程并发：1 个设备、6 次编译；无效选择器两次报错且不创建设备；`destroy` 后剔除、仅重建一个设备并各族重编译一次）。
+
+### MC 半径分批（PERF-05/08）
+
+`calculate_s2_gpu_counts` 以每批最多 `MC_RADIUS_BATCH = 128` 个半径循环：写入 `radius_base`，派发 `batch_radii * ceil(samples/256)` 个工作组，回读该前缀并合并到全局结果。随机数按全局编号 `(radius_base + slot) * samples + sample` 生成，计数与批大小无关（`radius_batches_match_single_batch_counts` 比较批大小 1/7/13/64/128 及 r_max 127 与 300）。输出/staging 容量与 `mc_evaluation_peak` 按单批计算。CPU 合并对每个 u32 部分和只读一次，复杂度 O((r_max+1)·ceil(samples/256))，回读每部分和 8 字节；由于已与回读量线性相关，未增加 GPU 二级归约。冻结的逐样本参考着色器仅支持单批。`dispatch_plan` 新增 `batch` 参数；`pack_params` 新增 `radius_base`（原 `_pad0` 字）。
+
+### SA 局部三角形上传（PERF-10）
+
+`GpuS2Pipeline::update_mesh` 在主机上构建完整三角形缓冲，与驻留内容的主机影子副本（`changed_face_runs`）逐位比较，仅用 `queue.write_buffer` 子区间写入变化的面区间（间隔不超过 8 个面时合并）。三角形数变化、缓冲扩容、超过 `MAX_UPLOAD_RUNS = 64` 段或变化面超过一半时回退为整体写入。由于比较对象是实际驻留内容而非调用者上一候选，拒绝恢复、迁移及多岛交替使用共享实例时均正确。`upload_stats()`/`GpuUploadStats` 记录整体/局部/未变化次数与字节。`partial_triangle_upload_matches_full_upload` 在每一步回读 GPU 缓冲逐字比较，并与新建实例的固定种子 MC 计数比较。主机端比较仍为 O(面数)，仅减少传输字节。

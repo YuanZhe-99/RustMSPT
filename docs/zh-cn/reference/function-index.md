@@ -842,7 +842,6 @@
 | `GpuShellS2Pipeline::build_on_device` | `src/gpu/s2_shell.rs:96` | Compile shell resources on supplied handles with balanced GPU error scopes. |
 | `GpuShellS2Pipeline::compute_s2_shell_resident` | `src/gpu/s2_shell.rs:385` | Read a same-device occupancy buffer directly; caller serializes producer and consumer. |
 | `GpuShellS2Pipeline::compute_shell_input` | `src/gpu/s2_shell.rs:410` | Shared execution for host-uploaded or resident occupancy with identical offset semantics. |
-| `GpuVoxelPipeline::device_queue` | `src/gpu/voxel.rs:59` | Clone device/queue handles for sequential stages; no device creation. |
 | `GpuVoxelPipeline::occupancy_buffer` | `src/gpu/voxel.rs:54` | Clone completed occupancy storage handle; producer must not overwrite while consumed. |
 
 | Function | Source | Contract |
@@ -902,3 +901,13 @@
 | `split_mesh_into_granules_reference` | Geometry Core | `src/geometry/mesh_ops.rs:136` | 仅测试用的原颗粒拆分 oracle。 |
 | `PackQueryStats` | Pipeline Packing | `src/pipeline/pack.rs:29` | relaxed 原子碰撞计数。 |
 | `PackQueryStats::summary_line` | Pipeline Packing | `src/pipeline/pack.rs:41` | 格式化 pack 查询计数。 |
+| `SharedGpuDevice` | GPU | `src/gpu/context.rs` | 按选择器共享的进程级设备/队列/适配器信息与已编译管线缓存。 |
+| `SharedGpuDevice::cached_pipeline` | GPU | `src/gpu/context.rs` | 每个 (kind, WGSL 源) 在设备上只编译一次；失败不缓存。 |
+| `shared_gpu_device` / `shared_device` / `shared_device_for` / `device_cache` | GPU | `src/gpu/context.rs` | 惰性创建并返回 `RUSTMSPT_GPU_DEVICE` 对应的共享设备；剔除已丢失设备。 |
+| `release_shared_gpu_devices` | GPU | `src/gpu/context.rs` | 释放缓存设备；CLI 入口结束时调用。 |
+| `gpu_device_creation_count` / `gpu_pipeline_build_count` | GPU | `src/gpu/context.rs` | 设备创建数与管线编译数计数器。 |
+| `ScopeDepth` (`Drop` impl) | GPU | `src/gpu/runtime.rs` | 递减线程局部错误作用域嵌套深度（含 unwind）。 |
+| `GpuS2Pipeline::upload_stats` / `GpuUploadStats` | GPU | `src/gpu/s2.rs` | 整体/局部/未变化上传次数与字节。 |
+| `changed_face_runs` / `triangle_usage` | GPU | `src/gpu/s2.rs` | 驻留与新三角形逐位比较得到合并面区间；三角形缓冲用途标志。 |
+| `run_cli` | CLI | `src/main.rs` | 解析 CLI 并运行所选管线；`main` 随后释放共享 GPU 设备。 |
+| `sample_counts` (s2_monte_carlo.wgsl) | GPU | `src/gpu/shaders/s2_monte_carlo.wgsl` | 以批内半径槽评估一个全局逻辑样本编号。 |

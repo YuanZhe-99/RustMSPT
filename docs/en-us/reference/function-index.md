@@ -14,8 +14,17 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `shared_instance` | GPU | `src/gpu/context.rs:84` | Retain one backend instance for non-GL selection. |
 | `select_adapter` | GPU | `src/gpu/context.rs:99` | Serialize selection and isolate selected GL adapters. |
 | `select_from_instance` | GPU | `src/gpu/context.rs:118` | Apply name/index/default selection within an instance. |
-| `request_device` | GPU | `src/gpu/context.rs:69` | Request a fresh logical device without memoizing failure. |
-| `request_adapter` | GPU | `src/gpu/context.rs:90` | Shared name/index/default adapter selection. |
+| `request_device` | GPU | `src/gpu/context.rs` | Request one logical device from a selected adapter without memoizing failure. |
+| `SharedGpuDevice` | GPU | `src/gpu/context.rs` | Process-wide shared device/queue/adapter info and compiled-pipeline cache for one selector. |
+| `SharedGpuDevice::device` / `queue` / `info` / `is_lost` | GPU | `src/gpu/context.rs` | Accessors for the shared device, queue, adapter info and device-lost flag. |
+| `SharedGpuDevice::cached_pipeline` | GPU | `src/gpu/context.rs` | Compile a pipeline bundle once per (kind, WGSL source); failures are not cached. |
+| `shared_gpu_device` | GPU | `src/gpu/context.rs` | Return (creating lazily) the shared device for `RUSTMSPT_GPU_DEVICE`; lost devices are evicted. |
+| `shared_device` | GPU | `src/gpu/context.rs` | String-error wrapper of `shared_gpu_device` for pipeline constructors. |
+| `shared_device_for` | GPU | `src/gpu/context.rs` | Cache lookup/creation for one selector under the cache lock; never caches failures. |
+| `device_cache` | GPU | `src/gpu/context.rs` | Process-wide selector-to-device map. |
+| `release_shared_gpu_devices` | GPU | `src/gpu/context.rs` | Drop cached devices; called at the end of the CLI entry point. |
+| `gpu_device_creation_count` | GPU | `src/gpu/context.rs` | Count logical devices created by the shared cache. |
+| `gpu_pipeline_build_count` | GPU | `src/gpu/context.rs` | Count pipeline bundles compiled by the shared cache. |
 | `foreground_blocks` | Pipeline | `src/pipeline/crop.rs:422` | Fixed-block foreground scan with ordered partial results. |
 | `ParticleMetrics` | Pipeline | `src/pipeline/split_filter.rs:305` | Cached component volume/aspect/area. |
 | `prepare_particle_metrics` | Pipeline | `src/pipeline/split_filter.rs:312` | Prepare requested metrics in stable component order. |
@@ -213,19 +222,24 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `GpuContext::caps` | GPU | `src/gpu/context.rs:11` | Returns `BackendCaps` describing this GPU context. |
 | `GpuInitError` | GPU | `src/gpu/context.rs:22` | Error type wrapping a GPU initialization failure message. |
 | `GpuInitError` (`Display` impl) | GPU | `src/gpu/context.rs:22` | Formats the error message. |
-| `try_init_gpu` | GPU | `src/gpu/context.rs:38` | Probes for a wgpu adapter/device and returns a `GpuContext`; used by `compute::policy::select_backend`. |
+| `try_init_gpu` | GPU | `src/gpu/context.rs` | Probes the shared device for the current selector and returns a `GpuContext`; used by `compute::policy::select_backend`. |
 | `GpuS2Pipeline` | GPU | `src/gpu/s2.rs:10` | GPU pipeline state for Monte Carlo S2 two-point correlation. |
 | `build_triangle_buffer` (s2.rs) | GPU | `src/gpu/s2.rs:29` | Builds a normalized `f32` triangle position buffer for the S2 Monte Carlo pipeline. |
-| `pack_params` | GPU | `src/gpu/s2.rs:50` | Packs Monte Carlo S2 shader parameters into a byte buffer matching the WGSL `Params` layout. |
-| `dispatch_plan` | GPU | `src/gpu/s2.rs:101` | Validate logical MC ids, partial buffers and two-dimensional dispatch. |
+| `pack_params` | GPU | `src/gpu/s2.rs` | Packs Monte Carlo S2 shader parameters (including the batch `radius_base`) into the WGSL `Params` layout. |
+| `dispatch_plan` | GPU | `src/gpu/s2.rs` | Validate global logical MC ids and the largest radius batch's partial buffers and dispatch. |
 | `check_buffer_size` | GPU | `src/gpu/s2.rs:115` | Check single-buffer and storage limits. |
 | `check_mesh_capacity` | GPU | `src/gpu/s2.rs:125` | Check triangle count and upload capacity. |
-| `scoped` | GPU | `src/gpu/runtime.rs:2` | Capture scoped GPU errors and balance all scopes. |
+| `scoped` | GPU | `src/gpu/runtime.rs` | Capture scoped GPU errors and balance all scopes under a process-wide reentrant scope lock. |
+| `ScopeDepth` (`Drop` impl) | GPU | `src/gpu/runtime.rs` | Decrement the thread-local error-scope nesting depth, including on unwind. |
 | `read_u32` | GPU | `src/gpu/runtime.rs:29` | Check mapping completion before copying and unmapping u32 readback. |
 | `GpuS2Pipeline::new` | GPU | `src/gpu/s2.rs:141` | Initializes the wgpu device and Monte Carlo S2 compute pipeline. |
-| `GpuS2Pipeline::update_mesh` | GPU | `src/gpu/s2.rs:277` | Re-uploads triangle data for a new mesh without recreating the pipeline. |
+| `GpuS2Pipeline::update_mesh` | GPU | `src/gpu/s2.rs` | Makes the triangle buffer equal to a new mesh, uploading only triangles that differ from the resident copy. |
+| `GpuS2Pipeline::upload_stats` | GPU | `src/gpu/s2.rs` | Return full/partial/unchanged upload counts and bytes. |
+| `GpuUploadStats` | GPU | `src/gpu/s2.rs` | Triangle-buffer upload traffic counters of one MC pipeline. |
+| `changed_face_runs` | GPU | `src/gpu/s2.rs` | Diff resident vs new triangle bits into coalesced face runs, or `None` for a full write. |
+| `triangle_usage` | GPU | `src/gpu/s2.rs` | Triangle storage usage flags (storage, copy dst/src). |
 | `GpuS2Pipeline::ensure_output_capacity` | GPU | `src/gpu/s2.rs:302` | Grows the output buffers if the invocation count exceeds current capacity. |
-| `GpuS2Pipeline::calculate_s2_gpu` | GPU | `src/gpu/s2.rs:351` | Dispatches the Monte Carlo S2 kernel for all radii and reads back results. |
+| `GpuS2Pipeline::calculate_s2_gpu` | GPU | `src/gpu/s2.rs` | Dispatches the Monte Carlo S2 kernel in radius batches of at most 128 and reads back results. |
 | `OffsetEntry` | GPU | `src/gpu/s2_shell.rs:6` | Packed `(radius_idx, dx, dy, dz)` shell-offset record matching the WGSL layout. |
 | `point_inside` (s2_monte_carlo.wgsl) | GPU | `src/gpu/shaders/s2_monte_carlo.wgsl:85` | Classify ray parity with overflow recovery. |
 | `point_inside_overflow` (s2_monte_carlo.wgsl) | GPU | `src/gpu/shaders/s2_monte_carlo.wgsl:62` | Classify ray parity with overflow recovery. |
@@ -479,7 +493,6 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `sha256_file` | I/O | `src/io/hash.rs:25` | Streams a file through SHA-256, returning the hex digest and byte count. |
 | `hex_digest` | I/O | `src/io/hash.rs:42` | Renders a digest as lowercase hexadecimal. |
 | `save_image` | I/O | `src/io/image.rs` | Validates and writes RGBA8 PNG. |
-| `request_adapter_device` | GPU | `src/gpu/context.rs` | Shared filtered wgpu device request. |
 | `RenderVertex` | GPU | `src/gpu/render.rs` | Packed position/flat-normal vertex. |
 | `RenderUniforms` | GPU | `src/gpu/render.rs` | Camera/appearance uniform layout. |
 | `GpuRenderPipeline` | GPU | `src/gpu/render.rs` | Offscreen render state. |
@@ -890,7 +903,7 @@ Master index of every documented function, struct, enum, and constant across `sr
 
 | Function | Source | Contract |
 |---|---|---|
-| `GpuShellS2Pipeline::ensure_reduction` | `src/gpu/s2_shell.rs:211` | Lazily compile the device tile reducer and grow its final buffers under the caller error scope. |
+| `GpuShellS2Pipeline::ensure_reduction` | `src/gpu/s2_shell.rs` | Lazily fetch the cached tile reducer and grow its final buffers under the caller error scope; returns compile errors. |
 
 | Function | Source | Contract |
 |---|---|---|
@@ -898,17 +911,17 @@ Master index of every documented function, struct, enum, and constant across `sr
 
 | Function | Source | Contract |
 |---|---|---|
-| `GpuShellS2Pipeline::with_device` | `src/gpu/s2_shell.rs:84` | Build production shell resources on supplied device/queue; no new device. |
+| `GpuShellS2Pipeline::with_device` | `src/gpu/s2_shell.rs` | Build production shell resources on a held `Arc<SharedGpuDevice>`; no new device. |
 | `GpuShellS2Pipeline::build_on_device` | `src/gpu/s2_shell.rs:96` | Compile shell resources on supplied handles with balanced GPU error scopes. |
 | `GpuShellS2Pipeline::compute_s2_shell_resident` | `src/gpu/s2_shell.rs:385` | Read a same-device occupancy buffer directly; caller serializes producer and consumer. |
 | `GpuShellS2Pipeline::compute_shell_input` | `src/gpu/s2_shell.rs:410` | Shared execution for host-uploaded or resident occupancy with identical offset semantics. |
-| `GpuVoxelPipeline::device_queue` | `src/gpu/voxel.rs:59` | Clone device/queue handles for sequential stages; no device creation. |
+| `GpuVoxelPipeline::shared_device` | `src/gpu/voxel.rs` | Share the process device handle for sequential stages; no device creation. |
 | `GpuVoxelPipeline::occupancy_buffer` | `src/gpu/voxel.rs:54` | Clone completed occupancy storage handle; producer must not overwrite while consumed. |
 
 | Function | Source | Contract |
 |---|---|---|
 | `GpuVoxelPipeline::voxelize_count` | `src/gpu/voxel.rs:199` | Voxelize and return only the occupied-cell count; retain the device field. |
-| `GpuVoxelPipeline::ensure_counter` | `src/gpu/voxel.rs:218` | Lazily construct the integer counter and four-byte output under caller error scope. |
+| `GpuVoxelPipeline::ensure_counter` | `src/gpu/voxel.rs` | Lazily fetch the cached integer counter and allocate the four-byte output under caller error scope; returns compile errors. |
 | `GpuVoxelPipeline::voxelize_impl` | `src/gpu/voxel.rs:267` | Checked common voxel execution with full-grid or count-only readback. |
 
 | Function | Source | Contract |
@@ -962,3 +975,5 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `split_mesh_into_granules_reference` | Geometry Core | `src/geometry/mesh_ops.rs:136` | Test-only former granule split oracle. |
 | `PackQueryStats` | Pipeline Packing | `src/pipeline/pack.rs:29` | Relaxed atomic collision counters. |
 | `PackQueryStats::summary_line` | Pipeline Packing | `src/pipeline/pack.rs:41` | Format pack query counters. |
+| `run_cli` | CLI | `src/main.rs` | Parse CLI arguments and run the selected pipeline; `main` releases shared GPU devices afterwards. |
+| `sample_counts` (s2_monte_carlo.wgsl) | GPU | `src/gpu/shaders/s2_monte_carlo.wgsl` | Evaluate one global logical sample id for a batch-local radius slot. |

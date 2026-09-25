@@ -190,8 +190,16 @@ fn pick_config_path(config: Option<PathBuf>, file_name: &str) -> PathBuf {
 // Inputs: process CLI arguments (via clap).
 // Returns: Ok(()) on success, or pipeline/config error.
 // Side effects: Reads YAML config from disk; may write output files via pipeline execution; prints progress to stdout.
-// Notes: Invoked once as the program entry point. CLI overrides (--input/--output) mutate the loaded config before running.
+// Notes: Invoked once as the program entry point. With the gpu feature, cached shared GPU devices are released after the subcommand returns so logical devices are destroyed before process exit.
 fn main() -> anyhow::Result<()> {
+    let result = run_cli();
+    #[cfg(feature = "gpu")]
+    rustmspt::gpu::release_shared_gpu_devices();
+    result
+}
+
+// AI-FUNC-SUMMARY: Parse CLI arguments, load the selected config and run its pipeline; returns the pipeline/config result; side effects: file I/O and progress output of the selected pipeline.
+fn run_cli() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {

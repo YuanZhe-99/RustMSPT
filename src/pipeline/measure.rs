@@ -177,7 +177,7 @@ impl MeasurePipeline {
                 ).ok()
             };
             let supports_gpu =
-                method == "exact" || (params.voxel_pitch <= 0.0 && params.r_max < 128);
+                method == "exact" || params.voxel_pitch <= 0.0;
             let selection = resolve_execution(
                 &params.acceleration,
                 requested,

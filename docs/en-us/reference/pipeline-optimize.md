@@ -198,7 +198,7 @@ Tests of already-shipped pipelines do not imply hardware GPU performance validat
 
 ### Persistent merged geometry (PERF-10)
 
-`merge_prepared_particles` directly assembles prepared meshes and records each particle's vertex range without temporary particle clones. Rigid candidates overwrite only their range; rejection restores its original vertices and prepared collider. Faces and other vertex ranges stay resident. Population migration recreates the merged mesh/ranges. GPU triangle uploads and voxel occupancy remain full updates; geometric VF now uses the island-local cache described below.
+`merge_prepared_particles` directly assembles prepared meshes and records each particle's vertex range without temporary particle clones. Rigid candidates overwrite only their range; rejection restores its original vertices and prepared collider. Faces and other vertex ranges stay resident. Population migration recreates the merged mesh/ranges. GPU MC triangle uploads now diff the new merged mesh against the host shadow of the resident buffer and write only changed face runs (one moved particle = that particle's faces), falling back to a full write on a triangle-count change, a grown buffer, more than 64 runs or more than half the faces changed; `GpuS2Pipeline::upload_stats` records the bytes. Voxel occupancy remains a full update; geometric VF uses the island-local cache described below.
 
 ### Optimize MC memory budget
 
