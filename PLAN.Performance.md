@@ -1432,7 +1432,7 @@ run_in_pool 增加完成阶段 wall time：load/background/pca/transform_and_bac
 
 **Cloud Session 按用户要求在 §66 完成后停止。** 分支 `claude/blissful-franklin-lpf9g1` 已推送，包含 §66 全部合并；worktree agent 分支已并入，无未合并工作。本地需自行同步到 Gitea。整个 Performance Plan 仍未完成，以 §5 PERF-00～19 的完整验收为准。
 
-最终回归（§66 全部合并后）：见本节下方“最终回归”行；若该行缺失，说明云端在结果返回前停止，本地需先执行 `cargo test --release` 与 `cargo test --release --features gpu`。
+最终回归（§66 全部合并后，llvmpipe）：`cargo test --release --features gpu` 44 组 **694 passed/0 failed/41 ignored**；`cargo test --release` 44 组 **634 passed/0 failed/30 ignored**，均 exit 0。ignored 为显式基准。
 
 本地 Agent 优先事项：
 
