@@ -86,9 +86,10 @@ fn with_placement_pool<T: Send>(threads: i32, work: impl FnOnce() -> Result<T> +
     pool.install(work)
 }
 
-// AI-FUNC-SUMMARY: Execute the complete placement run inside the caller's Rayon pool; returns the outcome; side effects: reads inputs and writes all outputs; records the active pool's worker count.
+// AI-FUNC-SUMMARY: Execute the complete placement run inside the caller's Rayon pool; returns the outcome; side effects: reads inputs and writes all outputs; records the active pool's worker count; prints load/plan/place/write_outputs/report/total_in_pool timings, workers and peak RSS to stdout (never into the record or report).
 fn run_placement_in_pool(config: &ResolvedPlacement) -> Result<PlacementOutcome> {
     let started = Instant::now();
+    let mut timer = crate::pipeline::timing::StageTimer::start("placement");
     let identity = build_identity();
     let tool = ToolRecord::from(&identity);
 
@@ -148,6 +149,7 @@ fn run_placement_in_pool(config: &ResolvedPlacement) -> Result<PlacementOutcome>
         }
     };
 
+    timer.stage("load");
     let target_volume = basis_volume * config.target_volume_fraction;
     let mut rng = seeded_rng(config.seed);
     let mut plan = plan_size_multiset(
@@ -193,6 +195,7 @@ fn run_placement_in_pool(config: &ResolvedPlacement) -> Result<PlacementOutcome>
         void_report,
     );
     write_json(&config.outputs.report, &report)?;
+    timer.stage("plan");
 
     let mut state = EngineState::new(config, &library, &classes, &plan.draws);
     place_all(
@@ -228,6 +231,7 @@ fn run_placement_in_pool(config: &ResolvedPlacement) -> Result<PlacementOutcome>
         )?;
     }
 
+    timer.stage("place");
     let elapsed = started.elapsed().as_secs_f64();
     let stop = decide_stop(config, &state, &plan, target_volume, elapsed);
 
@@ -240,6 +244,7 @@ fn run_placement_in_pool(config: &ResolvedPlacement) -> Result<PlacementOutcome>
         &classes,
         void.as_ref(),
     )?;
+    timer.stage("write_outputs");
     finish_report(
         &mut report,
         config,
@@ -254,7 +259,10 @@ fn run_placement_in_pool(config: &ResolvedPlacement) -> Result<PlacementOutcome>
     );
     write_json(&config.outputs.report, &report)?;
 
+    timer.stage("report");
     let summary_lines = summary(config, &state, &stop, target_volume, basis_volume);
+    timer.total("total_in_pool");
+    timer.report_resources();
     Ok(PlacementOutcome {
         placed: state.placed.len(),
         stop_reason: stop.reason,

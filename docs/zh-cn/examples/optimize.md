@@ -156,3 +156,7 @@ Final Best Loss: 0.040908
 历史另含 `Execution: workers=..., islands=..., active_island_limit=...`。正 pitch 的 exact/MC 配置保留 CPU 体素语义，
 请求 GPU 不会静默切换为连续 MC。`Selected Search Loss` 是历史最佳分数，`Final Best S2/Loss` 使用相同方法和完整预算复核。
 SA 是随机搜索，不同于 placement，不承诺跨线程输出一致。上面的旧捕获输出早于这些新增诊断字段。
+
+### 计时行（2026-09-25 新增）
+
+上面的捕获输出早于共享阶段计时器。当前版本还会为每个已完成阶段打印 `[Timing] optimize stage=<name> seconds=<f>`，随后打印 `[Timing] optimize workers=<n>` 与 `[Timing] optimize peak_rss_bytes=<n|unavailable>`，以及一到两行 `[GridStats]`。阶段名称见 `../reference/pipeline-core.md`（`pipeline/timing.rs`）；输出文件不变。

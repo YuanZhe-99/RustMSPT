@@ -221,3 +221,7 @@ Mesh-MC islands now cache each particle’s connected-component clipped-volume c
 | `IslandVolumes::fraction` | `src/pipeline/optimize_volume.rs:46` | Sum cached scalars in merged component order, then clamp. |
 | `OptimizeS2::evaluate_with_vf` | `src/pipeline/optimize_execution.rs:242` | Evaluate mesh MC with optional validated VF; reject geometric cache for voxel methods. |
 | `calculate_s2_mesh_mc_seeded_with_vf` | `src/geometry/s2.rs:765` | Preserve fixed-seed mesh MC samples while using caller-provided VF. |
+
+### Grid statistics and query counters (PERF-13 observability)
+
+At the end of each island `run_sa_island` prints `SpatialGrid::stats()` as `[GridStats] optimize island=<id> buckets=..` and `[GridStats] optimize island=<id> queries grid_queries=.. grid_candidates=.. bbox_rejects=.. narrow_phase=.. distance_checks=..`, counting candidate and ghost queries, bbox rejections, exact overlap tests and exact distance tests in the serial collision loop. The counters are plain local integers incremented beside the existing branches; no decision, RNG draw or history entry changes.

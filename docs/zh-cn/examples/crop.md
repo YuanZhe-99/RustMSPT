@@ -123,3 +123,7 @@ width=727, height=349, bps=16, compression=none, PhotometricInterpretation=Black
 - 关于 `CropPipeline::run` 的完整行为——包括 `output.path` 的文件夹/文件模式是如何决定的，
   以及在写出逐切片 TIFF 时如何使用 `folder_prefix`/`folder_extension`——见
   `../reference/pipeline-crop-and-splitfilter.md`。
+
+### 计时行（2026-09-25 新增）
+
+上面的捕获输出早于共享阶段计时器。当前版本还会为每个已完成阶段打印 `[Timing] crop stage=<name> seconds=<f>`，随后打印 `[Timing] crop workers=<n>` 与 `[Timing] crop peak_rss_bytes=<n|unavailable>`。阶段名称见 `../reference/pipeline-core.md`（`pipeline/timing.rs`）；输出文件不变。

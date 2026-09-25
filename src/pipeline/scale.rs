@@ -14,10 +14,12 @@ impl Pipeline for ScalePipeline {
     // Purpose: Execute scaling pipeline: load STL, apply unit conversion (factor, mm_per_voxel, or voxel_per_mm), optionally orient to positive volume, and save scaled STL.
     // Inputs: ScaleConfig with input/output, scaling type and value, and orient flag.
     // Returns: Ok(()) or error.
-    // Side effects: Reads STL from disk; writes scaled STL to disk; prints summary to stdout.
+    // Side effects: Reads STL from disk; writes scaled STL to disk; prints summary plus load/stats_before/transform/orient_stats_after/write_stl/total timings, global-pool workers and peak RSS to stdout.
     // Notes: Returns InvalidConfig for non-positive mm_per_voxel or voxel_per_mm values, or unknown scaling type.
     fn run(&self) -> Result<()> {
+        let mut timer = crate::pipeline::timing::StageTimer::start("scale");
         let mut mesh = load_stl_or_merge_folder(Path::new(&self.config.input.stl_path))?;
+        timer.stage("load");
         let mode = self.config.scaling.r#type.as_str();
         let value = self.config.scaling.value;
         let enable_orient = self
@@ -28,6 +30,7 @@ impl Pipeline for ScalePipeline {
 
         let original_volume = mesh_volume(&mesh);
         let original_bbox = mesh_bbox(&mesh);
+        timer.stage("stats_before");
 
         println!("[Info] Scaling started.");
         println!("[Info] Mode: {mode} | Value: {value:.6}");
@@ -64,12 +67,14 @@ impl Pipeline for ScalePipeline {
             }
         };
 
+        timer.restart();
         let transform_started = std::time::Instant::now();
         scale_mesh(&mut mesh, factor);
         println!(
             "[Info] Scale transform seconds: {:.6}",
             transform_started.elapsed().as_secs_f64()
         );
+        timer.stage("transform");
 
         let (mesh_oriented, flipped_components, component_count) = if enable_orient {
             orient_components_to_positive_volume(&mesh)
@@ -78,12 +83,14 @@ impl Pipeline for ScalePipeline {
         };
         let scaled_volume = mesh_volume(&mesh_oriented);
         let scaled_bbox = mesh_bbox(&mesh_oriented);
+        timer.stage("orient_stats_after");
 
         save_stl(
             Path::new(&self.config.output.stl_path),
             &mesh_oriented,
             "scaled_mesh",
         )?;
+        timer.stage("write_stl");
         println!("[Info] Scaling completed with factor {factor:.6}.");
         println!("[Info] Orientation fix enabled: {}", enable_orient);
         if let Some(bb) = scaled_bbox {
@@ -98,6 +105,8 @@ impl Pipeline for ScalePipeline {
                 "[Info] Orientation fix: flipped {flipped_components}/{component_count} components to positive signed volume"
             );
         }
+        timer.total("total");
+        timer.report_resources();
         Ok(())
     }
 }

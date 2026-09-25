@@ -158,3 +158,7 @@ CPU 上完全以“精确”方式运行，同时并行完成了 40,000 采样�
 - 单独的 `mc_method: 'exact'`（或作为 `'both'` 的一部分）在体素网格超过 1,500,000 个体素
   （例如包围盒大得多，或 `voxel_pitch` 精细得多）时，会被静默降级为仅使用蒙特卡洛方法；在
   更大的区域上调整这些数值时，请留意 stdout 中对应的 `[Warning]` 行。
+
+### 计时行（2026-09-25 新增）
+
+上面的捕获输出早于共享阶段计时器。当前版本还会为每个已完成阶段打印 `[Timing] measure stage=<name> seconds=<f>`，随后打印 `[Timing] measure workers=<n>` 与 `[Timing] measure peak_rss_bytes=<n|unavailable>`。阶段名称见 `../reference/pipeline-core.md`（`pipeline/timing.rs`）；输出文件不变。

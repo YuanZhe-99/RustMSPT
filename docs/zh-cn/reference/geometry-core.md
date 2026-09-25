@@ -142,10 +142,11 @@
 - **返回值：** 一个 `Vec<Mesh>`，每个连通分量对应一项，各自拥有紧凑的、独立索引的顶点缓冲区（与源网格或其他分量不共享索引）。若输入网格没有面或没有顶点，则返回空的 `Vec`。
 - **副作用：** 无。
 - **算法：**
-  1. 构建一个 `vertex_to_faces` 邻接表：对每个顶点索引，记录引用它的面索引列表。
-  2. 为每个面维护一个 `visited` 标记。对每个未访问的面，使用 `VecDeque` 队列执行广度优先搜索（BFS）：从该面开始，反复弹出一个面、将其记为当前分量的一部分，并将所有（通过 `vertex_to_faces`）与之共享任一顶点、且尚未访问的面加入队列。
-  3. 一旦该 BFS 耗尽，所收集的 `component_faces` 即构成一个连通分量。其顶点通过一个从全局顶点索引到局部顶点索引的 `HashMap<usize, usize>` 被重新映射到一个新的紧凑局部索引空间，并为该分量生成一个新的 `Mesh`。
-  4. 重复此过程直到所有面都被访问；分量按其起始面首次被发现的顺序被推入输出向量。
+  1. 构建 CSR 形式的顶点到面邻接：先统计每个顶点被引用的次数，前缀和得到偏移，再按面顺序填充一个连续的面编号数组（同一面两次引用同一顶点时出现两次，与原先逐顶点 `Vec` 完全一致）。
+  2. 为每个面维护 `visited` 标记。对每个未访问的面，用复用的 `Vec` 加队首游标做广度优先搜索：队列本身按弹出顺序就是该分量的面列表。邻面按 CSR 顺序入队，因此访问顺序与原 `VecDeque` BFS 相同。
+  3. 按面顺序用逐顶点的戳记数组（戳记 = 分量序号）代替 `HashMap`，将该分量顶点重映射到紧凑的局部索引空间，并生成新的 `Mesh`。
+  4. 重复直到所有面都被访问；分量按其起始面首次被发现的顺序推入输出向量。
+  原 `Vec<Vec>`/`VecDeque`/`HashMap` 实现保留为 `#[cfg(test)]` 的 oracle `split_mesh_into_granules_reference`；`csr_split_matches_reference` 在空网格、孤立顶点、共享顶点、退化面、大量小分量、单一大分量及面顺序打乱的输入上比较完整输出（分量顺序、面顺序、顶点重映射）。release 基准（`split_benchmark`，5 次中位数）：20,000 个打乱的立方体 0.139 s -> 0.048 s，20,000 个有序立方体 0.043 s -> 0.014 s，单个 327,680 面的 icosphere 0.104 s -> 0.044 s。
 - **说明：** 只要两个三角形共享*任意*一个顶点（不必是一条边），就被视为连通，因此这是顶点邻接 BFS，而非边邻接 BFS。这是整个流水线中在堆积、优化和拆分过滤阶段普遍使用的标准连通分量拆分器——例如，在锻造或裁剪操作可能将单个输入网格破碎为多个不相连的颗粒实体之后，正是此函数将它们重新分离为可单独追踪的颗粒。
 - **另请参阅：** `../algorithms/mesh-clipping-volume-fraction.md`，了解下游体积/裁剪操作如何消费所得到的各颗粒网格。
 
@@ -360,3 +361,11 @@ STL 最近命中和 prepared 透明 scene 渲染均使用不重叠连续像素�
 | `cpu_render_tile_pixels` | `src/geometry/render.rs:381` | Bounded CPU pixel-task scheduling with an explicit row reference. |
 
 | `render_mesh_cpu_with_tiles` | `src/geometry/render.rs:390` | Bounded CPU pixel-task scheduling with an explicit row reference. |
+
+### 网格占用统计（PERF-13 观测）
+
+`SpatialGrid::stats() -> GridStats` 对桶数组遍历一次，返回 `buckets`、`non_empty_buckets`、`max_occupancy`、`mean_occupancy_non_empty`（成员引用数 / 非空桶数，空网格为 0）、`memberships`（桶内条目总数，跨多个桶的对象按桶计）以及 `items`（反向成员表中的不同 id 数）。它只读，不改变任何桶内顺序。`GridStats::summary_line(label)` 输出 `[GridStats] <label> buckets=.. non_empty=.. max_occupancy=.. mean_occupancy_non_empty=.. memberships=.. items=..`。旧版 `pack` 在放置循环结束且网格实际被查询过（碰撞体 >= 32）时打印一行；`optimize` 在每个岛退火结束时打印。测试：`geometry::spatial::tests::stats_count_buckets_and_memberships`。
+
+### 融合的 void 质心（PERF-16）
+
+`map_vertices_centroid(&mut [Vec3], transform) -> Vec3` 执行与 `map_vertices` 相同的变换，并返回变换后顶点的算术质心。在串行分支（单 worker，或顶点数低于 `max(131072, workers * 65536)`）中一遍完成变换与累加；在并行分支中先分块映射，再按索引顺序串行求和。两种情况下累加顺序和缩放都与 `mesh_centroid` 相同，结果逐位一致（`fused_centroid_matches_map_then_centroid`，1/2/8 worker，跨越阈值的规模）。`forge_owned` 在 `mesh_type: void` 时使用它。单 worker release 测量（`fused_centroid_benchmark`，5 次中位数）：100,000 顶点 0.000207 s -> 0.000128 s，2,000,000 顶点 0.0210 s -> 0.0148 s。

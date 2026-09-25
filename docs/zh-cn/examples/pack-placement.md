@@ -283,3 +283,7 @@ sha256sum /tmp/t1/particles.json /tmp/t8/particles.json
 - 未达标的运行仍会**以零码退出**，并在报告中说明。只有配置不可用或输出无法写入才是错误。
 - 完整算法，包括孔隙判据的完备性论证与停止原因的优先级，见
   [`../algorithms/void-aware-placement.md`](../algorithms/void-aware-placement.md)。
+
+### 计时行（2026-09-25 新增）
+
+上面的捕获输出早于共享阶段计时器。当前版本还会为每个已完成阶段打印 `[Timing] placement stage=<name> seconds=<f>`，随后打印 `[Timing] placement workers=<n>` 与 `[Timing] placement peak_rss_bytes=<n|unavailable>`。阶段名称见 `../reference/pipeline-core.md`（`pipeline/timing.rs`）；输出文件不变。

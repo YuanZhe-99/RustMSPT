@@ -42,7 +42,11 @@ This page documents the core geometry primitives in `src/geometry/`: axis-aligne
 | `SpatialGrid::remove` | `src/geometry/spatial.rs:59` | Remove all item cell references. |
 | `SpatialGrid::update` | `src/geometry/spatial.rs:72` | Replace one item membership. |
 | `SpatialQueryScratch` | `src/geometry/spatial.rs:5` | Retained neighbors and membership storage. |
-| `SpatialGrid::query_into` | `src/geometry/spatial.rs:111` | Fill reusable query scratch. |
+| `SpatialGrid::query_into` | `src/geometry/spatial.rs:136` | Fill reusable query scratch. |
+| `GridStats` | `src/geometry/spatial.rs:11` | Bucket occupancy summary: buckets, non-empty buckets, max/mean occupancy, memberships, items. |
+| `GridStats::summary_line` | `src/geometry/spatial.rs:22` | Format a one-line `[GridStats] <label> ...` log line. |
+| `SpatialGrid::stats` | `src/geometry/spatial.rs:181` | One pass over buckets returning `GridStats`. |
+| `map_vertices_centroid` | `src/geometry/mesh_ops.rs:265` | Vertex map plus post-map centroid, bit-identical to map_vertices + mesh_centroid; serial branch is one fused pass. |
 | `map_vertices` | `src/geometry/mesh_ops.rs:162` | Serial or parallel independent vertex mapping. |
 
 ## Module role: `geometry/mod.rs`
@@ -158,10 +162,11 @@ Utilities for constructing, transforming, and measuring `Mesh` values. These are
 - **Returns:** A `Vec<Mesh>`, one entry per connected component, each with its own compact, independently-indexed vertex buffer (no shared indices with the source mesh or other components). Returns an empty `Vec` if the input mesh has no faces or no vertices.
 - **Side effects:** None.
 - **Algorithm:**
-  1. Build a `vertex_to_faces` adjacency list: for each vertex index, the list of face indices that reference it.
-  2. Maintain a `visited` flag per face. For each unvisited face, run a breadth-first search (BFS) using a `VecDeque` queue: starting from that face, repeatedly pop a face, record it as part of the current component, and enqueue every not-yet-visited face that shares any of its three vertices (via `vertex_to_faces`).
-  3. Once the BFS drains, the collected `component_faces` form one connected component. Its vertices are remapped into a fresh, compact local index space (via a `HashMap<usize, usize>` from global to local vertex index), and a new `Mesh` is emitted for that component.
+  1. Build a CSR vertex-to-face adjacency: count each vertex's references, prefix-sum the counts into offsets, then fill one contiguous face-id array in face order (a face referencing a vertex twice appears twice, exactly as the former per-vertex `Vec` did).
+  2. Maintain a `visited` flag per face. For each unvisited face, run a breadth-first search over a reused `Vec` with a head cursor: the queue itself, in pop order, is the component's face list. Neighbours are enqueued in CSR order, so the visit order equals the former `VecDeque` BFS.
+  3. Remap the component's vertices in face order into a compact local index space using a per-vertex stamp array (stamp = component number) instead of a `HashMap`, and emit a new `Mesh`.
   4. Repeat until every face has been visited; components are pushed into the output vector in the order their starting face was first encountered.
+  The former `Vec<Vec>`/`VecDeque`/`HashMap` implementation is kept as the `#[cfg(test)]` oracle `split_mesh_into_granules_reference`; `csr_split_matches_reference` compares whole output meshes (component order, face order, vertex remap) on empty, isolated-vertex, shared-vertex, degenerate, many-small, one-large and face-shuffled inputs. Release benchmark (`split_benchmark`, median of 5): 20,000 shuffled boxes 0.139 s -> 0.048 s, 20,000 ordered boxes 0.043 s -> 0.014 s, one 327,680-face icosphere 0.104 s -> 0.044 s.
 - **Notes:** Two triangles are considered connected if they share *any* vertex (not necessarily an edge), so this is vertex-adjacency BFS, not edge-adjacency. This is the standard connected-component splitter used throughout the packing, optimization, and split-filter stages of the pipeline — e.g., after forging or clipping operations that may fracture a single input mesh into multiple disjoint particle bodies, this function is what separates them back into individually trackable granules.
 - **See also:** `../algorithms/mesh-clipping-volume-fraction.md` for how downstream volume/clipping operations consume the resulting per-granule meshes.
 
@@ -376,3 +381,11 @@ Both nearest-hit STL rendering and prepared transparent scene rendering use disj
 | `cpu_render_tile_pixels` | `src/geometry/render.rs:381` | Bounded CPU pixel-task scheduling with an explicit row reference. |
 
 | `render_mesh_cpu_with_tiles` | `src/geometry/render.rs:390` | Bounded CPU pixel-task scheduling with an explicit row reference. |
+
+### Grid occupancy statistics (PERF-13 observability)
+
+`SpatialGrid::stats() -> GridStats` walks the bucket array once and returns `buckets`, `non_empty_buckets`, `max_occupancy`, `mean_occupancy_non_empty` (memberships / non-empty buckets, 0 when empty), `memberships` (total bucket entries, counting a multi-bucket item once per bucket) and `items` (distinct inserted ids from the reverse membership map). It reads only; it never changes bucket order. `GridStats::summary_line(label)` formats `[GridStats] <label> buckets=.. non_empty=.. max_occupancy=.. mean_occupancy_non_empty=.. memberships=.. items=..`. Legacy `pack` prints it after the placement loop when the grid was queried (>= 32 colliders), and `optimize` prints it per island at the end of annealing. Covered by `geometry::spatial::tests::stats_count_buckets_and_memberships`.
+
+### Fused void centroid (PERF-16)
+
+`map_vertices_centroid(&mut [Vec3], transform) -> Vec3` applies the same transform as `map_vertices` and returns the arithmetic centroid of the transformed vertices. On the serial branch (one worker, or below `max(131072, workers * 65536)` vertices) it transforms and accumulates in one pass; on the parallel branch it maps in chunks and then sums serially in index order. Either way the accumulation order and scale are those of `mesh_centroid`, so the result is bit-identical (`fused_centroid_matches_map_then_centroid`, 1/2/8 workers, sizes across the cutoff). `forge_owned` uses it for `mesh_type: void`. Release measurement at one worker (`fused_centroid_benchmark`, median of 5): 100,000 vertices 0.000207 s -> 0.000128 s, 2,000,000 vertices 0.0210 s -> 0.0148 s.

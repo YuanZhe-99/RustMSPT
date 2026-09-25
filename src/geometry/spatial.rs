@@ -7,6 +7,31 @@ pub struct SpatialQueryScratch {
     seen: HashSet<usize>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GridStats {
+    pub buckets: usize,
+    pub non_empty_buckets: usize,
+    pub max_occupancy: usize,
+    pub mean_occupancy_non_empty: f64,
+    pub memberships: usize,
+    pub items: usize,
+}
+
+impl GridStats {
+    // AI-FUNC-SUMMARY: Format the stats as one `[GridStats] <label> ...` log line; returns String; side effects: none.
+    pub fn summary_line(&self, label: &str) -> String {
+        format!(
+            "[GridStats] {label} buckets={} non_empty={} max_occupancy={} mean_occupancy_non_empty={:.3} memberships={} items={}",
+            self.buckets,
+            self.non_empty_buckets,
+            self.max_occupancy,
+            self.mean_occupancy_non_empty,
+            self.memberships,
+            self.items
+        )
+    }
+}
+
 pub struct SpatialGrid {
     inv_cell: f64,
     nx: usize,
@@ -152,6 +177,28 @@ impl SpatialGrid {
         }
     }
 
+    // AI-FUNC-SUMMARY: Summarise bucket occupancy (bucket count, non-empty buckets, max and mean non-empty occupancy, total bucket entries, distinct items) in one pass over the buckets; returns GridStats; side effects: none.
+    pub fn stats(&self) -> GridStats {
+        let mut non_empty = 0usize;
+        let mut max_occupancy = 0usize;
+        let mut memberships = 0usize;
+        for cell in &self.cells {
+            if !cell.is_empty() {
+                non_empty += 1;
+                max_occupancy = max_occupancy.max(cell.len());
+                memberships += cell.len();
+            }
+        }
+        GridStats {
+            buckets: self.cells.len(),
+            non_empty_buckets: non_empty,
+            max_occupancy,
+            mean_occupancy_non_empty: if non_empty == 0 { 0.0 } else { memberships as f64 / non_empty as f64 },
+            memberships,
+            items: self.memberships.len(),
+        }
+    }
+
     // AI-FUNC-SUMMARY: Map a point to grid cell coordinates, clamping to valid range; returns (cx, cy, cz) clamped to grid bounds; side effects: None.
     fn point_to_cell_clamped(&self, p: Vec3) -> (usize, usize, usize) {
         let (cx, cy, cz) = self.point_to_cell(p);
@@ -230,6 +277,28 @@ mod tests {
     }
 
     // AI-FUNC-SUMMARY: Compare exact neighbor order against the original scan for sparse IDs, repeated inserts, reversed and clamped boxes and margins; no side effects.
+    // AI-FUNC-SUMMARY: Check occupancy statistics on empty, single-bucket, multi-bucket and removed items.
+    #[test]
+    fn stats_count_buckets_and_memberships() {
+        let mut grid = SpatialGrid::new(bounds(0.0, 4.0), 1.0);
+        let empty = grid.stats();
+        assert_eq!((empty.buckets, empty.non_empty_buckets, empty.memberships, empty.items), (64, 0, 0, 0));
+        assert_eq!(empty.mean_occupancy_non_empty, 0.0);
+        grid.insert(0, bounds(0.1, 0.2));
+        grid.insert(1, bounds(0.3, 0.4));
+        grid.insert(2, bounds(0.5, 1.5));
+        let stats = grid.stats();
+        assert_eq!(stats.non_empty_buckets, 8);
+        assert_eq!(stats.max_occupancy, 3);
+        assert_eq!(stats.memberships, 10);
+        assert_eq!(stats.items, 3);
+        assert!((stats.mean_occupancy_non_empty - 10.0 / 8.0).abs() < 1e-12);
+        grid.remove(2);
+        let stats = grid.stats();
+        assert_eq!((stats.non_empty_buckets, stats.max_occupancy, stats.memberships, stats.items), (1, 2, 2, 2));
+        assert!(stats.summary_line("x").starts_with("[GridStats] x buckets=64 non_empty=1"));
+    }
+
     #[test]
     fn query_preserves_order_and_exclusions() {
         let mut grid = SpatialGrid::new(bounds(0.0, 8.0), 1.0);

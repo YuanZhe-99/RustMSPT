@@ -21,3 +21,7 @@ Captured CPU-only release output:
 ```
 
 The output is a 1024x1024 RGBA PNG containing the shaded particles on a white background. `--input` and `--output` override `render.stl_path` and `render.output_path`. Build with `--features gpu` and use `acceleration.mode: gpu` (or `auto` above `gpu_min_pixels`) to request offscreen wgpu rasterization; failures retain CPU output behavior.
+
+### Timing lines (added 2026-09-25)
+
+Captured output above predates the shared stage timer. Current builds also print `[Timing] render stage=<name> seconds=<f>` for each completed stage, then `[Timing] render workers=<n>` and `[Timing] render peak_rss_bytes=<n|unavailable>`. Stage names are listed in `../reference/pipeline-core.md` (`pipeline/timing.rs`); output files are unchanged.

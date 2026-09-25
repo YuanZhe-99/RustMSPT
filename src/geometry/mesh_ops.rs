@@ -1,4 +1,5 @@
 use crate::types::{BoundingBox, Mesh, Triangle, Vec3};
+#[cfg(test)]
 use std::collections::{HashMap, VecDeque};
 
 // AI-FUNC-SUMMARY: Compute the arithmetic centroid of all mesh vertices; returns Vec3 (zero for empty mesh); side effects: None.
@@ -43,8 +44,96 @@ pub fn merge_meshes(meshes: &[Mesh]) -> Mesh {
 // Inputs: mesh reference.
 // Returns: Vec<Mesh> where each element is one connected component with remapped vertex indices.
 // Side effects: None.
-// Notes: Returns empty vec for empty mesh. Each granule has its own independent vertex buffer.
+// Notes: Returns empty vec for empty mesh. Each granule has its own independent vertex buffer. Vertex-to-face adjacency is a CSR (count, prefix sum, contiguous face ids in face order), the BFS queue doubles as the component face list, and the vertex remap is a stamped array; component order, first-face order and remap are identical to the former Vec<Vec>/VecDeque/HashMap version kept as a test oracle.
 pub fn split_mesh_into_granules(mesh: &Mesh) -> Vec<Mesh> {
+    if mesh.faces.is_empty() || mesh.vertices.is_empty() {
+        return Vec::new();
+    }
+
+    let vertex_count = mesh.vertices.len();
+    let mut offsets = vec![0usize; vertex_count + 1];
+    for face in &mesh.faces {
+        offsets[face.a + 1] += 1;
+        offsets[face.b + 1] += 1;
+        offsets[face.c + 1] += 1;
+    }
+    for i in 0..vertex_count {
+        offsets[i + 1] += offsets[i];
+    }
+    let mut cursor = offsets[..vertex_count].to_vec();
+    let mut adjacency = vec![0usize; offsets[vertex_count]];
+    for (face_index, face) in mesh.faces.iter().enumerate() {
+        for vertex in [face.a, face.b, face.c] {
+            adjacency[cursor[vertex]] = face_index;
+            cursor[vertex] += 1;
+        }
+    }
+    drop(cursor);
+
+    let mut visited = vec![false; mesh.faces.len()];
+    let mut stamp = vec![usize::MAX; vertex_count];
+    let mut local_index = vec![0usize; vertex_count];
+    let mut queue: Vec<usize> = Vec::new();
+    let mut parts: Vec<Mesh> = Vec::new();
+
+    for start_face in 0..mesh.faces.len() {
+        if visited[start_face] {
+            continue;
+        }
+
+        queue.clear();
+        visited[start_face] = true;
+        queue.push(start_face);
+        let mut head = 0;
+        while head < queue.len() {
+            let f = &mesh.faces[queue[head]];
+            head += 1;
+            for vertex_index in [f.a, f.b, f.c] {
+                for &adjacent_face in &adjacency[offsets[vertex_index]..offsets[vertex_index + 1]] {
+                    if !visited[adjacent_face] {
+                        visited[adjacent_face] = true;
+                        queue.push(adjacent_face);
+                    }
+                }
+            }
+        }
+
+        let component = parts.len();
+        let mut local_vertices: Vec<Vec3> = Vec::new();
+        let mut local_faces = Vec::with_capacity(queue.len());
+        for &face_index in &queue {
+            let f = &mesh.faces[face_index];
+            let mut map_vertex = |global: usize| {
+                if stamp[global] != component {
+                    stamp[global] = component;
+                    local_index[global] = local_vertices.len();
+                    local_vertices.push(mesh.vertices[global]);
+                }
+                local_index[global]
+            };
+            let a = map_vertex(f.a);
+            let b = map_vertex(f.b);
+            let c = map_vertex(f.c);
+            local_faces.push(Triangle { a, b, c });
+        }
+
+        parts.push(Mesh {
+            vertices: local_vertices,
+            faces: local_faces,
+        });
+    }
+
+    parts
+}
+
+#[cfg(test)]
+// AI-FUNC-SUMMARY:
+// Purpose: Former Vec<Vec>/VecDeque/HashMap granule split, kept only as the test oracle and benchmark baseline for split_mesh_into_granules.
+// Inputs: mesh reference.
+// Returns: Vec<Mesh> where each element is one connected component with remapped vertex indices.
+// Side effects: None.
+// Notes: Returns empty vec for empty mesh. Each granule has its own independent vertex buffer.
+pub(crate) fn split_mesh_into_granules_reference(mesh: &Mesh) -> Vec<Mesh> {
     if mesh.faces.is_empty() || mesh.vertices.is_empty() {
         return Vec::new();
     }
@@ -169,6 +258,30 @@ pub(crate) fn map_vertices(vertices: &mut [Vec3], transform: impl Fn(Vec3) -> Ve
         vertices.par_chunks_mut(8192).for_each(|chunk| {
             for v in chunk { *v = transform(*v); }
         });
+    }
+}
+
+// AI-FUNC-SUMMARY: Apply map_vertices' transform and return the arithmetic centroid of the transformed vertices, bit-identical to mesh_centroid after map_vertices; the serial branch fuses both into one pass, the parallel branch maps in chunks then sums in index order; returns Vec3 (zero when empty); side effects: mutates vertices.
+pub(crate) fn map_vertices_centroid(vertices: &mut [Vec3], transform: impl Fn(Vec3) -> Vec3 + Sync + Send) -> Vec3 {
+    let workers = rayon::current_num_threads();
+    let parallel_min = workers.saturating_mul(65536).max(131072);
+    let mut sum = Vec3::new(0.0, 0.0, 0.0);
+    if workers == 1 || vertices.len() < parallel_min {
+        for v in vertices.iter_mut() {
+            *v = transform(*v);
+            sum = sum.add(*v);
+        }
+    } else {
+        map_vertices(vertices, transform);
+        for v in vertices.iter() {
+            sum = sum.add(*v);
+        }
+    }
+    let count = vertices.len() as f64;
+    if count > 0.0 {
+        sum.scale(1.0 / count)
+    } else {
+        sum
     }
 }
 
@@ -339,5 +452,164 @@ pub fn icosphere_mesh(center: Vec3, radius: f64, level: u32) -> Mesh {
                 c: t[2],
             })
             .collect(),
+    }
+}
+
+#[cfg(test)]
+mod split_tests {
+    use super::*;
+    use std::hint::black_box;
+    use std::time::Instant;
+
+    // AI-FUNC-SUMMARY: Deterministically permute a mesh's faces with a fixed LCG so components interleave in face order; returns the permuted mesh.
+    fn shuffled(mut mesh: Mesh, seed: u64) -> Mesh {
+        let mut state = seed;
+        for i in (1..mesh.faces.len()).rev() {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let j = (state >> 33) as usize % (i + 1);
+            mesh.faces.swap(i, j);
+        }
+        mesh
+    }
+
+    // AI-FUNC-SUMMARY: Build a grid of many small disjoint boxes merged into one mesh; returns the merged mesh.
+    fn many_boxes(count: usize) -> Mesh {
+        let boxes: Vec<Mesh> = (0..count)
+            .map(|i| {
+                let o = Vec3::new((i % 50) as f64 * 2.0, (i / 50 % 50) as f64 * 2.0, (i / 2500) as f64 * 2.0);
+                box_mesh(BoundingBox { min: o, max: o.add(Vec3::new(1.0, 1.0, 1.0)) })
+            })
+            .collect();
+        merge_meshes(&boxes)
+    }
+
+    // AI-FUNC-SUMMARY: Compare the CSR granule split with the retained HashMap/VecDeque oracle on empty, isolated-vertex, shared-vertex, degenerate, many-small, one-large and shuffled meshes.
+    #[test]
+    fn csr_split_matches_reference() {
+        let mut cases: Vec<Mesh> = vec![
+            Mesh { vertices: vec![], faces: vec![] },
+            Mesh { vertices: vec![Vec3::new(0.0, 0.0, 0.0)], faces: vec![] },
+        ];
+        let p = |x: f64| Vec3::new(x, x * 0.5, -x);
+        cases.push(Mesh {
+            vertices: (0..9).map(|i| p(i as f64)).collect(),
+            faces: vec![
+                Triangle { a: 4, b: 1, c: 2 },
+                Triangle { a: 7, b: 8, c: 6 },
+                Triangle { a: 2, b: 3, c: 0 },
+                Triangle { a: 5, b: 5, c: 5 },
+                Triangle { a: 6, b: 5, c: 5 },
+            ],
+        });
+        cases.push(many_boxes(300));
+        cases.push(icosphere_mesh(Vec3::new(1.0, 2.0, 3.0), 2.0, 4));
+        cases.push(shuffled(many_boxes(300), 7));
+        let mut mixed = merge_meshes(&[many_boxes(40), icosphere_mesh(Vec3::new(-5.0, 0.0, 0.0), 1.0, 3)]);
+        mixed.vertices.push(Vec3::new(9.0, 9.0, 9.0));
+        mixed.vertices.insert(0, Vec3::new(8.0, 8.0, 8.0));
+        for f in &mut mixed.faces {
+            f.a += 1;
+            f.b += 1;
+            f.c += 1;
+        }
+        cases.push(shuffled(mixed, 11));
+        for (index, mesh) in cases.iter().enumerate() {
+            assert_eq!(split_mesh_into_granules(mesh), split_mesh_into_granules_reference(mesh), "case {index}");
+        }
+        assert_eq!(split_mesh_into_granules(&cases[2]).len(), 2);
+        assert_eq!(split_mesh_into_granules(&cases[3]).len(), 300);
+        assert_eq!(split_mesh_into_granules(&cases[4]).len(), 1);
+    }
+
+    // AI-FUNC-SUMMARY: Check the fused map-and-centroid equals map_vertices followed by mesh_centroid bit for bit across worker counts and the parallel cutoff.
+    #[test]
+    fn fused_centroid_matches_map_then_centroid() {
+        for n in [0usize, 1, 13, 131071, 131073, 600001] {
+            let source: Vec<Vec3> = (0..n)
+                .map(|i| Vec3::new(1e8 + i as f64 * 0.01, -2.0 + (i % 37) as f64, (i % 113) as f64 * 0.07))
+                .collect();
+            let transform = |v: Vec3| Vec3::new(3.0 + (v.x - 3.0) * 0.8, v.y * 1.1, v.z * 1.1 - 0.5);
+            for workers in [1, 2, 8] {
+                let pool = rayon::ThreadPoolBuilder::new().num_threads(workers).build().unwrap();
+                let (expected, expected_c, actual, actual_c) = pool.install(|| {
+                    let mut expected = Mesh { vertices: source.clone(), faces: vec![] };
+                    map_vertices(&mut expected.vertices, transform);
+                    let expected_c = mesh_centroid(&expected);
+                    let mut actual = source.clone();
+                    let actual_c = map_vertices_centroid(&mut actual, transform);
+                    (expected.vertices, expected_c, actual, actual_c)
+                });
+                assert_eq!(actual, expected);
+                assert_eq!(actual_c.x.to_bits(), expected_c.x.to_bits());
+                assert_eq!(actual_c.y.to_bits(), expected_c.y.to_bits());
+                assert_eq!(actual_c.z.to_bits(), expected_c.z.to_bits());
+            }
+        }
+    }
+
+    // AI-FUNC-SUMMARY: Time reference versus CSR split on many small components and one large component (warmup plus five samples, release); prints medians.
+    #[test]
+    #[ignore = "release performance measurement"]
+    fn split_benchmark() {
+        let cases = [
+            ("many_small_20000_boxes_shuffled", shuffled(many_boxes(20000), 3)),
+            ("many_small_20000_boxes_ordered", many_boxes(20000)),
+            ("one_large_icosphere_l7", icosphere_mesh(Vec3::new(0.0, 0.0, 0.0), 1.0, 7)),
+        ];
+        for (name, mesh) in &cases {
+            let mut samples = [Vec::new(), Vec::new()];
+            for round in 0..6 {
+                let start = Instant::now();
+                black_box(split_mesh_into_granules_reference(black_box(mesh)));
+                let reference = start.elapsed().as_secs_f64();
+                let start = Instant::now();
+                black_box(split_mesh_into_granules(black_box(mesh)));
+                let csr = start.elapsed().as_secs_f64();
+                if round > 0 {
+                    samples[0].push(reference);
+                    samples[1].push(csr);
+                }
+            }
+            for s in &mut samples {
+                s.sort_by(f64::total_cmp);
+            }
+            println!(
+                "split_benchmark {name} faces={} reference_median={:.6} csr_median={:.6} reference_samples={:?} csr_samples={:?}",
+                mesh.faces.len(), samples[0][2], samples[1][2], samples[0], samples[1]
+            );
+        }
+    }
+
+    // AI-FUNC-SUMMARY: Time map_vertices+mesh_centroid versus fused map_vertices_centroid on one worker (warmup plus five samples, release); prints medians.
+    #[test]
+    #[ignore = "release performance measurement"]
+    fn fused_centroid_benchmark() {
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+        for n in [100_000usize, 2_000_000] {
+            let source: Vec<Vec3> = (0..n).map(|i| Vec3::new(i as f64, (i % 7) as f64, 0.5)).collect();
+            let transform = |v: Vec3| Vec3::new(v.x * 0.8, v.y * 1.1, v.z * 1.1);
+            let mut separate = Vec::new();
+            let mut fused = Vec::new();
+            for round in 0..6 {
+                let mut a = Mesh { vertices: source.clone(), faces: vec![] };
+                let mut b = source.clone();
+                let (t0, t1) = pool.install(|| {
+                    let start = Instant::now();
+                    map_vertices(&mut a.vertices, transform);
+                    black_box(mesh_centroid(&a));
+                    let t0 = start.elapsed().as_secs_f64();
+                    let start = Instant::now();
+                    black_box(map_vertices_centroid(&mut b, transform));
+                    (t0, start.elapsed().as_secs_f64())
+                });
+                if round > 0 {
+                    separate.push(t0);
+                    fused.push(t1);
+                }
+            }
+            separate.sort_by(f64::total_cmp);
+            fused.sort_by(f64::total_cmp);
+            println!("fused_centroid_benchmark n={n} separate_median={:.6} fused_median={:.6} separate={separate:?} fused={fused:?}", separate[2], fused[2]);
+        }
     }
 }

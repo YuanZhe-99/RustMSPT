@@ -202,3 +202,45 @@
 ### Render execution policy
 
 `RenderPipeline::run` installs the whole pipeline in the configured worker pool. `run_in_pool` loads geometry, resolves the environment override and method budget, renders and writes only after success. Both selection and runtime failures honor `cpu_fallback`. GPU work estimates include vertices, color/depth, aligned staging and uniforms. Actual CPU fallback executes in the same pool.
+
+## `pipeline/timing.rs` —— 阶段计时与峰值 RSS（PERF-00）
+
+| 条目 | 位置 | 摘要 |
+|---|---|---|
+| `StageTimer` | `src/pipeline/timing.rs:3` | 每条流水线的总时钟和当前阶段时钟。 |
+| `StageTimer::start` | `src/pipeline/timing.rs:11` | 为指定流水线同时启动两个时钟。 |
+| `StageTimer::restart` | `src/pipeline/timing.rs:17` | 不打印地重置阶段时钟（排除不计时的工作）。 |
+| `StageTimer::stage` | `src/pipeline/timing.rs:22` | 打印距上次标记的时间并重启阶段时钟。 |
+| `StageTimer::report` | `src/pipeline/timing.rs:30` | 把外部累计的时长作为一个阶段打印。 |
+| `StageTimer::total` | `src/pipeline/timing.rs:35` | 以给定阶段名打印自启动以来的时间。 |
+| `StageTimer::report_resources` | `src/pipeline/timing.rs:42` | 打印 worker 数和峰值 RSS 两行。 |
+| `format_stage_line` | `src/pipeline/timing.rs:49` | 格式化 `[Timing] <pipeline> stage=<name> seconds=<f>`（九位小数）。 |
+| `report_workers` | `src/pipeline/timing.rs:54` | 打印 `[Timing] <pipeline> workers=<rayon::current_num_threads()>`。 |
+| `report_peak_rss` | `src/pipeline/timing.rs:59` | 打印 `[Timing] <pipeline> peak_rss_bytes=<n|unavailable>`。 |
+| `peak_rss_bytes` | `src/pipeline/timing.rs:67` | 从 `/proc/self/status` 读取 VmHWM（字节），不可用时返回 `None`。 |
+| `parse_vm_hwm` | `src/pipeline/timing.rs:73` | 解析 `VmHWM: <n> kB` 行；缺失、格式错误或单位不是 kB 时返回 `None`。 |
+
+除 meshgen 外的每条流水线都以统一格式 `[Timing] <pipeline> stage=<name> seconds=<f>` 打印各阶段墙钟时间，随后打印 `[Timing] <pipeline> workers=<n>`（阶段实际运行所在池的 Rayon worker 数：自建池的流水线为配置的池，`forge`/`scale` 为全局池，受 `RAYON_NUM_THREADS` 控制）和 `[Timing] <pipeline> peak_rss_bytes=<n|unavailable>`。峰值 RSS 为从 `VmHWM` 读取的进程高水位，覆盖整个进程而非仅计时阶段，且从不估算：没有 `/proc` 的平台打印 `unavailable`。只为已完成的阶段输出计时行；出错时直接返回，不伪造测量值。
+
+| 流水线 | 阶段（按顺序） | 最后一行 |
+|---|---|---|
+| `split-filter` | `load`、`split`、`metrics`、`filter`、`write_stl`、`write_report` | `total_in_pool` |
+| `pack`（旧版 `packing:`） | `load`（目标、输入、拆分、过滤）、`pack_loop`、`merge_orient`、`write_stl`、`report`（摘要及分布 CSV） | `total_in_pool` |
+| `pack`（`placement:`） | `load`（形状库、尺寸、孔隙）、`plan`（多重集与首次报告）、`place`（放置与补充）、`write_outputs`、`report` | `total_in_pool` |
+| `optimize` | `load`、`prepare_evaluator`、`target_s2`、`input_s2`、`prune`、`anneal`、`final_s2`、`write_stl`、`write_history` | `total_in_pool` |
+| `measure` | `load`、`split_vf`、`s2_exact` 和/或 `s2_monte_carlo`、`write` | `total_in_pool` |
+| `forge` | `load`、`vf_before`、`transform`、`vf_after`、`orient_shift`、`write_stl`、`write_report` | `total` |
+| `scale` | `load`、`stats_before`、`transform`、`orient_stats_after`、`write_stl` | `total` |
+| `render` | `load`、`prepare`、`render_and_backend`、`encode_write` | `total_in_pool` |
+| `mesh-render` | `load`、`scene`、`cameras`；尝试 GPU 时有 `gpu_render_write`；CPU 渲染时有 `cpu_prepare`、`cpu_render`、`encode_write`（各视图累计） | `total_in_pool` |
+| `crop` | `load`、`background`、`pca`、`transform_and_backend`、`trim`、`encode_write`（名称不变） | `total_in_pool` |
+
+`total_in_pool` 不含 CLI 解析、配置加载和线程池创建；`scripts/perf_matrix.py` 中的 `process_wall` 度量整个进程。计时行只写到 stdout，从不进入输出文件、记录或报告，因此输出与 placement 确定性不变。旧版 `pack` 和 `optimize` 另外打印 `[GridStats]` 行（见 `pipeline-packing.md` 和 `pipeline-optimize.md`）。
+
+### 基准矩阵脚本
+
+`scripts/perf_matrix.py`（python3，仅标准库）按 worker 数（默认 1/2/4/8）运行所选流水线，含 `--warmup` 次冷运行（默认 1，单独报告）和 `--repeats` 次暖运行（默认 5）。每次运行都有独立的配置副本（worker 字段通过 `cpu_max`、`packing.cpu_max`、`optimization.cpu_max`、`measurement.cpu_max`、`render.cpu_max` 设置，placement 用 `--threads`；同时设置 `RAYON_NUM_THREADS` 与 `RUSTMSPT_ACCELERATION=cpu`）和 `--work` 下的独立输出目录，因此不会覆盖 `data/` 下任何文件。optimize、measure、forge、scale 使用在工作目录中生成的小依赖链（pack 再 optimize，各运行一次）。输出：`perf_matrix_raw.json`（每次运行的阶段、报告的 worker 数、峰值 RSS、网格行、返回码、进程墙钟时间）和 `perf_matrix_summary.md`（按阶段和 worker 数：冷运行、暖运行中位数/最小/最大、S(p) = T1 中位数 / Tp 中位数、E(p) = S(p) / 报告的 worker 数、峰值 RSS 中位数）。超过核心数的 worker 数会被钳制 `cpu_max` 的流水线截断，`workers` 列显示实际运行值。“冷”指该配置的第一个进程，并非清空页缓存。`--optimize-iterations` 可缩减 `optimization.max_iterations` 以缩短运行时间。
+
+### PERF-16 补充（2026-09-25）
+
+void 质心仍保持 `mesh_centroid` 的串行索引顺序累加，但当仿射变换走串行分支时在同一遍内求和（`map_vertices_centroid`，逐位一致）。未把 ROI 输出平移融合进 FFD 遍历：`vf_after` 和朝向修正读取的是未平移网格，而在平移后坐标上裁剪不能保证逐位一致。scale 的前后体积与包围盒扫描保留：`|f|^3 * V` 不是同一浮点求和，缩放包围盒捷径只能省一次顶点遍历。

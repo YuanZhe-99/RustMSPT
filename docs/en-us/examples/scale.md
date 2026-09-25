@@ -99,3 +99,7 @@ resolution.
   check has a non-trivial per-component cost on large meshes.
 - See `../reference/pipeline-core.md` for the full `ScalePipeline::run` behavior reference,
   including the exact error conditions for invalid `scaling.type`/`value` combinations.
+
+### Timing lines (added 2026-09-25)
+
+Captured output above predates the shared stage timer. Current builds also print `[Timing] scale stage=<name> seconds=<f>` for each completed stage, then `[Timing] scale workers=<n>` and `[Timing] scale peak_rss_bytes=<n|unavailable>`. Stage names are listed in `../reference/pipeline-core.md` (`pipeline/timing.rs`); output files are unchanged.

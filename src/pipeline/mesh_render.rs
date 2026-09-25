@@ -188,7 +188,7 @@ impl MeshRenderPipeline {
         })
     }
 
-    // AI-FUNC-SUMMARY: Load VTU, prepare one scene and render/save all views within the installed worker budget, including GPU fallback; preserve opaque-preview versus CPU transparency behavior.
+    // AI-FUNC-SUMMARY: Load VTU, prepare one scene and render/save all views within the installed worker budget, including GPU fallback; preserve opaque-preview versus CPU transparency behavior; prints load/scene/cameras/gpu_render_write or cpu_prepare/cpu_render/encode_write timings, workers and peak RSS.
     fn run_in_pool(&self) -> Result<()> {
         let p = &self.config.mesh_render;
         let configured = match p.backend.trim().to_ascii_lowercase().as_str() {
@@ -206,7 +206,9 @@ impl MeshRenderPipeline {
             ..Default::default()
         })?;
         println!("[mesh-render] requested backend: {backend}");
+        let mut timer = crate::pipeline::timing::StageTimer::start("mesh-render");
         let doc = load_vtu(Path::new(&p.input))?;
+        timer.stage("load");
 
         let color_mode = if p.color_by.eq_ignore_ascii_case("uniform") {
             let c = match &p.uniform_color {
@@ -266,7 +268,9 @@ impl MeshRenderPipeline {
             highlight_points,
         };
 
+        timer.restart();
         let scene = build_scene(&doc, &spec)?;
+        timer.stage("scene");
         let bbox = scene.bbox.ok_or_else(|| {
             RustMsptError::InvalidMesh("mesh-render: the VTU contains no points".to_string())
         })?;
@@ -356,6 +360,7 @@ impl MeshRenderPipeline {
             cameras.push((view_name, build_render_camera(&corner_mesh, &camera_spec)?));
         }
 
+        timer.stage("cameras");
         let gpu_preflight = || -> std::result::Result<(), String> {
             let plan = crate::compute::render_memory::SceneRenderMemory::plan(
                 scene.tris.iter().filter(|t| !(t.alpha <= 0.0)).count(),
@@ -421,6 +426,9 @@ impl MeshRenderPipeline {
                 }
             }
         };
+        if !matches!(backend, AccelerationMode::Cpu) && !below_threshold {
+            timer.stage("gpu_render_write");
+        }
         if gpu_completed {
             println!("[mesh-render] GPU opaque preview (per-set opacity ignored; the CPU path is the transparency reference)");
         }
@@ -431,14 +439,25 @@ impl MeshRenderPipeline {
                 rayon::current_num_threads(),
                 rayon::current_thread_index()
             );
+            timer.restart();
             let prepared = PreparedScene::new(&scene);
+            timer.stage("cpu_prepare");
+            let (mut render_seconds, mut write_seconds) = (0.0, 0.0);
             for (view_name, camera) in &cameras {
+                let started = std::time::Instant::now();
                 let image = prepared.render(camera, p.width, p.height, &settings);
+                render_seconds += started.elapsed().as_secs_f64();
+                let started = std::time::Instant::now();
                 let out_path = out_dir.join(format!("{stem}_{view_name}.png"));
                 save_image(&out_path, &image)?;
+                write_seconds += started.elapsed().as_secs_f64();
                 println!("[mesh-render] wrote {}", out_path.display());
             }
+            timer.report("cpu_render", render_seconds);
+            timer.report("encode_write", write_seconds);
         }
+        timer.total("total_in_pool");
+        timer.report_resources();
 
         Ok(())
     }

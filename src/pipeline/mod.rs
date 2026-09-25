@@ -20,6 +20,7 @@ pub mod rng;
 pub mod rotation;
 pub mod scale;
 pub mod split_filter;
+pub mod timing;
 
 use crate::error::Result;
 use indicatif::{ProgressBar, ProgressStyle};
