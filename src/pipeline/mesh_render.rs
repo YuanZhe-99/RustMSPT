@@ -64,6 +64,32 @@ fn consume_frames<T: Send>(
     })
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Render items in order and write each result, overlapping the write of item i-1 with the render of item i through rayon::join.
+// Inputs: items, a render closure (may use nested Rayon parallelism), an ordered write closure receiving (index, frame).
+// Returns: Ok after every frame is written, or the first write error.
+// Side effects: Whatever render/write do.
+// Notes: At most one finished frame waits for or undergoes writing while the next renders, so two frames are resident at most. Writes happen strictly in index order. A write error returns after the concurrently started render finishes; no later item is rendered or written. With one worker, join runs render then write inline, which is sequential.
+fn render_and_write_overlapped<C: Sync, T: Send>(
+    items: &[C],
+    render: impl Fn(&C) -> T + Sync,
+    mut write: impl FnMut(usize, T) -> Result<()> + Send,
+) -> Result<()> {
+    let mut pending: Option<(usize, T)> = None;
+    for (index, item) in items.iter().enumerate() {
+        let (frame, written) = match pending.take() {
+            None => (render(item), Ok(())),
+            Some((previous, image)) => rayon::join(|| render(item), || write(previous, image)),
+        };
+        written?;
+        pending = Some((index, frame));
+    }
+    match pending {
+        Some((index, frame)) => write(index, frame),
+        None => Ok(()),
+    }
+}
+
 fn parse_rgb(name: &str, values: &[u8], allow_alpha: bool) -> Result<[u8; 4]> {
     match (values.len(), allow_alpha) {
         (3, _) => Ok([values[0], values[1], values[2], 255]),
@@ -432,12 +458,16 @@ impl MeshRenderPipeline {
                 rayon::current_thread_index()
             );
             let prepared = PreparedScene::new(&scene);
-            for (view_name, camera) in &cameras {
-                let image = prepared.render(camera, p.width, p.height, &settings);
-                let out_path = out_dir.join(format!("{stem}_{view_name}.png"));
-                save_image(&out_path, &image)?;
-                println!("[mesh-render] wrote {}", out_path.display());
-            }
+            render_and_write_overlapped(
+                &cameras,
+                |(_, camera)| prepared.render(camera, p.width, p.height, &settings),
+                |index, image| {
+                    let out_path = out_dir.join(format!("{stem}_{}.png", cameras[index].0));
+                    save_image(&out_path, &image)?;
+                    println!("[mesh-render] wrote {}", out_path.display());
+                    Ok(())
+                },
+            )?;
         }
 
         Ok(())
@@ -540,6 +570,169 @@ mod execution_tests {
         );
         render.unwrap();
         output.unwrap();
+    }
+
+    // AI-FUNC-SUMMARY: Compare overlapped CPU render/write PNG bytes and order with a sequential loop at 1, 2 and 4 workers, including zero and one item.
+    #[test]
+    fn cpu_overlap_preserves_order_and_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let frame = |i: &usize| crate::types::RenderedImage {
+            width: 5,
+            height: 3,
+            rgba: (0..60).map(|k| (k * 7 + i * 13) as u8).collect(),
+        };
+        for count in [0usize, 1, 2, 7] {
+            let items: Vec<usize> = (0..count).collect();
+            for (i, item) in items.iter().enumerate() {
+                save_image(&dir.path().join(format!("seq_{count}_{i}.png")), &frame(item)).unwrap();
+            }
+            for workers in [1, 2, 4] {
+                let pool = rayon::ThreadPoolBuilder::new().num_threads(workers).build().unwrap();
+                let mut order = Vec::new();
+                pool.install(|| {
+                    render_and_write_overlapped(&items, frame, |index, image| {
+                        order.push(index);
+                        save_image(&dir.path().join(format!("ovl_{count}_{workers}_{index}.png")), &image)
+                    })
+                })
+                .unwrap();
+                assert_eq!(order, items);
+                for i in 0..count {
+                    assert_eq!(
+                        std::fs::read(dir.path().join(format!("seq_{count}_{i}.png"))).unwrap(),
+                        std::fs::read(dir.path().join(format!("ovl_{count}_{workers}_{i}.png"))).unwrap()
+                    );
+                }
+            }
+        }
+    }
+
+    // AI-FUNC-SUMMARY: Verify a first, middle or last write error is returned, stops later writes, and renders at most the one item overlapping the failing write.
+    #[test]
+    fn cpu_overlap_write_error_stops_rendering() {
+        for workers in [1, 2] {
+            let pool = rayon::ThreadPoolBuilder::new().num_threads(workers).build().unwrap();
+            for fail_at in [0usize, 2, 5] {
+                let rendered = std::sync::atomic::AtomicUsize::new(0);
+                let mut written = Vec::new();
+                let items: Vec<usize> = (0..6).collect();
+                let error = pool
+                    .install(|| {
+                        render_and_write_overlapped(
+                            &items,
+                            |&i| {
+                                rendered.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                                i
+                            },
+                            |index, _| {
+                                written.push(index);
+                                if index == fail_at {
+                                    return Err(RustMsptError::InvalidConfig("injected write failure".into()));
+                                }
+                                Ok(())
+                            },
+                        )
+                    })
+                    .unwrap_err();
+                assert!(error.to_string().contains("injected write failure"));
+                assert_eq!(written, (0..=fail_at).collect::<Vec<_>>());
+                assert_eq!(rendered.load(std::sync::atomic::Ordering::SeqCst), (fail_at + 2).min(6));
+            }
+        }
+    }
+
+    // AI-FUNC-SUMMARY: Prove rendering item 1 does not wait for writing item 0: the write blocks until the next render has started (bounded wait turns a regression into a failure, not a hang).
+    #[test]
+    fn cpu_overlap_renders_next_view_while_writing() {
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(2).build().unwrap();
+        let (started, wait) = std::sync::mpsc::channel();
+        let wait = std::sync::Mutex::new(wait);
+        let started = std::sync::Mutex::new(started);
+        let items = [0usize, 1];
+        pool.install(|| {
+            render_and_write_overlapped(
+                &items,
+                |&i| {
+                    if i == 1 {
+                        started.lock().unwrap().send(()).unwrap();
+                    }
+                    i
+                },
+                |index, _| {
+                    if index == 0 {
+                        wait.lock()
+                            .unwrap()
+                            .recv_timeout(std::time::Duration::from_secs(20))
+                            .map_err(|_| RustMsptError::InvalidConfig("render of view 1 never started".into()))?;
+                    }
+                    Ok(())
+                },
+            )
+        })
+        .unwrap();
+    }
+
+    // AI-FUNC-SUMMARY: Ignored release benchmark: median wall time of sequential render-then-save versus overlapped CPU render/PNG write over 8 views of a shaded icosphere at several sizes and worker counts.
+    #[test]
+    #[ignore]
+    fn cpu_overlap_benchmark() {
+        use crate::geometry::render::{render_mesh_cpu, RenderProjection, RenderSettings};
+        let mesh = crate::geometry::icosphere_mesh(Vec3::new(0.0, 0.0, 0.0), 1.0, 5);
+        let dir = tempfile::tempdir().unwrap();
+        let settings = RenderSettings::default();
+        for size in [256usize, 1024, 2048] {
+            let cameras: Vec<_> = (0..8)
+                .map(|i| {
+                    let a = i as f64 * 0.7;
+                    build_render_camera(
+                        &mesh,
+                        &RenderCameraSpec {
+                            focus_point: [0.0, 0.0, 0.0],
+                            view_direction: [a.cos(), a.sin(), -0.4],
+                            up_vector: None,
+                            projection: RenderProjection::Perspective,
+                            perspective_fov_degrees: 40.0,
+                            camera_distance: None,
+                            fit_padding: 0.05,
+                            width: size,
+                            height: size,
+                        },
+                    )
+                    .unwrap()
+                })
+                .collect();
+            for workers in [1usize, 2, 4] {
+                let pool = rayon::ThreadPoolBuilder::new().num_threads(workers).build().unwrap();
+                let mut seq = Vec::new();
+                let mut ovl = Vec::new();
+                for round in 0..6 {
+                    for overlapped in [round % 2 == 0, round % 2 != 0] {
+                        let start = std::time::Instant::now();
+                        pool.install(|| {
+                            let render = |c: &crate::geometry::render::RenderCamera| render_mesh_cpu(&mesh, c, size, size, &settings);
+                            let save = |i: usize, img: crate::types::RenderedImage| save_image(&dir.path().join(format!("b{i}.png")), &img);
+                            if overlapped {
+                                render_and_write_overlapped(&cameras, render, save).unwrap();
+                            } else {
+                                for (i, c) in cameras.iter().enumerate() {
+                                    save(i, render(c)).unwrap();
+                                }
+                            }
+                        });
+                        if round > 0 {
+                            let t = start.elapsed().as_secs_f64();
+                            if overlapped { ovl.push(t) } else { seq.push(t) }
+                        }
+                    }
+                }
+                seq.sort_by(f64::total_cmp);
+                ovl.sort_by(f64::total_cmp);
+                println!(
+                    "size {size} views 8 workers {workers} sequential_median_s {:.4} overlapped_median_s {:.4} ratio {:.3} seq_samples {:?} ovl_samples {:?}",
+                    seq[2], ovl[2], ovl[2] / seq[2], seq, ovl
+                );
+            }
+        }
     }
 
     // AI-FUNC-SUMMARY: Observe nested Rayon work under the same installation used by run, including defaults, clamping and error propagation.

@@ -13,7 +13,9 @@ This page documents `src/io/mod.rs`, content hashing in `hash.rs`, PNG output in
 | `parse_ascii_vertex` | `src/io/stl.rs:9` | Parses one ASCII STL `vertex x y z` line into a `Vec3`. |
 | `quantize_key` | `src/io/stl.rs:21` | Quantizes a vertex to a fixed-precision integer key for tolerant deduplication. |
 | `dedup_vertex` | `src/io/stl.rs:31` | Deduplicates a vertex against an existing list via quantized key lookup. |
-| `parse_ascii_stl` | `src/io/stl.rs:52` | Parses ASCII STL text into a `Mesh` with deduplicated vertices. |
+| `AsciiStlBuilder` | `src/io/stl.rs:47` | Incremental ASCII STL state: vertices, faces, pending vertices, dedup map. |
+| `AsciiStlBuilder::push_line` | `src/io/stl.rs:56` | Consume one raw line with the legacy lossy/trim/vertex rules. |
+| `parse_ascii_stream_or_binary` | `src/io/stl.rs:78` | Line-streamed ASCII STL with binary fallback on the retained bytes. |
 | `parse_f32_le` | `src/io/stl.rs:93` | Parses little-endian `f32` bytes and upcasts to `f64`. |
 | `parse_binary_stl` | `src/io/stl.rs:104` | Parses binary STL bytes into a `Mesh` with deduplicated vertices. |
 | `looks_ascii_stl` | `src/io/stl.rs:151` | Heuristically detects whether bytes represent ASCII STL. |
@@ -32,9 +34,12 @@ This page documents `src/io/mod.rs`, content hashing in `hash.rs`, PNG output in
 | `load_tiff_or_folder` | `src/io/volume.rs:369` | Loads a TIFF volume from a file or folder (all pages/slices). |
 | `load_tiff_or_folder_with_range` | `src/io/volume.rs:379` | Loads a TIFF volume from a file or folder over an inclusive slice range. |
 | `write_tiff_slice` | `src/io/volume.rs:446` | Writes one z-slice of volume data into a TIFF encoder page. |
+| `TiffPageEncoder` | `src/io/volume.rs:552` | Incremental multi-page TIFF encoder over a borrowed seekable writer. |
+| `TiffPageEncoder::new` | `src/io/volume.rs:562` | Write the TIFF header and fix page size/type. |
+| `TiffPageEncoder::write_slices` | `src/io/volume.rs:590` | Append whole z-slices as consecutive pages. |
 | `save_tiff_or_folder_with_ext` | `src/io/volume.rs:524` | Saves a `Volume3D` as a multi-page TIFF file or a folder of per-slice TIFF files, with configurable extension. |
 | `save_tiff_or_folder` | `src/io/volume.rs:586` | Saves a `Volume3D` to TIFF file or folder sequence with the default `.tiff` extension. |
-| `load_stl_from_reader` | `src/io/stl.rs:178` | Forward-reader STL with bounded binary records. |
+| `load_stl_from_reader` | `src/io/stl.rs:192` | Forward-reader STL: streamed ASCII lines and bounded binary records. |
 | `load_stl_hashed` | `src/io/stl.rs:193` | Single-pass STL parsing and raw digest. |
 | `parse_binary_reader` | `src/io/stl.rs:109` | Read binary triangle records with incremental deduplication. |
 | `read_stl_record` | `src/io/stl.rs:140` | Read complete record or report truncation. |
@@ -104,8 +109,8 @@ This file implements STL (stereolithography) mesh I/O with automatic ASCII/binar
 - **Parameters:**
   - `path` — path to the `.stl` file.
 - **Returns:** The parsed `Mesh`.
-- **Side effects:** Reads the file with bounded binary record buffering; ASCII retains its full-text buffer.
-- **Notes:** Uses `looks_ascii_stl` to sniff the format. If the sniff says ASCII, it attempts `parse_ascii_stl`; if that parse fails (e.g. malformed content after a valid-looking header), it silently falls back to `parse_binary_stl` rather than propagating the ASCII error. Binary parsing is otherwise the terminal path.
+- **Side effects:** Reads the file with bounded binary record buffering and line-streamed ASCII parsing.
+- **Notes:** Uses `looks_ascii_stl` to sniff the format. If the sniff says ASCII, it streams `parse_ascii_stream_or_binary`; if no ASCII triangle is found (e.g. malformed content after a valid-looking header), it silently falls back to `parse_binary_stl` on the same bytes rather than propagating the ASCII error. Binary parsing is otherwise the terminal path.
 
 #### load_folder_stls
 
@@ -177,17 +182,22 @@ This file implements STL (stereolithography) mesh I/O with automatic ASCII/binar
 - **Returns:** The index of `v` in `vertices` (pre-existing or freshly inserted).
 - **Side effects:** Mutates `vertices` and `map` in place.
 
-#### parse_ascii_stl
+#### AsciiStlBuilder / push_line
 
-- **Signature:** `fn parse_ascii_stl(content: &str, path: &Path) -> Result<Mesh>`
-- **Source:** `src/io/stl.rs:52`
-- **Purpose:** Parses a full ASCII STL document into a deduplicated `Mesh`.
-- **Parameters:**
-  - `content` — the full STL text.
-  - `path` — source path, used only for error messages.
-- **Returns:** The parsed `Mesh` (deduplicated vertices, one `Triangle` per facet).
-- **Side effects:** None (pure parse over the given string).
-- **Notes:** Requires the (trimmed) content to start with `"solid"`, else returns `RustMsptError::InvalidMesh`. Parsing is line-oriented and ignores all lines that don't match the `vertex x y z` pattern (i.e. `facet normal`, `outer loop`, `endloop`, `endfacet`, `endsolid` lines are effectively skipped rather than validated) — every group of three consecutive `vertex` lines is taken as one triangle regardless of surrounding keywords. Returns `RustMsptError::InvalidMesh` if no vertices or faces were parsed.
+- **Signature:** `struct AsciiStlBuilder`; `fn push_line(&mut self, raw: &[u8])`
+- **Source:** `src/io/stl.rs:47`
+- **Purpose:** Incremental replacement for the former whole-text `parse_ascii_stl`: one raw line (trailing `\n` optional) is lossily decoded, trimmed and matched with `parse_ascii_vertex`; every third vertex emits a deduplicated `Triangle`.
+- **Side effects:** Mutates the builder.
+- **Notes:** Splitting on `\n` and decoding each line lossily equals decoding the whole text, because `0x0A` never occurs inside a UTF-8 sequence; `trim` removes a CR, so CRLF and LF match `str::lines`.
+
+#### parse_ascii_stream_or_binary
+
+- **Signature:** `fn parse_ascii_stream_or_binary(reader: impl BufRead, path: &Path) -> Result<Mesh>`
+- **Source:** `src/io/stl.rs:78`
+- **Purpose:** Parse an ASCII-sniffed STL line by line; if no triangle is found, parse the same bytes as binary (the legacy fallback).
+- **Returns:** The ASCII mesh, or the binary fallback result/error.
+- **Side effects:** Reads to EOF.
+- **Notes:** Raw bytes are retained only until the first ASCII triangle completes, after which the ASCII result is certain; a misdetected binary file is still fully retained, exactly as before. The oracle `tests/stl_stream_tests.rs::ascii_stream_matches_whole_text_oracle` compares bit-exact vertices/faces with the former whole-text parse (CRLF, tabs, exponents, missing `endsolid`, missing final newline, Unicode whitespace, invalid UTF-8, lone CR, `VERTEX`, partial facets, a 200 KB line, short reads, hashing and binary fallback).
 
 #### parse_f32_le
 
@@ -463,7 +473,7 @@ Binary STL output now uses a 64 KiB BufWriter and explicitly flushes before succ
 
 ### Shared STL stream and digest (PERF-18)
 
-`load_stl_from_reader(reader, path)` accepts a forward-only reader. It sniffs at most 512 bytes, chains that prefix back for binary parsing, and preserves ASCII-first/fallback behavior. `parse_binary_reader` reads one 50-byte triangle record at a time, deduplicates in first-encounter order, grows geometry storage as records arrive, and drains permitted trailing data. Truncated header/records return InvalidMesh; other read errors propagate. A corrupt count does not cause a count-sized initial allocation. ASCII still buffers the existing full document.
+`load_stl_from_reader(reader, path)` accepts a forward-only reader. It sniffs at most 512 bytes, chains that prefix back for binary parsing, and preserves ASCII-first/fallback behavior. `parse_binary_reader` reads one 50-byte triangle record at a time, deduplicates in first-encounter order, grows geometry storage as records arrive, and drains permitted trailing data. Truncated header/records return InvalidMesh; other read errors propagate. A corrupt count does not cause a count-sized initial allocation. ASCII is streamed line by line (see below).
 
 `load_stl_hashed(path)` returns `(Mesh, sha256, bytes)` from one file pass through `HashingReader`, including ignored binary trailers in the digest/count. Placement shape loading uses this entry, preserving input list and first-face shell order. `HashingReader::finish` describes consumed bytes only; successful STL parsing drains its input before finishing. Independent `sha256_file` remains bounded and unchanged.
 
@@ -482,3 +492,9 @@ RAW files below 512 KiB use serial decoding even with multiple workers; the cuto
 ### RAW assembly reservation (2026-09-23)
 
 RAW plane size, byte length and selected output voxel count use checked arithmetic. After the first selected slice has decoded successfully, assembly makes one fallible `try_reserve_exact` request for the final voxel count; subsequent ordered appends cannot trigger geometric growth. Invalid first-slice errors still precede reservation, and allocation errors propagate. Two-file decode buffering and the 512-KiB parallel threshold are unchanged. Requested vector capacity is not a process RSS cap; individual slice buffers still coexist with the output. See PLAN.Performance.md §63.
+
+### Streaming ASCII STL (PERF-18, 2026-09-25)
+
+ASCII STL is now parsed line by line from the reader (`parse_ascii_stream_or_binary`), so the file text is no longer buffered once the first triangle is found; the 512-byte sniff, ASCII-first order, binary fallback on the same bytes and `load_stl_hashed`'s single-pass digest (the reader is still read to EOF) are unchanged. Release measurement (`ascii_stream_memory_benchmark`, ignored; 200,000 facets, 35.5 MB CRLF file, 600,000 vertices, 5 rounds): peak live heap 114.2 MB for the former whole-text parse (with an exact-size file read; the former `read_to_end` growth could only be higher) against 78.8 MB streaming, i.e. the file size saved; wall time median 0.346 s against 0.371 s, about 7 % slower from per-line copying and within the noise of a shared machine. The remaining peak is the mesh and the dedup map.
+
+`TiffPageEncoder` (2026-09-25) exposes the page loop of `write_tiff_pages` so a caller can append slabs of slices to one multi-page TIFF; `write_tiff_pages` now uses it, so both produce the same bytes. The caller flushes its own writer after dropping the encoder.

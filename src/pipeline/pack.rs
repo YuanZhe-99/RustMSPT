@@ -1,12 +1,14 @@
 use crate::config::{parse_box_dimensions, PackingConfig};
 use crate::error::{Result, RustMsptError};
 use crate::geometry::{
-    bbox_distance, check_boundary_constraints_mode, generate_periodic_ghosts, merge_meshes,
+    bbox_distance, check_boundary_constraints_mode, merge_meshes,
     mesh_bbox, mesh_collision_exact_prepared, mesh_distance_exact_prepared, mesh_metrics,
     mesh_surface_area, mesh_volume, move_mesh_to_target_center,
     orient_components_to_positive_volume, particle_volume_in_bbox, rotate_mesh_around_center,
-    scale_mesh_to_equivalent_diameter, split_mesh_into_granules, to_parry_trimesh, MeshMetrics,
+    scale_mesh_to_equivalent_diameter, split_mesh_into_granules, to_parry_trimesh, translate_mesh,
+    MeshMetrics,
 };
+use crate::geometry::spatial::SpatialGrid;
 use crate::io::{load_stl, save_stl};
 use crate::pipeline::pack_targets::{
     load_target_distribution_csv, write_distribution_comparison_csv, BinChoiceKind,
@@ -14,7 +16,7 @@ use crate::pipeline::pack_targets::{
 };
 use crate::pipeline::rotation::{parse_rotation_mode, sample_rotation_axis};
 use crate::pipeline::{create_progress_bar, Pipeline};
-use crate::types::{Mesh, Vec3};
+use crate::types::{BoundingBox, Mesh, Vec3};
 use indicatif::ProgressBar;
 use rand::Rng;
 use rayon::prelude::*;
@@ -23,9 +25,11 @@ use std::collections::BTreeSet;
 use std::f64::consts::PI;
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::OnceLock;
 
 struct PackCollider {
-    bbox: Option<crate::types::BoundingBox>,
+    bbox: Option<BoundingBox>,
     shape: Option<parry3d_f64::shape::TriMesh>,
 }
 
@@ -64,29 +68,198 @@ impl PackCollider {
     }
 }
 
-// AI-FUNC-SUMMARY: Test a prepared candidate against incremental spatial neighbors and bbox-less colliders; small populations scan directly and all exact predicates share cached shapes.
-fn pack_blocked(
-    candidate: &PackCollider,
-    colliders: &[PackCollider],
-    grid: &crate::geometry::spatial::SpatialGrid,
-    gap: f64,
-) -> bool {
-    if colliders.len() < 32 || candidate.bbox.is_none() {
-        return colliders
-            .iter()
-            .any(|other| candidate.blocks(other, gap));
+// AI-FUNC-SUMMARY: Mirror PackCollider::blocks' bbox rejection on optional boxes; returns false only when the exact predicate would also reject on bbox distance; side effects: None.
+fn bbox_may_block(a: Option<BoundingBox>, b: Option<BoundingBox>, gap: f64) -> bool {
+    if let (Some(a), Some(b)) = (a, b) {
+        let distance = bbox_distance(a, b);
+        if (gap > 0.0 && distance >= gap) || (gap <= 0.0 && distance > 0.0) {
+            return false;
+        }
     }
-    let mut neighbors = grid.query_neighbors_with_margin(candidate.bbox.unwrap(), gap, usize::MAX);
-    neighbors.extend(
-        colliders
+    true
+}
+
+// AI-FUNC-SUMMARY: List the periodic shifts, in generate_periodic_ghosts order and with its strict domain-overlap rule, together with each shifted bbox; returns empty for bbox-less meshes; side effects: None.
+fn periodic_image_shifts(bounds: Option<BoundingBox>, domain: BoundingBox) -> Vec<(Vec3, BoundingBox)> {
+    let Some(bounds) = bounds else {
+        return Vec::new();
+    };
+    let size = domain.size();
+    let mut out = Vec::new();
+    for x in [-1.0, 0.0, 1.0] {
+        for y in [-1.0, 0.0, 1.0] {
+            for z in [-1.0, 0.0, 1.0] {
+                if x == 0.0 && y == 0.0 && z == 0.0 {
+                    continue;
+                }
+                let shift = Vec3::new(x * size.x, y * size.y, z * size.z);
+                let shifted = BoundingBox {
+                    min: bounds.min.add(shift),
+                    max: bounds.max.add(shift),
+                };
+                if shifted.min.x < domain.max.x
+                    && shifted.max.x > domain.min.x
+                    && shifted.min.y < domain.max.y
+                    && shifted.max.y > domain.min.y
+                    && shifted.min.z < domain.max.z
+                    && shifted.max.z > domain.min.z
+                {
+                    out.push((shift, shifted));
+                }
+            }
+        }
+    }
+    out
+}
+
+type CandidateImage = (Vec3, BoundingBox, OnceLock<PackCollider>);
+
+struct PackImage {
+    particle: usize,
+    shift: Option<Vec3>,
+    bbox: Option<BoundingBox>,
+    collider: OnceLock<PackCollider>,
+}
+
+struct PackScene {
+    images: Vec<PackImage>,
+    grid: SpatialGrid,
+    bbox_less: Vec<usize>,
+    ghost_builds: AtomicUsize,
+}
+
+impl PackScene {
+    // AI-FUNC-SUMMARY: Create an empty image store with the legacy domain/8 incremental grid; side effects: None.
+    fn new(domain: BoundingBox) -> Self {
+        let extent = domain.size();
+        Self {
+            images: Vec::new(),
+            grid: SpatialGrid::new(domain, extent.x.max(extent.y).max(extent.z) / 8.0),
+            bbox_less: Vec::new(),
+            ghost_builds: AtomicUsize::new(0),
+        }
+    }
+
+    // AI-FUNC-SUMMARY: Instantiate the translated mesh of one periodic image and prepare its collider; returns the collider and counts one ghost TriMesh build; side effects: increments ghost_builds.
+    fn build_ghost(&self, mesh: &Mesh, shift: Vec3) -> PackCollider {
+        self.ghost_builds.fetch_add(1, Ordering::Relaxed);
+        let mut ghost = mesh.clone();
+        translate_mesh(&mut ghost, shift);
+        PackCollider::new(&ghost)
+    }
+
+    // AI-FUNC-SUMMARY: Return the prepared collider of an accepted image, lazily and thread-safely translating and preparing a periodic image on first use; side effects: may increment ghost_builds.
+    fn collider<'a>(&'a self, index: usize, placed: &[Mesh]) -> &'a PackCollider {
+        let image = &self.images[index];
+        image.collider.get_or_init(|| {
+            let shift = image.shift.expect("original images are prepared on insertion");
+            self.build_ghost(&placed[image.particle], shift)
+        })
+    }
+
+    // AI-FUNC-SUMMARY: Collect accepted images whose (possibly uninstantiated) bbox can block a query bbox at the gap, scanning directly for small stores and via grid plus bbox-less entries otherwise; returns image indices; side effects: None.
+    fn reachable(&self, bbox: Option<BoundingBox>, gap: f64) -> Vec<usize> {
+        let Some(query) = bbox else {
+            return (0..self.images.len()).collect();
+        };
+        let mut indices = if self.images.len() < 32 {
+            (0..self.images.len()).collect::<Vec<_>>()
+        } else {
+            let mut n = self
+                .grid
+                .query_neighbors_with_margin(query, gap.max(0.0), usize::MAX);
+            n.extend_from_slice(&self.bbox_less);
+            n
+        };
+        indices.retain(|&i| bbox_may_block(Some(query), self.images[i].bbox, gap));
+        indices
+    }
+
+    // AI-FUNC-SUMMARY: Decide whether a prepared query collider is blocked by any reachable accepted image, serial below 32 candidates and rayon any() above; returns bool; side effects: may lazily build ghost colliders.
+    fn blocks_any(&self, query: &PackCollider, reachable: &[usize], placed: &[Mesh], gap: f64) -> bool {
+        if reachable.len() < 32 {
+            reachable
+                .iter()
+                .any(|&i| query.blocks(self.collider(i, placed), gap))
+        } else {
+            reachable
+                .par_iter()
+                .any(|&i| query.blocks(self.collider(i, placed), gap))
+        }
+    }
+
+    // AI-FUNC-SUMMARY:
+    // Purpose: Apply the legacy feasibility test (candidate and, in mode 3, every periodic candidate image against every accepted particle and periodic image) without instantiating images that cannot reach.
+    // Inputs: accepted meshes, candidate mesh and its prepared collider, periodic domain (None outside mode 3), gap.
+    // Returns: None when blocked; otherwise the candidate's periodic images as (shift, bbox, collider slot built only if it was needed) for insertion.
+    // Side effects: May lazily build accepted ghost colliders and counts candidate ghost builds.
+    // Notes: bbox+shift equals the translated mesh bbox exactly because rounded addition is monotonic, so pruning matches the exact predicate's own bbox rejection; exact predicates run on the same translated coordinates as the former full ghost copies.
+    fn candidate_images(
+        &self,
+        placed: &[Mesh],
+        candidate: &Mesh,
+        collider: &PackCollider,
+        periodic: Option<BoundingBox>,
+        gap: f64,
+    ) -> Option<Vec<CandidateImage>> {
+        let reachable = self.reachable(collider.bbox, gap);
+        if self.blocks_any(collider, &reachable, placed, gap) {
+            return None;
+        }
+        let Some(domain) = periodic else {
+            return Some(Vec::new());
+        };
+        let mut images = Vec::new();
+        for (shift, bbox) in periodic_image_shifts(collider.bbox, domain) {
+            let reachable = self.reachable(Some(bbox), gap);
+            let slot = OnceLock::new();
+            if !reachable.is_empty() {
+                let ghost = slot.get_or_init(|| self.build_ghost(candidate, shift));
+                if self.blocks_any(ghost, &reachable, placed, gap) {
+                    return None;
+                }
+            }
+            images.push((shift, bbox, slot));
+        }
+        Some(images)
+    }
+
+    // AI-FUNC-SUMMARY: Record an accepted particle and its periodic image descriptors, inserting every bbox into the grid; ghost colliders stay lazy unless already built; side effects: mutates the store.
+    fn insert(&mut self, particle: usize, collider: PackCollider, ghosts: Vec<CandidateImage>) {
+        let original = PackImage {
+            particle,
+            shift: None,
+            bbox: collider.bbox,
+            collider: OnceLock::from(collider),
+        };
+        let ghost_images = ghosts.into_iter().map(|(shift, bbox, collider)| PackImage {
+            particle,
+            shift: Some(shift),
+            bbox: Some(bbox),
+            collider,
+        });
+        for image in std::iter::once(original).chain(ghost_images) {
+            let index = self.images.len();
+            match image.bbox {
+                Some(bbox) => self.grid.insert(index, bbox),
+                None => self.bbox_less.push(index),
+            }
+            self.images.push(image);
+        }
+    }
+
+    // AI-FUNC-SUMMARY: Report stored image count, instantiated periodic ghost images and total ghost TriMesh builds; returns (stored, instantiated, builds); side effects: None.
+    fn image_stats(&self) -> (usize, usize, usize) {
+        let instantiated = self
+            .images
             .iter()
-            .enumerate()
-            .filter_map(|(i, c)| c.bbox.is_none().then_some(i)),
-    );
-    if neighbors.len() < 32 {
-        neighbors.iter().any(|&i| candidate.blocks(&colliders[i], gap))
-    } else {
-        neighbors.par_iter().any(|&i| candidate.blocks(&colliders[i], gap))
+            .filter(|i| i.shift.is_some() && i.collider.get().is_some())
+            .count();
+        (
+            self.images.len(),
+            instantiated,
+            self.ghost_builds.load(Ordering::Relaxed),
+        )
     }
 }
 
@@ -316,12 +489,8 @@ impl PackPipeline {
 
         let mut rng = rand::thread_rng();
         let mut placed: Vec<Mesh> = Vec::new();
-        let mut colliders: Vec<PackCollider> = Vec::new();
-        let extent = box_bounds.size();
-        let mut collision_grid = crate::geometry::spatial::SpatialGrid::new(
-            box_bounds,
-            extent.x.max(extent.y).max(extent.z) / 8.0,
-        );
+        let mut scene = PackScene::new(box_bounds);
+        let periodic = (self.config.packing.mode == 3).then_some(box_bounds);
         let mut current_volume = 0.0;
         let mut attempts = 0usize;
         let mut distribution_state = target_distribution
@@ -547,28 +716,15 @@ impl PackPipeline {
                 }
 
                 let candidate_collider = PackCollider::new(&candidate);
-                if pack_blocked(
+                let Some(candidate_ghosts) = scene.candidate_images(
+                    &placed,
+                    &candidate,
                     &candidate_collider,
-                    &colliders,
-                    &collision_grid,
+                    periodic,
                     min_neighbor,
-                ) {
+                ) else {
                     reject_candidate!();
-                }
-                let candidate_ghosts: Vec<PackCollider> = if self.config.packing.mode == 3 {
-                    generate_periodic_ghosts(&candidate, box_bounds)
-                        .iter()
-                        .map(PackCollider::new)
-                        .collect()
-                } else {
-                    Vec::new()
                 };
-                if candidate_ghosts
-                    .iter()
-                    .any(|ghost| pack_blocked(ghost, &colliders, &collision_grid, min_neighbor))
-                {
-                    reject_candidate!();
-                }
 
                 let in_box_volume = particle_volume_in_bbox(&candidate, box_bounds);
                 if !in_box_volume.is_finite() || in_box_volume <= 0.0 {
@@ -591,12 +747,7 @@ impl PackPipeline {
                     }
                 }
                 current_volume += in_box_volume;
-                for collider in std::iter::once(candidate_collider).chain(candidate_ghosts) {
-                    if let Some(bbox) = collider.bbox {
-                        collision_grid.insert(colliders.len(), bbox);
-                    }
-                    colliders.push(collider);
-                }
+                scene.insert(placed.len(), candidate_collider, candidate_ghosts);
                 placed.push(candidate);
                 attempts = 0;
                 placement_complete = true;
@@ -661,6 +812,12 @@ impl PackPipeline {
         let vf = (current_volume / box_volume).clamp(0.0, 1.0);
         println!("[Info] Packing completed.");
         println!("[Info] Final count: {}", placed.len());
+        if periodic.is_some() {
+            let (stored, instantiated, builds) = scene.image_stats();
+            println!(
+                "[Info] Periodic images: {stored} stored, {instantiated} accepted ghosts instantiated, {builds} ghost TriMesh builds"
+            );
+        }
         println!("[Info] Final volume fraction: {vf:.6}");
         if vf + 1e-12 < target {
             println!(
@@ -752,9 +909,10 @@ impl PackPipeline {
 #[cfg(test)]
 mod collider_tests {
     use super::*;
-    use crate::geometry::spatial::SpatialGrid;
-    use crate::geometry::{box_mesh, mesh_collision_exact, mesh_distance_exact};
-    use crate::types::BoundingBox;
+    use crate::geometry::{
+        box_mesh, generate_periodic_ghosts, icosphere_mesh, mesh_collision_exact,
+        mesh_distance_exact,
+    };
 
     // AI-FUNC-SUMMARY: Reproduce the old bbox-pruned collision plus minimum-distance scan as an independent cache/broad-phase oracle.
     fn original_blocked(candidate: &Mesh, existing: &[Mesh], gap: f64) -> bool {
@@ -770,57 +928,159 @@ mod collider_tests {
         })
     }
 
-    // AI-FUNC-SUMMARY: Compare cached incremental packing feasibility with the former full scan over boundary ghosts, nested solids, contact and exact clearance.
+    // AI-FUNC-SUMMARY: Build an axis-aligned box mesh from a min corner and per-axis edges.
+    fn cuboid(min: Vec3, edge: Vec3) -> Mesh {
+        box_mesh(BoundingBox {
+            min,
+            max: min.add(edge),
+        })
+    }
+
+    // AI-FUNC-SUMMARY: Return fixed accepted sources and candidates covering face, edge and diagonal (corner) wraps, near-domain-width particles whose +/- images both overlap the domain, nested and contact cases.
+    fn fixtures(domain: BoundingBox) -> (Vec<Mesh>, Vec<Mesh>) {
+        let o = domain.min;
+        let s = domain.size();
+        let at = |fx: f64, fy: f64, fz: f64| Vec3::new(o.x + fx * s.x, o.y + fy * s.y, o.z + fz * s.z);
+        let e = |x: f64| Vec3::new(x, x, x);
+        let mut sources = vec![
+            cuboid(at(0.0, 0.1, 0.1).sub(Vec3::new(0.3, 0.0, 0.0)), e(0.8)),
+            cuboid(at(1.0, 1.0, 1.0).sub(e(0.25)), e(0.6)),
+            cuboid(at(0.0, 0.5, 0.5).sub(Vec3::new(0.05, 0.0, 0.0)), Vec3::new(s.x + 0.1, 0.4, 0.4)),
+            icosphere_mesh(at(0.5, 0.0, 1.0), 0.45, 1),
+        ];
+        sources.extend((0..40).map(|i| {
+            cuboid(
+                at(0.05 + (i % 6) as f64 * 0.15, 0.3 + ((i / 6) % 6) as f64 * 0.08, 0.4),
+                e(0.3),
+            )
+        }));
+        let mut candidates: Vec<Mesh> = (0..60)
+            .map(|i| cuboid(at(0.0, 0.1, 0.1).add(Vec3::new(i as f64 / 8.0 - 0.6, 0.0, 0.0)), e(0.3)))
+            .collect();
+        candidates.extend([
+            cuboid(at(0.0, 0.0, 0.0).sub(e(0.2)), e(0.3)),
+            cuboid(at(0.0, 0.0, 0.0).sub(e(0.05)), e(0.3)),
+            cuboid(at(1.0, 0.0, 1.0).sub(Vec3::new(0.2, 0.1, 0.2)), e(0.3)),
+            cuboid(at(0.0, 1.0, 0.0).sub(Vec3::new(0.1, 0.25, 0.05)), e(0.3)),
+            cuboid(at(0.0, 0.2, 0.2).sub(Vec3::new(0.1, 0.0, 0.0)), Vec3::new(s.x - 0.05, 0.2, 0.2)),
+            cuboid(at(0.0, 0.8, 0.8).sub(Vec3::new(0.1, 0.0, 0.0)), Vec3::new(s.x + 0.2, 0.2, 0.2)),
+            cuboid(at(0.05, 0.05, 0.05), e(s.x.min(s.y).min(s.z) * 0.9)),
+            cuboid(at(0.0, 0.52, 0.52).sub(Vec3::new(0.3, 0.0, 0.0)), e(0.2)),
+            cuboid(at(0.5, 0.97, 0.03).sub(Vec3::new(0.0, 0.0, 0.1)), e(0.2)),
+            icosphere_mesh(at(0.5, 1.0, 0.0), 0.3, 1),
+            icosphere_mesh(at(0.5, 0.0, 1.0), 0.1, 1),
+        ]);
+        (sources, candidates)
+    }
+
+    // AI-FUNC-SUMMARY: Insert accepted meshes with lazy periodic descriptors, as the pipeline does after acceptance.
+    fn scene_of(meshes: &[Mesh], domain: BoundingBox, periodic: bool) -> PackScene {
+        let mut scene = PackScene::new(domain);
+        for (i, mesh) in meshes.iter().enumerate() {
+            let collider = PackCollider::new(mesh);
+            let ghosts = if periodic {
+                periodic_image_shifts(collider.bbox, domain)
+                    .into_iter()
+                    .map(|(shift, bbox)| (shift, bbox, OnceLock::new()))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            scene.insert(i, collider, ghosts);
+        }
+        scene
+    }
+
+    // AI-FUNC-SUMMARY: Full-ghost oracle: candidate and every eager ghost copy against accepted meshes plus all their eager ghost copies.
+    fn eager_blocked(candidate: &Mesh, accepted: &[Mesh], domain: BoundingBox, periodic: bool, gap: f64) -> bool {
+        let mut existing = accepted.to_vec();
+        let mut queries = vec![candidate.clone()];
+        if periodic {
+            existing.extend(accepted.iter().flat_map(|m| generate_periodic_ghosts(m, domain)));
+            queries.extend(generate_periodic_ghosts(candidate, domain));
+        }
+        queries.iter().any(|q| original_blocked(q, &existing, gap))
+    }
+
+    // AI-FUNC-SUMMARY: Compare lazy periodic-image feasibility with the former full ghost scan over face/edge/corner wraps, near-width particles with duplicate images, nested solids, contact and clearance, and check shifted bboxes equal instantiated ones.
     #[test]
     fn cached_pack_candidates_match_original() {
-        let domain = BoundingBox::from_size(Vec3::new(10.0, 10.0, 10.0));
-        let cube = |x, y, z, edge| {
-            box_mesh(BoundingBox {
-                min: Vec3::new(x, y, z),
-                max: Vec3::new(x + edge, y + edge, z + edge),
-            })
-        };
-        let mut sources = vec![cube(-0.3, 1.0, 1.0, 0.8), cube(8.0, 8.0, 8.0, 3.0)];
-        sources.extend(
-            (0..40).map(|i| cube((i % 6) as f64 * 1.5, 3.0 + ((i / 6) % 6) as f64, 4.0, 0.4)),
-        );
-        for periodic in [false, true] {
-            let mut meshes = sources.clone();
-            if periodic {
-                meshes.extend(
-                    sources
-                        .iter()
-                        .flat_map(|m| generate_periodic_ghosts(m, domain)),
-                );
-            }
-            let prepared: Vec<_> = meshes.iter().map(PackCollider::new).collect();
-            let boxes: Vec<_> = prepared
-                .iter()
-                .enumerate()
-                .filter_map(|(i, c)| c.bbox.map(|b| (i, b)))
-                .collect();
-            let grid = SpatialGrid::build(&boxes, domain, 1.25);
-            let mut candidates: Vec<_> = (0..80)
-                .map(|i| cube(i as f64 / 8.0 - 0.2, 1.0, 1.0, 0.3))
-                .collect();
-            candidates.extend([
-                cube(8.5, 8.5, 8.5, 0.2),
-                cube(7.0, 7.0, 7.0, 5.0),
-                cube(0.75, 1.0, 1.0, 0.25),
-            ]);
-            for gap in [0.0, 0.25, 0.5] {
-                for candidate in &candidates {
-                    let mut queries = vec![candidate.clone()];
-                    if periodic {
-                        queries.extend(generate_periodic_ghosts(candidate, domain));
+        let domains = [
+            BoundingBox::from_size(Vec3::new(10.0, 10.0, 10.0)),
+            BoundingBox {
+                min: Vec3::new(-3.3, 2.1, 5.7),
+                max: Vec3::new(6.9, 9.4, 10.2),
+            },
+        ];
+        for domain in domains {
+            let (sources, candidates) = fixtures(domain);
+            let mut outcomes = std::collections::BTreeMap::new();
+            for periodic in [false, true] {
+                let scene = scene_of(&sources, domain, periodic);
+                for gap in [0.0, 0.25, 0.5] {
+                    for (index, candidate) in candidates.iter().enumerate() {
+                        let expected = eager_blocked(candidate, &sources, domain, periodic, gap);
+                        let actual = scene
+                            .candidate_images(
+                                &sources,
+                                candidate,
+                                &PackCollider::new(candidate),
+                                periodic.then_some(domain),
+                                gap,
+                            )
+                            .is_none();
+                        assert_eq!(actual, expected, "periodic={periodic} gap={gap} candidate={index}");
+                        outcomes.insert((periodic, gap.to_bits(), index), actual);
                     }
-                    let expected = queries.iter().any(|q| original_blocked(q, &meshes, gap));
-                    let actual = queries
-                        .iter()
-                        .any(|q| pack_blocked(&PackCollider::new(q), &prepared, &grid, gap));
-                    assert_eq!(actual, expected, "periodic={periodic} gap={gap}");
+                }
+                for (index, image) in scene.images.iter().enumerate() {
+                    if let (Some(built), Some(stored)) = (image.collider.get(), image.bbox) {
+                        let built = built.bbox.unwrap();
+                        assert_eq!((built.min, built.max), (stored.min, stored.max), "image {index}");
+                    }
                 }
             }
+            let blocked = outcomes.values().filter(|&&v| v).count();
+            assert!(blocked > 0 && blocked < outcomes.len());
+            let wrap_only = outcomes
+                .iter()
+                .filter(|((p, g, i), &v)| *p && v && !outcomes[&(false, *g, *i)])
+                .count();
+            assert!(wrap_only > 0, "no candidate is blocked only through a periodic image");
+        }
+    }
+
+    // AI-FUNC-SUMMARY: Replay a fixed candidate sequence through incremental acceptance, asserting each decision equals the eager ghost oracle and that lazy ghost TriMesh builds stay below the eager per-image count.
+    #[test]
+    fn incremental_periodic_acceptance_matches_eager_and_builds_fewer_ghosts() {
+        let domain = BoundingBox::from_size(Vec3::new(10.0, 10.0, 10.0));
+        let (sources, candidates) = fixtures(domain);
+        let sequence: Vec<Mesh> = sources.iter().chain(candidates.iter()).cloned().collect();
+        for gap in [0.0, 0.3] {
+            let mut scene = PackScene::new(domain);
+            let mut accepted: Vec<Mesh> = Vec::new();
+            let mut eager_builds = 0usize;
+            for (index, candidate) in sequence.iter().enumerate() {
+                let expected = eager_blocked(candidate, &accepted, domain, true, gap);
+                eager_builds += generate_periodic_ghosts(candidate, domain).len();
+                let collider = PackCollider::new(candidate);
+                let result = scene.candidate_images(&accepted, candidate, &collider, Some(domain), gap);
+                assert_eq!(result.is_none(), expected, "gap={gap} step={index}");
+                if let Some(ghosts) = result {
+                    scene.insert(accepted.len(), collider, ghosts);
+                    accepted.push(candidate.clone());
+                }
+            }
+            let (stored, instantiated, builds) = scene.image_stats();
+            assert!(accepted.len() > 10 && stored > accepted.len());
+            assert!(instantiated <= stored - accepted.len());
+            assert!(builds < eager_builds, "lazy {builds} vs eager {eager_builds}");
+            let first = scene.ghost_builds.load(Ordering::Relaxed);
+            for candidate in &sequence {
+                let _ = scene.candidate_images(&accepted, candidate, &PackCollider::new(candidate), Some(domain), gap);
+            }
+            let (_, instantiated_after, _) = scene.image_stats();
+            assert!(instantiated_after >= instantiated && first == builds);
         }
     }
 }

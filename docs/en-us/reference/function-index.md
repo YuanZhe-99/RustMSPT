@@ -246,7 +246,6 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `parse_ascii_vertex` | I/O | `src/io/stl.rs:9` | Parses one ASCII STL `vertex x y z` line into a `Vec3`. |
 | `quantize_key` | I/O | `src/io/stl.rs:21` | Quantizes a vertex to a fixed-precision integer key for tolerant deduplication. |
 | `dedup_vertex` | I/O | `src/io/stl.rs:31` | Deduplicates a vertex against an existing list via quantized key lookup. |
-| `parse_ascii_stl` | I/O | `src/io/stl.rs:52` | Parses ASCII STL text into a `Mesh` with deduplicated vertices. |
 | `parse_f32_le` | I/O | `src/io/stl.rs:93` | Parses little-endian `f32` bytes and upcasts to `f64`. |
 | `parse_binary_stl` | I/O | `src/io/stl.rs:104` | Parses binary STL bytes into a `Mesh` with deduplicated vertices. |
 | `looks_ascii_stl` | I/O | `src/io/stl.rs:151` | Heuristically detects whether bytes represent ASCII STL. |
@@ -342,7 +341,7 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `PHASE_MATRIX` | Pipeline — Packing | `src/pipeline/placement_labels.rs:13` | Phase code 0 in the written label field. |
 | `VoxelLabelsHeader` | Pipeline — Packing | `src/pipeline/placement_labels.rs:22` | What the label stacks are: spacing, origin, layout, phase table. |
 | `PhaseLabel` | Pipeline — Packing | `src/pipeline/placement_labels.rs:39` | One phase code and its name. |
-| `write_voxel_labels` | Pipeline — Packing | `src/pipeline/placement_labels.rs:57` | Writes the three-phase label field and the per-voxel particle id field. |
+| `write_voxel_labels` | Pipeline — Packing | `src/pipeline/placement_labels.rs:60` | Writes the three-phase label field and the per-voxel particle id field. |
 | `particle_at` | Pipeline — Packing | `src/pipeline/placement_labels.rs:233` | Finds which placed particle, if any, contains a point. |
 | `point_in_particle` | Pipeline — Packing | `src/pipeline/placement_labels.rs:245` | Ray-parity containment for one particle mesh. |
 | `VoidReport` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:278` | What the run did with the frozen void, and how it measured it. |
@@ -787,11 +786,22 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `SpatialQueryScratch` | Geometry Core | `src/geometry/spatial.rs:5` | Retained neighbors and membership storage. |
 | `SpatialGrid::query_into` | Geometry Core | `src/geometry/spatial.rs:111` | Fill reusable query scratch. |
 
-| `PackCollider` | Pipeline Packing | `src/pipeline/pack.rs:27` | Cached collider bbox and shape. |
-| `PackCollider::new` | Pipeline Packing | `src/pipeline/pack.rs:34` | Prepare collision shape once. |
-| `PackCollider::blocks` | Pipeline Packing | `src/pipeline/pack.rs:42` | Cached overlap or clearance predicate. |
-| `pack_blocked` | Pipeline Packing | `src/pipeline/pack.rs:68` | Check incremental spatial candidates. |
-| `PackPipeline::run_in_pool` | Pipeline Packing | `src/pipeline/pack.rs:221` | Packing work under configured pool. |
+| `PackCollider` | Pipeline Packing | `src/pipeline/pack.rs:31` | Cached collider bbox and shape. |
+| `PackCollider::new` | Pipeline Packing | `src/pipeline/pack.rs:38` | Prepare collision shape once. |
+| `PackCollider::blocks` | Pipeline Packing | `src/pipeline/pack.rs:46` | Cached overlap or clearance predicate. |
+| `bbox_may_block` | Pipeline Packing | `src/pipeline/pack.rs:72` | The exact predicate's own bbox rejection, on optional boxes. |
+| `periodic_image_shifts` | Pipeline Packing | `src/pipeline/pack.rs:83` | Periodic shifts and shifted bboxes in `generate_periodic_ghosts` order. |
+| `PackImage` | Pipeline Packing | `src/pipeline/pack.rs:117` | Accepted particle or `(particle_id, shift)` image with a lazily built collider. |
+| `PackScene` | Pipeline Packing | `src/pipeline/pack.rs:124` | Image store, incremental grid, bbox-less list and ghost-build counter. |
+| `PackScene::new` | Pipeline Packing | `src/pipeline/pack.rs:133` | Empty store with the domain/8 grid. |
+| `PackScene::build_ghost` | Pipeline Packing | `src/pipeline/pack.rs:144` | Translate one image and prepare it (counted). |
+| `PackScene::collider` | Pipeline Packing | `src/pipeline/pack.rs:152` | Thread-safe lazy image collider. |
+| `PackScene::reachable` | Pipeline Packing | `src/pipeline/pack.rs:161` | Images whose bbox can block a query at the gap. |
+| `PackScene::blocks_any` | Pipeline Packing | `src/pipeline/pack.rs:179` | Serial/parallel any() over reachable images. |
+| `PackScene::candidate_images` | Pipeline Packing | `src/pipeline/pack.rs:197` | Full legacy feasibility with lazy candidate and accepted images. |
+| `PackScene::insert` | Pipeline Packing | `src/pipeline/pack.rs:228` | Record an accepted particle and its image descriptors. |
+| `PackScene::image_stats` | Pipeline Packing | `src/pipeline/pack.rs:252` | Stored images, instantiated ghosts, ghost builds. |
+| `PackPipeline::run_in_pool` | Pipeline Packing | `src/pipeline/pack.rs:394` | Packing work under configured pool. |
 
 | `MeasurePipeline::run_in_pool` | Pipeline Core | `src/pipeline/measure.rs:83` | Method-specific measurement in configured pool. |
 
@@ -802,13 +812,26 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `grid_plan` | GPU | `src/gpu/runtime.rs:67` | Validate product, buffer and dispatch limits. |
 | `GpuVoxelPipeline::voxelize_limited` | GPU | `src/gpu/voxel.rs:179` | Fallible voxel execution with bounded dispatch. |
 
-| `particle_at_prepared` | Pipeline Placement | `src/pipeline/placement_labels.rs:253` | First particle in ordered cached candidates. |
+| `particle_at_prepared` | Pipeline Placement | `src/pipeline/placement_labels.rs:326` | First particle in ordered cached candidates. |
+| `LABEL_SLAB_VOXELS` | Pipeline Placement | `src/pipeline/placement_labels.rs:46` | Target voxels per label slab (4,194,304). |
+| `label_dims` | Pipeline Placement | `src/pipeline/placement_labels.rs:111` | Label grid dimensions with overflow check. |
+| `LabelQuery` | Pipeline Placement | `src/pipeline/placement_labels.rs:124` | Prepared particle queries, bbox grid and void shared by all slabs. |
+| `LabelQuery::new` | Pipeline Placement | `src/pipeline/placement_labels.rs:136` | Prepare the per-run query context once. |
+| `LabelQuery::centre` | Pipeline Placement | `src/pipeline/placement_labels.rs:170` | Voxel-centre world position. |
+| `LabelQuery::fill_slab` | Pipeline Placement | `src/pipeline/placement_labels.rs:184` | Classify one z-slab into phase/id buffers. |
+| `write_label_stacks` | Pipeline Placement | `src/pipeline/placement_labels.rs:257` | Stream both label TIFF stacks slab by slab. |
 
 | `map_vertices` | Geometry Core | `src/geometry/mesh_ops.rs:162` | Serial or parallel independent vertex mapping. |
 
 | `forge_owned` | Geometry Volume/Collision | `src/geometry/forging.rs:66` | Ownership-consuming FFD and ROI transform. |
 
-| `load_stl_from_reader` | I/O | `src/io/stl.rs:178` | Forward-reader STL with bounded binary records. |
+| `load_stl_from_reader` | I/O | `src/io/stl.rs:192` | Forward-reader STL: streamed ASCII lines and bounded binary records. |
+| `AsciiStlBuilder` | I/O | `src/io/stl.rs:47` | Incremental ASCII STL state: vertices, faces, pending vertices, dedup map. |
+| `AsciiStlBuilder::push_line` | I/O | `src/io/stl.rs:56` | Consume one raw line with the legacy lossy/trim/vertex rules. |
+| `parse_ascii_stream_or_binary` | I/O | `src/io/stl.rs:78` | Line-streamed ASCII STL with binary fallback on the retained bytes. |
+| `TiffPageEncoder` | I/O | `src/io/volume.rs:552` | Incremental multi-page TIFF encoder over a borrowed seekable writer. |
+| `TiffPageEncoder::new` | I/O | `src/io/volume.rs:562` | Write the TIFF header and fix page size/type. |
+| `TiffPageEncoder::write_slices` | I/O | `src/io/volume.rs:590` | Append whole z-slices as consecutive pages. |
 | `load_stl_hashed` | I/O | `src/io/stl.rs:193` | Single-pass STL parsing and raw digest. |
 | `parse_binary_reader` | I/O | `src/io/stl.rs:109` | Read binary triangle records with incremental deduplication. |
 | `read_stl_record` | I/O | `src/io/stl.rs:140` | Read complete record or report truncation. |
@@ -831,9 +854,9 @@ Master index of every documented function, struct, enum, and constant across `sr
 
 | `GpuShellS2Pipeline::release_batch_capacity` | `src/gpu/s2_shell.rs:230` | Shell batch buffer capacity management; occupancy retained. |
 
-| `MeshRenderPipeline::with_worker_pool` | `src/pipeline/mesh_render.rs:122` | Execute scene preparation, rendering and fallback within the worker budget. |
+| `MeshRenderPipeline::with_worker_pool` | `src/pipeline/mesh_render.rs:193` | Execute scene preparation, rendering and fallback within the worker budget. |
 
-| `MeshRenderPipeline::run_in_pool` | `src/pipeline/mesh_render.rs:147` | Execute scene preparation, rendering and fallback within the worker budget. |
+| `MeshRenderPipeline::run_in_pool` | `src/pipeline/mesh_render.rs:218` | Execute scene preparation, rendering and fallback within the worker budget. |
 
 | `SceneRenderMemory::plan` | `src/compute/render_memory.rs:20` | Checked scene preview workset, budget and buffer planning without allocation. |
 
@@ -911,6 +934,7 @@ Master index of every documented function, struct, enum, and constant across `sr
 | Function | Source | Contract |
 |---|---|---|
 | `consume_frames` | `src/pipeline/mesh_render.rs:25` | Ordered bounded PNG writer; joins before fallback, preserves output errors; sequential for one worker/view. |
+| `render_and_write_overlapped` | `src/pipeline/mesh_render.rs:73` | Ordered CPU render/PNG overlap via rayon::join; at most one frame writing; write error stops further views. |
 | `collect_opaque_hits` | `src/geometry/scene_render.rs:96` | Nearest-distance bounded coincidence group preserving Face priority and overlay depth. |
 | `consume_file_batches` | `src/io/volume.rs:47` | Decode at most two files in the current pool; consume/validate in source order and stop subsequent batches on errors. |
 | `write_tiff_pages` | `src/io/volume.rs:552` | Borrowed sequential TIFF encoding with explicit final flush and propagated output errors. |

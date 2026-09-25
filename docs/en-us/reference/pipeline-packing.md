@@ -34,11 +34,22 @@ mean-sphericity steering engine (`src/pipeline/pack_targets.rs`).
 | `write_distribution_comparison_csv` | `src/pipeline/pack_targets.rs:495` | Writes the `<output_stem>_diameter_distribution.csv` target-vs-actual report. |
 | `parse_csv_f64` | `src/pipeline/pack_targets.rs:564` | Parses a required finite CSV float cell with row/column error context. |
 | `parse_optional_csv_f64` | `src/pipeline/pack_targets.rs:587` | Parses an optional CSV float cell where a blank means "absent". |
-| `PackCollider` | `src/pipeline/pack.rs:27` | Cached collider bbox and shape. |
-| `PackCollider::new` | `src/pipeline/pack.rs:34` | Prepare collision shape once. |
-| `PackCollider::blocks` | `src/pipeline/pack.rs:42` | Cached overlap or clearance predicate. |
-| `pack_blocked` | `src/pipeline/pack.rs:68` | Check incremental spatial candidates. |
-| `PackPipeline::run_in_pool` | `src/pipeline/pack.rs:221` | Packing work under configured pool. |
+| `PackCollider` | `src/pipeline/pack.rs:31` | Cached collider bbox and shape. |
+| `PackCollider::new` | `src/pipeline/pack.rs:38` | Prepare collision shape once. |
+| `PackCollider::blocks` | `src/pipeline/pack.rs:46` | Cached overlap or clearance predicate. |
+| `bbox_may_block` | `src/pipeline/pack.rs:72` | The exact predicate's own bbox rejection, on optional boxes. |
+| `periodic_image_shifts` | `src/pipeline/pack.rs:83` | Periodic shifts and shifted bboxes in `generate_periodic_ghosts` order. |
+| `PackImage` | `src/pipeline/pack.rs:117` | Accepted particle or `(particle_id, shift)` image with a lazily built collider. |
+| `PackScene` | `src/pipeline/pack.rs:124` | Image store, incremental grid, bbox-less list and ghost-build counter. |
+| `PackScene::new` | `src/pipeline/pack.rs:133` | Empty store with the domain/8 grid. |
+| `PackScene::build_ghost` | `src/pipeline/pack.rs:144` | Translate one image and prepare it (counted). |
+| `PackScene::collider` | `src/pipeline/pack.rs:152` | Thread-safe lazy image collider. |
+| `PackScene::reachable` | `src/pipeline/pack.rs:161` | Images whose bbox can block a query at the gap. |
+| `PackScene::blocks_any` | `src/pipeline/pack.rs:179` | Serial/parallel any() over reachable images. |
+| `PackScene::candidate_images` | `src/pipeline/pack.rs:197` | Full legacy feasibility with lazy candidate and accepted images. |
+| `PackScene::insert` | `src/pipeline/pack.rs:228` | Record an accepted particle and its image descriptors. |
+| `PackScene::image_stats` | `src/pipeline/pack.rs:252` | Stored images, instantiated ghosts, ghost builds. |
+| `PackPipeline::run_in_pool` | `src/pipeline/pack.rs:394` | Packing work under configured pool. |
 
 **See also:** [geometry-analysis.md](geometry-analysis.md) for `MeshMetrics` and `scale_mesh_to_equivalent_diameter`, used throughout this pipeline.
 
@@ -359,4 +370,8 @@ mean-sphericity steering engine (`src/pipeline/pack_targets.rs`).
 
 ### Cached legacy packing feasibility (PERF-11)
 
-`PackCollider::new(&Mesh)` retains bbox and optional parry TriMesh without another raw mesh copy. `blocks(other, gap)` keeps the old bbox rejection, uses cached solid collision at zero gap and cached solid distance below a positive gap. `pack_blocked` directly scans fewer than 32 colliders, otherwise queries an incremental grid plus every bbox-less collider. Candidate images are prepared once per proposal; accepted particle/image shapes are appended once and indexed. This replaces the previous `placed.clone()`, repeated ghost generation, shape construction and separate minimum-distance pass. The grid has at most eight cells on the longest domain axis. Void/nesting semantics and gap equality remain governed by the same prepared collision/distance functions. Periodic checks still include candidate ghosts against accepted real particles and ghosts. `PackPipeline::run` installs the worker pool around `run_in_pool`, including loading and finalization; proposal RNG remains sequential.
+`PackCollider::new(&Mesh)` retains bbox and optional parry TriMesh without another raw mesh copy. `blocks(other, gap)` keeps the old bbox rejection, uses cached solid collision at zero gap and cached solid distance below a positive gap. `PackScene::reachable` directly scans fewer than 32 stored images, otherwise queries an incremental grid plus every bbox-less image. Periodic images are lazy descriptors (see below). This replaces the previous `placed.clone()`, repeated ghost generation, shape construction and separate minimum-distance pass. The grid has at most eight cells on the longest domain axis. Void/nesting semantics and gap equality remain governed by the same prepared collision/distance functions. Periodic checks still include candidate ghosts against accepted real particles and ghosts. `PackPipeline::run` installs the worker pool around `run_in_pool`, including loading and finalization; proposal RNG remains sequential.
+
+### Lazy periodic images (PERF-11, 2026-09-25)
+
+Mode 3 no longer materialises ghost copies. `PackScene` stores every accepted particle once plus one `PackImage` per periodic shift whose shifted bbox strictly overlaps the domain (the `generate_periodic_ghosts` rule and order, via `periodic_image_shifts`), as `(particle_id, shift, bbox)`; the grid indexes all images. An image's collider is built on first use through a `OnceLock` (thread-safe inside rayon `any`), by translating the accepted mesh exactly as `translate_mesh` did, so the exact predicates see the same coordinates as before. `candidate_images` checks the candidate, then each candidate image only if some accepted image's bbox can block it (`bbox_may_block`, the exact predicate's own bbox test); an image nothing can reach is never translated. `bbox + shift` equals the translated mesh's bbox bit for bit because rounded addition is monotonic, so the pruning never changes a decision. Candidate images built during the check are reused on acceptance. `pack` mode 3 prints `Periodic images: stored, instantiated, ghost TriMesh builds`. Oracles in `pack.rs` compare every decision with the former eager full-ghost scan over face/edge/corner wraps, two domains (one off-origin), near-domain-width particles whose `-1` and `+1` images both overlap the domain, nesting, contact and gap 0/0.25/0.5, and an incremental acceptance replay asserts fewer ghost builds than the eager count.

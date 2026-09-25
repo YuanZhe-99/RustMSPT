@@ -12,6 +12,7 @@ pub use stl::{
 };
 pub use volume::{
     load_raw_folder, load_tiff_or_folder, load_tiff_or_folder_with_range,
-    save_tiff_or_folder, save_tiff_or_folder_with_ext, ByteOrder, RawFolderSpec, Volume3D,
+    save_tiff_or_folder, save_tiff_or_folder_with_ext, ByteOrder, RawFolderSpec, TiffPageEncoder,
+    Volume3D,
     VolumeNumericType,
 };

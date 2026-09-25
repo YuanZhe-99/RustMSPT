@@ -548,16 +548,74 @@ fn write_tiff_slice<W: Write + Seek>(
     Ok(())
 }
 
+/// Incremental multi-page TIFF encoder over a borrowed seekable writer.
+pub struct TiffPageEncoder<'a, W: Write + Seek> {
+    encoder: TiffEncoder<&'a mut W>,
+    width: u32,
+    height: u32,
+    numeric_type: VolumeNumericType,
+    slice_len: usize,
+}
+
+impl<'a, W: Write + Seek> TiffPageEncoder<'a, W> {
+    // AI-FUNC-SUMMARY: Start a multi-page TIFF stream (writes the TIFF header) for width x height pages of one numeric type; returns the encoder or InvalidConfig for empty/over-u32 dimensions; side effects: writes the header to the writer.
+    pub fn new(
+        writer: &'a mut W,
+        width: usize,
+        height: usize,
+        numeric_type: VolumeNumericType,
+    ) -> Result<Self> {
+        if width == 0 || height == 0 {
+            return Err(RustMsptError::InvalidConfig(
+                "Cannot write empty volume".to_string(),
+            ));
+        }
+        let w = u32::try_from(width)
+            .map_err(|_| RustMsptError::InvalidConfig("TIFF width exceeds u32".into()))?;
+        let h = u32::try_from(height)
+            .map_err(|_| RustMsptError::InvalidConfig("TIFF height exceeds u32".into()))?;
+        let slice_len = width
+            .checked_mul(height)
+            .ok_or_else(|| RustMsptError::InvalidConfig("TIFF volume dimensions overflow".into()))?;
+        Ok(Self {
+            encoder: TiffEncoder::new(writer)?,
+            width: w,
+            height: h,
+            numeric_type,
+            slice_len,
+        })
+    }
+
+    // AI-FUNC-SUMMARY: Append whole z-slices (z-major, width*height values each) as consecutive pages; returns InvalidConfig if data is not a whole number of slices or a value overflows the numeric type; side effects: writes pages to the stream.
+    pub fn write_slices(&mut self, data: &[i64]) -> Result<()> {
+        if !data.len().is_multiple_of(self.slice_len) {
+            return Err(RustMsptError::InvalidConfig(format!(
+                "TIFF page data length {} is not a multiple of the slice size {}",
+                data.len(),
+                self.slice_len
+            )));
+        }
+        for slice in data.chunks(self.slice_len) {
+            write_tiff_slice(&mut self.encoder, self.width, self.height, self.numeric_type, slice)?;
+        }
+        Ok(())
+    }
+}
+
 // AI-FUNC-SUMMARY: Encode ordered pages through a borrowed seekable writer and explicitly flush after dropping the TIFF encoder; propagate final buffered-write failures instead of relying on BufWriter::drop.
 fn write_tiff_pages<W: Write + Seek>(
     writer: &mut W, width: u32, height: u32, ty: VolumeNumericType,
     data: &[i64], slice_len: usize,
 ) -> Result<()> {
     {
-        let mut encoder = TiffEncoder::new(&mut *writer)?;
-        for slice in data.chunks(slice_len) {
-            write_tiff_slice(&mut encoder, width, height, ty, slice)?;
-        }
+        let mut encoder = TiffPageEncoder {
+            encoder: TiffEncoder::new(&mut *writer)?,
+            width,
+            height,
+            numeric_type: ty,
+            slice_len,
+        };
+        encoder.write_slices(data)?;
     }
     writer.flush()?;
     Ok(())

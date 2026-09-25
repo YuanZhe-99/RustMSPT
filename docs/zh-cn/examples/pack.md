@@ -82,7 +82,7 @@ packing:
 | 字段 | 含义 |
 |---|---|
 | `target_volume_fraction` | 堆积应达到的固体体积分数（本例中 `0.02` = 填充 2%——刻意设得很小，以便本演示能在远低于一秒的时间内完成；生产环境的运行通常以更高的分数为目标，耗时也会相应增加）。 |
-| `mode` | `1` 严格（不允许越界），`2` 宽松（允许越界，忽略墙体），`3` 周期（允许越界 + 周期镜像碰撞检查）。本示例使用 `2`。 |
+| `mode` | `1` 严格（不允许越界），`2` 宽松（允许越界，忽略墙体），`3` 周期（允许越界 + 周期镜像碰撞检查）。本示例使用 `2`。模式 3 还会在 `Final count` 之后输出 `[Info] Periodic images: N stored, M accepted ghosts instantiated, K ghost TriMesh builds`。 |
 | `max_attempts` | 在流水线放弃并报告已达到的体积分数之前，允许的放置尝试次数。 |
 | `min_neighbor_distance` | 已放置颗粒表面之间允许的最小间隙。 |
 | `rotation_mode` / `rotation_axis_vector` | 控制放置前候选颗粒的朝向；此处的 `'none'` 意味着每个候选都保持其加载时的原始朝向。 |
