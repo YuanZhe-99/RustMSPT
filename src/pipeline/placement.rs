@@ -233,6 +233,12 @@ fn run_placement_in_pool(config: &ResolvedPlacement) -> Result<PlacementOutcome>
     }
 
     timer.stage("place");
+    println!("{}", state.grid.stats().summary_line("placement"));
+    println!(
+        "[GridStats] placement queries grid_queries={} grid_candidates={} (includes speculative evaluations; diagnostic only)",
+        state.grid_queries.load(std::sync::atomic::Ordering::Relaxed),
+        state.grid_candidates.load(std::sync::atomic::Ordering::Relaxed)
+    );
     let elapsed = started.elapsed().as_secs_f64();
     let stop = decide_stop(config, &state, &plan, target_volume, elapsed);
 
@@ -291,6 +297,10 @@ struct EngineState {
     /// particle plus the gap rather than from `estimate_cell_size`, whose 1.0 floor
     /// makes it unit-dependent.
     grid: SpatialGrid,
+    /// Diagnostic query counters, incremented from parallel evaluations with relaxed atomics; they include
+    /// speculative evaluations a serial scan would not have run, and never influence a decision.
+    grid_queries: std::sync::atomic::AtomicU64,
+    grid_candidates: std::sync::atomic::AtomicU64,
     merged: Mesh,
     /// Running total, accumulated sequentially in acceptance order. A parallel sum
     /// over f64 depends on the reduction tree and therefore on the thread count,
@@ -330,6 +340,8 @@ impl EngineState {
         }
         EngineState {
             grid: SpatialGrid::new(config.domain, cell_size.max(1e-9)),
+            grid_queries: std::sync::atomic::AtomicU64::new(0),
+            grid_candidates: std::sync::atomic::AtomicU64::new(0),
             placed: Vec::new(),
             merged: Mesh::empty(),
             volume_in_domain: 0.0,
@@ -534,6 +546,7 @@ fn evaluate_proposal(
     void: Option<&VoidIndex>,
     placed: &[PlacedParticle],
     grid: &SpatialGrid,
+    counters: Option<(&std::sync::atomic::AtomicU64, &std::sync::atomic::AtomicU64)>,
     proposal: &Proposal,
 ) -> Evaluation {
     if !proposal.fits_domain {
@@ -547,6 +560,10 @@ fn evaluate_proposal(
         return Evaluation::Rejected(RejectReason::ZeroInDomainVolume);
     };
     let neighbours = grid.query_neighbors_with_margin(cand_bbox, config.gap_particle_particle, usize::MAX);
+    if let Some((queries, candidates)) = counters {
+        queries.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        candidates.fetch_add(neighbours.len() as u64, std::sync::atomic::Ordering::Relaxed);
+    }
     let ctx = FeasibilityContext {
         domain: config.domain,
         boundary: &config.boundary,
@@ -627,15 +644,16 @@ fn try_place_one(
         let size = batch.min(room);
         let proposals: Vec<Proposal> = (0..size).map(|_| draw_proposal(config, library, void, rng, draw)).collect();
         let (placed, grid) = (&state.placed, &state.grid);
+        let counters = Some((&state.grid_queries, &state.grid_candidates));
         let evaluations: Vec<Evaluation> = if size > 1 {
             proposals
                 .par_iter()
-                .map(|p| evaluate_proposal(config, library, void, placed, grid, p))
+                .map(|p| evaluate_proposal(config, library, void, placed, grid, counters, p))
                 .collect()
         } else {
             proposals
                 .iter()
-                .map(|p| evaluate_proposal(config, library, void, placed, grid, p))
+                .map(|p| evaluate_proposal(config, library, void, placed, grid, counters, p))
                 .collect()
         };
         for (proposal, evaluation) in proposals.iter().zip(evaluations) {
