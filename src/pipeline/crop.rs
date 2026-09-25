@@ -821,6 +821,20 @@ struct CropSourceBlock {
 }
 
 impl CropSourceBlock {
+    // AI-FUNC-SUMMARY: The block grown by `pad` voxels on every side and clamped to the source; returns the new block; side effects: none.
+    #[cfg(feature = "gpu")]
+    fn padded(&self, pad: usize, src_dims: [usize; 3]) -> CropSourceBlock {
+        let mut origin = [0usize; 3];
+        let mut dims = [0usize; 3];
+        for axis in 0..3 {
+            let lo = self.origin[axis].saturating_sub(pad);
+            let hi = (self.origin[axis] + self.dims[axis]).saturating_add(pad).min(src_dims[axis]);
+            origin[axis] = lo;
+            dims[axis] = hi.saturating_sub(lo);
+        }
+        CropSourceBlock { origin, dims }
+    }
+
     // AI-FUNC-SUMMARY: Count block voxels with checked multiplication; returns None on overflow; side effects: none.
     fn voxels(&self) -> Option<u64> {
         self.dims
@@ -1063,7 +1077,8 @@ fn plan_crop_gpu_tiles(
 // Returns: Ok((Volume3D, tile count)) or a GPU/planning error string (including "no single minimal tile fits").
 // Side effects: Initializes the GPU pipeline, pre-sizes buffers to the plan maxima, dispatches one transform per tile, prints timing.
 // Notes: Tiles reproduce the single-dispatch arithmetic exactly (absolute output coordinates, full-source bounds tests); a runtime halo
-//        guard turns any unexpected out-of-block access into an error. Only available with feature "gpu".
+//        guard catches any out-of-block access; the tile is then rerun with its block grown (1, 2, 4... voxels per side) while
+//        the grown block fits the budget, and only then is it an error. Only available with feature "gpu".
 #[cfg(feature = "gpu")]
 #[allow(clippy::too_many_arguments)]
 fn rotate_and_crop_gpu(
@@ -1076,6 +1091,26 @@ fn rotate_and_crop_gpu(
     interpolation_mode: InterpolationMode,
     budget: Option<u64>,
 ) -> std::result::Result<(Volume3D, usize), String> {
+    rotate_and_crop_gpu_with(volume, background, rot, centroid, min_v, max_v, interpolation_mode, budget, 0)
+        .map(|(volume, tiles, _)| (volume, tiles))
+}
+
+// AI-FUNC-SUMMARY: rotate_and_crop_gpu with `first_block_shrink` voxels removed from the high x side of every tile's first source block; returns the volume, tile count and halo-retry count; side effects: as rotate_and_crop_gpu.
+// Notes: Production passes 0. A positive value makes the planned blocks deliberately too small so tests can drive
+// the halo-guard retry path, which the planner's conservative margin otherwise never reaches.
+#[cfg(feature = "gpu")]
+#[allow(clippy::too_many_arguments)]
+fn rotate_and_crop_gpu_with(
+    volume: &Volume3D,
+    background: i64,
+    rot: &Matrix3<f64>,
+    centroid: &Vector3<f64>,
+    min_v: &Vector3<f64>,
+    max_v: &Vector3<f64>,
+    interpolation_mode: InterpolationMode,
+    budget: Option<u64>,
+    first_block_shrink: usize,
+) -> std::result::Result<(Volume3D, usize, usize), String> {
     let eps = 1e-3;
     let (x0, x1) = float_bounds_to_inclusive_i64(min_v.x, max_v.x, eps);
     let (y0, y1) = float_bounds_to_inclusive_i64(min_v.y, max_v.y, eps);
@@ -1144,38 +1179,71 @@ fn rotate_and_crop_gpu(
     let mut data = vec![background; out_total];
     let (out_w, out_h) = (out_usize[0], out_usize[1]);
     let mut block_values: Vec<i32> = Vec::new();
+    let mut halo_retries = 0usize;
     for_each_crop_tile(out_usize, plan.tile_dims, |lo, hi| {
-        let block = crop_tile_source_block(src_dims, rot, centroid, origin_i, lo, hi)?;
-        block_values.clear();
-        if !block.dims.contains(&0) {
-            let [bx, by, bz] = block.origin;
-            let [bw, bh, bd] = block.dims;
-            for z in bz..bz + bd {
-                for y in by..by + bh {
-                    let row = voxel_index(volume.width, volume.height, bx, y, z);
-                    for &value in &volume.data[row..row + bw] {
-                        block_values.push(
-                            i32::try_from(value).map_err(|_| "crop GPU input exceeds i32")?,
-                        );
-                    }
-                }
-            }
-        }
+        let planned = crop_tile_source_block(src_dims, rot, centroid, origin_i, lo, hi)?;
         let as_u32 = |v: usize| u32::try_from(v).map_err(|_| "crop GPU tile index exceeds u32");
         let tile_dims = [
             as_u32(hi[0] - lo[0] + 1)?,
             as_u32(hi[1] - lo[1] + 1)?,
             as_u32(hi[2] - lo[2] + 1)?,
         ];
-        let tile = crate::gpu::volume_transform::TransformTile {
-            block: &block_values,
-            block_origin: [as_u32(block.origin[0])?, as_u32(block.origin[1])?, as_u32(block.origin[2])?],
-            block_dims: [as_u32(block.dims[0])?, as_u32(block.dims[1])?, as_u32(block.dims[2])?],
-            source_dims,
-            tile_offset: [as_u32(lo[0])?, as_u32(lo[1])?, as_u32(lo[2])?],
-            tile_dims,
+        // A tripped halo guard means the shader wanted a source voxel the planned block left out. That
+        // is a margin that proved too small, not a reason to give up the GPU: grow the block (1, 2, 4...
+        // voxels per side) and run the tile again, as long as the grown block still fits the budget the
+        // plan was made for. The retry recomputes the same tile, so its values are what they would have been.
+        let mut pad = 0usize;
+        let values = loop {
+            let mut block = planned.padded(pad, src_dims);
+            if pad == 0 && first_block_shrink > 0 {
+                block.dims[0] = block.dims[0].saturating_sub(first_block_shrink).max(1);
+            }
+            block_values.clear();
+            if !block.dims.contains(&0) {
+                let [bx, by, bz] = block.origin;
+                let [bw, bh, bd] = block.dims;
+                for z in bz..bz + bd {
+                    for y in by..by + bh {
+                        let row = voxel_index(volume.width, volume.height, bx, y, z);
+                        for &value in &volume.data[row..row + bw] {
+                            block_values.push(
+                                i32::try_from(value).map_err(|_| "crop GPU input exceeds i32")?,
+                            );
+                        }
+                    }
+                }
+            }
+            let tile = crate::gpu::volume_transform::TransformTile {
+                block: &block_values,
+                block_origin: [as_u32(block.origin[0])?, as_u32(block.origin[1])?, as_u32(block.origin[2])?],
+                block_dims: [as_u32(block.dims[0])?, as_u32(block.dims[1])?, as_u32(block.dims[2])?],
+                source_dims,
+                tile_offset: [as_u32(lo[0])?, as_u32(lo[1])?, as_u32(lo[2])?],
+                tile_dims,
+            };
+            match pipeline.transform_tile(&tile, bg_i32, rot, centroid, &origin, interp) {
+                Err(error) if error.contains(crate::gpu::volume_transform::HALO_GUARD_ERROR) => {
+                    let next = (pad * 2).max(1);
+                    let grown = planned.padded(next, src_dims);
+                    let whole = block.dims == src_dims;
+                    let fits = grown.voxels().is_some_and(|voxels| {
+                        crop_gpu_peak_bytes(voxels, plan.max_tile_voxels)
+                            .is_some_and(|peak| budget.is_none_or(|limit| peak <= limit))
+                            && voxels.saturating_mul(4) <= buffer_limit
+                    });
+                    if whole || !fits {
+                        return Err(error);
+                    }
+                    let grown_bytes = grown.voxels().unwrap_or(u64::MAX).saturating_mul(4);
+                    if grown_bytes > block_bytes {
+                        pipeline.reserve_capacity(grown_bytes, tile_bytes)?;
+                    }
+                    halo_retries += 1;
+                    pad = next;
+                }
+                other => break other?,
+            }
         };
-        let values = pipeline.transform_tile(&tile, bg_i32, rot, centroid, &origin, interp)?;
         let row_len = tile_dims[0] as usize;
         for (row_index, row) in values.chunks_exact(row_len).enumerate() {
             let y = lo[1] + row_index % tile_dims[1] as usize;
@@ -1190,7 +1258,7 @@ fn rotate_and_crop_gpu(
 
     let elapsed = t0.elapsed().as_secs_f64();
     println!(
-        "[Info] GPU volume transform: {:.3}s, {}x{}x{} -> {}x{}x{}, tiles={} tile={}x{}x{} peak_bytes={}",
+        "[Info] GPU volume transform: {:.3}s, {}x{}x{} -> {}x{}x{}, tiles={} tile={}x{}x{} peak_bytes={} halo_retries={}",
         elapsed,
         volume.width,
         volume.height,
@@ -1202,7 +1270,8 @@ fn rotate_and_crop_gpu(
         plan.tile_dims[0],
         plan.tile_dims[1],
         plan.tile_dims[2],
-        plan.peak_bytes
+        plan.peak_bytes,
+        halo_retries
     );
 
     Ok((
@@ -1214,6 +1283,7 @@ fn rotate_and_crop_gpu(
             numeric_type: volume.numeric_type,
         },
         plan.tiles,
+        halo_retries,
     ))
 }
 
@@ -2167,6 +2237,45 @@ mod gpu_tile_tests {
         assert!(shapes.iter().any(|s| s.3), "no non-dividing tiles: {shapes:?}");
     }
 
+
+    // AI-FUNC-SUMMARY: Force every tile's first source block to miss voxels its samples need; the halo guard trips, the tile reruns with a grown block, and the result still equals the untiled dispatch for nearest and trilinear, whole-volume and budget-tiled plans; no file output.
+    #[test]
+    fn halo_guard_retries_with_a_grown_block_and_keeps_the_result() {
+        let mut gpu = match GpuVolumeTransformPipeline::new() {
+            Ok(gpu) => gpu,
+            Err(error) => {
+                eprintln!("SKIP no GPU: {error}");
+                return;
+            }
+        };
+        let src = [13usize, 11, 7];
+        let rot = axis_rotation([1.0, 2.0, 3.0], 0.7);
+        let centroid = Vector3::new(6.1, 4.9, 3.05);
+        let (min, max) = covering_bounds(src, &rot, &centroid, 2.5);
+        for mode in [InterpolationMode::Nearest, InterpolationMode::Trilinear] {
+            let volume = fixture(src, VolumeNumericType::U16, mode == InterpolationMode::Trilinear);
+            let reference = untiled(&mut gpu, &volume, 3, &rot, &centroid, &min, &max, mode);
+            let out = {
+                let cpu = rotate_and_crop(&volume, 3, &rot, &centroid, &min, &max, mode);
+                [cpu.width, cpu.height, cpu.depth]
+            };
+            let origin = [min.x.floor() as isize, min.y.floor() as isize, min.z.floor() as isize];
+            let full = plan_crop_gpu_tiles(src, &rot, &centroid, origin, out, None, None).unwrap();
+            for budget in [None, Some(full.peak_bytes / 2)] {
+                let (plain, tiles, retries) =
+                    rotate_and_crop_gpu_with(&volume, 3, &rot, &centroid, &min, &max, mode, budget, 0).unwrap();
+                assert_eq!(plain.data, reference);
+                assert_eq!(retries, 0, "the planner's margin never trips the guard");
+                let (shrunk, shrunk_tiles, retries) =
+                    rotate_and_crop_gpu_with(&volume, 3, &rot, &centroid, &min, &max, mode, budget.map(|b| b * 2), 3).unwrap();
+                if budget.is_none() {
+                    assert_eq!(shrunk_tiles, tiles, "no budget: same single-tile plan");
+                }
+                assert!(retries > 0, "{mode:?} {budget:?}: shrinking the first blocks must trip the guard");
+                assert_eq!(shrunk.data, reference, "{mode:?} {budget:?}: retried tiles keep the result");
+            }
+        }
+    }
     // AI-FUNC-SUMMARY: Release benchmark of untiled versus budget-forced ~4 and ~16 tile GPU transforms (1 warmup + 5 samples, identical outputs), printing raw seconds and medians.
     #[test]
     #[ignore = "release performance measurement"]

@@ -1613,3 +1613,11 @@ forge 把整个网格作为一个元素传给 `volume_fraction_of_meshes_in_bbox
 **正确性论证。** 误差界是针对任意求值顺序、正确舍入的 f32 运算推导的，主机端计算满足同一前提；即使主机与 GPU 的 f32 结果在末位不同，已认证的判定仍等于 CPU f64 参考，未认证的仍在 CPU 重算，最终计数不变。验证：新增 `precomputed_terms_respect_their_error_bounds`（全部对抗性 fixture × 两种偏移 + 3,000 个随机三角形：f32 `det` 与同一 f32 顶点的 f64 行列式之差 ≤ `eps_det`，`m`、`es` 确为幅值上界，`a` 原样保存）；`partial_triangle_upload_matches_full_upload` 在每一步回读常量缓冲，与整体重算逐字节一致；既有的 `certified_voxels_equal_cpu_reference`、MC 认证与 1e9 偏移/薄片/共享面等对抗性测试全部通过；预算与上传字节测试的期望值按 36 + 64 更新。
 
 **性能（llvmpipe，仅作方向参考）：** `certification_overhead_benchmark`（5 次交替）认证/未认证耗时比，particles.stl：MC 由 §66 的 3.98/1.65 s = 2.41× 降到 2.15/1.60 s = 1.34×，体素由 4.66/2.22 s = 2.10× 降到 3.75/2.39 s = 1.57×；球体上认证版已快于未认证版（MC 0.18 对 0.24 s，体素 0.42 对 0.67 s）。所有计数与未认证版一致（`radii_with_different_counts=0`、体素计数相同），重算比例 1.4e-3～1.3e-2 与此前同量级。理论上每次三角形测试在首个拒绝前的算术约减半，但每次读取 64 字节常量而非 36 字节原始顶点；硬件 GPU 上所有 lane 同时读同一三角形、可由缓存广播，预期受 ALU 限制而受益，需硬件验证。原始输出：`data/output/performance/20260925-local-matrix/cert-constants-bench.log`。
+
+## 78. PERF-14：GPU crop 分块的 halo 守卫重试（§67 第 6 项之一，2026-09-25，本地）
+
+此前某个输出块若采样到上传子块之外的源体素，着色器置守卫位，`transform_tile` 返回错误，整个 GPU crop 随之失败（auto 回退 CPU，gpu 模式报错）。现在 `rotate_and_crop_gpu` 捕获该错误（`volume_transform::HALO_GUARD_ERROR`），把该块的源子块每侧扩大 1、2、4…… 个体素（裁剪到源体）并重跑这一块；扩大后的子块须仍满足 `crop_gpu_peak_bytes(…) ≤ budget` 与设备缓冲上限（必要时 `reserve_capacity` 扩容），已覆盖整个源体或放不下时才返回原错误。重跑的是同一块、同一算术，结果与首次成功时相同。重试次数在 `[Info] GPU volume transform ... halo_retries=` 中报告。
+
+验证：新增 `halo_guard_retries_with_a_grown_block_and_keeps_the_result`——通过内部参数 `first_block_shrink`（生产为 0，`rotate_and_crop_gpu_with`）让每块首个子块在高 x 侧少 3 个体素，斜向旋转、最近邻与三线性、不分块与按预算分块，守卫均触发（`retries > 0`）且输出与不分块派发逐体素一致；未缩小时 `retries == 0`，说明规划器的余量本身足够。既有 `tiled_gpu_matches_untiled_and_cpu` 通过。
+
+未做：传输/派发/回读的流水重叠——需要双份源/输出/staging 缓冲，会使规划峰值翻倍并改变所有分块方案，而在 llvmpipe 上无法测得收益，留待硬件 GPU。主机端输出分块写出也未做（输出整卷仍驻留）。

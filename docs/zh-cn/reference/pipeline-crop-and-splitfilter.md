@@ -261,7 +261,7 @@ CT 体数据裁剪流水线。加载体数据、检测背景强度、计算基�
 - **源码位置：** `src/pipeline/crop.rs`
 - **用途：** 按 `plan_crop_gpu_tiles` 选出的输出块执行 GPU 旋转裁剪；每个块只上传其采样可能触及的源子块。
 - **参数：** 与 `rotate_and_crop` 相同，另加 `budget` —— 逻辑 GPU 字节预算（`acceleration.gpu_memory_limit_mb × 1 MiB`），`None` 表示无预算。
-- **返回值：** `Ok((Volume3D, tiles))`，形状/语义与 CPU 路径相同并附实际派发块数；或初始化、规划（`"... no single minimal tile fits (needs at least N bytes)"`）、派发、回读、halo 守卫失败时的 `Err(String)`。
+- **返回值：** `Ok((Volume3D, tiles))`，形状/语义与 CPU 路径相同并附实际派发块数；或初始化、规划（`"... no single minimal tile fits (needs at least N bytes)"`）、派发、回读、halo 守卫失败时的 `Err(String)`。halo 守卫触发（`volume_transform::HALO_GUARD_ERROR`：着色器采样到上传子块之外的体素）本身不再是错误：该块把子块每侧扩大 1、2、4…… 个体素（裁剪到源体）后重跑，只要扩大后的子块仍满足预算与设备缓冲上限；只有在整个源体上仍触发、或扩大后已放不下时才返回错误。重试次数显示在 `[Info] GPU volume transform` 行的 `halo_retries=`；规划器的余量在测试中从未触发它。`rotate_and_crop_gpu_with(..., first_block_shrink)` 供 `halo_guard_retries_with_a_grown_block_and_keeps_the_result` 缩小每块的首个子块，以证明重试后的输出与不分块派发一致（PLAN.Performance.md §78）。
 - **副作用：** 初始化 `GpuVolumeTransformPipeline`，同时按预算和设备单缓冲上限（`min(max_buffer_size, max_storage_buffer_binding_size)`）规划，一次性把源/输出/staging 缓冲预留到计划最大值；随后逐块把子块 `i64 → i32`（带检查）、调用 `transform_tile`、把块内各行写回主机输出。打印 `"[Info] GPU volume transform: {s}s, {src} -> {out}, tiles=N tile=WxHxD peak_bytes=B"`。
 - **说明：** 两种插值都与单次 dispatch 的 GPU 路径逐字节一致：着色器按绝对输出索引（`f32(tile_offset + local)`）重算每个体素，并按完整源尺寸判断越界，子块只改变体内数值的读取位置。运行时守卫字会把任何落在已上传子块之外的体内读取变成错误而非数值。无预算且设备上限充足时计划为单块，其子块是输出对应的源 AABB（不一定是整个源体）。最近邻在斜旋转下仅在 f32/f64 坐标恰处 `.5` 平局而舍入不同之处与 CPU 不同；三线性的 f32 混合不宣称与 CPU f64 逐位一致。
 - **另请参阅：** `GpuVolumeTransformPipeline` 及底层 WGSL 计算着色器见 [gpu.md](gpu.md)；CPU 回退路径见 `rotate_and_crop`；GPU/CPU 选择逻辑与失败回退行为见 `CropPipeline::run`。

@@ -3,6 +3,9 @@ use nalgebra::{Matrix3, Vector3};
 const WORKGROUP_SIZE: u32 = 64;
 const PARAMS_BYTES: u64 = 160;
 
+/// The error a tile returns when its shader sampled a source voxel outside the uploaded block; callers match on it to retry with a larger block.
+pub const HALO_GUARD_ERROR: &str = "crop GPU tile sampled source outside its uploaded halo block";
+
 // AI-FUNC-SUMMARY: Describe one output tile and the source sub-block (origin/dims inside the full source) uploaded for it; carries no GPU state.
 pub struct TransformTile<'a> {
     pub block: &'a [i32],
@@ -369,7 +372,7 @@ impl GpuVolumeTransformPipeline {
             let mut words =
                 super::runtime::read_u32_prefix(&self.device, &self.staging_buffer, read_bytes)?;
             if words.pop() != Some(0) {
-                return Err("crop GPU tile sampled source outside its uploaded halo block".into());
+                return Err(HALO_GUARD_ERROR.into());
             }
             Ok(words.into_iter().map(|word| word as i32).collect())
         })
