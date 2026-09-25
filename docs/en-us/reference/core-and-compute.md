@@ -28,23 +28,23 @@ This page documents the crate root and entry points (`src/lib.rs`, `src/main.rs`
 | `main` (build.rs) | `build.rs:80` | Stamps the identity into compile-time environment variables. |
 | `Vec3` | `src/types.rs:2` | 3D vector of `f64` components with basic vector algebra methods. |
 | `Vec3::new` | `src/types.rs:10` | Constructs a vector from x/y/z components. |
-| `Vec3::add` | `src/types.rs:15` | Vector addition. |
-| `Vec3::sub` | `src/types.rs:20` | Vector subtraction. |
-| `Vec3::scale` | `src/types.rs:25` | Scalar multiplication. |
-| `Vec3::dot` | `src/types.rs:30` | Dot product. |
-| `Vec3::cross` | `src/types.rs:35` | Cross product. |
-| `BoundingBox` | `src/types.rs:45` | Axis-aligned box defined by `min`/`max` corners. |
-| `BoundingBox::from_size` | `src/types.rs:52` | Builds a box from the origin to a given size. |
-| `BoundingBox::size` | `src/types.rs:60` | Returns the box's side lengths. |
-| `BoundingBox::volume` | `src/types.rs:65` | Returns the box's (non-negative) volume. |
-| `BoundingBox::contains_point` | `src/types.rs:71` | Tests whether a point lies inside or on the box boundary. |
-| `Triangle` | `src/types.rs:114` | Index triple `(a, b, c)` referencing a mesh's vertex array. |
-| `Mesh` | `src/types.rs:121` | Vertex/face container: `vertices: Vec<Vec3>`, `faces: Vec<Triangle>`. |
-| `Mesh::empty` | `src/types.rs:128` | Constructs an empty mesh. |
-| `Mesh::is_empty` | `src/types.rs:136` | True if the mesh has no vertices or no faces. |
-| `RenderedImage` | `src/types.rs:142` | Top-row-first RGBA8 image buffer. |
-| `RenderedImage::new` | `src/types.rs:151` | Constructs an RGBA8 image from bytes. |
-| `RenderedImage::filled` | `src/types.rs:161` | Allocates a solid-color RGBA8 image. |
+| `Vec3::add` | `src/types.rs:16` | Vector addition. |
+| `Vec3::sub` | `src/types.rs:22` | Vector subtraction. |
+| `Vec3::scale` | `src/types.rs:27` | Scalar multiplication. |
+| `Vec3::dot` | `src/types.rs:32` | Dot product. |
+| `Vec3::cross` | `src/types.rs:37` | Cross product. |
+| `BoundingBox` | `src/types.rs:47` | Axis-aligned box defined by `min`/`max` corners. |
+| `BoundingBox::from_size` | `src/types.rs:54` | Builds a box from the origin to a given size. |
+| `BoundingBox::size` | `src/types.rs:62` | Returns the box's side lengths. |
+| `BoundingBox::volume` | `src/types.rs:67` | Returns the box's (non-negative) volume. |
+| `BoundingBox::contains_point` | `src/types.rs:73` | Tests whether a point lies inside or on the box boundary. |
+| `Triangle` | `src/types.rs:116` | Index triple `(a, b, c)` referencing a mesh's vertex array. |
+| `Mesh` | `src/types.rs:123` | Vertex/face container: `vertices: Vec<Vec3>`, `faces: Vec<Triangle>`. |
+| `Mesh::empty` | `src/types.rs:130` | Constructs an empty mesh. |
+| `Mesh::is_empty` | `src/types.rs:138` | True if the mesh has no vertices or no faces. |
+| `RenderedImage` | `src/types.rs:144` | Top-row-first RGBA8 image buffer. |
+| `RenderedImage::new` | `src/types.rs:153` | Constructs an RGBA8 image from bytes. |
+| `RenderedImage::filled` | `src/types.rs:163` | Allocates a solid-color RGBA8 image. |
 | `AccelerationMode` | `src/compute/backend.rs:5` | Enum of requested compute modes: `Auto` (default), `Cpu`, `Gpu`. |
 | `AccelerationMode::fmt` (Display) | `src/compute/backend.rs:12` | Formats the mode as `"auto"`/`"cpu"`/`"gpu"`. |
 | `BackendCaps` | `src/compute/backend.rs:23` | Reported capabilities of a selected backend (name, GPU support, buffer size limits). |
@@ -476,5 +476,5 @@ Fresh resident GPU exact evaluations use `ExactMemoryPlan` for both backend sele
 | Symbol | Source | Contract |
 |---|---|---|
 | `ExactMemoryPlan` | `src/compute/exact_memory.rs:20` | Fresh resident exact logical GPU peak and budget-selected partial batch. |
-| `ExactMemoryPlan::new` | `src/compute/exact_memory.rs:27` | Checked resource arithmetic and batch selection; may still require check_budget for infeasible minima. |
-| `ExactMemoryPlan::check_budget` | `src/compute/exact_memory.rs:69` | Enforce configured MiB cap before initialization. |
+| `ExactMemoryPlan::new` | `src/compute/exact_memory.rs:28` | Checked resource arithmetic and batch selection; may still require check_budget for infeasible minima. |
+| `ExactMemoryPlan::check_budget` | `src/compute/exact_memory.rs:71` | Enforce configured MiB cap before initialization. |

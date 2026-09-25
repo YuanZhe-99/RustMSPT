@@ -32,8 +32,8 @@ This page documents three `src/geometry/` submodules: `volume.rs` (mesh volume c
 | `mesh_distance_exact` | `src/geometry/collision.rs:411` | Convenience wrapper: builds bbox/shape then computes distance. |
 | `generate_periodic_ghosts` | `src/geometry/collision.rs:425` | Generates translated ghost copies of a mesh for periodic boundary collision. |
 | `simulate_forging_ffd` | `src/geometry/forging.rs:10` | Simple Z-axis FFD compression with lateral bulge. |
-| `simulate_forging_ffd_with_tracking` | `src/geometry/forging.rs:43` | Axis-configurable FFD forging with void densification and ROI bbox tracking. |
-| `forge_owned` | `src/geometry/forging.rs:66` | Ownership-consuming FFD and ROI transform. |
+| `simulate_forging_ffd_with_tracking` | `src/geometry/forging.rs:44` | Axis-configurable FFD forging with void densification and ROI bbox tracking. |
+| `forge_owned` | `src/geometry/forging.rs:68` | Ownership-consuming FFD and ROI transform. |
 
 ## volume.rs
 

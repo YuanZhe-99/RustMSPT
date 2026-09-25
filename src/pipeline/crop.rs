@@ -1,8 +1,8 @@
 use crate::config::CropConfig;
 use crate::error::{Result, RustMsptError};
 use crate::io::{
-    load_raw_folder, load_tiff_or_folder_with_range, save_tiff_or_folder_with_ext, ByteOrder,
-    RawFolderSpec, Volume3D, VolumeNumericType,
+    load_raw_folder_typed, load_tiff_or_folder_typed_with_range, save_tiff_or_folder_with_ext,
+    AnyVolume, ByteOrder, RawFolderSpec, Volume3D, VolumeNumericType, Voxel,
 };
 use crate::pipeline::Pipeline;
 use nalgebra::{Matrix3, SymmetricEigen, Vector3};
@@ -22,12 +22,12 @@ enum InterpolationMode {
 }
 
 // AI-FUNC-SUMMARY: Check lossless i64-to-i32 upload and, for trilinear interpolation, exact f32 input representation; nearest retains all i32 label bits.
-fn gpu_crop_values_supported(volume: &Volume3D, background: i64, mode: InterpolationMode) -> bool {
+fn gpu_crop_values_supported<T: Voxel>(volume: &Volume3D<T>, background: i64, mode: InterpolationMode) -> bool {
     let supported = |value: i64| {
         i32::try_from(value).is_ok()
             && (matches!(mode, InterpolationMode::Nearest) || (value as f32) as i64 == value)
     };
-    supported(background) && volume.data.iter().copied().all(supported)
+    supported(background) && volume.data.iter().all(|&value| supported(value.to_i64()))
 }
 
 // AI-FUNC-SUMMARY: Parse byte order config string into ByteOrder enum; returns ByteOrder; side effects: None.
@@ -65,10 +65,10 @@ fn parse_interpolation_mode(value: Option<&str>) -> Result<InterpolationMode> {
 // AI-FUNC-SUMMARY:
 // Purpose: Read input volume according to crop config type (raw or tiff).
 // Inputs: CropConfig with input type, path, slice range, and optional raw spec.
-// Returns: Loaded Volume3D.
+// Returns: Loaded volume in the width of its file type (2 bytes per voxel for 16-bit input, not 8).
 // Side effects: Reads files from disk.
 // Notes: Returns InvalidConfig for unsupported input types.
-fn load_input_volume(config: &CropConfig) -> Result<Volume3D> {
+fn load_input_volume(config: &CropConfig) -> Result<AnyVolume> {
     let input = &config.input;
     let path = Path::new(&input.path);
     let slice_start = input.slice_start.unwrap_or(-1) as isize;
@@ -92,9 +92,9 @@ fn load_input_volume(config: &CropConfig) -> Result<Volume3D> {
                 slice_start,
                 slice_end,
             };
-            load_raw_folder(&spec)
+            load_raw_folder_typed(&spec)
         }
-        "tiff" | "tif" => load_tiff_or_folder_with_range(path, slice_start, slice_end),
+        "tiff" | "tif" => load_tiff_or_folder_typed_with_range(path, slice_start, slice_end),
         other => Err(RustMsptError::InvalidConfig(format!(
             "Unsupported crop input.type: {other}. Expected raw or tiff"
         ))),
@@ -107,8 +107,8 @@ fn voxel_index(width: usize, height: usize, x: usize, y: usize, z: usize) -> usi
 }
 
 // AI-FUNC-SUMMARY: Sample a voxel value at integer coordinates, returning background value when out of bounds; returns i64; side effects: None.
-fn sample_voxel_or_background(
-    volume: &Volume3D,
+fn sample_voxel_or_background<T: Voxel>(
+    volume: &Volume3D<T>,
     background: i64,
     x: isize,
     y: isize,
@@ -130,11 +130,11 @@ fn sample_voxel_or_background(
         y as usize,
         z as usize,
     );
-    volume.data[idx]
+    volume.data[idx].to_i64()
 }
 
 // AI-FUNC-SUMMARY: Sample source volume with nearest-neighbor interpolation at floating-point coordinates; returns i64; side effects: None.
-fn sample_nearest(volume: &Volume3D, background: i64, src_x: f64, src_y: f64, src_z: f64) -> i64 {
+fn sample_nearest<T: Voxel>(volume: &Volume3D<T>, background: i64, src_x: f64, src_y: f64, src_z: f64) -> i64 {
     let x = src_x.round() as isize;
     let y = src_y.round() as isize;
     let z = src_z.round() as isize;
@@ -142,7 +142,7 @@ fn sample_nearest(volume: &Volume3D, background: i64, src_x: f64, src_y: f64, sr
 }
 
 // AI-FUNC-SUMMARY: Sample source volume with trilinear interpolation at floating-point coordinates; returns i64 (rounded); side effects: None.
-fn sample_trilinear(volume: &Volume3D, background: i64, src_x: f64, src_y: f64, src_z: f64) -> i64 {
+fn sample_trilinear<T: Voxel>(volume: &Volume3D<T>, background: i64, src_x: f64, src_y: f64, src_z: f64) -> i64 {
     let x0 = src_x.floor() as isize;
     let y0 = src_y.floor() as isize;
     let z0 = src_z.floor() as isize;
@@ -198,7 +198,7 @@ fn float_bounds_to_inclusive_i64(min_v: f64, max_v: f64, eps: f64) -> (isize, is
 // Inputs: volume, background value, and shell thickness in voxels.
 // Returns: Ratio in [0,1] where higher means stronger edge artifacts.
 // Side effects: None.
-fn boundary_non_bg_ratio(volume: &Volume3D, background: i64, thickness: usize) -> f64 {
+fn boundary_non_bg_ratio<T: Voxel>(volume: &Volume3D<T>, background: i64, thickness: usize) -> f64 {
     if thickness == 0 {
         return 0.0;
     }
@@ -220,7 +220,7 @@ fn boundary_non_bg_ratio(volume: &Volume3D, background: i64, thickness: usize) -
                 }
                 total += 1;
                 let idx = voxel_index(volume.width, volume.height, x, y, z);
-                if volume.data[idx] != background {
+                if volume.data[idx].to_i64() != background {
                     non_bg += 1;
                 }
             }
@@ -239,7 +239,7 @@ fn boundary_non_bg_ratio(volume: &Volume3D, background: i64, thickness: usize) -
 // Inputs: rotated-cropped volume and background value.
 // Returns: Suggested trim pixels in [0,2].
 // Side effects: None.
-fn infer_trim_pixels(volume: &Volume3D, background: i64) -> usize {
+fn infer_trim_pixels<T: Voxel>(volume: &Volume3D<T>, background: i64) -> usize {
     let r1 = boundary_non_bg_ratio(volume, background, 1);
     let r2 = boundary_non_bg_ratio(volume, background, 2);
 
@@ -257,9 +257,9 @@ fn infer_trim_pixels(volume: &Volume3D, background: i64) -> usize {
 // Inputs: config value (-1=auto, 0/1/2=explicit), current volume, and background value.
 // Returns: Trim pixel count clamped to [0, min(2, volume_half_size)].
 // Side effects: None.
-fn resolve_trim_pixels(
+fn resolve_trim_pixels<T: Voxel>(
     config_value: Option<i32>,
-    volume: &Volume3D,
+    volume: &Volume3D<T>,
     background: i64,
 ) -> Result<usize> {
     let requested = match config_value.unwrap_or(0) {
@@ -284,7 +284,7 @@ fn resolve_trim_pixels(
 // Inputs: owned source volume and trim pixels.
 // Returns: Trimmed volume with unchanged depth and numeric type, or an invalid-shape error.
 // Side effects: Moves retained rows toward the start and truncates the data without reallocating.
-fn trim_volume_border(mut volume: Volume3D, trim: usize) -> Result<Volume3D> {
+fn trim_volume_border<T: Voxel>(mut volume: Volume3D<T>, trim: usize) -> Result<Volume3D<T>> {
     if trim == 0 {
         return Ok(volume);
     }
@@ -310,19 +310,19 @@ fn trim_volume_border(mut volume: Volume3D, trim: usize) -> Result<Volume3D> {
 }
 
 // AI-FUNC-SUMMARY: Visit each boundary voxel once in z-major order without scanning interior voxels; the caller supplies a specialized counter, and collapsed dimensions do not duplicate edges/corners.
-fn for_each_boundary_value(volume: &Volume3D, mut record: impl FnMut(i64)) {
+fn for_each_boundary_value<T: Voxel>(volume: &Volume3D<T>, mut record: impl FnMut(i64)) {
     for z in 0..volume.depth {
         let slab = z * volume.width * volume.height;
         if z == 0 || z + 1 == volume.depth {
-            for &value in &volume.data[slab..slab + volume.width * volume.height] { record(value); }
+            for &value in &volume.data[slab..slab + volume.width * volume.height] { record(value.to_i64()); }
         } else {
             for y in 0..volume.height {
                 let row = slab + y * volume.width;
                 if y == 0 || y + 1 == volume.height {
-                    for &value in &volume.data[row..row + volume.width] { record(value); }
+                    for &value in &volume.data[row..row + volume.width] { record(value.to_i64()); }
                 } else {
-                    record(volume.data[row]);
-                    if volume.width > 1 { record(volume.data[row + volume.width - 1]); }
+                    record(volume.data[row].to_i64());
+                    if volume.width > 1 { record(volume.data[row + volume.width - 1].to_i64()); }
                 }
             }
         }
@@ -335,7 +335,7 @@ fn for_each_boundary_value(volume: &Volume3D, mut record: impl FnMut(i64)) {
 // Returns: The modal boundary voxel value as i64, choosing the smallest tied value.
 // Notes: Bounded dense counters cover common 8/16-bit types; sparse spill preserves arbitrary i64 values and large types.
 // Side effects: None.
-fn detect_background_mode(volume: &Volume3D) -> i64 {
+fn detect_background_mode<T: Voxel>(volume: &Volume3D<T>) -> i64 {
     let mut counts: HashMap<i64, usize> = HashMap::new();
     if volume.width == 0 || volume.height == 0 || volume.depth == 0 { return 0; }
     // Dense counters avoid per-voxel hashing for common integer image types.
@@ -382,8 +382,8 @@ type PcaEstimate = (Matrix3<f64>, Vector3<f64>, Vector3<f64>, Vector3<f64>, usiz
 // Returns: Tuple of (rotation matrix, centroid, rotated min, rotated max, foreground voxel count).
 // Side effects: None.
 // Notes: One statistics pass (exact per-row integer moments merged with Chan's formula inside each fixed 65536-voxel block, blocks merged in ascending order) replaces the centroid and covariance passes; a second pass projects bounds. Worker count never changes the result. The frame comes from pca_frame (canonical basis for near-degenerate eigenspaces, right-handed). Returns error if no foreground voxels found.
-fn estimate_pca_bbox(
-    volume: &Volume3D,
+fn estimate_pca_bbox<T: Voxel>(
+    volume: &Volume3D<T>,
     background: i64,
 ) -> Result<PcaEstimate> {
     let partials = foreground_row_blocks(volume, MomentState::default, |state, x0, y, z, row| {
@@ -391,7 +391,7 @@ fn estimate_pca_bbox(
         let mut sum = 0u128;
         let mut sum_sq = 0u128;
         for (x, &value) in row.iter().enumerate() {
-            if value != background {
+            if value.to_i64() != background {
                 let x = (x0 + x) as u128;
                 count += 1;
                 sum += x;
@@ -546,7 +546,7 @@ fn pca_frame(cov: Matrix3<f64>) -> Matrix3<f64> {
 }
 
 // AI-FUNC-SUMMARY: Project every foreground voxel into the rotated frame about the centroid over fixed 65536-voxel blocks and return the (min, max) corners; min/max merges are order-independent; side effects: None.
-fn projected_bounds(volume: &Volume3D, background: i64, rot: &Matrix3<f64>, centroid: &Vector3<f64>) -> (Vector3<f64>, Vector3<f64>) {
+fn projected_bounds<T: Voxel>(volume: &Volume3D<T>, background: i64, rot: &Matrix3<f64>, centroid: &Vector3<f64>) -> (Vector3<f64>, Vector3<f64>) {
     let inv = rot.transpose();
     let empty_bounds = || (Vector3::repeat(f64::INFINITY), Vector3::repeat(f64::NEG_INFINITY));
     let partials = foreground_blocks(volume, background, empty_bounds, |(min, max), p| {
@@ -561,8 +561,8 @@ fn projected_bounds(volume: &Volume3D, background: i64, rot: &Matrix3<f64>, cent
 
 #[cfg(test)]
 // AI-FUNC-SUMMARY: Previous fixed-block three-pass PCA (centroid pass, centered covariance pass, bounds pass) retained as the oracle for the one-pass moment merge; uses the same pca_frame.
-fn estimate_pca_bbox_three_pass(
-    volume: &Volume3D,
+fn estimate_pca_bbox_three_pass<T: Voxel>(
+    volume: &Volume3D<T>,
     background: i64,
 ) -> Result<PcaEstimate> {
     let partials = foreground_blocks(volume, background, || (0usize, Vector3::zeros()), |state, p| {
@@ -587,13 +587,13 @@ fn estimate_pca_bbox_three_pass(
 }
 
 // AI-FUNC-SUMMARY: Scan fixed 65536-voxel blocks in parallel and hand each contiguous row segment (start x, y, z, values) to the accumulator in source order, collecting partials by block index regardless of worker count.
-fn foreground_row_blocks<T: Send>(
-    volume: &Volume3D,
-    initial: impl Fn() -> T + Sync + Send,
-    accumulate: impl Fn(&mut T, usize, usize, usize, &[i64]) + Sync + Send,
-) -> Vec<T> {
+fn foreground_row_blocks<A: Send, T: Voxel>(
+    volume: &Volume3D<T>,
+    initial: impl Fn() -> A + Sync + Send,
+    accumulate: impl Fn(&mut A, usize, usize, usize, &[T]) + Sync + Send,
+) -> Vec<A> {
     const BLOCK: usize = 65536;
-    let scan = |(block, values): (usize, &[i64])| {
+    let scan = |(block, values): (usize, &[T])| {
         let mut result = initial();
         let mut offset = 0;
         while offset < values.len() {
@@ -617,23 +617,23 @@ fn foreground_row_blocks<T: Send>(
 }
 
 // AI-FUNC-SUMMARY: Scan fixed 65536-voxel blocks in parallel, visiting foreground positions in source order and collecting partials by block index regardless of worker count.
-fn foreground_blocks<T: Send>(
-    volume: &Volume3D,
+fn foreground_blocks<A: Send, T: Voxel>(
+    volume: &Volume3D<T>,
     background: i64,
-    initial: impl Fn() -> T + Sync + Send,
-    accumulate: impl Fn(&mut T, Vector3<f64>) + Sync + Send,
-) -> Vec<T> {
+    initial: impl Fn() -> A + Sync + Send,
+    accumulate: impl Fn(&mut A, Vector3<f64>) + Sync + Send,
+) -> Vec<A> {
     foreground_row_blocks(volume, initial, |result, x0, y, z, row| {
         for (x, &value) in row.iter().enumerate() {
-            if value != background { accumulate(result, Vector3::new((x0 + x) as f64, y as f64, z as f64)); }
+            if value.to_i64() != background { accumulate(result, Vector3::new((x0 + x) as f64, y as f64, z as f64)); }
         }
     })
 }
 
 #[cfg(test)]
 // AI-FUNC-SUMMARY: Original serial three-pass PCA retained as a numerical oracle for fixed-block reductions.
-fn estimate_pca_bbox_serial(
-    volume: &Volume3D,
+fn estimate_pca_bbox_serial<T: Voxel>(
+    volume: &Volume3D<T>,
     background: i64,
 ) -> Result<PcaEstimate> {
     let mut count: usize = 0;
@@ -643,7 +643,7 @@ fn estimate_pca_bbox_serial(
         for y in 0..volume.height {
             for x in 0..volume.width {
                 let idx = voxel_index(volume.width, volume.height, x, y, z);
-                if volume.data[idx] == background {
+                if volume.data[idx].to_i64() == background {
                     continue;
                 }
                 count += 1;
@@ -665,7 +665,7 @@ fn estimate_pca_bbox_serial(
         for y in 0..volume.height {
             for x in 0..volume.width {
                 let idx = voxel_index(volume.width, volume.height, x, y, z);
-                if volume.data[idx] == background {
+                if volume.data[idx].to_i64() == background {
                     continue;
                 }
                 let d = Vector3::new(x as f64, y as f64, z as f64) - centroid;
@@ -710,7 +710,7 @@ fn estimate_pca_bbox_serial(
         for y in 0..volume.height {
             for x in 0..volume.width {
                 let idx = voxel_index(volume.width, volume.height, x, y, z);
-                if volume.data[idx] == background {
+                if volume.data[idx].to_i64() == background {
                     continue;
                 }
                 let p = Vector3::new(x as f64, y as f64, z as f64);
@@ -728,21 +728,27 @@ fn estimate_pca_bbox_serial(
     Ok((rot, centroid, min_v, max_v, count))
 }
 
+// AI-FUNC-SUMMARY: Store a resampled value back in the input's sample type; returns T; side effects: None.
+// Notes: Always fits: the background is one of the input's own values, nearest returns an input value or the background, and trilinear rounds a convex combination of such values, which stays inside their integer range. A failure here is a broken invariant, not bad input.
+fn narrow_sample<T: Voxel>(value: i64) -> T {
+    T::from_i64(value).expect("resampled value lies within the input's sample range")
+}
+
 // AI-FUNC-SUMMARY:
 // Purpose: Rotate the full volume and crop to the rotated foreground bounding box, producing a new axis-aligned volume.
 // Inputs: source volume, background value, rotation matrix, centroid, rotated min/max bounds, and interpolation mode.
 // Returns: Cropped, axis-aligned Volume3D.
 // Side effects: None.
 // Notes: Parallelizes over z-slices via rayon. Maps each output voxel back to source coordinates using the inverse rotation.
-fn rotate_and_crop(
-    volume: &Volume3D,
+fn rotate_and_crop<T: Voxel>(
+    volume: &Volume3D<T>,
     background: i64,
     rot: &Matrix3<f64>,
     centroid: &Vector3<f64>,
     min_v: &Vector3<f64>,
     max_v: &Vector3<f64>,
     interpolation_mode: InterpolationMode,
-) -> Volume3D {
+) -> Volume3D<T> {
     let eps = 1e-3;
     let (x0, x1) = float_bounds_to_inclusive_i64(min_v.x, max_v.x, eps);
     let (y0, y1) = float_bounds_to_inclusive_i64(min_v.y, max_v.y, eps);
@@ -752,7 +758,7 @@ fn rotate_and_crop(
     let out_h = (y1 - y0 + 1).max(1) as usize;
     let out_d = (z1 - z0 + 1).max(1) as usize;
 
-    let mut data = vec![background; out_w * out_h * out_d];
+    let mut data = vec![narrow_sample::<T>(background); out_w * out_h * out_d];
     // Preserve cheap slice loops when depth already exposes enough parallelism.
     // Otherwise use row-aligned tiles to make shallow volumes share the pool.
     if out_d >= rayon::current_num_threads() {
@@ -765,14 +771,14 @@ fn rotate_and_crop(
                     for x in 0..out_w {
                         let src =
                             rot * Vector3::new(x0 as f64 + x as f64, y_coord, z_coord) + centroid;
-                        slab[y * out_w + x] = match interpolation_mode {
+                        slab[y * out_w + x] = narrow_sample(match interpolation_mode {
                             InterpolationMode::Nearest => {
                                 sample_nearest(volume, background, src.x, src.y, src.z)
                             }
                             InterpolationMode::Trilinear => {
                                 sample_trilinear(volume, background, src.x, src.y, src.z)
                             }
-                        };
+                        });
                     }
                 }
             });
@@ -788,14 +794,14 @@ fn rotate_and_crop(
                     for (x, value) in values.iter_mut().enumerate() {
                         let local = Vector3::new(x0 as f64 + x as f64, y_coord, z_coord);
                         let src = rot * local + centroid;
-                        *value = match interpolation_mode {
+                        *value = narrow_sample(match interpolation_mode {
                             InterpolationMode::Nearest => {
                                 sample_nearest(volume, background, src.x, src.y, src.z)
                             }
                             InterpolationMode::Trilinear => {
                                 sample_trilinear(volume, background, src.x, src.y, src.z)
                             }
-                        };
+                        });
                     }
                 }
             });
@@ -1128,8 +1134,8 @@ fn plan_crop_gpu_levels(
 //        the grown block fits the budget, and only then is it an error. Only available with feature "gpu".
 #[cfg(feature = "gpu")]
 #[allow(clippy::too_many_arguments)]
-fn rotate_and_crop_gpu(
-    volume: &Volume3D,
+fn rotate_and_crop_gpu<T: Voxel>(
+    volume: &Volume3D<T>,
     background: i64,
     rot: &Matrix3<f64>,
     centroid: &Vector3<f64>,
@@ -1137,7 +1143,7 @@ fn rotate_and_crop_gpu(
     max_v: &Vector3<f64>,
     interpolation_mode: InterpolationMode,
     budget: Option<u64>,
-) -> std::result::Result<(Volume3D, usize), String> {
+) -> std::result::Result<(Volume3D<T>, usize), String> {
     rotate_and_crop_gpu_with(volume, background, rot, centroid, min_v, max_v, interpolation_mode, budget, 0, None)
         .map(|(volume, tiles, _)| (volume, tiles))
 }
@@ -1147,8 +1153,8 @@ fn rotate_and_crop_gpu(
 // drive the halo-guard retry path; a forced tile lets tests cover every tile shape whatever the planner prefers.
 #[cfg(feature = "gpu")]
 #[allow(clippy::too_many_arguments)]
-fn rotate_and_crop_gpu_with(
-    volume: &Volume3D,
+fn rotate_and_crop_gpu_with<T: Voxel>(
+    volume: &Volume3D<T>,
     background: i64,
     rot: &Matrix3<f64>,
     centroid: &Vector3<f64>,
@@ -1158,7 +1164,7 @@ fn rotate_and_crop_gpu_with(
     budget: Option<u64>,
     first_block_shrink: usize,
     forced_tile: Option<[usize; 3]>,
-) -> std::result::Result<(Volume3D, usize, usize), String> {
+) -> std::result::Result<(Volume3D<T>, usize, usize), String> {
     let eps = 1e-3;
     let (x0, x1) = float_bounds_to_inclusive_i64(min_v.x, max_v.x, eps);
     let (y0, y1) = float_bounds_to_inclusive_i64(min_v.y, max_v.y, eps);
@@ -1219,7 +1225,8 @@ fn rotate_and_crop_gpu_with(
         .iter()
         .try_fold(1usize, |acc, &d| acc.checked_mul(d))
         .ok_or("crop GPU output size overflows")?;
-    let mut data = vec![background; out_total];
+    let fill = T::from_i64(background).ok_or("crop GPU background is outside the input type")?;
+    let mut data = vec![fill; out_total];
     let (out_w, out_h) = (out_usize[0], out_usize[1]);
     let mut block_values: Vec<i32> = Vec::new();
     let mut halo_retries = 0usize;
@@ -1250,7 +1257,7 @@ fn rotate_and_crop_gpu_with(
                         let row = voxel_index(volume.width, volume.height, bx, y, z);
                         for &value in &volume.data[row..row + bw] {
                             block_values.push(
-                                i32::try_from(value).map_err(|_| "crop GPU input exceeds i32")?,
+                                i32::try_from(value.to_i64()).map_err(|_| "crop GPU input exceeds i32")?,
                             );
                         }
                     }
@@ -1293,7 +1300,8 @@ fn rotate_and_crop_gpu_with(
             let z = lo[2] + row_index / tile_dims[1] as usize;
             let start = voxel_index(out_w, out_h, lo[0], y, z);
             for (slot, &value) in data[start..start + row_len].iter_mut().zip(row) {
-                *slot = i64::from(value);
+                *slot = T::from_i64(i64::from(value))
+                    .ok_or("crop GPU output is outside the input type")?;
             }
         }
         Ok::<(), String>(())
@@ -1359,11 +1367,35 @@ impl CropPipeline {
     fn run_in_pool(&self) -> Result<()> {
         let requested = crate::compute::policy::configured_mode(&self.config.acceleration)?;
         let mut timer = crate::pipeline::timing::StageTimer::start("crop");
-        let input_volume = load_input_volume(&self.config)?;
+        let loaded = load_input_volume(&self.config)?;
         timer.stage("load");
+        match loaded {
+            AnyVolume::U8(volume) => self.crop_typed(volume, requested, timer),
+            AnyVolume::I8(volume) => self.crop_typed(volume, requested, timer),
+            AnyVolume::U16(volume) => self.crop_typed(volume, requested, timer),
+            AnyVolume::I16(volume) => self.crop_typed(volume, requested, timer),
+            AnyVolume::U32(volume) => self.crop_typed(volume, requested, timer),
+            AnyVolume::I32(volume) => self.crop_typed(volume, requested, timer),
+        }
+    }
+}
+
+impl CropPipeline {
+    // AI-FUNC-SUMMARY:
+    // Purpose: Run every crop stage after loading on a volume kept in its file's own sample type.
+    // Inputs: the loaded volume, the resolved acceleration mode and the running stage timer.
+    // Returns: Ok(()) after writing the output, or the first stage error.
+    // Side effects: Prints stage information, may initialize a GPU device, writes the output TIFF(s).
+    // Notes: Monomorphised once per sample type, so every hot loop reads `T` directly; the output keeps the input's type and width, which is what cut crop's peak memory to about a quarter for 16-bit input.
+    fn crop_typed<T: Voxel>(
+        &self,
+        input_volume: Volume3D<T>,
+        requested: crate::compute::backend::AccelerationMode,
+        mut timer: crate::pipeline::timing::StageTimer,
+    ) -> Result<()> {
         println!(
-            "[Info] Crop input loaded: shape=({},{},{})",
-            input_volume.width, input_volume.height, input_volume.depth
+            "[Info] Crop input loaded: shape=({},{},{}) type={:?}",
+            input_volume.width, input_volume.height, input_volume.depth, input_volume.numeric_type
         );
 
         timer.restart();
@@ -1481,7 +1513,7 @@ impl CropPipeline {
             None
         };
         #[cfg(not(feature = "gpu"))]
-        let attempted: Option<std::result::Result<(Volume3D, usize), String>> = None;
+        let attempted: Option<std::result::Result<(Volume3D<T>, usize), String>> = None;
         let (cropped, backend) = match attempted {
             Some(Ok((volume, _tiles))) => (volume, "gpu"),
             Some(Err(error)) if !self.config.acceleration.cpu_fallback => {
@@ -1889,7 +1921,7 @@ mod performance_tests {
             slice_start: -1,
             slice_end: -1,
         };
-        let volume = load_raw_folder(&spec).unwrap();
+        let volume = crate::io::load_raw_folder(&spec).unwrap();
         let background = detect_background_mode(&volume);
         let serial = estimate_pca_bbox_serial(&volume, background).unwrap();
         let online = estimate_pca_bbox(&volume, background).unwrap();

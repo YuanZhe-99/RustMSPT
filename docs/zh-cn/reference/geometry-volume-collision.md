@@ -32,8 +32,8 @@
 | `mesh_distance_exact` | `src/geometry/collision.rs:411` | 便捷封装：构建包围盒/形状后计算距离。 |
 | `generate_periodic_ghosts` | `src/geometry/collision.rs:425` | 为周期边界碰撞生成网格的平移镜像副本。 |
 | `simulate_forging_ffd` | `src/geometry/forging.rs:10` | 简单的 Z 轴 FFD 压缩加侧向鼓起。 |
-| `simulate_forging_ffd_with_tracking` | `src/geometry/forging.rs:43` | 轴可配置的 FFD 锻造，带孔隙致密化与 ROI 包围盒跟踪。 |
-| `forge_owned` | `src/geometry/forging.rs:66` | Ownership-consuming FFD and ROI transform. |
+| `simulate_forging_ffd_with_tracking` | `src/geometry/forging.rs:44` | 轴可配置的 FFD 锻造，带孔隙致密化与 ROI 包围盒跟踪。 |
+| `forge_owned` | `src/geometry/forging.rs:68` | Ownership-consuming FFD and ROI transform. |
 
 ## volume.rs
 

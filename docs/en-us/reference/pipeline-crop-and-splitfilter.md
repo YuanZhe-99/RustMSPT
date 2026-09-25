@@ -7,7 +7,7 @@ Covers the `crop` pipeline (`src/pipeline/crop.rs`) — background detection, PC
 | Item | Location | Summary |
 |---|---|---|
 | `gpu_crop_values_supported` | `src/pipeline/crop.rs:25` | Check exact integer representation for GPU interpolation. |
-| `CropPipeline::run_in_pool` | `src/pipeline/crop.rs:1359` | Execute crop stages within the configured pool and report completed-stage wall times. |
+| `CropPipeline::run_in_pool` | `src/pipeline/crop.rs:1367` | Execute crop stages within the configured pool and report completed-stage wall times. |
 | `CropPipeline` (struct) | `src/pipeline/crop.rs:14` | Holds `CropConfig` for the crop pipeline. |
 | `InterpolationMode` (enum) | `src/pipeline/crop.rs:19` | Nearest vs. trilinear resampling mode used during rotate+crop. |
 | `parse_byte_order` | `src/pipeline/crop.rs:34` | Parses `little`/`big` (or `le`/`be`) into a `ByteOrder`. |
@@ -32,17 +32,17 @@ Covers the `crop` pipeline (`src/pipeline/crop.rs`) — background detection, PC
 | `projected_bounds` | `src/pipeline/crop.rs:549` | Fixed-block rotated-frame foreground bounds. |
 | `foreground_row_blocks` | `src/pipeline/crop.rs:590` | Fixed-block scan handing contiguous row segments to an accumulator. |
 | `estimate_pca_bbox_three_pass` | `src/pipeline/crop.rs:564` | Test-only previous three-pass fixed-block PCA oracle. |
-| `rotate_and_crop` | `src/pipeline/crop.rs:737` | CPU, rayon-parallel rotate-and-crop of the volume into an axis-aligned output. |
-| `rotate_and_crop_gpu` | `src/pipeline/crop.rs:1131` | Budget-planned, output-tiled GPU rotate-and-crop via `GpuVolumeTransformPipeline` (feature `gpu`). |
-| `CropSourceBlock` | `src/pipeline/crop.rs:818` | Clamped source sub-block (origin/dims) one output tile may read. |
-| `CropTilePlan` | `src/pipeline/crop.rs:847` | Chosen tile shape, tile count, retained maxima and peak logical GPU bytes. |
-| `CropTilePlanError` | `src/pipeline/crop.rs:859` | Planning refusal with an optional lower bound on the required bytes. |
-| `crop_tile_source_block` | `src/pipeline/crop.rs:871` | Source AABB of a tile's 8 inverse-mapped corners plus interpolation halo and f32 margin. |
-| `crop_gpu_peak_bytes` | `src/pipeline/crop.rs:920` | Logical GPU peak for retained max block/tile, queued upload, staging, params and guard. |
-| `for_each_crop_tile` | `src/pipeline/crop.rs:930` | Visits whole-output tiles in z, y, x order. |
-| `evaluate_crop_tiling` | `src/pipeline/crop.rs:957` | Checks one tile shape against the budget and device buffer limit. |
-| `plan_crop_gpu_tiles` | `src/pipeline/crop.rs:1023` | Largest z-slab / row / x-run tiling that fits the budget and limits. |
-| `CropPipeline::run` | `src/pipeline/crop.rs:1339` | Orchestrates load → background detect → PCA bbox → rotate+crop (GPU or CPU) → edge trim → save TIFF. |
+| `rotate_and_crop` | `src/pipeline/crop.rs:743` | CPU, rayon-parallel rotate-and-crop of the volume into an axis-aligned output. |
+| `rotate_and_crop_gpu` | `src/pipeline/crop.rs:1137` | Budget-planned, output-tiled GPU rotate-and-crop via `GpuVolumeTransformPipeline` (feature `gpu`). |
+| `CropSourceBlock` | `src/pipeline/crop.rs:824` | Clamped source sub-block (origin/dims) one output tile may read. |
+| `CropTilePlan` | `src/pipeline/crop.rs:853` | Chosen tile shape, tile count, retained maxima and peak logical GPU bytes. |
+| `CropTilePlanError` | `src/pipeline/crop.rs:865` | Planning refusal with an optional lower bound on the required bytes. |
+| `crop_tile_source_block` | `src/pipeline/crop.rs:877` | Source AABB of a tile's 8 inverse-mapped corners plus interpolation halo and f32 margin. |
+| `crop_gpu_peak_bytes` | `src/pipeline/crop.rs:926` | Logical GPU peak for retained max block/tile, queued upload, staging, params and guard. |
+| `for_each_crop_tile` | `src/pipeline/crop.rs:936` | Visits whole-output tiles in z, y, x order. |
+| `evaluate_crop_tiling` | `src/pipeline/crop.rs:963` | Checks one tile shape against the budget and device buffer limit. |
+| `plan_crop_gpu_tiles` | `src/pipeline/crop.rs:1029` | Largest z-slab / row / x-run tiling that fits the budget and limits. |
+| `CropPipeline::run` | `src/pipeline/crop.rs:1347` | Orchestrates load → background detect → PCA bbox → rotate+crop (GPU or CPU) → edge trim → save TIFF. |
 | `SplitFilterPipeline` (struct) | `src/pipeline/split_filter.rs:13` | Holds `SplitFilterConfig` for the split-filter pipeline. |
 | `VolumeStats` (struct) | `src/pipeline/split_filter.rs:18` | Min/max/mean/median summary of kept-particle volumes. |
 | `volume_stats_for_kept` | `src/pipeline/split_filter.rs:31` | Computes `VolumeStats` over particles whose `keep` flag is true. |
@@ -118,11 +118,11 @@ CT-volume crop pipeline. Loads a volume, detects the background intensity, compu
 
 #### load_input_volume
 
-- **Signature:** `fn load_input_volume(config: &CropConfig) -> Result<Volume3D>`
+- **Signature:** `fn load_input_volume(config: &CropConfig) -> Result<AnyVolume>`
 - **Source:** `src/pipeline/crop.rs:71`
 - **Purpose:** Load the crop pipeline's input volume according to `config.input.type`.
 - **Parameters:** `config` — the full `CropConfig`; reads `input.type` (`"raw"` or `"tiff"`/`"tif"`), `input.path`, `input.slice_start`/`slice_end` (defaulting to -1, meaning "no clamp"), and, for raw input, `input.raw` (width/height/bits/signed/byte_order).
-- **Returns:** A loaded `Volume3D`.
+- **Returns:** The loaded volume in its file's own sample type (`AnyVolume`); `run_in_pool` matches it once and runs `CropPipeline::crop_typed::<T>`, so every later stage (background, PCA, resampling, GPU upload, trim, write) is monomorphised for `T` and the output keeps the input's type and width.
 - **Side effects:** Reads file(s) from disk (a folder of raw slices, or a TIFF file/folder).
 - **Notes:** Returns `RustMsptError::InvalidConfig` if `input.type=raw` but `input.raw` is missing, or if `input.type` is neither `raw` nor `tiff`/`tif`.
 

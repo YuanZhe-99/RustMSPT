@@ -22,13 +22,171 @@ pub enum ByteOrder {
     BigEndian,
 }
 
+/// A voxel sample type a volume can be stored in. The six file types store in their own width;
+/// `i64` is the wide type code that needs arbitrary values (placement labels, tests) uses.
+pub trait Voxel: Copy + PartialEq + Send + Sync + std::fmt::Debug + 'static {
+    // AI-FUNC-SUMMARY: Widen the sample to i64 exactly; returns i64; side effects: None.
+    fn to_i64(self) -> i64;
+    // AI-FUNC-SUMMARY: Narrow an i64 to this type; returns None when it does not fit; side effects: None.
+    fn from_i64(value: i64) -> Option<Self>;
+}
+
+macro_rules! impl_voxel {
+    ($($t:ty),*) => {$(
+        impl Voxel for $t {
+            fn to_i64(self) -> i64 { self as i64 }
+            fn from_i64(value: i64) -> Option<Self> { <$t>::try_from(value).ok() }
+        }
+    )*};
+}
+impl_voxel!(u8, i8, u16, i16, u32, i32, i64);
+
+/// A z-major voxel volume (`idx = z * width * height + y * width + x`) stored in `T`.
+/// `numeric_type` is the file type the values belong to; for a typed volume it matches `T`.
 #[derive(Debug, Clone)]
-pub struct Volume3D {
+pub struct Volume3D<T = i64> {
     pub width: usize,
     pub height: usize,
     pub depth: usize,
-    pub data: Vec<i64>,
+    pub data: Vec<T>,
     pub numeric_type: VolumeNumericType,
+}
+
+impl<T: Voxel> Volume3D<T> {
+    // AI-FUNC-SUMMARY: Widen every sample to i64 (one allocation of 8 bytes per voxel); returns Volume3D<i64>; side effects: consumes self.
+    pub fn into_i64(self) -> Volume3D<i64> {
+        Volume3D {
+            width: self.width,
+            height: self.height,
+            depth: self.depth,
+            data: self.data.into_iter().map(Voxel::to_i64).collect(),
+            numeric_type: self.numeric_type,
+        }
+    }
+}
+
+/// A loaded volume in the width of its file type, so a 16-bit CT costs 2 bytes per voxel rather than 8.
+#[derive(Debug, Clone)]
+pub enum AnyVolume {
+    U8(Volume3D<u8>),
+    I8(Volume3D<i8>),
+    U16(Volume3D<u16>),
+    I16(Volume3D<i16>),
+    U32(Volume3D<u32>),
+    I32(Volume3D<i32>),
+}
+
+impl AnyVolume {
+    // AI-FUNC-SUMMARY: Widen whatever type was loaded to a Volume3D<i64>; returns it; side effects: consumes self.
+    pub fn into_i64(self) -> Volume3D<i64> {
+        match self {
+            AnyVolume::U8(v) => v.into_i64(),
+            AnyVolume::I8(v) => v.into_i64(),
+            AnyVolume::U16(v) => v.into_i64(),
+            AnyVolume::I16(v) => v.into_i64(),
+            AnyVolume::U32(v) => v.into_i64(),
+            AnyVolume::I32(v) => v.into_i64(),
+        }
+    }
+
+    // AI-FUNC-SUMMARY: The file numeric type of the loaded volume; returns VolumeNumericType; side effects: None.
+    pub fn numeric_type(&self) -> VolumeNumericType {
+        match self {
+            AnyVolume::U8(_) => VolumeNumericType::U8,
+            AnyVolume::I8(_) => VolumeNumericType::I8,
+            AnyVolume::U16(_) => VolumeNumericType::U16,
+            AnyVolume::I16(_) => VolumeNumericType::I16,
+            AnyVolume::U32(_) => VolumeNumericType::U32,
+            AnyVolume::I32(_) => VolumeNumericType::I32,
+        }
+    }
+}
+
+/// Samples of one file type accumulated while loading; appending another type is an error.
+enum VoxelVec {
+    U8(Vec<u8>),
+    I8(Vec<i8>),
+    U16(Vec<u16>),
+    I16(Vec<i16>),
+    U32(Vec<u32>),
+    I32(Vec<i32>),
+}
+
+impl VoxelVec {
+    // AI-FUNC-SUMMARY: Append another buffer of the same sample type, reserving `reserve` more samples first when the buffer is empty; returns false on a type mismatch; side effects: moves the other buffer's samples in.
+    fn append(&mut self, other: VoxelVec) -> bool {
+        match (self, other) {
+            (VoxelVec::U8(a), VoxelVec::U8(mut b)) => a.append(&mut b),
+            (VoxelVec::I8(a), VoxelVec::I8(mut b)) => a.append(&mut b),
+            (VoxelVec::U16(a), VoxelVec::U16(mut b)) => a.append(&mut b),
+            (VoxelVec::I16(a), VoxelVec::I16(mut b)) => a.append(&mut b),
+            (VoxelVec::U32(a), VoxelVec::U32(mut b)) => a.append(&mut b),
+            (VoxelVec::I32(a), VoxelVec::I32(mut b)) => a.append(&mut b),
+            _ => return false,
+        }
+        true
+    }
+
+    // AI-FUNC-SUMMARY: Reserve exactly `additional` more samples, reporting allocation failure; returns Result; side effects: allocates.
+    fn try_reserve_exact(&mut self, additional: usize) -> std::result::Result<(), std::collections::TryReserveError> {
+        match self {
+            VoxelVec::U8(v) => v.try_reserve_exact(additional),
+            VoxelVec::I8(v) => v.try_reserve_exact(additional),
+            VoxelVec::U16(v) => v.try_reserve_exact(additional),
+            VoxelVec::I16(v) => v.try_reserve_exact(additional),
+            VoxelVec::U32(v) => v.try_reserve_exact(additional),
+            VoxelVec::I32(v) => v.try_reserve_exact(additional),
+        }
+    }
+
+    // AI-FUNC-SUMMARY: The file numeric type of these samples; returns VolumeNumericType; side effects: None.
+    fn numeric_type(&self) -> VolumeNumericType {
+        match self {
+            VoxelVec::U8(_) => VolumeNumericType::U8,
+            VoxelVec::I8(_) => VolumeNumericType::I8,
+            VoxelVec::U16(_) => VolumeNumericType::U16,
+            VoxelVec::I16(_) => VolumeNumericType::I16,
+            VoxelVec::U32(_) => VolumeNumericType::U32,
+            VoxelVec::I32(_) => VolumeNumericType::I32,
+        }
+    }
+
+    // AI-FUNC-SUMMARY: Wrap the samples as a typed volume of the given shape; returns AnyVolume; side effects: consumes self.
+    fn into_volume(self, width: usize, height: usize, depth: usize) -> AnyVolume {
+        let numeric_type = self.numeric_type();
+        macro_rules! wrap {
+            ($variant:ident, $data:expr) => {
+                AnyVolume::$variant(Volume3D { width, height, depth, data: $data, numeric_type })
+            };
+        }
+        match self {
+            VoxelVec::U8(v) => wrap!(U8, v),
+            VoxelVec::I8(v) => wrap!(I8, v),
+            VoxelVec::U16(v) => wrap!(U16, v),
+            VoxelVec::I16(v) => wrap!(I16, v),
+            VoxelVec::U32(v) => wrap!(U32, v),
+            VoxelVec::I32(v) => wrap!(I32, v),
+        }
+    }
+}
+
+impl AnyVolume {
+    // AI-FUNC-SUMMARY: Split a typed volume back into its shape and samples for concatenation; returns (width, height, depth, VoxelVec); side effects: consumes self.
+    fn into_parts(self) -> (usize, usize, usize, VoxelVec) {
+        macro_rules! parts {
+            ($v:expr, $variant:ident) => {
+                ($v.width, $v.height, $v.depth, VoxelVec::$variant($v.data))
+            };
+        }
+        match self {
+            AnyVolume::U8(v) => parts!(v, U8),
+            AnyVolume::I8(v) => parts!(v, I8),
+            AnyVolume::U16(v) => parts!(v, U16),
+            AnyVolume::I16(v) => parts!(v, I16),
+            AnyVolume::U32(v) => parts!(v, U32),
+            AnyVolume::I32(v) => parts!(v, I32),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -121,110 +279,69 @@ fn resolve_slice_range(total: usize, start: isize, end: isize) -> Result<(usize,
 }
 
 // AI-FUNC-SUMMARY:
-// Purpose: Decode one raw image slice from bytes according to bit depth (8/16/32), signedness, and byte order.
+// Purpose: Decode one raw image slice from bytes into samples of its own type according to bit depth (8/16/32), signedness, and byte order.
 // Inputs: raw bytes and numeric interpretation parameters.
-// Returns: Decoded scalar values as Vec<i64>.
+// Returns: Decoded samples as a VoxelVec of the matching type.
 // Side effects: None.
 // Notes: Returns InvalidConfig for unsupported bit depths or misaligned byte lengths.
-fn decode_raw_slice(bytes: &[u8], bits: u8, signed: bool, byte_order: ByteOrder) -> Result<Vec<i64>> {
-    let mut out = Vec::new();
-    match (bits, signed) {
-        (8, false) => {
-            out.reserve(bytes.len());
-            for &v in bytes {
-                out.push(v as i64);
-            }
+fn decode_raw_slice(bytes: &[u8], bits: u8, signed: bool, byte_order: ByteOrder) -> Result<VoxelVec> {
+    let aligned = |width: usize| -> Result<()> {
+        if bytes.len().is_multiple_of(width) {
+            Ok(())
+        } else {
+            Err(RustMsptError::InvalidConfig(format!(
+                "RAW byte length is not aligned to {}-bit samples",
+                width * 8
+            )))
         }
-        (8, true) => {
-            out.reserve(bytes.len());
-            for &v in bytes {
-                out.push((v as i8) as i64);
-            }
-        }
-        (16, false) => {
-            if !bytes.len().is_multiple_of(2) {
-                return Err(RustMsptError::InvalidConfig(
-                    "RAW byte length is not aligned to 16-bit samples".to_string(),
-                ));
-            }
-            out.reserve(bytes.len() / 2);
-            for chunk in bytes.chunks_exact(2) {
-                let v = match byte_order {
-                    ByteOrder::LittleEndian => u16::from_le_bytes([chunk[0], chunk[1]]),
-                    ByteOrder::BigEndian => u16::from_be_bytes([chunk[0], chunk[1]]),
-                };
-                out.push(v as i64);
-            }
-        }
-        (16, true) => {
-            if !bytes.len().is_multiple_of(2) {
-                return Err(RustMsptError::InvalidConfig(
-                    "RAW byte length is not aligned to 16-bit samples".to_string(),
-                ));
-            }
-            out.reserve(bytes.len() / 2);
-            for chunk in bytes.chunks_exact(2) {
-                let v = match byte_order {
-                    ByteOrder::LittleEndian => i16::from_le_bytes([chunk[0], chunk[1]]),
-                    ByteOrder::BigEndian => i16::from_be_bytes([chunk[0], chunk[1]]),
-                };
-                out.push(v as i64);
-            }
-        }
-        (32, false) => {
-            if !bytes.len().is_multiple_of(4) {
-                return Err(RustMsptError::InvalidConfig(
-                    "RAW byte length is not aligned to 32-bit samples".to_string(),
-                ));
-            }
-            out.reserve(bytes.len() / 4);
-            for chunk in bytes.chunks_exact(4) {
-                let v = match byte_order {
-                    ByteOrder::LittleEndian => {
-                        u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
+    };
+    macro_rules! words {
+        ($t:ty, $n:expr) => {{
+            aligned($n)?;
+            bytes
+                .chunks_exact($n)
+                .map(|chunk| {
+                    let word: [u8; $n] = chunk.try_into().expect("chunks_exact yields whole samples");
+                    match byte_order {
+                        ByteOrder::LittleEndian => <$t>::from_le_bytes(word),
+                        ByteOrder::BigEndian => <$t>::from_be_bytes(word),
                     }
-                    ByteOrder::BigEndian => {
-                        u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
-                    }
-                };
-                out.push(v as i64);
-            }
-        }
-        (32, true) => {
-            if !bytes.len().is_multiple_of(4) {
-                return Err(RustMsptError::InvalidConfig(
-                    "RAW byte length is not aligned to 32-bit samples".to_string(),
-                ));
-            }
-            out.reserve(bytes.len() / 4);
-            for chunk in bytes.chunks_exact(4) {
-                let v = match byte_order {
-                    ByteOrder::LittleEndian => {
-                        i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
-                    }
-                    ByteOrder::BigEndian => {
-                        i32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
-                    }
-                };
-                out.push(v as i64);
-            }
-        }
+                })
+                .collect()
+        }};
+    }
+    Ok(match (bits, signed) {
+        (8, false) => VoxelVec::U8(bytes.to_vec()),
+        (8, true) => VoxelVec::I8(bytes.iter().map(|&v| v as i8).collect()),
+        (16, false) => VoxelVec::U16(words!(u16, 2)),
+        (16, true) => VoxelVec::I16(words!(i16, 2)),
+        (32, false) => VoxelVec::U32(words!(u32, 4)),
+        (32, true) => VoxelVec::I32(words!(i32, 4)),
         _ => {
             return Err(RustMsptError::InvalidConfig(
                 "RAW bits must be 8/16/32".to_string(),
             ));
         }
-    }
-    Ok(out)
+    })
 }
 
 // AI-FUNC-SUMMARY:
 // Purpose: Load a 3D volume from a folder of raw binary slice files.
 // Inputs: RawFolderSpec with folder path, dimensions, bit depth, sign, byte order, and slice range.
-// Returns: Volume3D with decoded data.
+// Returns: Volume3D<i64> with decoded data (widened from `load_raw_folder_typed`).
+// Side effects: Reads all slice files from disk.
+// Notes: Costs 8 bytes per voxel; code that can work in the file's own type should call `load_raw_folder_typed`.
+pub fn load_raw_folder(spec: &RawFolderSpec) -> Result<Volume3D> {
+    load_raw_folder_typed(spec).map(AnyVolume::into_i64)
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Load a 3D volume from a folder of raw binary slice files, keeping each sample in its file type.
+// Inputs: RawFolderSpec with folder path, dimensions, bit depth, sign, byte order, and slice range.
+// Returns: AnyVolume in the width of the RAW sample type.
 // Side effects: Reads all slice files from disk.
 // Notes: RAW files below 512 KiB remain serial; otherwise at most two files decode in the current pool; ordered validation/assembly preserves range and numeric type; checked output sizing and one fallible reservation after the first valid slice avoid repeated assembly growth. Returns InvalidConfig for size mismatches.
-pub fn load_raw_folder(spec: &RawFolderSpec) -> Result<Volume3D> {
+pub fn load_raw_folder_typed(spec: &RawFolderSpec) -> Result<AnyVolume> {
     if spec.width == 0 || spec.height == 0 {
         return Err(RustMsptError::InvalidConfig(
             "RAW width/height must be > 0".to_string(),
@@ -251,7 +368,7 @@ pub fn load_raw_folder(spec: &RawFolderSpec) -> Result<Volume3D> {
     let output_len = pixels.checked_mul(depth)
         .ok_or_else(|| RustMsptError::InvalidConfig("RAW volume dimensions overflow".into()))?;
 
-    let mut data: Vec<i64> = Vec::new();
+    let mut data: Option<VoxelVec> = None;
     consume_file_batches(&files[start..=end], if expected_len >= 512 * 1024 { 2 } else { 1 }, |path| {
         let bytes = fs::read(path)?;
         if bytes.len() != expected_len {
@@ -261,49 +378,38 @@ pub fn load_raw_folder(spec: &RawFolderSpec) -> Result<Volume3D> {
             )));
         }
         decode_raw_slice(&bytes, spec.bits, spec.signed, spec.byte_order)
-    }, |_, mut slice| {
-        if data.is_empty() {
-            // Reserve only after a valid first slice, preserving malformed-file errors.
-            data.try_reserve_exact(output_len).map_err(|error| {
-                RustMsptError::InvalidConfig(format!("RAW volume allocation failed: {error}"))
-            })?;
+    }, |_, slice| {
+        match data.as_mut() {
+            None => {
+                // Reserve only after a valid first slice, preserving malformed-file errors.
+                let mut first = slice;
+                first.try_reserve_exact(output_len - pixels).map_err(|error| {
+                    RustMsptError::InvalidConfig(format!("RAW volume allocation failed: {error}"))
+                })?;
+                data = Some(first);
+            }
+            Some(buffer) => {
+                if !buffer.append(slice) {
+                    return Err(RustMsptError::InvalidConfig("RAW sample type changed between slices".into()));
+                }
+            }
         }
-        data.append(&mut slice);
         Ok(())
     })?;
 
-    let numeric_type = match (spec.bits, spec.signed) {
-        (8, false) => VolumeNumericType::U8,
-        (8, true) => VolumeNumericType::I8,
-        (16, false) => VolumeNumericType::U16,
-        (16, true) => VolumeNumericType::I16,
-        (32, false) => VolumeNumericType::U32,
-        (32, true) => VolumeNumericType::I32,
-        _ => {
-            return Err(RustMsptError::InvalidConfig(
-                "RAW bits must be 8/16/32".to_string(),
-            ))
-        }
-    };
-
-    Ok(Volume3D {
-        width: spec.width,
-        height: spec.height,
-        depth,
-        data,
-        numeric_type,
-    })
+    let data = data.ok_or_else(|| RustMsptError::InvalidConfig("RAW folder has no slices in range".into()))?;
+    Ok(data.into_volume(spec.width, spec.height, depth))
 }
 
-// AI-FUNC-SUMMARY: Convert a TIFF DecodingResult into a Vec<i64> buffer and its numeric type; returns (data, type); side effects: None.
-fn tiff_decoding_to_i64(decoded: DecodingResult) -> Result<(Vec<i64>, VolumeNumericType)> {
+// AI-FUNC-SUMMARY: Keep a TIFF DecodingResult's samples in their own type (no widening copy); returns VoxelVec; side effects: None.
+fn tiff_decoding_to_voxels(decoded: DecodingResult) -> Result<VoxelVec> {
     match decoded {
-        DecodingResult::U8(v) => Ok((v.into_iter().map(|x| x as i64).collect(), VolumeNumericType::U8)),
-        DecodingResult::U16(v) => Ok((v.into_iter().map(|x| x as i64).collect(), VolumeNumericType::U16)),
-        DecodingResult::U32(v) => Ok((v.into_iter().map(|x| x as i64).collect(), VolumeNumericType::U32)),
-        DecodingResult::I8(v) => Ok((v.into_iter().map(|x| x as i64).collect(), VolumeNumericType::I8)),
-        DecodingResult::I16(v) => Ok((v.into_iter().map(|x| x as i64).collect(), VolumeNumericType::I16)),
-        DecodingResult::I32(v) => Ok((v.into_iter().map(|x| x as i64).collect(), VolumeNumericType::I32)),
+        DecodingResult::U8(v) => Ok(VoxelVec::U8(v)),
+        DecodingResult::U16(v) => Ok(VoxelVec::U16(v)),
+        DecodingResult::U32(v) => Ok(VoxelVec::U32(v)),
+        DecodingResult::I8(v) => Ok(VoxelVec::I8(v)),
+        DecodingResult::I16(v) => Ok(VoxelVec::I16(v)),
+        DecodingResult::I32(v) => Ok(VoxelVec::I32(v)),
         _ => Err(RustMsptError::InvalidConfig(
             "Unsupported TIFF sample type; supported: U8/U16/U32/I8/I16/I32".to_string(),
         )),
@@ -313,10 +419,10 @@ fn tiff_decoding_to_i64(decoded: DecodingResult) -> Result<(Vec<i64>, VolumeNume
 // AI-FUNC-SUMMARY:
 // Purpose: Load a multi-page TIFF file into a Volume3D with inclusive page range.
 // Inputs: TIFF file path and [start, end] page range (-1 for begin/end).
-// Returns: Decoded Volume3D.
+// Returns: Decoded AnyVolume in the pages' own sample type.
 // Side effects: Reads file from disk twice (once to count pages, once to decode).
 // Notes: Validates consistent dimensions and numeric type across pages.
-fn load_tiff_file_with_range(path: &Path, slice_start: isize, slice_end: isize) -> Result<Volume3D> {
+fn load_tiff_file_with_range(path: &Path, slice_start: isize, slice_end: isize) -> Result<AnyVolume> {
     let file = fs::File::open(path)?;
     let mut decoder = Decoder::new(BufReader::new(file))?;
 
@@ -337,8 +443,7 @@ fn load_tiff_file_with_range(path: &Path, slice_start: isize, slice_end: isize) 
     let mut width = 0usize;
     let mut height = 0usize;
     let mut depth = 0usize;
-    let mut data: Vec<i64> = Vec::new();
-    let mut numeric_type: Option<VolumeNumericType> = None;
+    let mut data: Option<VoxelVec> = None;
 
     for page_idx in start..=end {
         let (w, h) = decoder.dimensions()?;
@@ -354,19 +459,18 @@ fn load_tiff_file_with_range(path: &Path, slice_start: isize, slice_end: isize) 
             )));
         }
 
-        let decoded = decoder.read_image()?;
-        let (mut values, ty) = tiff_decoding_to_i64(decoded)?;
-        if let Some(existing) = numeric_type {
-            if existing != ty {
-                return Err(RustMsptError::InvalidConfig(format!(
-                    "TIFF page type mismatch in {}",
-                    path.display()
-                )));
+        let values = tiff_decoding_to_voxels(decoder.read_image()?)?;
+        match data.as_mut() {
+            None => data = Some(values),
+            Some(buffer) => {
+                if !buffer.append(values) {
+                    return Err(RustMsptError::InvalidConfig(format!(
+                        "TIFF page type mismatch in {}",
+                        path.display()
+                    )));
+                }
             }
-        } else {
-            numeric_type = Some(ty);
         }
-        data.append(&mut values);
         depth += 1;
 
         if page_idx < end {
@@ -374,17 +478,12 @@ fn load_tiff_file_with_range(path: &Path, slice_start: isize, slice_end: isize) 
         }
     }
 
-    Ok(Volume3D {
-        width,
-        height,
-        depth,
-        data,
-        numeric_type: numeric_type.unwrap_or(VolumeNumericType::U8),
-    })
+    let data = data.unwrap_or(VoxelVec::U8(Vec::new()));
+    Ok(data.into_volume(width, height, depth))
 }
 
-// AI-FUNC-SUMMARY: Load a TIFF file (all pages) into a Volume3D; returns Volume3D; side effects: Reads from disk.
-fn load_tiff_file(path: &Path) -> Result<Volume3D> {
+// AI-FUNC-SUMMARY: Load a TIFF file (all pages) into an AnyVolume; returns AnyVolume; side effects: Reads from disk.
+fn load_tiff_file(path: &Path) -> Result<AnyVolume> {
     load_tiff_file_with_range(path, -1, -1)
 }
 
@@ -406,10 +505,20 @@ pub fn load_tiff_or_folder(path: &Path) -> Result<Volume3D> {
 // AI-FUNC-SUMMARY:
 // Purpose: Load a TIFF volume from file or folder with inclusive slice range.
 // Inputs: input path and [start,end] range where -1 means begin/end.
-// Returns: Decoded Volume3D.
+// Returns: Decoded Volume3D<i64> (widened from `load_tiff_or_folder_typed_with_range`).
 // Side effects: Reads files from disk.
-// Notes: Files advance pages serially; folders decode at most two independent complete files in the current pool and assemble in filename order.
+// Notes: Costs 8 bytes per voxel; code that can work in the file's own type should call the typed loader.
 pub fn load_tiff_or_folder_with_range(path: &Path, slice_start: isize, slice_end: isize) -> Result<Volume3D> {
+    load_tiff_or_folder_typed_with_range(path, slice_start, slice_end).map(AnyVolume::into_i64)
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Load a TIFF volume from file or folder with inclusive slice range, keeping samples in their file type.
+// Inputs: input path and [start,end] range where -1 means begin/end.
+// Returns: Decoded AnyVolume.
+// Side effects: Reads files from disk.
+// Notes: Files advance pages serially; folders decode at most two independent complete files in the current pool and assemble in filename order. The decoder's own typed buffers are moved in, never widened.
+pub fn load_tiff_or_folder_typed_with_range(path: &Path, slice_start: isize, slice_end: isize) -> Result<AnyVolume> {
     if path.is_file() {
         return load_tiff_file_with_range(path, slice_start, slice_end);
     }
@@ -433,41 +542,36 @@ pub fn load_tiff_or_folder_with_range(path: &Path, slice_start: isize, slice_end
     let mut width = 0usize;
     let mut height = 0usize;
     let mut depth = 0usize;
-    let mut data = Vec::new();
-    let mut numeric_type: Option<VolumeNumericType> = None;
+    let mut data: Option<VoxelVec> = None;
 
     consume_file_batches(&files[start..=end], 2, load_tiff_file, |file, vol| {
+        let (w, h, d, values) = vol.into_parts();
         if width == 0 {
-            width = vol.width;
-            height = vol.height;
-            numeric_type = Some(vol.numeric_type);
-        } else {
-            if width != vol.width || height != vol.height {
-                return Err(RustMsptError::InvalidConfig(format!(
-                    "TIFF shape mismatch at {}",
-                    file.display()
-                )));
-            }
-            if numeric_type != Some(vol.numeric_type) {
-                return Err(RustMsptError::InvalidConfig(format!(
-                    "TIFF numeric type mismatch at {}",
-                    file.display()
-                )));
+            width = w;
+            height = h;
+        } else if width != w || height != h {
+            return Err(RustMsptError::InvalidConfig(format!(
+                "TIFF shape mismatch at {}",
+                file.display()
+            )));
+        }
+        match data.as_mut() {
+            None => data = Some(values),
+            Some(buffer) => {
+                if !buffer.append(values) {
+                    return Err(RustMsptError::InvalidConfig(format!(
+                        "TIFF numeric type mismatch at {}",
+                        file.display()
+                    )));
+                }
             }
         }
-
-        depth += vol.depth;
-        data.extend(vol.data);
+        depth += d;
         Ok(())
     })?;
 
-    Ok(Volume3D {
-        width,
-        height,
-        depth,
-        data,
-        numeric_type: numeric_type.unwrap_or(VolumeNumericType::U8),
-    })
+    let data = data.unwrap_or(VoxelVec::U8(Vec::new()));
+    Ok(data.into_volume(width, height, depth))
 }
 
 // AI-FUNC-SUMMARY:
@@ -476,18 +580,18 @@ pub fn load_tiff_or_folder_with_range(path: &Path, slice_start: isize, slice_end
 // Returns: Ok(()) on success.
 // Side effects: Writes one TIFF page to the encoder stream.
 // Notes: Returns InvalidConfig if values overflow the target numeric type.
-fn write_tiff_slice<W: Write + Seek>(
+fn write_tiff_slice<W: Write + Seek, T: Voxel>(
     encoder: &mut TiffEncoder<W>,
     width: u32,
     height: u32,
     ty: VolumeNumericType,
-    slice: &[i64],
+    slice: &[T],
 ) -> Result<()> {
     match ty {
         VolumeNumericType::U8 => {
             let mut v = Vec::with_capacity(slice.len());
             for &x in slice {
-                let y = u8::try_from(x).map_err(|_| {
+                let y = u8::try_from(x.to_i64()).map_err(|_| {
                     RustMsptError::InvalidConfig("Value out of range for u8 TIFF output".to_string())
                 })?;
                 v.push(y);
@@ -497,7 +601,7 @@ fn write_tiff_slice<W: Write + Seek>(
         VolumeNumericType::U16 => {
             let mut v = Vec::with_capacity(slice.len());
             for &x in slice {
-                let y = u16::try_from(x).map_err(|_| {
+                let y = u16::try_from(x.to_i64()).map_err(|_| {
                     RustMsptError::InvalidConfig("Value out of range for u16 TIFF output".to_string())
                 })?;
                 v.push(y);
@@ -507,7 +611,7 @@ fn write_tiff_slice<W: Write + Seek>(
         VolumeNumericType::U32 => {
             let mut v = Vec::with_capacity(slice.len());
             for &x in slice {
-                let y = u32::try_from(x).map_err(|_| {
+                let y = u32::try_from(x.to_i64()).map_err(|_| {
                     RustMsptError::InvalidConfig("Value out of range for u32 TIFF output".to_string())
                 })?;
                 v.push(y);
@@ -517,7 +621,7 @@ fn write_tiff_slice<W: Write + Seek>(
         VolumeNumericType::I8 => {
             let mut v = Vec::with_capacity(slice.len());
             for &x in slice {
-                let y = i8::try_from(x).map_err(|_| {
+                let y = i8::try_from(x.to_i64()).map_err(|_| {
                     RustMsptError::InvalidConfig("Value out of range for i8 TIFF output".to_string())
                 })?;
                 v.push(y);
@@ -527,7 +631,7 @@ fn write_tiff_slice<W: Write + Seek>(
         VolumeNumericType::I16 => {
             let mut v = Vec::with_capacity(slice.len());
             for &x in slice {
-                let y = i16::try_from(x).map_err(|_| {
+                let y = i16::try_from(x.to_i64()).map_err(|_| {
                     RustMsptError::InvalidConfig("Value out of range for i16 TIFF output".to_string())
                 })?;
                 v.push(y);
@@ -537,7 +641,7 @@ fn write_tiff_slice<W: Write + Seek>(
         VolumeNumericType::I32 => {
             let mut v = Vec::with_capacity(slice.len());
             for &x in slice {
-                let y = i32::try_from(x).map_err(|_| {
+                let y = i32::try_from(x.to_i64()).map_err(|_| {
                     RustMsptError::InvalidConfig("Value out of range for i32 TIFF output".to_string())
                 })?;
                 v.push(y);
@@ -587,7 +691,7 @@ impl<'a, W: Write + Seek> TiffPageEncoder<'a, W> {
     }
 
     // AI-FUNC-SUMMARY: Append whole z-slices (z-major, width*height values each) as consecutive pages; returns InvalidConfig if data is not a whole number of slices or a value overflows the numeric type; side effects: writes pages to the stream.
-    pub fn write_slices(&mut self, data: &[i64]) -> Result<()> {
+    pub fn write_slices<T: Voxel>(&mut self, data: &[T]) -> Result<()> {
         if !data.len().is_multiple_of(self.slice_len) {
             return Err(RustMsptError::InvalidConfig(format!(
                 "TIFF page data length {} is not a multiple of the slice size {}",
@@ -603,9 +707,9 @@ impl<'a, W: Write + Seek> TiffPageEncoder<'a, W> {
 }
 
 // AI-FUNC-SUMMARY: Encode ordered pages through a borrowed seekable writer and explicitly flush after dropping the TIFF encoder; propagate final buffered-write failures instead of relying on BufWriter::drop.
-fn write_tiff_pages<W: Write + Seek>(
+fn write_tiff_pages<W: Write + Seek, T: Voxel>(
     writer: &mut W, width: u32, height: u32, ty: VolumeNumericType,
-    data: &[i64], slice_len: usize,
+    data: &[T], slice_len: usize,
 ) -> Result<()> {
     {
         let mut encoder = TiffPageEncoder {
@@ -627,8 +731,8 @@ fn write_tiff_pages<W: Write + Seek>(
 // Returns: Ok(()) on success.
 // Side effects: Creates parent directories; writes TIFF file(s) to disk.
 // Notes: Folder output uses at most two writers in the current pool and returns the first slice-ordered error after joining a batch; current-batch partial files may remain, later batches are not started. Multi-page output stays serial. Both modes explicitly flush.
-pub fn save_tiff_or_folder_with_ext(
-    volume: &Volume3D,
+pub fn save_tiff_or_folder_with_ext<T: Voxel>(
+    volume: &Volume3D<T>,
     output: &Path,
     file_prefix: Option<&str>,
     file_extension: Option<&str>,
@@ -674,7 +778,7 @@ pub fn save_tiff_or_folder_with_ext(
     for first in (0..volume.depth).step_by(batch_size) {
         let count = batch_size.min(volume.depth - first);
         let data = &volume.data[first * slice_len..(first + count) * slice_len];
-        let write = |(local, slice): (usize, &[i64])| -> Result<()> {
+        let write = |(local, slice): (usize, &[T])| -> Result<()> {
             let path = output.join(format!("{}_{:04}.{}", prefix, first + local, extension));
             let file = fs::File::create(path)?;
             let mut writer = BufWriter::new(file);
@@ -692,7 +796,7 @@ pub fn save_tiff_or_folder_with_ext(
 }
 
 // AI-FUNC-SUMMARY: Save a Volume3D to TIFF file or folder sequence with default .tiff extension; returns Ok(()); side effects: Creates directories and writes TIFF files to disk.
-pub fn save_tiff_or_folder(volume: &Volume3D, output: &Path, file_prefix: Option<&str>) -> Result<()> {
+pub fn save_tiff_or_folder<T: Voxel>(volume: &Volume3D<T>, output: &Path, file_prefix: Option<&str>) -> Result<()> {
     save_tiff_or_folder_with_ext(volume, output, file_prefix, Some("tiff"))
 }
 

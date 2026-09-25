@@ -25,22 +25,26 @@ This page documents `src/io/mod.rs`, content hashing in `hash.rs`, PNG output in
 | `load_folder_stls` | `src/io/stl.rs:255` | Loads all STL files in a folder. |
 | `load_stl_or_merge_folder` | `src/io/stl.rs:282` | Loads a single STL file, or merges all STLs in a directory into one mesh. |
 | `save_stl` | `src/io/stl.rs:311` | Saves a mesh as a binary STL file. |
-| `collect_sorted_files` | `src/io/volume.rs:72` | Collects regular files in a folder, sorted by name, optionally filtered by extension. |
-| `resolve_slice_range` | `src/io/volume.rs:100` | Resolves an inclusive slice range from start/end indices, treating `-1` as "from beginning"/"to end". |
-| `decode_raw_slice` | `src/io/volume.rs:129` | Decodes one raw image slice into `i64` values per bit depth, sign, and byte order. |
-| `load_raw_folder` | `src/io/volume.rs:227` | Loads ordered RAW slices with checked sizing, bounded decoding and one final-output reservation. |
+| `collect_sorted_files` | `src/io/volume.rs:230` | Collects regular files in a folder, sorted by name, optionally filtered by extension. |
+| `resolve_slice_range` | `src/io/volume.rs:258` | Resolves an inclusive slice range from start/end indices, treating `-1` as "from beginning"/"to end". |
+| `decode_raw_slice` | `src/io/volume.rs:287` | Decodes one raw image slice into `i64` values per bit depth, sign, and byte order. |
+| `load_raw_folder` | `src/io/volume.rs:334` | Loads ordered RAW slices with checked sizing, bounded decoding and one final-output reservation. |
+| `Voxel` | `src/io/volume.rs:27` | Sample trait (`to_i64`, checked `from_i64`) for the six file types and `i64`. |
+| `AnyVolume` | `src/io/volume.rs:70` | A loaded volume in its file's own sample type; `into_i64` widens. |
+| `load_raw_folder_typed` | `src/io/volume.rs:344` | RAW folder load keeping the file's sample type. |
+| `load_tiff_or_folder_typed_with_range` | `src/io/volume.rs:521` | TIFF file/folder load keeping the file's sample type. |
 | `tiff_decoding_to_i64` | `src/io/volume.rs:299` | Converts a TIFF `DecodingResult` into a `Vec<i64>` buffer plus its numeric type. |
-| `load_tiff_file_with_range` | `src/io/volume.rs:319` | Loads a multi-page TIFF file into a `Volume3D` over an inclusive page range. |
-| `load_tiff_file` | `src/io/volume.rs:387` | Loads a TIFF file (all pages) into a `Volume3D`. |
-| `is_tiff_path` | `src/io/volume.rs:392` | Checks whether a path has a `.tif`/`.tiff` extension. |
-| `load_tiff_or_folder` | `src/io/volume.rs:402` | Loads a TIFF volume from a file or folder (all pages/slices). |
-| `load_tiff_or_folder_with_range` | `src/io/volume.rs:412` | Loads a TIFF volume from a file or folder over an inclusive slice range. |
-| `write_tiff_slice` | `src/io/volume.rs:479` | Writes one z-slice of volume data into a TIFF encoder page. |
-| `TiffPageEncoder` | `src/io/volume.rs:552` | Incremental multi-page TIFF encoder over a borrowed seekable writer. |
-| `TiffPageEncoder::new` | `src/io/volume.rs:562` | Write the TIFF header and fix page size/type. |
-| `TiffPageEncoder::write_slices` | `src/io/volume.rs:590` | Append whole z-slices as consecutive pages. |
-| `save_tiff_or_folder_with_ext` | `src/io/volume.rs:630` | Saves a `Volume3D` as a multi-page TIFF file or a folder of per-slice TIFF files, with configurable extension. |
-| `save_tiff_or_folder` | `src/io/volume.rs:695` | Saves a `Volume3D` to TIFF file or folder sequence with the default `.tiff` extension. |
+| `load_tiff_file_with_range` | `src/io/volume.rs:425` | Loads a multi-page TIFF file into a `Volume3D` over an inclusive page range. |
+| `load_tiff_file` | `src/io/volume.rs:486` | Loads a TIFF file (all pages) into a `Volume3D`. |
+| `is_tiff_path` | `src/io/volume.rs:491` | Checks whether a path has a `.tif`/`.tiff` extension. |
+| `load_tiff_or_folder` | `src/io/volume.rs:501` | Loads a TIFF volume from a file or folder (all pages/slices). |
+| `load_tiff_or_folder_with_range` | `src/io/volume.rs:511` | Loads a TIFF volume from a file or folder over an inclusive slice range. |
+| `write_tiff_slice` | `src/io/volume.rs:583` | Writes one z-slice of volume data into a TIFF encoder page. |
+| `TiffPageEncoder` | `src/io/volume.rs:656` | Incremental multi-page TIFF encoder over a borrowed seekable writer. |
+| `TiffPageEncoder::new` | `src/io/volume.rs:666` | Write the TIFF header and fix page size/type. |
+| `TiffPageEncoder::write_slices` | `src/io/volume.rs:694` | Append whole z-slices as consecutive pages. |
+| `save_tiff_or_folder_with_ext` | `src/io/volume.rs:734` | Saves a `Volume3D` as a multi-page TIFF file or a folder of per-slice TIFF files, with configurable extension. |
+| `save_tiff_or_folder` | `src/io/volume.rs:799` | Saves a `Volume3D` to TIFF file or folder sequence with the default `.tiff` extension. |
 | `load_stl_from_reader` | `src/io/stl.rs:229` | Forward-reader STL: streamed ASCII lines and bounded binary records. |
 | `load_stl_hashed` | `src/io/stl.rs:242` | Single-pass STL parsing and raw digest. |
 | `parse_binary_reader` | `src/io/stl.rs:157` | Read binary triangle records with incremental deduplication. |
@@ -261,11 +265,11 @@ This file implements two independent 3D image formats used as inputs/outputs for
 
 - **Signature:**
   ```rust
-  pub struct Volume3D {
+  pub struct Volume3D<T = i64> {
       pub width: usize,
       pub height: usize,
       pub depth: usize,
-      pub data: Vec<i64>,
+      pub data: Vec<T>,
       pub numeric_type: VolumeNumericType,
   }
   ```
@@ -277,10 +281,18 @@ This file implements two independent 3D image formats used as inputs/outputs for
 | `width` | `usize` | Number of voxels along X (columns per slice). |
 | `height` | `usize` | Number of voxels along Y (rows per slice). |
 | `depth` | `usize` | Number of slices along Z. |
-| `data` | `Vec<i64>` | Flat voxel buffer, length `width * height * depth`. Every source numeric type (`u8`/`u16`/`u32`/`i8`/`i16`/`i32`) is widened to `i64` on load so a single buffer type can represent any supported bit depth uniformly; `numeric_type` records what the original bit depth was so it can be narrowed back correctly on save. |
+| `data` | `Vec<T>` | Flat voxel buffer, length `width * height * depth`, in sample type `T: Voxel`. The typed loaders (`load_raw_folder_typed`, `load_tiff_or_folder_typed_with_range`) return an `AnyVolume` whose volume keeps the file's own type (2 bytes per voxel for 16-bit input); the default `T = i64` is what the widening loaders (`load_raw_folder`, `load_tiff_or_folder_with_range`) and code needing arbitrary values (placement labels) use. |
 | `numeric_type` | `VolumeNumericType` | The original (pre-widening) sample type, used to range-check and narrow values when writing back out. |
 
 > **Important:** `Volume3D::data` uses **z-major indexing**: `idx = z * width * height + y * width + x`. Each z-slice is a contiguous `width * height` block, and slices are laid out one after another. This is the layout every reader (`load_raw_folder`, `load_tiff_file_with_range`, `load_tiff_or_folder_with_range`) produces and every writer (`save_tiff_or_folder_with_ext`) consumes by slicing `data` into `width * height`-sized chunks per `z`. Code that indexes into `Volume3D::data` manually — including GPU/WGSL compute shaders — must match this z-major layout, not an x-major one, or voxel positions will be silently scrambled.
+
+#### Voxel / AnyVolume / typed loaders
+
+- **`Voxel`** (`src/io/volume.rs`): the sample trait (`to_i64`, checked `from_i64`), implemented for `u8`/`i8`/`u16`/`i16`/`u32`/`i32`/`i64`.
+- **`AnyVolume`**: one `Volume3D<T>` per file type; `into_i64()` widens, `numeric_type()` names the type. Internally the loaders accumulate a private `VoxelVec` that moves the TIFF decoder's own typed buffers in (never widening) and refuses a type change between pages/files.
+- **`load_raw_folder_typed(spec) -> Result<AnyVolume>`** and **`load_tiff_or_folder_typed_with_range(path, start, end) -> Result<AnyVolume>`** have the same validation, batching and reservation contracts as the widening loaders, which are now `typed(...).map(AnyVolume::into_i64)`.
+- Writers (`save_tiff_or_folder[_with_ext]`, `TiffPageEncoder::write_slices`) are generic over `T: Voxel` and range-check each value against `numeric_type` as before.
+- Measured (2026-09-25, 512x512x256 u16 RAW): crop peak RSS 616 MB -> 171 MB at 8 workers (156 MB at 1), GPU path 821 MB -> 377 MB, outputs byte-identical to the i64 path.
 
 #### RawFolderSpec
 

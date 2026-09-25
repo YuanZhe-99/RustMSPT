@@ -18,20 +18,20 @@
 | `main`（precision_test.rs） | `src/bin/precision_test.rs:6` | 独立诊断二进制文件，比较 CPU 精确法、CPU 蒙特卡洛法与 GPU 蒙特卡洛法之间 S2 计算的精度/性能。 |
 | `Vec3` | `src/types.rs:2` | 由 `f64` 分量组成的三维向量，带基本向量代数方法。 |
 | `Vec3::new` | `src/types.rs:10` | 由 x/y/z 分量构造一个向量。 |
-| `Vec3::add` | `src/types.rs:15` | 向量加法。 |
-| `Vec3::sub` | `src/types.rs:20` | 向量减法。 |
-| `Vec3::scale` | `src/types.rs:25` | 标量乘法。 |
-| `Vec3::dot` | `src/types.rs:30` | 点积。 |
-| `Vec3::cross` | `src/types.rs:35` | 叉积。 |
-| `BoundingBox` | `src/types.rs:45` | 由 `min`/`max` 角点定义的轴对齐包围盒。 |
-| `BoundingBox::from_size` | `src/types.rs:52` | 由原点到给定尺寸构建一个包围盒。 |
-| `BoundingBox::size` | `src/types.rs:60` | 返回包围盒的边长。 |
-| `BoundingBox::volume` | `src/types.rs:65` | 返回包围盒的（非负）体积。 |
-| `BoundingBox::contains_point` | `src/types.rs:71` | 判断某点是否位于包围盒内部或边界上。 |
-| `Triangle` | `src/types.rs:114` | 引用网格顶点数组的索引三元组 `(a, b, c)`。 |
-| `Mesh` | `src/types.rs:121` | 顶点/面容器：`vertices: Vec<Vec3>`、`faces: Vec<Triangle>`。 |
-| `Mesh::empty` | `src/types.rs:128` | 构造一个空网格。 |
-| `Mesh::is_empty` | `src/types.rs:136` | 若网格没有顶点或没有面，则为真。 |
+| `Vec3::add` | `src/types.rs:16` | 向量加法。 |
+| `Vec3::sub` | `src/types.rs:22` | 向量减法。 |
+| `Vec3::scale` | `src/types.rs:27` | 标量乘法。 |
+| `Vec3::dot` | `src/types.rs:32` | 点积。 |
+| `Vec3::cross` | `src/types.rs:37` | 叉积。 |
+| `BoundingBox` | `src/types.rs:47` | 由 `min`/`max` 角点定义的轴对齐包围盒。 |
+| `BoundingBox::from_size` | `src/types.rs:54` | 由原点到给定尺寸构建一个包围盒。 |
+| `BoundingBox::size` | `src/types.rs:62` | 返回包围盒的边长。 |
+| `BoundingBox::volume` | `src/types.rs:67` | 返回包围盒的（非负）体积。 |
+| `BoundingBox::contains_point` | `src/types.rs:73` | 判断某点是否位于包围盒内部或边界上。 |
+| `Triangle` | `src/types.rs:116` | 引用网格顶点数组的索引三元组 `(a, b, c)`。 |
+| `Mesh` | `src/types.rs:123` | 顶点/面容器：`vertices: Vec<Vec3>`、`faces: Vec<Triangle>`。 |
+| `Mesh::empty` | `src/types.rs:130` | 构造一个空网格。 |
+| `Mesh::is_empty` | `src/types.rs:138` | 若网格没有顶点或没有面，则为真。 |
 | `AccelerationMode` | `src/compute/backend.rs:5` | 请求的计算模式枚举：`Auto`（默认）、`Cpu`、`Gpu`。 |
 | `AccelerationMode::fmt`（Display） | `src/compute/backend.rs:12` | 将模式格式化为 `"auto"`/`"cpu"`/`"gpu"`。 |
 | `BackendCaps` | `src/compute/backend.rs:23` | 所选后端上报的能力（名称、GPU 支持情况、缓冲区大小限制）。 |
@@ -452,5 +452,5 @@
 | Symbol | Source | Contract |
 |---|---|---|
 | `ExactMemoryPlan` | `src/compute/exact_memory.rs:20` | Fresh resident exact logical GPU peak and budget-selected partial batch. |
-| `ExactMemoryPlan::new` | `src/compute/exact_memory.rs:27` | Checked resource arithmetic and batch selection; may still require check_budget for infeasible minima. |
-| `ExactMemoryPlan::check_budget` | `src/compute/exact_memory.rs:69` | Enforce configured MiB cap before initialization. |
+| `ExactMemoryPlan::new` | `src/compute/exact_memory.rs:28` | Checked resource arithmetic and batch selection; may still require check_budget for infeasible minima. |
+| `ExactMemoryPlan::check_budget` | `src/compute/exact_memory.rs:71` | Enforce configured MiB cap before initialization. |

@@ -349,7 +349,7 @@ fn tiff_folder_writer_errors_are_ordered_and_bounded() {
     }
     let dir = tempfile::tempdir().unwrap();
     let output = dir.path().join("overflow");
-    let volume = Volume3D {
+    let volume: Volume3D = Volume3D {
         width: usize::MAX,
         height: 2,
         depth: 1,

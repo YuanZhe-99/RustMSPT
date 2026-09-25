@@ -64,7 +64,7 @@ This module implements wgpu compute pipelines plus offscreen STL rasterization, 
 | `GpuShellS2Pipeline` | `src/gpu/s2_shell.rs:22` | GPU pipeline state for exact shell-pair S2 computation. |
 | `build_offset_buffer` | `src/gpu/s2_shell.rs:48` | Converts `(radius_idx, [dx,dy,dz])` tuples into `OffsetEntry` records. |
 | `GpuShellS2Pipeline::new` | `src/gpu/s2_shell.rs:74` | Initializes the wgpu device and shell S2 compute pipeline. |
-| `GpuShellS2Pipeline::compute_s2_shell` | `src/gpu/s2_shell.rs:382` | Dispatches exact shell-pair counting over an occupancy grid and reads back S2(r). |
+| `GpuShellS2Pipeline::compute_s2_shell` | `src/gpu/s2_shell.rs:383` | Dispatches exact shell-pair counting over an occupancy grid and reads back S2(r). |
 | `GpuVoxelPipeline` | `src/gpu/voxel.rs:7` | GPU pipeline state for mesh voxelization. |
 | `build_triangle_buffer` (voxel.rs) | `src/gpu/voxel.rs:17` | Builds a normalized `f32` triangle position buffer for the voxelization pipeline (separate copy from `s2.rs`). |
 | `pack_params` (voxel.rs) | `src/gpu/voxel.rs` | Serializes the 80-byte voxel parameter layout: ray direction at byte 32, certification tail (mesh_lo, flags, mesh_hi) from byte 48. |
@@ -690,8 +690,8 @@ Production shell evaluation now filters offsets whose unsigned displacement magn
 |---|---|---|
 | `GpuShellS2Pipeline::with_device` | `src/gpu/s2_shell.rs:87` | Build production shell resources on a held `Arc<SharedGpuDevice>`; no new device. |
 | `GpuShellS2Pipeline::build_on_device` | `src/gpu/s2_shell.rs:100` | Compile shell resources on supplied handles with balanced GPU error scopes. |
-| `GpuShellS2Pipeline::compute_s2_shell_resident` | `src/gpu/s2_shell.rs:407` | Read a same-device occupancy buffer directly; caller serializes producer and consumer. |
-| `GpuShellS2Pipeline::compute_shell_input` | `src/gpu/s2_shell.rs:455` | Shared execution for host-uploaded or resident occupancy with identical offset semantics. |
+| `GpuShellS2Pipeline::compute_s2_shell_resident` | `src/gpu/s2_shell.rs:410` | Read a same-device occupancy buffer directly; caller serializes producer and consumer. |
+| `GpuShellS2Pipeline::compute_shell_input` | `src/gpu/s2_shell.rs:459` | Shared execution for host-uploaded or resident occupancy with identical offset semantics. |
 | `GpuVoxelPipeline::shared_device` | `src/gpu/voxel.rs:103` | Share the process device handle (`Arc<SharedGpuDevice>`) for sequential stages; no device creation. |
 | `GpuVoxelPipeline::occupancy_buffer` | `src/gpu/voxel.rs:98` | Clone completed occupancy storage handle; producer must not overwrite while consumed. |
 
@@ -709,7 +709,7 @@ GPU exact now lazily generates one shell-radius Vec at a time and passes its off
 
 | Function | Source | Contract |
 |---|---|---|
-| `GpuShellS2Pipeline::compute_s2_shell_resident_stream` | `src/gpu/s2_shell.rs:432` | Consume ordered offsets lazily in bounded batches on a resident grid; preserve per-offset ratios. |
+| `GpuShellS2Pipeline::compute_s2_shell_resident_stream` | `src/gpu/s2_shell.rs:435` | Consume ordered offsets lazily in bounded batches on a resident grid; preserve per-offset ratios. |
 
 GPU exact now uses `shell_offset_iter`, retaining only nested range cursors even within one radius. It preserves the original x/y/z order, origin special case and half-open squared-distance test; the public Vec API remains unchanged for random-access consumers. Support is detected with a peekable iterator and every generated offset is counted as consumed. Safe ordinary integer norms match the Vec implementation; larger norms use u128 to avoid signed multiplication overflow. Enumeration still scans the enclosing cube, so this reduces allocation without changing its O(radius³) search complexity.
 

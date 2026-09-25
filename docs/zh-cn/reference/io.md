@@ -26,22 +26,26 @@
 | `load_folder_stls` | `src/io/stl.rs:255` | 加载文件夹中所有 STL 文件。 |
 | `load_stl_or_merge_folder` | `src/io/stl.rs:282` | 加载单个 STL 文件，或将目录中所有 STL 合并为一个网格。 |
 | `save_stl` | `src/io/stl.rs:311` | 将网格保存为二进制 STL 文件。 |
-| `collect_sorted_files` | `src/io/volume.rs:72` | 收集文件夹中的常规文件，按名称排序，可选按扩展名过滤。 |
-| `resolve_slice_range` | `src/io/volume.rs:100` | 根据起止索引解析出闭区间切片范围，将 `-1` 视为"从头开始"/"到末尾"。 |
-| `decode_raw_slice` | `src/io/volume.rs:129` | 根据位深、符号性和字节序，将一个原始图像切片解码为 `i64` 值。 |
-| `load_raw_folder` | `src/io/volume.rs:227` | 从一个原始二进制切片文件文件夹中加载 `Volume3D`。 |
+| `collect_sorted_files` | `src/io/volume.rs:230` | 收集文件夹中的常规文件，按名称排序，可选按扩展名过滤。 |
+| `resolve_slice_range` | `src/io/volume.rs:258` | 根据起止索引解析出闭区间切片范围，将 `-1` 视为"从头开始"/"到末尾"。 |
+| `decode_raw_slice` | `src/io/volume.rs:287` | 根据位深、符号性和字节序，将一个原始图像切片解码为 `i64` 值。 |
+| `load_raw_folder` | `src/io/volume.rs:334` | 从一个原始二进制切片文件文件夹中加载 `Volume3D`。 |
+| `Voxel` | `src/io/volume.rs:27` | 六种文件类型与 `i64` 的样本 trait（`to_i64`、带检查的 `from_i64`）。 |
+| `AnyVolume` | `src/io/volume.rs:70` | 以文件自身样本类型加载的体数据；`into_i64` 扩宽。 |
+| `load_raw_folder_typed` | `src/io/volume.rs:344` | 保持文件样本类型的 RAW 文件夹加载。 |
+| `load_tiff_or_folder_typed_with_range` | `src/io/volume.rs:521` | 保持文件样本类型的 TIFF 文件/文件夹加载。 |
 | `tiff_decoding_to_i64` | `src/io/volume.rs:299` | 将 TIFF 的 `DecodingResult` 转换为 `Vec<i64>` 缓冲区及其数值类型。 |
-| `load_tiff_file_with_range` | `src/io/volume.rs:319` | 在一个闭区间页码范围内，将多页 TIFF 文件加载为 `Volume3D`。 |
-| `load_tiff_file` | `src/io/volume.rs:387` | 将一个 TIFF 文件（所有页）加载为 `Volume3D`。 |
-| `is_tiff_path` | `src/io/volume.rs:392` | 检查路径是否具有 `.tif`/`.tiff` 扩展名。 |
-| `load_tiff_or_folder` | `src/io/volume.rs:402` | 从文件或文件夹加载 TIFF 体数据（所有页/切片）。 |
-| `load_tiff_or_folder_with_range` | `src/io/volume.rs:412` | 在一个闭区间切片范围内，从文件或文件夹加载 TIFF 体数据。 |
-| `write_tiff_slice` | `src/io/volume.rs:479` | 将体数据的一个 z 切片写入 TIFF 编码器的一页。 |
-| `TiffPageEncoder` | `src/io/volume.rs:552` | 基于借用可 seek writer 的增量多页 TIFF 编码器。 |
-| `TiffPageEncoder::new` | `src/io/volume.rs:562` | 写入 TIFF 头并固定页尺寸与类型。 |
-| `TiffPageEncoder::write_slices` | `src/io/volume.rs:590` | 以连续页追加完整 z 切片。 |
-| `save_tiff_or_folder_with_ext` | `src/io/volume.rs:630` | 将 `Volume3D` 保存为多页 TIFF 文件或按切片逐一保存的 TIFF 文件夹，可配置扩展名。 |
-| `save_tiff_or_folder` | `src/io/volume.rs:695` | 使用默认的 `.tiff` 扩展名，将 `Volume3D` 保存为 TIFF 文件或切片文件序列。 |
+| `load_tiff_file_with_range` | `src/io/volume.rs:425` | 在一个闭区间页码范围内，将多页 TIFF 文件加载为 `Volume3D`。 |
+| `load_tiff_file` | `src/io/volume.rs:486` | 将一个 TIFF 文件（所有页）加载为 `Volume3D`。 |
+| `is_tiff_path` | `src/io/volume.rs:491` | 检查路径是否具有 `.tif`/`.tiff` 扩展名。 |
+| `load_tiff_or_folder` | `src/io/volume.rs:501` | 从文件或文件夹加载 TIFF 体数据（所有页/切片）。 |
+| `load_tiff_or_folder_with_range` | `src/io/volume.rs:511` | 在一个闭区间切片范围内，从文件或文件夹加载 TIFF 体数据。 |
+| `write_tiff_slice` | `src/io/volume.rs:583` | 将体数据的一个 z 切片写入 TIFF 编码器的一页。 |
+| `TiffPageEncoder` | `src/io/volume.rs:656` | 基于借用可 seek writer 的增量多页 TIFF 编码器。 |
+| `TiffPageEncoder::new` | `src/io/volume.rs:666` | 写入 TIFF 头并固定页尺寸与类型。 |
+| `TiffPageEncoder::write_slices` | `src/io/volume.rs:694` | 以连续页追加完整 z 切片。 |
+| `save_tiff_or_folder_with_ext` | `src/io/volume.rs:734` | 将 `Volume3D` 保存为多页 TIFF 文件或按切片逐一保存的 TIFF 文件夹，可配置扩展名。 |
+| `save_tiff_or_folder` | `src/io/volume.rs:799` | 使用默认的 `.tiff` 扩展名，将 `Volume3D` 保存为 TIFF 文件或切片文件序列。 |
 | `load_stl_from_reader` | `src/io/stl.rs:229` | Forward-reader STL: streamed ASCII lines and bounded binary records. |
 | `load_stl_hashed` | `src/io/stl.rs:242` | Single-pass STL parsing and raw digest. |
 | `parse_binary_reader` | `src/io/stl.rs:157` | Read binary triangle records with incremental deduplication. |
@@ -254,11 +258,11 @@
 
 - **签名：**
   ```rust
-  pub struct Volume3D {
+  pub struct Volume3D<T = i64> {
       pub width: usize,
       pub height: usize,
       pub depth: usize,
-      pub data: Vec<i64>,
+      pub data: Vec<T>,
       pub numeric_type: VolumeNumericType,
   }
   ```
@@ -270,10 +274,18 @@
 | `width` | `usize` | 沿 X 方向的体素数（每个切片的列数）。 |
 | `height` | `usize` | 沿 Y 方向的体素数（每个切片的行数）。 |
 | `depth` | `usize` | 沿 Z 方向的切片数。 |
-| `data` | `Vec<i64>` | 扁平体素缓冲区，长度为 `width * height * depth`。加载时每种源数值类型（`u8`/`u16`/`u32`/`i8`/`i16`/`i32`）都会被扩宽为 `i64`，以便单一缓冲区类型能统一表示任意支持的位深；`numeric_type` 记录了原始位深，以便保存时能正确地窄化回去。 |
+| `data` | `Vec<T>` | 扁平体素缓冲区，长度为 `width * height * depth`，样本类型为 `T: Voxel`。带类型的加载器（`load_raw_folder_typed`、`load_tiff_or_folder_typed_with_range`）返回 `AnyVolume`，其中体数据保持文件自身的类型（16 位输入每体素 2 字节）；默认 `T = i64` 用于扩宽加载器（`load_raw_folder`、`load_tiff_or_folder_with_range`）以及需要任意数值的代码（placement 标签）。 |
 | `numeric_type` | `VolumeNumericType` | 原始（扩宽前）的样本类型，用于在写回时对数值进行范围检查和窄化。 |
 
 > **重要：** `Volume3D::data` 采用 **Z 主序索引**：`idx = z * width * height + y * width + x`。每个 z 切片是一个连续的 `width * height` 块，各切片依次排列。这是每个读取器（`load_raw_folder`、`load_tiff_file_with_range`、`load_tiff_or_folder_with_range`）生成的布局，也是每个写入器（`save_tiff_or_folder_with_ext`）在按 `z` 将 `data` 切分为 `width * height` 大小的块时所依赖的布局。任何手动索引 `Volume3D::data` 的代码——包括 GPU/WGSL 计算着色器——都必须遵循这种 Z 主序布局，而非 X 主序布局，否则体素位置会被无声地打乱。
+
+#### Voxel / AnyVolume / 带类型的加载器
+
+- **`Voxel`**（`src/io/volume.rs`）：样本 trait（`to_i64`、带检查的 `from_i64`），为 `u8`/`i8`/`u16`/`i16`/`u32`/`i32`/`i64` 实现。
+- **`AnyVolume`**：每种文件类型一个 `Volume3D<T>`；`into_i64()` 扩宽，`numeric_type()` 给出类型。加载器内部以私有的 `VoxelVec` 累积样本，直接移入 TIFF 解码器自身的带类型缓冲（不扩宽），并拒绝页/文件之间的类型变化。
+- **`load_raw_folder_typed(spec) -> Result<AnyVolume>`** 与 **`load_tiff_or_folder_typed_with_range(path, start, end) -> Result<AnyVolume>`** 的校验、分批与预留约定与扩宽加载器相同；扩宽加载器现在就是 `typed(...).map(AnyVolume::into_i64)`。
+- 写出器（`save_tiff_or_folder[_with_ext]`、`TiffPageEncoder::write_slices`）对 `T: Voxel` 泛型，仍按 `numeric_type` 逐值做范围检查。
+- 实测（2026-09-25，512×512×256 u16 RAW）：crop 峰值 RSS 在 8 worker 下 616 MB → 171 MB（1 worker 156 MB），GPU 路径 821 MB → 377 MB，输出与 i64 路径逐字节相同。
 
 #### RawFolderSpec
 

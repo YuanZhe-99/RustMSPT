@@ -7,7 +7,7 @@
 | 条目 | 位置 | 摘要 |
 |---|---|---|
 | `gpu_crop_values_supported` | `src/pipeline/crop.rs:25` | Check exact integer representation for GPU interpolation. |
-| `CropPipeline::run_in_pool` | `src/pipeline/crop.rs:1359` | Execute crop stages within the configured pool and report completed-stage wall times. |
+| `CropPipeline::run_in_pool` | `src/pipeline/crop.rs:1367` | Execute crop stages within the configured pool and report completed-stage wall times. |
 | `CropPipeline`（结构体） | `src/pipeline/crop.rs:14` | 持有裁剪流水线所用的 `CropConfig`。 |
 | `InterpolationMode`（枚举） | `src/pipeline/crop.rs:19` | 旋转+裁剪期间使用的最近邻与三线性重采样模式。 |
 | `parse_byte_order` | `src/pipeline/crop.rs:34` | 将 `little`/`big`（或 `le`/`be`）解析为 `ByteOrder`。 |
@@ -32,17 +32,17 @@
 | `projected_bounds` | `src/pipeline/crop.rs:549` | 固定分块求旋转坐标系下的前景边界。 |
 | `foreground_row_blocks` | `src/pipeline/crop.rs:590` | 固定分块扫描，把连续行段交给累加器。 |
 | `estimate_pca_bbox_three_pass` | `src/pipeline/crop.rs:564` | 仅测试使用的原三遍固定分块 PCA oracle。 |
-| `rotate_and_crop` | `src/pipeline/crop.rs:737` | CPU 上、基于 rayon 并行的旋转+裁剪，将体数据重采样为轴对齐输出。 |
-| `rotate_and_crop_gpu` | `src/pipeline/crop.rs:1131` | 按预算规划、按输出分块执行的 GPU 旋转裁剪（`gpu` 特性）。 |
-| `CropSourceBlock` | `src/pipeline/crop.rs:818` | 单个输出块可读取的、已裁剪到源体范围的源子块（原点/尺寸）。 |
-| `CropTilePlan` | `src/pipeline/crop.rs:847` | 选定的块形状、块数、保留最大值与逻辑 GPU 峰值字节。 |
-| `CropTilePlanError` | `src/pipeline/crop.rs:859` | 规划拒绝原因，附带所需字节的可选下界。 |
-| `crop_tile_source_block` | `src/pipeline/crop.rs:871` | 块 8 个角点逆映射的源 AABB，加插值 halo 与 f32 误差余量。 |
-| `crop_gpu_peak_bytes` | `src/pipeline/crop.rs:920` | 保留最大源块/输出块、排队上传、staging、参数和守卫字的逻辑峰值。 |
-| `for_each_crop_tile` | `src/pipeline/crop.rs:930` | 按 z、y、x 顺序遍历整个输出的块。 |
-| `evaluate_crop_tiling` | `src/pipeline/crop.rs:957` | 检查某一块形状是否满足预算和设备单缓冲上限。 |
-| `plan_crop_gpu_tiles` | `src/pipeline/crop.rs:1023` | 选择满足预算与上限的最大 z 板/行/x 段分块。 |
-| `CropPipeline::run` | `src/pipeline/crop.rs:1339` | 编排加载 → 背景检测 → PCA 包围盒 → 旋转+裁剪（GPU 或 CPU）→ 边缘裁剪 → 保存 TIFF。 |
+| `rotate_and_crop` | `src/pipeline/crop.rs:743` | CPU 上、基于 rayon 并行的旋转+裁剪，将体数据重采样为轴对齐输出。 |
+| `rotate_and_crop_gpu` | `src/pipeline/crop.rs:1137` | 按预算规划、按输出分块执行的 GPU 旋转裁剪（`gpu` 特性）。 |
+| `CropSourceBlock` | `src/pipeline/crop.rs:824` | 单个输出块可读取的、已裁剪到源体范围的源子块（原点/尺寸）。 |
+| `CropTilePlan` | `src/pipeline/crop.rs:853` | 选定的块形状、块数、保留最大值与逻辑 GPU 峰值字节。 |
+| `CropTilePlanError` | `src/pipeline/crop.rs:865` | 规划拒绝原因，附带所需字节的可选下界。 |
+| `crop_tile_source_block` | `src/pipeline/crop.rs:877` | 块 8 个角点逆映射的源 AABB，加插值 halo 与 f32 误差余量。 |
+| `crop_gpu_peak_bytes` | `src/pipeline/crop.rs:926` | 保留最大源块/输出块、排队上传、staging、参数和守卫字的逻辑峰值。 |
+| `for_each_crop_tile` | `src/pipeline/crop.rs:936` | 按 z、y、x 顺序遍历整个输出的块。 |
+| `evaluate_crop_tiling` | `src/pipeline/crop.rs:963` | 检查某一块形状是否满足预算和设备单缓冲上限。 |
+| `plan_crop_gpu_tiles` | `src/pipeline/crop.rs:1029` | 选择满足预算与上限的最大 z 板/行/x 段分块。 |
+| `CropPipeline::run` | `src/pipeline/crop.rs:1347` | 编排加载 → 背景检测 → PCA 包围盒 → 旋转+裁剪（GPU 或 CPU）→ 边缘裁剪 → 保存 TIFF。 |
 | `SplitFilterPipeline`（结构体） | `src/pipeline/split_filter.rs:13` | 持有拆分-过滤流水线所用的 `SplitFilterConfig`。 |
 | `VolumeStats`（结构体） | `src/pipeline/split_filter.rs:18` | 保留颗粒体积的最小/最大/均值/中位数汇总。 |
 | `volume_stats_for_kept` | `src/pipeline/split_filter.rs:31` | 在 `keep` 标志为真的颗粒上计算 `VolumeStats`。 |
@@ -118,11 +118,11 @@ CT 体数据裁剪流水线。加载体数据、检测背景强度、计算基�
 
 #### load_input_volume
 
-- **签名：** `fn load_input_volume(config: &CropConfig) -> Result<Volume3D>`
+- **签名：** `fn load_input_volume(config: &CropConfig) -> Result<AnyVolume>`
 - **源码位置：** `src/pipeline/crop.rs:52`
 - **用途：** 根据 `config.input.type` 加载裁剪流水线的输入体数据。
 - **参数：** `config`——完整的 `CropConfig`；读取 `input.type`（`"raw"` 或 `"tiff"`/`"tif"`）、`input.path`、`input.slice_start`/`slice_end`（默认为 -1，表示“不限制”），以及针对原始输入的 `input.raw`（宽/高/位深/是否有符号/字节序）。
-- **返回值：** 一个已加载的 `Volume3D`。
+- **返回值：** 以文件自身样本类型加载的体数据（`AnyVolume`）；`run_in_pool` 对其匹配一次并运行 `CropPipeline::crop_typed::<T>`，之后每个阶段（背景、PCA、重采样、GPU 上传、修边、写出）都针对 `T` 单态化，输出保持输入的类型与宽度。
 - **副作用：** 从磁盘读取文件（原始切片文件夹，或 TIFF 文件/文件夹）。
 - **说明：** 若 `input.type=raw` 但缺少 `input.raw`，或 `input.type` 既非 `raw` 也非 `tiff`/`tif`，则返回 `RustMsptError::InvalidConfig`。
 

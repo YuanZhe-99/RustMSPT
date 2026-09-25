@@ -29,14 +29,14 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `ParticleMetrics` | Pipeline | `src/pipeline/split_filter.rs:309` | Cached component volume/aspect/area. |
 | `prepare_particle_metrics` | Pipeline | `src/pipeline/split_filter.rs:316` | Prepare requested metrics in stable component order. |
 | `SplitFilterPipeline::run_in_pool` | Pipeline | `src/pipeline/split_filter.rs:353` | Execute split-filter inside the configured pool. |
-| `GpuScenePipeline::render_views_to` | GPU | `src/gpu/scene_render.rs:409` | Stream owned views in order while reusing scene and target resources. |
+| `GpuScenePipeline::render_views_to` | GPU | `src/gpu/scene_render.rs:410` | Stream owned views in order while reusing scene and target resources. |
 | `PreparedScene` | Geometry | `src/geometry/scene_render.rs:135` | Immutable CPU scene accelerator shared across cameras. |
 | `PreparedScene::new` | Geometry | `src/geometry/scene_render.rs:142` | Prepare QBVH and materials once. |
 | `PreparedScene::render` | Geometry | `src/geometry/scene_render.rs:147` | Render a view with retained preparation and per-task hit scratch. |
 | `scene_qbvh_build_count` | Geometry | `src/geometry/scene_render.rs:130` | Process-wide count of scene QBVH builds (one per PreparedScene with geometry). |
 | `RenderPipeline::run_in_pool` | Pipeline | `src/pipeline/render.rs:59` | Execute render stages and fallback within the configured pool. |
 | `gpu_crop_values_supported` | Pipeline | `src/pipeline/crop.rs:25` | Check exact integer representation for GPU interpolation. |
-| `CropPipeline::run_in_pool` | Pipeline | `src/pipeline/crop.rs:1359` | Execute crop stages within the configured pool and report completed-stage wall times. |
+| `CropPipeline::run_in_pool` | Pipeline | `src/pipeline/crop.rs:1367` | Execute crop stages within the configured pool and report completed-stage wall times. |
 | `PlacementParams` | Config | `src/config/placement.rs:22` | The `placement:` block as written in YAML, before validation. |
 | `PlacementParams::validate` | Config | `src/config/placement.rs:584` | Applies every cross-field rule and resolves every path into a `ResolvedPlacement`. |
 | `ResolvedPlacement` | Config | `src/config/placement.rs:386` | A checked placement block with paths resolved and nothing left optional. |
@@ -64,7 +64,7 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `RustMsptError` | Core & Compute | `src/error.rs:4` | Crate-wide error enum including image encoding failures. |
 | `Result` | Core & Compute | `src/error.rs:30` | Type alias `Result<T> = std::result::Result<T, RustMsptError>` used throughout the crate. |
 | `cli_path_as_config_relative` | Core & Compute | `src/main.rs:157` | Re-expresses a command-line path so config-relative resolution keeps its meaning. |
-| `BoundingBox::intersects_domain` | Core & Compute | `src/types.rs:96` | Whether two boxes meet at all; touching counts. |
+| `BoundingBox::intersects_domain` | Core & Compute | `src/types.rs:98` | Whether two boxes meet at all; touching counts. |
 | `BuildIdentity` | Core & Compute | `src/version.rs:18` | What this binary is: version, git commit, worktree dirtiness, features, build platform. |
 | `build_identity` | Core & Compute | `src/version.rs:36` | Returns the compiled-in build identity; the single source of truth for tool identity. |
 | `BuildIdentity::version_detail` | Core & Compute | `src/version.rs:64` | Identity as one line without the program name, for clap's `--version`. |
@@ -83,23 +83,23 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `pick_config_path` | Core & Compute | `src/main.rs:184` | Chooses a user-supplied config path or falls back to the default. |
 | `main` (main.rs) | Core & Compute | `src/main.rs:194` | CLI entry point: parses args, loads config, applies overrides, runs the selected pipeline. |
 | `main` (precision_test.rs) | Core & Compute | `src/bin/precision_test.rs:6` | Standalone diagnostic binary comparing S2 computation precision/performance across CPU exact, CPU Monte Carlo, and GPU Monte Carlo methods. |
-| `BoundingBox::expanded` | Core & Compute | `src/types.rs:105` | Grows or shrinks a box by the same margin on every side. |
+| `BoundingBox::expanded` | Core & Compute | `src/types.rs:107` | Grows or shrinks a box by the same margin on every side. |
 | `Vec3` | Core & Compute | `src/types.rs:2` | 3D vector of `f64` components with basic vector algebra methods. |
 | `Vec3::new` | Core & Compute | `src/types.rs:10` | Constructs a vector from x/y/z components. |
-| `Vec3::add` | Core & Compute | `src/types.rs:15` | Vector addition. |
-| `Vec3::sub` | Core & Compute | `src/types.rs:20` | Vector subtraction. |
-| `Vec3::scale` | Core & Compute | `src/types.rs:25` | Scalar multiplication. |
-| `Vec3::dot` | Core & Compute | `src/types.rs:30` | Dot product. |
-| `Vec3::cross` | Core & Compute | `src/types.rs:35` | Cross product. |
-| `BoundingBox` | Core & Compute | `src/types.rs:45` | Axis-aligned box defined by `min`/`max` corners. |
-| `BoundingBox::from_size` | Core & Compute | `src/types.rs:52` | Builds a box from the origin to a given size. |
-| `BoundingBox::size` | Core & Compute | `src/types.rs:60` | Returns the box's side lengths. |
-| `BoundingBox::volume` | Core & Compute | `src/types.rs:65` | Returns the box's (non-negative) volume. |
-| `BoundingBox::contains_point` | Core & Compute | `src/types.rs:71` | Tests whether a point lies inside or on the box boundary. |
-| `Triangle` | Core & Compute | `src/types.rs:114` | Index triple `(a, b, c)` referencing a mesh's vertex array. |
-| `Mesh` | Core & Compute | `src/types.rs:121` | Vertex/face container: `vertices: Vec<Vec3>`, `faces: Vec<Triangle>`. |
-| `Mesh::empty` | Core & Compute | `src/types.rs:128` | Constructs an empty mesh. |
-| `Mesh::is_empty` | Core & Compute | `src/types.rs:136` | True if the mesh has no vertices or no faces. |
+| `Vec3::add` | Core & Compute | `src/types.rs:16` | Vector addition. |
+| `Vec3::sub` | Core & Compute | `src/types.rs:22` | Vector subtraction. |
+| `Vec3::scale` | Core & Compute | `src/types.rs:27` | Scalar multiplication. |
+| `Vec3::dot` | Core & Compute | `src/types.rs:32` | Dot product. |
+| `Vec3::cross` | Core & Compute | `src/types.rs:37` | Cross product. |
+| `BoundingBox` | Core & Compute | `src/types.rs:47` | Axis-aligned box defined by `min`/`max` corners. |
+| `BoundingBox::from_size` | Core & Compute | `src/types.rs:54` | Builds a box from the origin to a given size. |
+| `BoundingBox::size` | Core & Compute | `src/types.rs:62` | Returns the box's side lengths. |
+| `BoundingBox::volume` | Core & Compute | `src/types.rs:67` | Returns the box's (non-negative) volume. |
+| `BoundingBox::contains_point` | Core & Compute | `src/types.rs:73` | Tests whether a point lies inside or on the box boundary. |
+| `Triangle` | Core & Compute | `src/types.rs:116` | Index triple `(a, b, c)` referencing a mesh's vertex array. |
+| `Mesh` | Core & Compute | `src/types.rs:123` | Vertex/face container: `vertices: Vec<Vec3>`, `faces: Vec<Triangle>`. |
+| `Mesh::empty` | Core & Compute | `src/types.rs:130` | Constructs an empty mesh. |
+| `Mesh::is_empty` | Core & Compute | `src/types.rs:138` | True if the mesh has no vertices or no faces. |
 | `AccelerationMode` | Core & Compute | `src/compute/backend.rs:5` | Enum of requested compute modes: `Auto` (default), `Cpu`, `Gpu`. |
 | `AccelerationMode::fmt` (Display) | Core & Compute | `src/compute/backend.rs:12` | Formats the mode as `"auto"`/`"cpu"`/`"gpu"`. |
 | `BackendCaps` | Core & Compute | `src/compute/backend.rs:23` | Reported capabilities of a selected backend (name, GPU support, buffer size limits). |
@@ -235,7 +235,7 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `mesh_distance_exact` | Geometry — Volume & Collision | `src/geometry/collision.rs:411` | Convenience wrapper: builds bbox/shape then computes distance. |
 | `generate_periodic_ghosts` | Geometry — Volume & Collision | `src/geometry/collision.rs:425` | Generates translated ghost copies of a mesh for periodic boundary collision. |
 | `simulate_forging_ffd` | Geometry — Volume & Collision | `src/geometry/forging.rs:10` | Simple Z-axis FFD compression with lateral bulge. |
-| `simulate_forging_ffd_with_tracking` | Geometry — Volume & Collision | `src/geometry/forging.rs:43` | Axis-configurable FFD forging with void densification and ROI bbox tracking. |
+| `simulate_forging_ffd_with_tracking` | Geometry — Volume & Collision | `src/geometry/forging.rs:44` | Axis-configurable FFD forging with void densification and ROI bbox tracking. |
 | `GpuContext` | GPU | `src/gpu/context.rs:42` | Holds adapter name and buffer-size capabilities after successful GPU init. |
 | `GpuContext::caps` | GPU | `src/gpu/context.rs:62` | Returns `BackendCaps` describing this GPU context. |
 | `GpuInitError` | GPU | `src/gpu/context.rs:73` | Error type wrapping a GPU initialization failure message. |
@@ -288,7 +288,7 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `GpuShellS2Pipeline` | GPU | `src/gpu/s2_shell.rs:22` | GPU pipeline state for exact shell-pair S2 computation. |
 | `build_offset_buffer` | GPU | `src/gpu/s2_shell.rs:48` | Converts `(radius_idx, [dx,dy,dz])` tuples into `OffsetEntry` records. |
 | `GpuShellS2Pipeline::new` | GPU | `src/gpu/s2_shell.rs:74` | Initializes the wgpu device and shell S2 compute pipeline. |
-| `GpuShellS2Pipeline::compute_s2_shell` | GPU | `src/gpu/s2_shell.rs:382` | Dispatches exact shell-pair counting over an occupancy grid and reads back S2(r). |
+| `GpuShellS2Pipeline::compute_s2_shell` | GPU | `src/gpu/s2_shell.rs:383` | Dispatches exact shell-pair counting over an occupancy grid and reads back S2(r). |
 | `GpuVoxelPipeline` | GPU | `src/gpu/voxel.rs:7` | GPU pipeline state for mesh voxelization. |
 | `build_triangle_buffer` (voxel.rs) | GPU | `src/gpu/voxel.rs:17` | Builds a normalized `f32` triangle position buffer for the voxelization pipeline (separate copy from `s2.rs`). |
 | `pack_params` (voxel.rs) | GPU | `src/gpu/voxel.rs` | Serialize the 80-byte voxel parameters: ray at byte 32, certification tail from byte 48. |
@@ -309,19 +309,25 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `load_folder_stls` | I/O | `src/io/stl.rs:255` | Loads all STL files in a folder. |
 | `load_stl_or_merge_folder` | I/O | `src/io/stl.rs:282` | Loads a single STL file, or merges all STLs in a directory into one mesh. |
 | `save_stl` | I/O | `src/io/stl.rs:311` | Saves a mesh as a binary STL file. |
-| `collect_sorted_files` | I/O | `src/io/volume.rs:72` | Collects regular files in a folder, sorted by name, optionally filtered by extension. |
-| `resolve_slice_range` | I/O | `src/io/volume.rs:100` | Resolves an inclusive slice range from start/end indices, treating `-1` as "from beginning"/"to end". |
-| `decode_raw_slice` | I/O | `src/io/volume.rs:129` | Decodes one raw image slice into `i64` values per bit depth, sign, and byte order. |
-| `load_raw_folder` | I/O | `src/io/volume.rs:227` | Loads ordered RAW slices with checked sizing, bounded decoding and one final-output reservation. |
+| `collect_sorted_files` | I/O | `src/io/volume.rs:230` | Collects regular files in a folder, sorted by name, optionally filtered by extension. |
+| `resolve_slice_range` | I/O | `src/io/volume.rs:258` | Resolves an inclusive slice range from start/end indices, treating `-1` as "from beginning"/"to end". |
+| `decode_raw_slice` | I/O | `src/io/volume.rs:287` | Decodes one raw image slice into `i64` values per bit depth, sign, and byte order. |
+| `load_raw_folder` | I/O | `src/io/volume.rs:334` | Loads ordered RAW slices with checked sizing, bounded decoding and one final-output reservation. |
+| `Voxel` | I/O | `src/io/volume.rs:27` | Sample trait for typed volumes. |
+| `AnyVolume` | I/O | `src/io/volume.rs:70` | Loaded volume in its file's own sample type. |
+| `load_raw_folder_typed` | I/O | `src/io/volume.rs:344` | RAW folder load keeping the sample type. |
+| `load_tiff_or_folder_typed_with_range` | I/O | `src/io/volume.rs:521` | TIFF load keeping the sample type. |
+| `CropPipeline::crop_typed` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:1390` | Crop stages after load, monomorphised per sample type. |
+| `narrow_sample` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:733` | Store a resampled value back in the input type (always fits). |
 | `tiff_decoding_to_i64` | I/O | `src/io/volume.rs:299` | Converts a TIFF `DecodingResult` into a `Vec<i64>` buffer plus its numeric type. |
-| `load_tiff_file_with_range` | I/O | `src/io/volume.rs:319` | Loads a multi-page TIFF file into a `Volume3D` over an inclusive page range. |
-| `load_tiff_file` | I/O | `src/io/volume.rs:387` | Loads a TIFF file (all pages) into a `Volume3D`. |
-| `is_tiff_path` | I/O | `src/io/volume.rs:392` | Checks whether a path has a `.tif`/`.tiff` extension. |
-| `load_tiff_or_folder` | I/O | `src/io/volume.rs:402` | Loads a TIFF volume from a file or folder (all pages/slices). |
-| `load_tiff_or_folder_with_range` | I/O | `src/io/volume.rs:412` | Loads a TIFF volume from a file or folder over an inclusive slice range. |
-| `write_tiff_slice` | I/O | `src/io/volume.rs:479` | Writes one z-slice of volume data into a TIFF encoder page. |
-| `save_tiff_or_folder_with_ext` | I/O | `src/io/volume.rs:630` | Saves a `Volume3D` as a multi-page TIFF file or a folder of per-slice TIFF files, with configurable extension. |
-| `save_tiff_or_folder` | I/O | `src/io/volume.rs:695` | Saves a `Volume3D` to TIFF file or folder sequence with the default `.tiff` extension. |
+| `load_tiff_file_with_range` | I/O | `src/io/volume.rs:425` | Loads a multi-page TIFF file into a `Volume3D` over an inclusive page range. |
+| `load_tiff_file` | I/O | `src/io/volume.rs:486` | Loads a TIFF file (all pages) into a `Volume3D`. |
+| `is_tiff_path` | I/O | `src/io/volume.rs:491` | Checks whether a path has a `.tif`/`.tiff` extension. |
+| `load_tiff_or_folder` | I/O | `src/io/volume.rs:501` | Loads a TIFF volume from a file or folder (all pages/slices). |
+| `load_tiff_or_folder_with_range` | I/O | `src/io/volume.rs:511` | Loads a TIFF volume from a file or folder over an inclusive slice range. |
+| `write_tiff_slice` | I/O | `src/io/volume.rs:583` | Writes one z-slice of volume data into a TIFF encoder page. |
+| `save_tiff_or_folder_with_ext` | I/O | `src/io/volume.rs:734` | Saves a `Volume3D` as a multi-page TIFF file or a folder of per-slice TIFF files, with configurable extension. |
+| `save_tiff_or_folder` | I/O | `src/io/volume.rs:799` | Saves a `Volume3D` to TIFF file or folder sequence with the default `.tiff` extension. |
 | `Pipeline::run` (trait) | Pipeline — Core | `src/pipeline/mod.rs:17` | Trait method every pipeline struct implements to execute end-to-end. |
 | `PlacementPipeline` | Pipeline — Core | `src/pipeline/placement.rs:39` | Pipeline struct holding a validated `ResolvedPlacement`. |
 | `seeded_rng` | Pipeline — Core | `src/pipeline/rng.rs:13` | Builds the ChaCha12 stream a seeded run draws every variate from. |
@@ -367,22 +373,22 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `projected_bounds` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:549` | Fixed-block rotated-frame foreground bounds. |
 | `foreground_row_blocks` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:590` | Fixed-block scan over contiguous row segments. |
 | `estimate_pca_bbox_three_pass` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:564` | Test-only previous three-pass PCA oracle. |
-| `rotate_and_crop` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:737` | CPU, rayon-parallel rotate-and-crop of the volume into an axis-aligned output. |
-| `rotate_and_crop_gpu` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:1131` | Budget-planned, output-tiled GPU rotate-and-crop (feature `gpu`). |
-| `CropSourceBlock` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:818` | Clamped source sub-block one output tile may read. |
-| `CropTilePlan` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:847` | Chosen tile shape, count, retained maxima and peak GPU bytes. |
-| `CropTilePlanError` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:859` | Planning refusal with an optional lower bound on required bytes. |
-| `crop_tile_source_block` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:871` | Tile corner source AABB plus interpolation halo and f32 margin. |
-| `crop_gpu_peak_bytes` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:920` | Logical GPU peak for retained block/tile, upload, staging, params, guard. |
-| `for_each_crop_tile` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:930` | Visits whole-output tiles in z, y, x order. |
-| `evaluate_crop_tiling` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:957` | Checks one tile shape against budget and device buffer limit. |
-| `plan_crop_gpu_tiles` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:1023` | Largest z-slab / row / x-run tiling fitting the budget and limits. |
+| `rotate_and_crop` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:743` | CPU, rayon-parallel rotate-and-crop of the volume into an axis-aligned output. |
+| `rotate_and_crop_gpu` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:1137` | Budget-planned, output-tiled GPU rotate-and-crop (feature `gpu`). |
+| `CropSourceBlock` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:824` | Clamped source sub-block one output tile may read. |
+| `CropTilePlan` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:853` | Chosen tile shape, count, retained maxima and peak GPU bytes. |
+| `CropTilePlanError` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:865` | Planning refusal with an optional lower bound on required bytes. |
+| `crop_tile_source_block` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:877` | Tile corner source AABB plus interpolation halo and f32 margin. |
+| `crop_gpu_peak_bytes` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:926` | Logical GPU peak for retained block/tile, upload, staging, params, guard. |
+| `for_each_crop_tile` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:936` | Visits whole-output tiles in z, y, x order. |
+| `evaluate_crop_tiling` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:963` | Checks one tile shape against budget and device buffer limit. |
+| `plan_crop_gpu_tiles` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:1029` | Largest z-slab / row / x-run tiling fitting the budget and limits. |
 | `TransformTile` | GPU | `src/gpu/volume_transform.rs:11` | Output tile plus uploaded source sub-block descriptor. |
 | `GpuVolumeTransformPipeline::device_limits` | GPU | `src/gpu/volume_transform.rs:197` | Device limits bounding per-tile buffers. |
 | `GpuVolumeTransformPipeline::reserve_capacity` | GPU | `src/gpu/volume_transform.rs:207` | Pre-size source and output/staging buffers to a plan's maxima. |
 | `GpuVolumeTransformPipeline::transform_tile` | GPU | `src/gpu/volume_transform.rs:229` | Transform one output tile from a halo source block with single-dispatch arithmetic and a halo guard. |
 | `GpuVolumeTransformPipeline::resize_source_buffer` | GPU | `src/gpu/volume_transform.rs:388` | Replace the retained source-block buffer. |
-| `CropPipeline::run` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:1339` | Orchestrates load → background detect → PCA bbox → rotate+crop (GPU or CPU) → edge trim → save TIFF. |
+| `CropPipeline::run` | Pipeline — Crop & Split-Filter | `src/pipeline/crop.rs:1347` | Orchestrates load → background detect → PCA bbox → rotate+crop (GPU or CPU) → edge trim → save TIFF. |
 | `SplitFilterPipeline` (struct) | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:13` | Holds `SplitFilterConfig` for the split-filter pipeline. |
 | `VolumeStats` (struct) | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:18` | Min/max/mean/median summary of kept-particle volumes. |
 | `volume_stats_for_kept` | Pipeline — Crop & Split-Filter | `src/pipeline/split_filter.rs:31` | Computes `VolumeStats` over particles whose `keep` flag is true. |
@@ -532,9 +538,9 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `default_fov_degrees` | Config | `src/config/render.rs:48` | Defaults perspective FOV to 45 degrees. |
 | `default_fit_padding` | Config | `src/config/render.rs:53` | Defaults framing padding to 0.05. |
 | `default_resolution` | Config | `src/config/render.rs:58` | Defaults one image dimension to 1024. |
-| `RenderedImage` | Core & Compute | `src/types.rs:142` | Top-row-first RGBA8 image container. |
-| `RenderedImage::new` | Core & Compute | `src/types.rs:151` | Constructs an image from RGBA bytes. |
-| `RenderedImage::filled` | Core & Compute | `src/types.rs:161` | Allocates a solid-color image. |
+| `RenderedImage` | Core & Compute | `src/types.rs:144` | Top-row-first RGBA8 image container. |
+| `RenderedImage::new` | Core & Compute | `src/types.rs:153` | Constructs an image from RGBA bytes. |
+| `RenderedImage::filled` | Core & Compute | `src/types.rs:163` | Allocates a solid-color image. |
 | `select_backend_for_workload` | Core & Compute | `src/compute/policy.rs:46` | Unit-aware CPU/GPU/Auto selector. |
 | `select_gpu_backend` | Core & Compute | `src/compute/policy.rs:84` | Shared GPU probe/memory guard. |
 | `RenderProjection` | Geometry — Core | `src/geometry/render.rs:11` | Orthographic/perspective projection enum. |
@@ -909,15 +915,15 @@ Master index of every documented function, struct, enum, and constant across `sr
 
 | `map_vertices` | Geometry Core | `src/geometry/mesh_ops.rs:251` | Serial or parallel independent vertex mapping. |
 
-| `forge_owned` | Geometry Volume/Collision | `src/geometry/forging.rs:66` | Ownership-consuming FFD and ROI transform. |
+| `forge_owned` | Geometry Volume/Collision | `src/geometry/forging.rs:68` | Ownership-consuming FFD and ROI transform. |
 
 | `load_stl_from_reader` | I/O | `src/io/stl.rs:229` | Forward-reader STL: streamed ASCII lines and bounded binary records. |
 | `AsciiStlBuilder` | I/O | `src/io/stl.rs:81` | Incremental ASCII STL state: vertices, faces, pending vertices, dedup map. |
 | `AsciiStlBuilder::push_line` | I/O | `src/io/stl.rs:90` | Consume one raw line with the legacy lossy/trim/vertex rules. |
 | `parse_ascii_stream_or_binary` | I/O | `src/io/stl.rs:112` | Line-streamed ASCII STL with binary fallback on the retained bytes. |
-| `TiffPageEncoder` | I/O | `src/io/volume.rs:552` | Incremental multi-page TIFF encoder over a borrowed seekable writer. |
-| `TiffPageEncoder::new` | I/O | `src/io/volume.rs:562` | Write the TIFF header and fix page size/type. |
-| `TiffPageEncoder::write_slices` | I/O | `src/io/volume.rs:590` | Append whole z-slices as consecutive pages. |
+| `TiffPageEncoder` | I/O | `src/io/volume.rs:656` | Incremental multi-page TIFF encoder over a borrowed seekable writer. |
+| `TiffPageEncoder::new` | I/O | `src/io/volume.rs:666` | Write the TIFF header and fix page size/type. |
+| `TiffPageEncoder::write_slices` | I/O | `src/io/volume.rs:694` | Append whole z-slices as consecutive pages. |
 | `load_stl_hashed` | I/O | `src/io/stl.rs:242` | Single-pass STL parsing and raw digest. |
 | `parse_binary_reader` | I/O | `src/io/stl.rs:157` | Read binary triangle records with incremental deduplication. |
 | `read_stl_record` | I/O | `src/io/stl.rs:191` | Read complete record or report truncation. |
@@ -1012,8 +1018,8 @@ Master index of every documented function, struct, enum, and constant across `sr
 |---|---|---|
 | `GpuShellS2Pipeline::with_device` | `src/gpu/s2_shell.rs:87` | Build production shell resources on a held `Arc<SharedGpuDevice>`; no new device. |
 | `GpuShellS2Pipeline::build_on_device` | `src/gpu/s2_shell.rs:100` | Compile shell resources on supplied handles with balanced GPU error scopes. |
-| `GpuShellS2Pipeline::compute_s2_shell_resident` | `src/gpu/s2_shell.rs:407` | Read a same-device occupancy buffer directly; caller serializes producer and consumer. |
-| `GpuShellS2Pipeline::compute_shell_input` | `src/gpu/s2_shell.rs:455` | Shared execution for host-uploaded or resident occupancy with identical offset semantics. |
+| `GpuShellS2Pipeline::compute_s2_shell_resident` | `src/gpu/s2_shell.rs:410` | Read a same-device occupancy buffer directly; caller serializes producer and consumer. |
+| `GpuShellS2Pipeline::compute_shell_input` | `src/gpu/s2_shell.rs:459` | Shared execution for host-uploaded or resident occupancy with identical offset semantics. |
 | `GpuVoxelPipeline::shared_device` | `src/gpu/voxel.rs:103` | Share the process device handle for sequential stages; no device creation. |
 | `GpuVoxelPipeline::occupancy_buffer` | `src/gpu/voxel.rs:98` | Clone completed occupancy storage handle; producer must not overwrite while consumed. |
 
@@ -1025,7 +1031,7 @@ Master index of every documented function, struct, enum, and constant across `sr
 
 | Function | Source | Contract |
 |---|---|---|
-| `GpuShellS2Pipeline::compute_s2_shell_resident_stream` | `src/gpu/s2_shell.rs:432` | Consume ordered offsets lazily in bounded batches on a resident grid; preserve per-offset ratios. |
+| `GpuShellS2Pipeline::compute_s2_shell_resident_stream` | `src/gpu/s2_shell.rs:435` | Consume ordered offsets lazily in bounded batches on a resident grid; preserve per-offset ratios. |
 
 | Function | Source | Contract |
 |---|---|---|
@@ -1034,8 +1040,8 @@ Master index of every documented function, struct, enum, and constant across `sr
 | Symbol | Source | Contract |
 |---|---|---|
 | `ExactMemoryPlan` | `src/compute/exact_memory.rs:20` | Fresh resident exact logical GPU peak and budget-selected partial batch. |
-| `ExactMemoryPlan::new` | `src/compute/exact_memory.rs:27` | Checked resource arithmetic and batch selection; may still require check_budget for infeasible minima. |
-| `ExactMemoryPlan::check_budget` | `src/compute/exact_memory.rs:69` | Enforce configured MiB cap before initialization. |
+| `ExactMemoryPlan::new` | `src/compute/exact_memory.rs:28` | Checked resource arithmetic and batch selection; may still require check_budget for infeasible minima. |
+| `ExactMemoryPlan::check_budget` | `src/compute/exact_memory.rs:71` | Enforce configured MiB cap before initialization. |
 
 | Function | Source | Contract |
 |---|---|---|
@@ -1057,8 +1063,8 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `consume_frames` | `src/pipeline/mesh_render.rs:25` | Ordered bounded PNG writer; joins before fallback, preserves output errors; sequential for one worker/view. |
 | `render_and_write_overlapped` | `src/pipeline/mesh_render.rs:73` | Ordered CPU render/PNG overlap via rayon::join; at most one frame writing; write error stops further views. |
 | `collect_opaque_hits` | `src/geometry/scene_render.rs:97` | Nearest-distance bounded coincidence group preserving Face priority and overlay depth. |
-| `consume_file_batches` | `src/io/volume.rs:47` | Decode at most two files in the current pool; consume/validate in source order and stop subsequent batches on errors. |
-| `write_tiff_pages` | `src/io/volume.rs:606` | Borrowed sequential TIFF encoding with explicit final flush and propagated output errors. |
+| `consume_file_batches` | `src/io/volume.rs:205` | Decode at most two files in the current pool; consume/validate in source order and stop subsequent batches on errors. |
+| `write_tiff_pages` | `src/io/volume.rs:710` | Borrowed sequential TIFF encoding with explicit final flush and propagated output errors. |
 | `for_each_boundary_value` | `src/pipeline/crop.rs:313` | Visit boundary voxels once in z-major order for specialized background counters. |
 
 | `StageTimer` | Pipeline Core | `src/pipeline/timing.rs:3` | Per-pipeline total and stage clocks. |

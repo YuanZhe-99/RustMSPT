@@ -56,7 +56,7 @@
 | `GpuShellS2Pipeline` | `src/gpu/s2_shell.rs:22` | 精确壳层对 S2 计算的 GPU 流水线状态。 |
 | `build_offset_buffer` | `src/gpu/s2_shell.rs:48` | 将 `(radius_idx, [dx,dy,dz])` 元组转换为 `OffsetEntry` 记录。 |
 | `GpuShellS2Pipeline::new` | `src/gpu/s2_shell.rs:74` | 初始化 wgpu 设备与壳层 S2 计算流水线。 |
-| `GpuShellS2Pipeline::compute_s2_shell` | `src/gpu/s2_shell.rs:382` | 在占据网格上分派精确壳层对计数并回读 S2(r)。 |
+| `GpuShellS2Pipeline::compute_s2_shell` | `src/gpu/s2_shell.rs:383` | 在占据网格上分派精确壳层对计数并回读 S2(r)。 |
 | `GpuVoxelPipeline` | `src/gpu/voxel.rs:7` | 网格体素化的 GPU 流水线状态。 |
 | `build_triangle_buffer`（voxel.rs） | `src/gpu/voxel.rs:17` | 为体素化流水线构建归一化的 `f32` 三角形位置缓冲区（与 `s2.rs` 中的实现相互独立）。 |
 | `pack_params`（voxel.rs） | `src/gpu/voxel.rs` | 序列化 80 字节参数：射线方向从字节 32 开始，认证尾部从字节 48 开始。 |
@@ -678,8 +678,8 @@ GPU shell 在排除超出任意轴的位移后，以 (nx−|dx|)×(ny−|dy|)×(
 |---|---|---|
 | `GpuShellS2Pipeline::with_device` | `src/gpu/s2_shell.rs:87` | Build production shell resources on supplied device/queue; no new device. |
 | `GpuShellS2Pipeline::build_on_device` | `src/gpu/s2_shell.rs:100` | Compile shell resources on supplied handles with balanced GPU error scopes. |
-| `GpuShellS2Pipeline::compute_s2_shell_resident` | `src/gpu/s2_shell.rs:407` | Read a same-device occupancy buffer directly; caller serializes producer and consumer. |
-| `GpuShellS2Pipeline::compute_shell_input` | `src/gpu/s2_shell.rs:455` | Shared execution for host-uploaded or resident occupancy with identical offset semantics. |
+| `GpuShellS2Pipeline::compute_s2_shell_resident` | `src/gpu/s2_shell.rs:410` | Read a same-device occupancy buffer directly; caller serializes producer and consumer. |
+| `GpuShellS2Pipeline::compute_shell_input` | `src/gpu/s2_shell.rs:459` | Shared execution for host-uploaded or resident occupancy with identical offset semantics. |
 | `GpuVoxelPipeline::shared_device` | `src/gpu/voxel.rs:103` | 为后续阶段共享进程设备句柄（`Arc<SharedGpuDevice>`）；不创建设备。 |
 | `GpuVoxelPipeline::occupancy_buffer` | `src/gpu/voxel.rs:98` | Clone completed occupancy storage handle; producer must not overwrite while consumed. |
 
@@ -697,7 +697,7 @@ GPU exact 现逐半径延迟生成一个 shell Vec，经 compute_s2_shell_reside
 
 | Function | Source | Contract |
 |---|---|---|
-| `GpuShellS2Pipeline::compute_s2_shell_resident_stream` | `src/gpu/s2_shell.rs:432` | Consume ordered offsets lazily in bounded batches on a resident grid; preserve per-offset ratios. |
+| `GpuShellS2Pipeline::compute_s2_shell_resident_stream` | `src/gpu/s2_shell.rs:435` | Consume ordered offsets lazily in bounded batches on a resident grid; preserve per-offset ratios. |
 
 GPU exact 现使用 shell_offset_iter，单个半径内部也只保留嵌套范围游标；保持原 x/y/z 顺序、原点特殊情况和半开平方距离判定。需要随机访问的公共 Vec API 保持不变。用 peekable 判定该半径是否有支持，生成数量在消费时累计。普通范围沿用原整数范数，更大范数用 u128 避免有符号乘法溢出。仍扫描包围立方体，降低分配并未改变 O(半径³) 搜索复杂度。
 
