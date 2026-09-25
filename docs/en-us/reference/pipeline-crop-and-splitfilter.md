@@ -33,7 +33,15 @@ Covers the `crop` pipeline (`src/pipeline/crop.rs`) — background detection, PC
 | `foreground_row_blocks` | `src/pipeline/crop.rs` | Fixed-block scan handing contiguous row segments to an accumulator. |
 | `estimate_pca_bbox_three_pass` | `src/pipeline/crop.rs` | Test-only previous three-pass fixed-block PCA oracle. |
 | `rotate_and_crop` | `src/pipeline/crop.rs:459` | CPU, rayon-parallel rotate-and-crop of the volume into an axis-aligned output. |
-| `rotate_and_crop_gpu` | `src/pipeline/crop.rs:520` | GPU-accelerated rotate-and-crop via `GpuVolumeTransformPipeline` (feature `gpu`). |
+| `rotate_and_crop_gpu` | `src/pipeline/crop.rs` | Budget-planned, output-tiled GPU rotate-and-crop via `GpuVolumeTransformPipeline` (feature `gpu`). |
+| `CropSourceBlock` | `src/pipeline/crop.rs` | Clamped source sub-block (origin/dims) one output tile may read. |
+| `CropTilePlan` | `src/pipeline/crop.rs` | Chosen tile shape, tile count, retained maxima and peak logical GPU bytes. |
+| `CropTilePlanError` | `src/pipeline/crop.rs` | Planning refusal with an optional lower bound on the required bytes. |
+| `crop_tile_source_block` | `src/pipeline/crop.rs` | Source AABB of a tile's 8 inverse-mapped corners plus interpolation halo and f32 margin. |
+| `crop_gpu_peak_bytes` | `src/pipeline/crop.rs` | Logical GPU peak for retained max block/tile, queued upload, staging, params and guard. |
+| `for_each_crop_tile` | `src/pipeline/crop.rs` | Visits whole-output tiles in z, y, x order. |
+| `evaluate_crop_tiling` | `src/pipeline/crop.rs` | Checks one tile shape against the budget and device buffer limit. |
+| `plan_crop_gpu_tiles` | `src/pipeline/crop.rs` | Largest z-slab / row / x-run tiling that fits the budget and limits. |
 | `CropPipeline::run` | `src/pipeline/crop.rs:598` | Orchestrates load → background detect → PCA bbox → rotate+crop (GPU or CPU) → edge trim → save TIFF. |
 | `SplitFilterPipeline` (struct) | `src/pipeline/split_filter.rs:13` | Holds `SplitFilterConfig` for the split-filter pipeline. |
 | `VolumeStats` (struct) | `src/pipeline/split_filter.rs:18` | Min/max/mean/median summary of kept-particle volumes. |
@@ -249,14 +257,23 @@ CT-volume crop pipeline. Loads a volume, detects the background intensity, compu
 
 > **Feature-gated:** compiled only with `--features gpu` (`#[cfg(feature = "gpu")]`).
 
-- **Signature:** `fn rotate_and_crop_gpu(volume: &Volume3D, background: i64, rot: &Matrix3<f64>, centroid: &Vector3<f64>, min_v: &Vector3<f64>, max_v: &Vector3<f64>, interpolation_mode: InterpolationMode) -> std::result::Result<Volume3D, String>`
-- **Source:** `src/pipeline/crop.rs:520`
-- **Purpose:** GPU-accelerated equivalent of `rotate_and_crop`, dispatching a WGSL compute shader via `GpuVolumeTransformPipeline`.
-- **Parameters:** Same as `rotate_and_crop`.
-- **Returns:** `Ok(Volume3D)` with the same shape/semantics as the CPU path, or `Err(String)` describing a GPU initialization/dispatch failure.
-- **Side effects:** Initializes a `crate::gpu::volume_transform::GpuVolumeTransformPipeline` (creates a `wgpu` device/queue on first use), uploads the volume as `i32` (converted from `i64`), dispatches the compute shader, downloads the `i32` result and converts back to `i64`. Prints an `[Info]` timing line to stdout (`"[Info] GPU volume transform: {elapsed}s, {w}x{h}x{d} -> {w}x{h}x{d}"`).
-- **Notes:** Data is round-tripped through `i32`, not `i64` — a checked narrowing conversion; unsupported values return an error before upload. The interpolation mode is passed to the shader as a `u32` flag (`0` = nearest, `1` = trilinear). Origin passed to the shader is `(x0, y0, z0)` from the float-to-inclusive-integer bounds conversion, i.e. the shader receives the same coordinate frame as the CPU path.
+- **Signature:** `fn rotate_and_crop_gpu(volume: &Volume3D, background: i64, rot: &Matrix3<f64>, centroid: &Vector3<f64>, min_v: &Vector3<f64>, max_v: &Vector3<f64>, interpolation_mode: InterpolationMode, budget: Option<u64>) -> std::result::Result<(Volume3D, usize), String>`
+- **Source:** `src/pipeline/crop.rs`
+- **Purpose:** GPU rotate-and-crop executed as output tiles chosen by `plan_crop_gpu_tiles`; each tile uploads only the source sub-block its samples can reach.
+- **Parameters:** Same as `rotate_and_crop`, plus `budget` — the logical GPU byte budget (`acceleration.gpu_memory_limit_mb × 1 MiB`), or `None` for no budget.
+- **Returns:** `Ok((Volume3D, tiles))` with the same shape/semantics as the CPU path and the number of dispatched tiles, or `Err(String)` for initialization, planning (`"... no single minimal tile fits (needs at least N bytes)"`), dispatch, readback or halo-guard failures.
+- **Side effects:** Initializes a `GpuVolumeTransformPipeline`, plans with both the budget and the device's single-buffer limit (`min(max_buffer_size, max_storage_buffer_binding_size)`), pre-sizes source and output/staging buffers once to the plan maxima, then per tile converts the block `i64 → i32` (checked), dispatches `transform_tile`, and writes the tile rows into the host output. Prints `"[Info] GPU volume transform: {s}s, {src} -> {out}, tiles=N tile=WxHxD peak_bytes=B"`.
+- **Notes:** Output is byte-identical to the single-dispatch GPU path for both interpolations because the shader recomputes every voxel from its absolute output index (`f32(tile_offset + local)`) and bounds-tests against the full source dims; the block only changes where in-volume values are read from. A runtime guard word turns any in-volume read outside the uploaded block into an error instead of a value. With no budget and ample device limits the plan is one tile whose block is the output's source AABB (not necessarily the whole source). Nearest output equals the CPU path except where f32 and f64 coordinates round differently at an exact `.5` tie (oblique rotations); trilinear f32 blending is not claimed bit-identical to CPU f64.
 - **See also:** [gpu.md](gpu.md) for `GpuVolumeTransformPipeline` and the underlying WGSL compute shader; `rotate_and_crop` for the CPU fallback path; `CropPipeline::run` for the GPU/CPU selection logic and fallback-on-error behavior.
+
+#### Crop GPU tile planning (`CropSourceBlock`, `CropTilePlan`, `CropTilePlanError`, `crop_tile_source_block`, `crop_gpu_peak_bytes`, `for_each_crop_tile`, `evaluate_crop_tiling`, `plan_crop_gpu_tiles`)
+
+- **Source:** `src/pipeline/crop.rs` (compiled without the `gpu` feature too: `CropPipeline::run_in_pool` uses the plan as the working-set estimate).
+- **`crop_tile_source_block(src_dims, rot, centroid, origin, lo, hi) -> Result<CropSourceBlock, String>`** — inverse-maps the tile's 8 corners (`src = rot * (origin + index) + centroid`, the affine image's AABB), expands to `floor(min − m) .. floor(max + m) + 1` per axis (covers both trilinear neighbours and nearest rounding, i.e. a 1-voxel halo), and clamps to the source. `m = 16·ε_f32·(Σ|r_ij|·(max|local_j|+1) + |c_i| + 1) + 1e-6` bounds the shader's f32 rounding of rotation, centroid, origin and products. A tile whose samples all leave the source gets a zero-dim block. Nonfinite coordinates are an error. Rotations cross source slices, so the block is never the output's z range.
+- **`crop_gpu_peak_bytes(max_block_voxels, max_tile_voxels) -> Option<u64>`** — `2·4·block` (buffer plus the queued `write_buffer` copy) `+ 4·tile` (output) `+ 4·tile + 4` (staging with the guard word) `+ 160` (params) `+ 4 + 4` (guard), all checked.
+- **`for_each_crop_tile(out_dims, tile_dims, visit)`** — visits inclusive `(lo, hi)` bounds in z, y, x order; tail tiles are shorter when sizes do not divide.
+- **`evaluate_crop_tiling(...) -> Result<CropTilePlan, CropTilePlanError>`** — accumulates the retained maxima over all tiles (buffers are pre-sized once, so the peak is the maxima, not one tile) and refuses at the first tile that exceeds the budget, the single-buffer limit, or u32 voxel indexing.
+- **`plan_crop_gpu_tiles(src_dims, rot, centroid, origin, out_dims, budget, buffer_limit) -> Result<CropTilePlan, CropTilePlanError>`** — tries the whole output, then full-xy z slabs, then y-row groups of one slice, then x runs of one row; within a level it binary-searches the largest extent that evaluates as fitting, and only returns plans evaluated over all their tiles. Refuses only when a single-voxel x run does not fit; the error's `needed` is a lower bound used as the policy estimate, so `resolve_execution` reports the budget refusal and auto falls back / gpu errors.
 
 ---
 

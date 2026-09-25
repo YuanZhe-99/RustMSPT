@@ -33,7 +33,15 @@
 | `foreground_row_blocks` | `src/pipeline/crop.rs` | 固定分块扫描，把连续行段交给累加器。 |
 | `estimate_pca_bbox_three_pass` | `src/pipeline/crop.rs` | 仅测试使用的原三遍固定分块 PCA oracle。 |
 | `rotate_and_crop` | `src/pipeline/crop.rs:459` | CPU 上、基于 rayon 并行的旋转+裁剪，将体数据重采样为轴对齐输出。 |
-| `rotate_and_crop_gpu` | `src/pipeline/crop.rs:520` | 通过 `GpuVolumeTransformPipeline` 实现的 GPU 加速旋转+裁剪（`gpu` 特性）。 |
+| `rotate_and_crop_gpu` | `src/pipeline/crop.rs` | 按预算规划、按输出分块执行的 GPU 旋转裁剪（`gpu` 特性）。 |
+| `CropSourceBlock` | `src/pipeline/crop.rs` | 单个输出块可读取的、已裁剪到源体范围的源子块（原点/尺寸）。 |
+| `CropTilePlan` | `src/pipeline/crop.rs` | 选定的块形状、块数、保留最大值与逻辑 GPU 峰值字节。 |
+| `CropTilePlanError` | `src/pipeline/crop.rs` | 规划拒绝原因，附带所需字节的可选下界。 |
+| `crop_tile_source_block` | `src/pipeline/crop.rs` | 块 8 个角点逆映射的源 AABB，加插值 halo 与 f32 误差余量。 |
+| `crop_gpu_peak_bytes` | `src/pipeline/crop.rs` | 保留最大源块/输出块、排队上传、staging、参数和守卫字的逻辑峰值。 |
+| `for_each_crop_tile` | `src/pipeline/crop.rs` | 按 z、y、x 顺序遍历整个输出的块。 |
+| `evaluate_crop_tiling` | `src/pipeline/crop.rs` | 检查某一块形状是否满足预算和设备单缓冲上限。 |
+| `plan_crop_gpu_tiles` | `src/pipeline/crop.rs` | 选择满足预算与上限的最大 z 板/行/x 段分块。 |
 | `CropPipeline::run` | `src/pipeline/crop.rs:598` | 编排加载 → 背景检测 → PCA 包围盒 → 旋转+裁剪（GPU 或 CPU）→ 边缘裁剪 → 保存 TIFF。 |
 | `SplitFilterPipeline`（结构体） | `src/pipeline/split_filter.rs:13` | 持有拆分-过滤流水线所用的 `SplitFilterConfig`。 |
 | `VolumeStats`（结构体） | `src/pipeline/split_filter.rs:18` | 保留颗粒体积的最小/最大/均值/中位数汇总。 |
@@ -249,14 +257,23 @@ CT 体数据裁剪流水线。加载体数据、检测背景强度、计算基�
 
 > **特性门控：** 仅在使用 `--features gpu`（`#[cfg(feature = "gpu")]`）编译时启用。
 
-- **签名：** `fn rotate_and_crop_gpu(volume: &Volume3D, background: i64, rot: &Matrix3<f64>, centroid: &Vector3<f64>, min_v: &Vector3<f64>, max_v: &Vector3<f64>, interpolation_mode: InterpolationMode) -> std::result::Result<Volume3D, String>`
-- **源码位置：** `src/pipeline/crop.rs:494`
-- **用途：** `rotate_and_crop` 的 GPU 加速等价实现，通过 `GpuVolumeTransformPipeline` 派发一个 WGSL 计算着色器。
-- **参数：** 与 `rotate_and_crop` 相同。
-- **返回值：** `Ok(Volume3D)`，形状/语义与 CPU 路径相同；或 `Err(String)` 描述 GPU 初始化/派发失败。
-- **副作用：** 初始化一个 `crate::gpu::volume_transform::GpuVolumeTransformPipeline`（首次使用时创建 `wgpu` 设备/队列），将体数据以 `i32`（由 `i64` 转换而来）形式上传，派发计算着色器，下载 `i32` 结果并转换回 `i64`。向标准输出打印一行 `[Info]` 计时信息（`"[Info] GPU volume transform: {elapsed}s, {w}x{h}x{d} -> {w}x{h}x{d}"`）。
-- **说明：** 数据以 `i32` 而非 `i64` 往返传输——窄化前检查值域；最近邻要求值可无损表示为 i32，三线性还要求整数可精确表示为 f32。不满足时返回错误，由管线按回退策略处理。插值模式作为 `u32` 标志传给着色器（`0` = 最近邻，`1` = 三线性）。传给着色器的原点为浮点转闭区间整数边界转换得到的 `(x0, y0, z0)`，即着色器接收到与 CPU 路径相同的坐标系。
+- **签名：** `fn rotate_and_crop_gpu(volume: &Volume3D, background: i64, rot: &Matrix3<f64>, centroid: &Vector3<f64>, min_v: &Vector3<f64>, max_v: &Vector3<f64>, interpolation_mode: InterpolationMode, budget: Option<u64>) -> std::result::Result<(Volume3D, usize), String>`
+- **源码位置：** `src/pipeline/crop.rs`
+- **用途：** 按 `plan_crop_gpu_tiles` 选出的输出块执行 GPU 旋转裁剪；每个块只上传其采样可能触及的源子块。
+- **参数：** 与 `rotate_and_crop` 相同，另加 `budget` —— 逻辑 GPU 字节预算（`acceleration.gpu_memory_limit_mb × 1 MiB`），`None` 表示无预算。
+- **返回值：** `Ok((Volume3D, tiles))`，形状/语义与 CPU 路径相同并附实际派发块数；或初始化、规划（`"... no single minimal tile fits (needs at least N bytes)"`）、派发、回读、halo 守卫失败时的 `Err(String)`。
+- **副作用：** 初始化 `GpuVolumeTransformPipeline`，同时按预算和设备单缓冲上限（`min(max_buffer_size, max_storage_buffer_binding_size)`）规划，一次性把源/输出/staging 缓冲预留到计划最大值；随后逐块把子块 `i64 → i32`（带检查）、调用 `transform_tile`、把块内各行写回主机输出。打印 `"[Info] GPU volume transform: {s}s, {src} -> {out}, tiles=N tile=WxHxD peak_bytes=B"`。
+- **说明：** 两种插值都与单次 dispatch 的 GPU 路径逐字节一致：着色器按绝对输出索引（`f32(tile_offset + local)`）重算每个体素，并按完整源尺寸判断越界，子块只改变体内数值的读取位置。运行时守卫字会把任何落在已上传子块之外的体内读取变成错误而非数值。无预算且设备上限充足时计划为单块，其子块是输出对应的源 AABB（不一定是整个源体）。最近邻在斜旋转下仅在 f32/f64 坐标恰处 `.5` 平局而舍入不同之处与 CPU 不同；三线性的 f32 混合不宣称与 CPU f64 逐位一致。
 - **另请参阅：** `GpuVolumeTransformPipeline` 及底层 WGSL 计算着色器见 [gpu.md](gpu.md)；CPU 回退路径见 `rotate_and_crop`；GPU/CPU 选择逻辑与失败回退行为见 `CropPipeline::run`。
+
+#### Crop GPU 分块规划（`CropSourceBlock`、`CropTilePlan`、`CropTilePlanError`、`crop_tile_source_block`、`crop_gpu_peak_bytes`、`for_each_crop_tile`、`evaluate_crop_tiling`、`plan_crop_gpu_tiles`）
+
+- **源码位置：** `src/pipeline/crop.rs`（未启用 `gpu` 特性也编译：`CropPipeline::run_in_pool` 以计划峰值作为工作集估计）。
+- **`crop_tile_source_block(src_dims, rot, centroid, origin, lo, hi) -> Result<CropSourceBlock, String>`** —— 对块的 8 个角点做逆映射（`src = rot * (origin + index) + centroid`，仿射像的 AABB），每轴扩展为 `floor(min − m) .. floor(max + m) + 1`（同时覆盖三线性邻点与最近邻舍入，即 1 体素 halo），再裁剪到源体范围。`m = 16·ε_f32·(Σ|r_ij|·(max|local_j|+1) + |c_i| + 1) + 1e-6` 界定着色器对旋转、质心、原点及乘加的 f32 舍入。所有采样都在源体外的块得到零尺寸子块；非有限坐标报错。旋转会跨越源切片，因此子块绝不按输出 z 范围切取。
+- **`crop_gpu_peak_bytes(max_block_voxels, max_tile_voxels) -> Option<u64>`** —— `2·4·block`（缓冲加排队的 `write_buffer` 副本）`+ 4·tile`（输出）`+ 4·tile + 4`（含守卫字的 staging）`+ 160`（参数）`+ 4 + 4`（守卫），全部 checked。
+- **`for_each_crop_tile(out_dims, tile_dims, visit)`** —— 按 z、y、x 顺序访问闭区间 `(lo, hi)`；尺寸不整除时尾块更短。
+- **`evaluate_crop_tiling(...) -> Result<CropTilePlan, CropTilePlanError>`** —— 在所有块上累计保留最大值（缓冲只预留一次，因此峰值取最大值而非单块），在第一个超出预算、单缓冲上限或 u32 体素索引的块处拒绝。
+- **`plan_crop_gpu_tiles(src_dims, rot, centroid, origin, out_dims, budget, buffer_limit) -> Result<CropTilePlan, CropTilePlanError>`** —— 依次尝试整个输出、完整 xy 的 z 板、单切片内的 y 行组、单行内的 x 段；每一层二分查找可行的最大范围，只返回在其全部块上评估通过的计划。仅当单体素 x 段仍放不下时拒绝；错误中的 `needed` 是下界，作为策略估计，使 `resolve_execution` 报告预算拒绝（auto 回退 CPU，gpu 报错）。
 
 ---
 

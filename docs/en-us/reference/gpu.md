@@ -53,6 +53,10 @@ This module implements wgpu compute pipelines plus offscreen STL rasterization, 
 | `GpuVoxelPipeline::voxelize` | `src/gpu/voxel.rs:168` | Dispatches ray-casting voxelization and reads back the occupancy grid. |
 | `GpuVolumeTransformPipeline` | `src/gpu/volume_transform.rs:5` | GPU pipeline state for volume rotate-and-crop. |
 | `GpuVolumeTransformPipeline::new` | `src/gpu/volume_transform.rs:23` | Initializes the wgpu device and volume-transform compute pipeline. |
+| `TransformTile` | `src/gpu/volume_transform.rs` | Output tile plus uploaded source sub-block descriptor. |
+| `GpuVolumeTransformPipeline::transform_tile` | `src/gpu/volume_transform.rs` | Transforms one output tile from a halo source block with single-dispatch arithmetic and a halo guard. |
+| `GpuVolumeTransformPipeline::reserve_capacity` | `src/gpu/volume_transform.rs` | Pre-sizes source and output/staging buffers to a tile plan's maxima. |
+| `GpuVolumeTransformPipeline::device_limits` | `src/gpu/volume_transform.rs` | Device limits bounding per-tile buffers. |
 | `GpuVolumeTransformPipeline::rotate_and_crop` | `src/gpu/volume_transform.rs:123` | Dispatches the rotate/crop/resample kernel and reads back the transformed volume. |
 | `GridPlan` | `src/gpu/runtime.rs:60` | Checked two-dimensional grid dispatch. |
 | `grid_plan` | `src/gpu/runtime.rs:67` | Validate product, buffer and dispatch limits. |
@@ -516,6 +520,24 @@ Module-level constant: `WORKGROUP_SIZE: u32 = 64` (applied along the output X di
 - **Notes:** Checked flattened two-dimensional dispatch uses 64 invocations per workgroup. Source values and transform parameters are validated before upload; readback errors propagate.
 
 ---
+
+### Output tiles with a source halo (`TransformTile`, `transform_tile`, `reserve_capacity`, `device_limits`)
+
+```rust
+pub struct TransformTile<'a> {
+    pub block: &'a [i32],
+    pub block_origin: [u32; 3],
+    pub block_dims: [u32; 3],
+    pub source_dims: [u32; 3],
+    pub tile_offset: [u32; 3],
+    pub tile_dims: [u32; 3],
+}
+```
+
+- **`transform_tile(&mut self, tile: &TransformTile, background: i32, rot, centroid, origin, interp_mode) -> Result<Vec<i32>, String>`** transforms one output tile (`tile_dims` at `tile_offset` inside the whole output) using only `block`, the source sub-block at `block_origin` with `block_dims` inside the full `source_dims`. Params grow to 160 bytes: after the original 112 bytes come `tile_offset`, `block_origin` and `block_dims`, each a padded `vec4<u32>`. The shader forms `origin + f32(local + tile_offset)`, i.e. the same absolute f32 coordinate the whole-output dispatch forms, still bounds-tests samples against the full source dims (so background decisions are unchanged), and reads in-volume voxels through `fetch`, which indexes the block. A read the block does not contain sets a fourth binding, an `atomic<u32>` guard word, which is copied into staging after the tile and turns the call into an error. Validation: block length equals its checked dims product, block and tile ends are checked against u32 and the source, the block fits the device buffer limits, and trilinear f32 exactness is checked on the block.
+- **`rotate_and_crop`** is now `transform_tile` with the whole source as block and the whole output as tile, so existing callers are unchanged.
+- **`reserve_capacity(src_bytes, out_bytes)`** grows (never shrinks) the source and output/staging buffers once to a plan's maxima so later tiles never reallocate; **`device_limits()`** exposes the limits the crop planner uses. Staging is now output capacity + 4 bytes (guard word); `release_output_capacity` resets it to 8 bytes.
+- **Memory:** a tiled run's logical peak is `2·max_block + 2·max_tile + 4` words plus 160 params and 8 guard bytes (see `crop_gpu_peak_bytes`).
 
 ## Summary of shared conventions across all four pipelines
 

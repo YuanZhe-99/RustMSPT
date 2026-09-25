@@ -1,6 +1,7 @@
 // AI-FUNC-SUMMARY: WGSL compute shader for volume rotate-and-crop transform.
 // Each invocation computes one output voxel by inverse-rotating to source coordinates
-// and sampling with nearest or trilinear interpolation.
+// and sampling with nearest or trilinear interpolation. A dispatch covers one output tile at
+// tile_offset and reads only an uploaded source block; coordinates use absolute output indices.
 
 struct Params {
     src_width: u32,
@@ -19,14 +20,26 @@ struct Params {
     centroid: vec4<f32>,
     // Output origin (x0, y0, z0, pad)
     origin: vec4<f32>,
+    // Tile offset inside the whole output, uploaded source block origin and block dims (xyz, pad)
+    tile_offset: vec4<u32>,
+    block_origin: vec4<u32>,
+    block_dims: vec4<u32>,
 };
 
 @group(0) @binding(0) var<storage, read> src_volume: array<i32>;
 @group(0) @binding(1) var<storage, read> params: Params;
 @group(0) @binding(2) var<storage, read_write> out_volume: array<i32>;
+@group(0) @binding(3) var<storage, read_write> halo_guard: atomic<u32>;
 
-fn idx3d(x: u32, y: u32, z: u32) -> u32 {
-    return z * params.src_width * params.src_height + y * params.src_width + x;
+// AI-FUNC-SUMMARY: Read an in-volume source voxel from the uploaded block; flag the halo guard and return background when the block lacks it.
+fn fetch(x: u32, y: u32, z: u32) -> i32 {
+    let o = params.block_origin;
+    let d = params.block_dims;
+    if (x < o.x || y < o.y || z < o.z || x - o.x >= d.x || y - o.y >= d.y || z - o.z >= d.z) {
+        atomicStore(&halo_guard, 1u);
+        return params.background;
+    }
+    return src_volume[(z - o.z) * d.x * d.y + (y - o.y) * d.x + (x - o.x)];
 }
 
 // AI-FUNC-SUMMARY: Round ties away from zero like Rust f64::round without perturbing exactly represented large integers.
@@ -43,7 +56,7 @@ fn sample_nearest(sx: f32, sy: f32, sz: f32) -> i32 {
         x >= i32(params.src_width) || y >= i32(params.src_height) || z >= i32(params.src_depth)) {
         return params.background;
     }
-    return src_volume[idx3d(u32(x), u32(y), u32(z))];
+    return fetch(u32(x), u32(y), u32(z));
 }
 
 fn sample_trilinear(sx: f32, sy: f32, sz: f32) -> i32 {
@@ -65,35 +78,35 @@ fn sample_trilinear(sx: f32, sy: f32, sz: f32) -> i32 {
 
     var c000 = bg;
     if (x0 >= 0 && y0 >= 0 && z0 >= 0 && x0 < sw && y0 < sh && z0 < sd) {
-        c000 = f32(src_volume[idx3d(u32(x0), u32(y0), u32(z0))]);
+        c000 = f32(fetch(u32(x0), u32(y0), u32(z0)));
     }
     var c100 = bg;
     if (x1 >= 0 && y0 >= 0 && z0 >= 0 && x1 < sw && y0 < sh && z0 < sd) {
-        c100 = f32(src_volume[idx3d(u32(x1), u32(y0), u32(z0))]);
+        c100 = f32(fetch(u32(x1), u32(y0), u32(z0)));
     }
     var c010 = bg;
     if (x0 >= 0 && y1 >= 0 && z0 >= 0 && x0 < sw && y1 < sh && z0 < sd) {
-        c010 = f32(src_volume[idx3d(u32(x0), u32(y1), u32(z0))]);
+        c010 = f32(fetch(u32(x0), u32(y1), u32(z0)));
     }
     var c110 = bg;
     if (x1 >= 0 && y1 >= 0 && z0 >= 0 && x1 < sw && y1 < sh && z0 < sd) {
-        c110 = f32(src_volume[idx3d(u32(x1), u32(y1), u32(z0))]);
+        c110 = f32(fetch(u32(x1), u32(y1), u32(z0)));
     }
     var c001 = bg;
     if (x0 >= 0 && y0 >= 0 && z1 >= 0 && x0 < sw && y0 < sh && z1 < sd) {
-        c001 = f32(src_volume[idx3d(u32(x0), u32(y0), u32(z1))]);
+        c001 = f32(fetch(u32(x0), u32(y0), u32(z1)));
     }
     var c101 = bg;
     if (x1 >= 0 && y0 >= 0 && z1 >= 0 && x1 < sw && y0 < sh && z1 < sd) {
-        c101 = f32(src_volume[idx3d(u32(x1), u32(y0), u32(z1))]);
+        c101 = f32(fetch(u32(x1), u32(y0), u32(z1)));
     }
     var c011 = bg;
     if (x0 >= 0 && y1 >= 0 && z1 >= 0 && x0 < sw && y1 < sh && z1 < sd) {
-        c011 = f32(src_volume[idx3d(u32(x0), u32(y1), u32(z1))]);
+        c011 = f32(fetch(u32(x0), u32(y1), u32(z1)));
     }
     var c111 = bg;
     if (x1 >= 0 && y1 >= 0 && z1 >= 0 && x1 < sw && y1 < sh && z1 < sd) {
-        c111 = f32(src_volume[idx3d(u32(x1), u32(y1), u32(z1))]);
+        c111 = f32(fetch(u32(x1), u32(y1), u32(z1)));
     }
 
     let c00 = c000 * (1.0 - tx) + c100 * tx;
@@ -117,9 +130,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     let z = index / (params.out_width * params.out_height);
 
     let local = vec3<f32>(
-        params.origin.x + f32(x),
-        params.origin.y + f32(y),
-        params.origin.z + f32(z),
+        params.origin.x + f32(x + params.tile_offset.x),
+        params.origin.y + f32(y + params.tile_offset.y),
+        params.origin.z + f32(z + params.tile_offset.z),
     );
 
     // Inverse rotation: src = rot * local + centroid

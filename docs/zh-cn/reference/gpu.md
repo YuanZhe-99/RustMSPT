@@ -45,6 +45,10 @@
 | `GpuVoxelPipeline::voxelize` | `src/gpu/voxel.rs:168` | 分派光线投射体素化并回读占据网格。 |
 | `GpuVolumeTransformPipeline` | `src/gpu/volume_transform.rs:5` | 体数据旋转裁剪的 GPU 流水线状态。 |
 | `GpuVolumeTransformPipeline::new` | `src/gpu/volume_transform.rs:23` | 初始化 wgpu 设备与体数据变换计算流水线。 |
+| `TransformTile` | `src/gpu/volume_transform.rs` | 输出块及其上传源子块的描述。 |
+| `GpuVolumeTransformPipeline::transform_tile` | `src/gpu/volume_transform.rs` | 用 halo 源子块按单次 dispatch 算术变换一个输出块，并带 halo 守卫。 |
+| `GpuVolumeTransformPipeline::reserve_capacity` | `src/gpu/volume_transform.rs` | 把源和输出/staging 缓冲预留到分块计划最大值。 |
+| `GpuVolumeTransformPipeline::device_limits` | `src/gpu/volume_transform.rs` | 限制每块缓冲的设备上限。 |
 | `GpuVolumeTransformPipeline::rotate_and_crop` | `src/gpu/volume_transform.rs:123` | 分派旋转/裁剪/重采样内核并回读变换后的体数据。 |
 | `GridPlan` | `src/gpu/runtime.rs:60` | Checked two-dimensional grid dispatch. |
 | `grid_plan` | `src/gpu/runtime.rs:67` | Validate product, buffer and dispatch limits. |
@@ -509,6 +513,25 @@ pub struct GpuVolumeTransformPipeline {
 - **说明：** 所有浮点变换输入（`rot`、`centroid`、`origin`）在 Rust 侧为 `f64`，但在为着色器打包时被收窄为 `f32`——这与其他流水线在 GPU 侧使用 `f32` 精度的做法一致。分派形状（`wg_y = out_h`、`wg_z = out_d`，即每行/每片使用一整个工作组，而不是像 X 维度那样进行 `div_ceil` 分块）意味着较大的 `out_h`/`out_d` 值会直接转化为较大的 `y`/`z` 工作组数量——调用方应当注意，这与 X 维度的分块方式不同。
 
 ---
+
+
+### 带源 halo 的输出分块（`TransformTile`、`transform_tile`、`reserve_capacity`、`device_limits`）
+
+```rust
+pub struct TransformTile<'a> {
+    pub block: &'a [i32],
+    pub block_origin: [u32; 3],
+    pub block_dims: [u32; 3],
+    pub source_dims: [u32; 3],
+    pub tile_offset: [u32; 3],
+    pub tile_dims: [u32; 3],
+}
+```
+
+- **`transform_tile(&mut self, tile: &TransformTile, background: i32, rot, centroid, origin, interp_mode) -> Result<Vec<i32>, String>`** 只用 `block`（完整 `source_dims` 内位于 `block_origin`、尺寸为 `block_dims` 的源子块）变换一个输出块（整个输出中位于 `tile_offset`、尺寸为 `tile_dims`）。参数扩展为 160 字节：原 112 字节之后依次是 `tile_offset`、`block_origin`、`block_dims`，各为补齐的 `vec4<u32>`。着色器计算 `origin + f32(local + tile_offset)`，即与整体 dispatch 相同的绝对 f32 坐标；仍按完整源尺寸判断越界（背景判定不变）；体内体素经 `fetch` 按子块索引读取。子块不包含的读取会置位第四个绑定 —— `atomic<u32>` 守卫字，它在块完成后复制进 staging，使调用返回错误。校验：子块长度等于 checked 尺寸乘积，子块与输出块终点按 u32 和源尺寸检查，子块不超过设备缓冲上限，三线性的 f32 精确性按子块检查。
+- **`rotate_and_crop`** 现等价于以整个源为子块、整个输出为单块的 `transform_tile`，现有调用者不变。
+- **`reserve_capacity(src_bytes, out_bytes)`** 一次性把源与输出/staging 缓冲增长（不缩小）到计划最大值，后续块不再重新分配；**`device_limits()`** 暴露规划器使用的设备上限。staging 现为输出容量 + 4 字节（守卫字），`release_output_capacity` 将其重置为 8 字节。
+- **内存：** 分块运行的逻辑峰值为 `2·max_block + 2·max_tile + 4` 个字加 160 字节参数和 8 字节守卫（见 `crop_gpu_peak_bytes`）。
 
 ## 四条流水线的共享约定小结
 

@@ -794,13 +794,262 @@ fn rotate_and_crop(
     }
 }
 
+const CROP_GPU_PARAMS_BYTES: u64 = 160;
+const CROP_GPU_FIXED_BYTES: u64 = CROP_GPU_PARAMS_BYTES + 4 + 4;
+type CropTileShape = fn(usize, [usize; 3]) -> [usize; 3];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CropSourceBlock {
+    origin: [usize; 3],
+    dims: [usize; 3],
+}
+
+impl CropSourceBlock {
+    // AI-FUNC-SUMMARY: Count block voxels with checked multiplication; returns None on overflow; side effects: none.
+    fn voxels(&self) -> Option<u64> {
+        self.dims
+            .iter()
+            .try_fold(1u64, |acc, &d| acc.checked_mul(d as u64))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CropTilePlan {
+    out_dims: [usize; 3],
+    tile_dims: [usize; 3],
+    tiles: usize,
+    max_block_voxels: u64,
+    max_tile_voxels: u64,
+    peak_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CropTilePlanError {
+    needed: Option<u64>,
+    reason: String,
+}
+
 // AI-FUNC-SUMMARY:
-// Purpose: GPU-accelerated rotate-and-crop: upload volume to GPU, dispatch compute, download result.
-// Inputs: same as rotate_and_crop.
-// Returns: Ok(Volume3D) or GPU error string.
-// Side effects: Initializes GPU pipeline on first call, dispatches GPU compute.
-// Notes: Converts i64 volume data to i32 for GPU, converts back on download. Only available with feature "gpu".
+// Purpose: Find the source sub-block a GPU output tile can read, including interpolation halo and an f32 error margin.
+// Inputs: full source dims, rotation/centroid (src = rot * local + centroid), integer output origin, inclusive whole-output tile bounds.
+// Returns: Clamped block origin/dims (a zero dim means no in-volume sample is reachable) or an error for nonfinite coordinates.
+// Side effects: None.
+// Notes: The affine image of the tile box has its AABB at the 8 corners. The halo spans floor(min)..floor(max)+1, which covers both
+//        trilinear neighbours and nearest rounding; the margin bounds the shader's f32 rounding of rot/centroid/origin and products.
+fn crop_tile_source_block(
+    src_dims: [usize; 3],
+    rot: &Matrix3<f64>,
+    centroid: &Vector3<f64>,
+    origin: [isize; 3],
+    lo: [usize; 3],
+    hi: [usize; 3],
+) -> std::result::Result<CropSourceBlock, String> {
+    let bounds = |axis: usize| {
+        let a = origin[axis] as f64 + lo[axis] as f64;
+        let b = origin[axis] as f64 + hi[axis] as f64;
+        (a, b)
+    };
+    let local = [bounds(0), bounds(1), bounds(2)];
+    let mut block = CropSourceBlock {
+        origin: [0; 3],
+        dims: [0; 3],
+    };
+    for (i, &src_dim) in src_dims.iter().enumerate() {
+        let mut min = centroid[i];
+        let mut max = centroid[i];
+        let mut scale = centroid[i].abs();
+        for (j, &(a, b)) in local.iter().enumerate() {
+            let r = rot[(i, j)];
+            min += (r * a).min(r * b);
+            max += (r * a).max(r * b);
+            scale += r.abs() * (a.abs().max(b.abs()) + 1.0);
+        }
+        let margin = 16.0 * f64::from(f32::EPSILON) * (scale + 1.0) + 1e-6;
+        let (low, high) = ((min - margin).floor(), (max + margin).floor() + 1.0);
+        if !low.is_finite() || !high.is_finite() {
+            return Err("crop GPU tile source bounds are nonfinite".into());
+        }
+        let last = src_dim as f64 - 1.0;
+        if high < 0.0 || low > last {
+            return Ok(CropSourceBlock {
+                origin: [0; 3],
+                dims: [0; 3],
+            });
+        }
+        let start = low.max(0.0) as usize;
+        let end = high.min(last) as usize;
+        block.origin[i] = start;
+        block.dims[i] = end - start + 1;
+    }
+    Ok(block)
+}
+
+// AI-FUNC-SUMMARY: Peak logical GPU bytes for retained max source block (buffer plus queued upload copy) and max output tile (output plus staging), plus params and guard words; returns None on overflow.
+fn crop_gpu_peak_bytes(max_block_voxels: u64, max_tile_voxels: u64) -> Option<u64> {
+    let block = max_block_voxels.max(1).checked_mul(4)?.checked_mul(2)?;
+    let tile = max_tile_voxels.max(1).checked_mul(4)?;
+    block
+        .checked_add(tile)?
+        .checked_add(tile.checked_add(4)?)?
+        .checked_add(CROP_GPU_FIXED_BYTES)
+}
+
+// AI-FUNC-SUMMARY: Visit whole-output tiles in z, y, x order as inclusive (lo, hi) bounds; stops and returns the first visitor error; side effects: runs the visitor.
+fn for_each_crop_tile<E>(
+    out_dims: [usize; 3],
+    tile_dims: [usize; 3],
+    mut visit: impl FnMut([usize; 3], [usize; 3]) -> std::result::Result<(), E>,
+) -> std::result::Result<(), E> {
+    for z in (0..out_dims[2]).step_by(tile_dims[2]) {
+        for y in (0..out_dims[1]).step_by(tile_dims[1]) {
+            for x in (0..out_dims[0]).step_by(tile_dims[0]) {
+                let lo = [x, y, z];
+                let hi = [
+                    (x + tile_dims[0]).min(out_dims[0]) - 1,
+                    (y + tile_dims[1]).min(out_dims[1]) - 1,
+                    (z + tile_dims[2]).min(out_dims[2]) - 1,
+                ];
+                visit(lo, hi)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Evaluate one tile shape against the logical budget and per-buffer device limit.
+// Inputs: source/output dims, transform, tile dims, optional byte budget and optional single-buffer limit.
+// Returns: Ok(plan) when every tile's retained maxima fit, or Err with the smallest known requirement at the first failing tile.
+// Side effects: None.
+#[allow(clippy::too_many_arguments)]
+fn evaluate_crop_tiling(
+    src_dims: [usize; 3],
+    rot: &Matrix3<f64>,
+    centroid: &Vector3<f64>,
+    origin: [isize; 3],
+    out_dims: [usize; 3],
+    tile_dims: [usize; 3],
+    budget: Option<u64>,
+    buffer_limit: Option<u64>,
+) -> std::result::Result<CropTilePlan, CropTilePlanError> {
+    let refuse = |needed: Option<u64>, reason: &str| CropTilePlanError {
+        needed,
+        reason: reason.to_string(),
+    };
+    let mut plan = CropTilePlan {
+        out_dims,
+        tile_dims,
+        tiles: 0,
+        max_block_voxels: 0,
+        max_tile_voxels: 0,
+        peak_bytes: 0,
+    };
+    for_each_crop_tile(out_dims, tile_dims, |lo, hi| {
+        let block = crop_tile_source_block(src_dims, rot, centroid, origin, lo, hi)
+            .map_err(|reason| refuse(None, &reason))?;
+        let block_voxels = block
+            .voxels()
+            .ok_or_else(|| refuse(None, "crop GPU source block size overflows"))?;
+        let tile_voxels = (0..3)
+            .try_fold(1u64, |acc, axis| acc.checked_mul((hi[axis] - lo[axis] + 1) as u64))
+            .ok_or_else(|| refuse(None, "crop GPU tile size overflows"))?;
+        let max_block = plan.max_block_voxels.max(block_voxels);
+        let max_tile = plan.max_tile_voxels.max(tile_voxels);
+        let peak = crop_gpu_peak_bytes(max_block, max_tile);
+        let largest_buffer = max_block.max(max_tile).checked_mul(4);
+        if max_block > u64::from(u32::MAX) || max_tile > u64::from(u32::MAX) {
+            return Err(refuse(peak, "crop GPU tile exceeds u32 voxel indexing"));
+        }
+        if let (Some(limit), Some(bytes)) = (buffer_limit, largest_buffer) {
+            if bytes > limit {
+                return Err(refuse(peak, "crop GPU tile exceeds device buffer limits"));
+            }
+        }
+        let peak = peak.ok_or_else(|| refuse(None, "crop GPU tile bytes overflow"))?;
+        if budget.is_some_and(|b| peak > b) {
+            return Err(refuse(Some(peak), "crop GPU tile exceeds the logical GPU budget"));
+        }
+        plan.max_block_voxels = max_block;
+        plan.max_tile_voxels = max_tile;
+        plan.peak_bytes = peak;
+        plan.tiles += 1;
+        Ok(())
+    })?;
+    Ok(plan)
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Choose the largest GPU output tiling that fits the logical budget and device buffer limit.
+// Inputs: source dims, transform, integer output origin, output dims, optional byte budget, optional single-buffer limit.
+// Returns: A plan (one tile when the whole output fits) or an error carrying a lower bound on the minimal tile requirement.
+// Side effects: None.
+// Notes: Prefers z slabs of full xy extent, then y row groups of one slice, then x runs of one row; within a level it binary-searches
+//        the extent, and every returned plan was evaluated over all of its tiles, so it fits even if cost is not monotone.
+fn plan_crop_gpu_tiles(
+    src_dims: [usize; 3],
+    rot: &Matrix3<f64>,
+    centroid: &Vector3<f64>,
+    origin: [isize; 3],
+    out_dims: [usize; 3],
+    budget: Option<u64>,
+    buffer_limit: Option<u64>,
+) -> std::result::Result<CropTilePlan, CropTilePlanError> {
+    if out_dims.contains(&0) || src_dims.contains(&0) {
+        return Err(CropTilePlanError {
+            needed: None,
+            reason: "crop GPU dimensions must be positive".into(),
+        });
+    }
+    let evaluate = |tile: [usize; 3]| {
+        evaluate_crop_tiling(src_dims, rot, centroid, origin, out_dims, tile, budget, buffer_limit)
+    };
+    let [w, h, d] = out_dims;
+    let levels: [(usize, CropTileShape); 3] = [
+        (2, |t, [w, h, _]| [w, h, t]),
+        (1, |t, [w, _, _]| [w, t, 1]),
+        (0, |t, _| [t, 1, 1]),
+    ];
+    let mut last_error = None;
+    for (axis, shape) in levels {
+        let extent = [w, h, d][axis];
+        if let Ok(plan) = evaluate(shape(extent, out_dims)) {
+            return Ok(plan);
+        }
+        let mut best = match evaluate(shape(1, out_dims)) {
+            Ok(plan) => plan,
+            Err(error) => {
+                last_error = Some(error);
+                continue;
+            }
+        };
+        let (mut lo, mut hi) = (1usize, extent - 1);
+        while lo < hi {
+            let mid = lo + (hi - lo).div_ceil(2);
+            match evaluate(shape(mid, out_dims)) {
+                Ok(plan) => {
+                    best = plan;
+                    lo = mid;
+                }
+                Err(_) => hi = mid - 1,
+            }
+        }
+        return Ok(best);
+    }
+    Err(last_error.unwrap_or(CropTilePlanError {
+        needed: None,
+        reason: "crop GPU has no feasible tile".into(),
+    }))
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: GPU rotate-and-crop executed as budget-planned output tiles, each uploading only its halo-expanded source block.
+// Inputs: same as rotate_and_crop plus an optional logical GPU byte budget.
+// Returns: Ok((Volume3D, tile count)) or a GPU/planning error string (including "no single minimal tile fits").
+// Side effects: Initializes the GPU pipeline, pre-sizes buffers to the plan maxima, dispatches one transform per tile, prints timing.
+// Notes: Tiles reproduce the single-dispatch arithmetic exactly (absolute output coordinates, full-source bounds tests); a runtime halo
+//        guard turns any unexpected out-of-block access into an error. Only available with feature "gpu".
 #[cfg(feature = "gpu")]
+#[allow(clippy::too_many_arguments)]
 fn rotate_and_crop_gpu(
     volume: &Volume3D,
     background: i64,
@@ -809,7 +1058,8 @@ fn rotate_and_crop_gpu(
     min_v: &Vector3<f64>,
     max_v: &Vector3<f64>,
     interpolation_mode: InterpolationMode,
-) -> std::result::Result<Volume3D, String> {
+    budget: Option<u64>,
+) -> std::result::Result<(Volume3D, usize), String> {
     let eps = 1e-3;
     let (x0, x1) = float_bounds_to_inclusive_i64(min_v.x, max_v.x, eps);
     let (y0, y1) = float_bounds_to_inclusive_i64(min_v.y, max_v.y, eps);
@@ -821,16 +1071,15 @@ fn rotate_and_crop_gpu(
             .and_then(|n| u32::try_from(n.max(1)).ok())
             .ok_or("crop GPU dimension exceeds u32")
     };
-    let out_w = dimension(x0, x1)?;
-    let out_h = dimension(y0, y1)?;
-    let out_d = dimension(z0, z1)?;
-    let source_dims = [volume.width, volume.height, volume.depth].map(u32::try_from);
-    let [src_w, src_h, src_d] = source_dims;
-    let (src_w, src_h, src_d) = (
+    let out_dims = [dimension(x0, x1)?, dimension(y0, y1)?, dimension(z0, z1)?];
+    let src_dims = [volume.width, volume.height, volume.depth];
+    let src_dims_u32 = src_dims.map(u32::try_from);
+    let [src_w, src_h, src_d] = src_dims_u32;
+    let source_dims = [
         src_w.map_err(|_| "source width exceeds u32")?,
         src_h.map_err(|_| "source height exceeds u32")?,
         src_d.map_err(|_| "source depth exceeds u32")?,
-    );
+    ];
 
     if !gpu_crop_values_supported(volume, background, interpolation_mode) {
         return Err(
@@ -840,37 +1089,116 @@ fn rotate_and_crop_gpu(
     let t0 = std::time::Instant::now();
 
     let mut pipeline = crate::gpu::volume_transform::GpuVolumeTransformPipeline::new()?;
+    let limits = pipeline.device_limits();
+    let buffer_limit = limits
+        .max_buffer_size
+        .min(u64::from(limits.max_storage_buffer_binding_size));
+    let origin_i = [x0, y0, z0];
+    let out_usize = out_dims.map(|d| d as usize);
+    let plan = plan_crop_gpu_tiles(
+        src_dims,
+        rot,
+        centroid,
+        origin_i,
+        out_usize,
+        budget,
+        Some(buffer_limit),
+    )
+    .map_err(|error| match error.needed {
+        Some(needed) => format!(
+            "{}; no single minimal tile fits (needs at least {needed} bytes)",
+            error.reason
+        ),
+        None => error.reason,
+    })?;
+    let block_bytes = plan.max_block_voxels.checked_mul(4).ok_or("crop GPU block bytes overflow")?;
+    let tile_bytes = plan.max_tile_voxels.checked_mul(4).ok_or("crop GPU tile bytes overflow")?;
+    pipeline.reserve_capacity(block_bytes, tile_bytes)?;
 
-    let src_i32: Vec<i32> = volume
-        .data
-        .iter()
-        .map(|&v| i32::try_from(v).map_err(|_| "crop GPU input exceeds i32".to_string()))
-        .collect::<std::result::Result<_, _>>()?;
     let bg_i32 = i32::try_from(background).map_err(|_| "crop GPU background exceeds i32")?;
     let interp = match interpolation_mode {
         InterpolationMode::Nearest => 0u32,
         InterpolationMode::Trilinear => 1u32,
     };
     let origin = Vector3::new(x0 as f64, y0 as f64, z0 as f64);
+    let out_total = out_usize
+        .iter()
+        .try_fold(1usize, |acc, &d| acc.checked_mul(d))
+        .ok_or("crop GPU output size overflows")?;
+    let mut data = vec![background; out_total];
+    let (out_w, out_h) = (out_usize[0], out_usize[1]);
+    let mut block_values: Vec<i32> = Vec::new();
+    for_each_crop_tile(out_usize, plan.tile_dims, |lo, hi| {
+        let block = crop_tile_source_block(src_dims, rot, centroid, origin_i, lo, hi)?;
+        block_values.clear();
+        if !block.dims.contains(&0) {
+            let [bx, by, bz] = block.origin;
+            let [bw, bh, bd] = block.dims;
+            for z in bz..bz + bd {
+                for y in by..by + bh {
+                    let row = voxel_index(volume.width, volume.height, bx, y, z);
+                    for &value in &volume.data[row..row + bw] {
+                        block_values.push(
+                            i32::try_from(value).map_err(|_| "crop GPU input exceeds i32")?,
+                        );
+                    }
+                }
+            }
+        }
+        let as_u32 = |v: usize| u32::try_from(v).map_err(|_| "crop GPU tile index exceeds u32");
+        let tile_dims = [
+            as_u32(hi[0] - lo[0] + 1)?,
+            as_u32(hi[1] - lo[1] + 1)?,
+            as_u32(hi[2] - lo[2] + 1)?,
+        ];
+        let tile = crate::gpu::volume_transform::TransformTile {
+            block: &block_values,
+            block_origin: [as_u32(block.origin[0])?, as_u32(block.origin[1])?, as_u32(block.origin[2])?],
+            block_dims: [as_u32(block.dims[0])?, as_u32(block.dims[1])?, as_u32(block.dims[2])?],
+            source_dims,
+            tile_offset: [as_u32(lo[0])?, as_u32(lo[1])?, as_u32(lo[2])?],
+            tile_dims,
+        };
+        let values = pipeline.transform_tile(&tile, bg_i32, rot, centroid, &origin, interp)?;
+        let row_len = tile_dims[0] as usize;
+        for (row_index, row) in values.chunks_exact(row_len).enumerate() {
+            let y = lo[1] + row_index % tile_dims[1] as usize;
+            let z = lo[2] + row_index / tile_dims[1] as usize;
+            let start = voxel_index(out_w, out_h, lo[0], y, z);
+            for (slot, &value) in data[start..start + row_len].iter_mut().zip(row) {
+                *slot = i64::from(value);
+            }
+        }
+        Ok::<(), String>(())
+    })?;
 
-    let out_i32 = pipeline.rotate_and_crop(
-        &src_i32, src_w, src_h, src_d, bg_i32, rot, centroid, &origin, out_w, out_h, out_d, interp,
-    )?;
-
-    let data: Vec<i64> = out_i32.iter().map(|&v| v as i64).collect();
     let elapsed = t0.elapsed().as_secs_f64();
     println!(
-        "[Info] GPU volume transform: {:.3}s, {}x{}x{} -> {}x{}x{}",
-        elapsed, volume.width, volume.height, volume.depth, out_w, out_h, out_d
+        "[Info] GPU volume transform: {:.3}s, {}x{}x{} -> {}x{}x{}, tiles={} tile={}x{}x{} peak_bytes={}",
+        elapsed,
+        volume.width,
+        volume.height,
+        volume.depth,
+        out_dims[0],
+        out_dims[1],
+        out_dims[2],
+        plan.tiles,
+        plan.tile_dims[0],
+        plan.tile_dims[1],
+        plan.tile_dims[2],
+        plan.peak_bytes
     );
 
-    Ok(Volume3D {
-        width: out_w as usize,
-        height: out_h as usize,
-        depth: out_d as usize,
-        data,
-        numeric_type: volume.numeric_type,
-    })
+    Ok((
+        Volume3D {
+            width: out_usize[0],
+            height: out_usize[1],
+            depth: out_usize[2],
+            data,
+            numeric_type: volume.numeric_type,
+        },
+        plan.tiles,
+    ))
 }
 
 impl Pipeline for CropPipeline {
@@ -958,14 +1286,45 @@ impl CropPipeline {
             }
             eprintln!("[Info] {reason}; using CPU");
         }
-        let estimated = (input_volume.data.len() as u64)
-            .checked_mul(4)
-            .and_then(|n| {
-                (out_total as u64)
-                    .checked_mul(8)
-                    .and_then(|out| n.checked_add(out))
-            })
-            .and_then(|n| n.checked_add(128));
+        let budget = self
+            .config
+            .acceleration
+            .gpu_memory_limit_mb
+            .and_then(|mb| mb.checked_mul(1024 * 1024));
+        let estimated = if consider_gpu && integer_safe {
+            let out_dims = [x0, y0, z0]
+                .into_iter()
+                .zip([x1, y1, z1])
+                .map(|(lo, hi)| (hi - lo + 1).max(1) as usize)
+                .collect::<Vec<_>>();
+            match plan_crop_gpu_tiles(
+                [input_volume.width, input_volume.height, input_volume.depth],
+                &rot,
+                &centroid,
+                [x0, y0, z0],
+                [out_dims[0], out_dims[1], out_dims[2]],
+                budget,
+                None,
+            ) {
+                Ok(plan) => {
+                    println!(
+                        "[Info] crop GPU plan: tiles={} tile={}x{}x{} peak_bytes={}",
+                        plan.tiles,
+                        plan.tile_dims[0],
+                        plan.tile_dims[1],
+                        plan.tile_dims[2],
+                        plan.peak_bytes
+                    );
+                    Some(plan.peak_bytes)
+                }
+                Err(error) => {
+                    eprintln!("[Info] crop GPU plan: {}", error.reason);
+                    error.needed
+                }
+            }
+        } else {
+            None
+        };
         let selection = crate::compute::policy::resolve_execution(
             &self.config.acceleration,
             requested,
@@ -987,14 +1346,15 @@ impl CropPipeline {
                 &min_v,
                 &max_v,
                 interpolation_mode,
+                budget,
             ))
         } else {
             None
         };
         #[cfg(not(feature = "gpu"))]
-        let attempted: Option<std::result::Result<Volume3D, String>> = None;
+        let attempted: Option<std::result::Result<(Volume3D, usize), String>> = None;
         let (cropped, backend) = match attempted {
-            Some(Ok(volume)) => (volume, "gpu"),
+            Some(Ok((volume, _tiles))) => (volume, "gpu"),
             Some(Err(error)) if !self.config.acceleration.cpu_fallback => {
                 return Err(RustMsptError::Gpu(format!("crop transform: {error}")))
             }
@@ -1459,4 +1819,375 @@ mod performance_tests {
         } } }
     }
 
+}
+
+#[cfg(test)]
+mod gpu_tile_plan_tests {
+    use super::*;
+
+    // AI-FUNC-SUMMARY: Build a unit-quaternion rotation about a normalized axis for oblique tile fixtures; returns Matrix3; side effects: none.
+    pub(super) fn axis_rotation(axis: [f64; 3], angle: f64) -> Matrix3<f64> {
+        let axis = nalgebra::Unit::new_normalize(Vector3::new(axis[0], axis[1], axis[2]));
+        *nalgebra::Rotation3::from_axis_angle(&axis, angle).matrix()
+    }
+
+    // AI-FUNC-SUMMARY: Compute rotated-frame min/max covering the whole source box plus a background margin; returns (min, max); side effects: none.
+    pub(super) fn covering_bounds(
+        dims: [usize; 3],
+        rot: &Matrix3<f64>,
+        centroid: &Vector3<f64>,
+        margin: f64,
+    ) -> (Vector3<f64>, Vector3<f64>) {
+        let mut min = Vector3::repeat(f64::INFINITY);
+        let mut max = Vector3::repeat(f64::NEG_INFINITY);
+        for corner in 0..8 {
+            let p = Vector3::new(
+                if corner & 1 == 0 { 0.0 } else { dims[0] as f64 - 1.0 },
+                if corner & 2 == 0 { 0.0 } else { dims[1] as f64 - 1.0 },
+                if corner & 4 == 0 { 0.0 } else { dims[2] as f64 - 1.0 },
+            );
+            let local = rot.transpose() * (p - centroid);
+            min = min.inf(&local);
+            max = max.sup(&local);
+        }
+        (min.add_scalar(-margin), max.add_scalar(margin))
+    }
+
+    // AI-FUNC-SUMMARY: Verify tiles partition the output and every f64 sample index a tile reaches (nearest and trilinear neighbours) lies in its planned block.
+    #[test]
+    fn tile_blocks_cover_every_sample_and_partition_output() {
+        let src = [13usize, 11, 7];
+        for rot in [
+            Matrix3::identity(),
+            Matrix3::new(0.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0),
+            axis_rotation([1.0, 2.0, 3.0], 0.7),
+        ] {
+            let centroid = Vector3::new(6.0, 5.0, 3.0);
+            let (min, max) = covering_bounds(src, &rot, &centroid, 2.0);
+            let origin = [min.x.floor() as isize, min.y.floor() as isize, min.z.floor() as isize];
+            let out = [
+                (max.x.ceil() - min.x.floor()) as usize + 1,
+                (max.y.ceil() - min.y.floor()) as usize + 1,
+                (max.z.ceil() - min.z.floor()) as usize + 1,
+            ];
+            for tile in [out, [out[0], out[1], 3], [out[0], 4, 1], [5, 1, 1], [1, 1, 1]] {
+                let mut seen = vec![0u8; out.iter().product()];
+                for_each_crop_tile(out, tile, |lo, hi| {
+                    let block = crop_tile_source_block(src, &rot, &centroid, origin, lo, hi).unwrap();
+                    for z in lo[2]..=hi[2] {
+                        for y in lo[1]..=hi[1] {
+                            for x in lo[0]..=hi[0] {
+                                seen[(z * out[1] + y) * out[0] + x] += 1;
+                                let local = Vector3::new(
+                                    (origin[0] + x as isize) as f64,
+                                    (origin[1] + y as isize) as f64,
+                                    (origin[2] + z as isize) as f64,
+                                );
+                                let s = rot * local + centroid;
+                                let mut reads = vec![[s.x.round(), s.y.round(), s.z.round()]];
+                                for corner in 0..8 {
+                                    reads.push([0, 1, 2].map(|axis| {
+                                        s[axis].floor() + ((corner >> axis) & 1) as f64
+                                    }));
+                                }
+                                for read in reads {
+                                    let inside = (0..3)
+                                        .all(|axis| read[axis] >= 0.0 && read[axis] < src[axis] as f64);
+                                    if inside {
+                                        for (axis, &coordinate) in read.iter().enumerate() {
+                                            let i = coordinate as usize;
+                                            assert!(
+                                                i >= block.origin[axis]
+                                                    && i < block.origin[axis] + block.dims[axis],
+                                                "axis {axis} index {i} outside {block:?}"
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Ok::<(), ()>(())
+                })
+                .unwrap();
+                assert!(seen.iter().all(|&n| n == 1));
+            }
+        }
+    }
+
+    // AI-FUNC-SUMMARY: Verify planner levels (single tile, z slabs, rows, x runs), budget adherence, device buffer limits and minimal-tile refusal.
+    #[test]
+    fn planner_shrinks_levels_and_refuses_minimal_overflow() {
+        let src = [40usize, 30, 20];
+        let rot = axis_rotation([0.2, -0.4, 1.0], 0.5);
+        let centroid = Vector3::new(19.5, 14.5, 9.5);
+        let (min, max) = covering_bounds(src, &rot, &centroid, 1.0);
+        let origin = [min.x.floor() as isize, min.y.floor() as isize, min.z.floor() as isize];
+        let out = [
+            (max.x.ceil() - min.x.floor()) as usize + 1,
+            (max.y.ceil() - min.y.floor()) as usize + 1,
+            (max.z.ceil() - min.z.floor()) as usize + 1,
+        ];
+        let plan = |budget, limit| plan_crop_gpu_tiles(src, &rot, &centroid, origin, out, budget, limit);
+        let full = plan(None, None).unwrap();
+        assert_eq!((full.tiles, full.tile_dims), (1, out));
+        let mut levels = [false; 3];
+        let mut budget = full.peak_bytes;
+        loop {
+            match plan(Some(budget), None) {
+                Ok(p) => {
+                    assert!(p.peak_bytes <= budget);
+                    let covered: usize = p.tile_dims.iter().product();
+                    assert!(p.tiles >= out.iter().product::<usize>().div_ceil(covered));
+                    if p.tile_dims[0] == out[0] && p.tile_dims[1] == out[1] && p.tiles > 1 {
+                        levels[0] = true;
+                    } else if p.tile_dims[0] == out[0] && p.tile_dims[1] < out[1] {
+                        levels[1] = true;
+                    } else if p.tile_dims[0] < out[0] {
+                        levels[2] = true;
+                    }
+                    budget = budget * 7 / 10;
+                }
+                Err(error) => {
+                    assert!(error.needed.unwrap() > budget, "{error:?}");
+                    break;
+                }
+            }
+        }
+        assert_eq!(levels, [true; 3]);
+        let limited = plan(None, Some(4 * 4000)).unwrap();
+        assert!(limited.tiles > 1);
+        assert!(limited.max_block_voxels * 4 <= 16_000 && limited.max_tile_voxels * 4 <= 16_000);
+        assert!(plan(Some(0), None).is_err());
+        assert!(plan(None, Some(4)).is_err());
+    }
+}
+
+#[cfg(all(test, feature = "gpu"))]
+mod gpu_tile_tests {
+    use super::gpu_tile_plan_tests::{axis_rotation, covering_bounds};
+    use super::*;
+    use crate::gpu::volume_transform::GpuVolumeTransformPipeline;
+
+    // AI-FUNC-SUMMARY: Build a typed fixture: U8/U16 wrapping ramps, I32 full-range labels for nearest or f32-exact signed values for trilinear.
+    fn fixture(dims: [usize; 3], kind: VolumeNumericType, trilinear: bool) -> Volume3D {
+        let n = dims.iter().product::<usize>();
+        let data = (0..n as i64)
+            .map(|i| match kind {
+                VolumeNumericType::U8 => (i * 37 + 11) % 256,
+                VolumeNumericType::U16 => (i * 7919 + 3) % 65_536,
+                _ if trilinear => (i * 9_973) % 16_000_001 - 8_000_000,
+                _ => ((i * 2_654_435_761) % 4_294_967_296) - 2_147_483_648,
+            })
+            .collect();
+        Volume3D {
+            width: dims[0],
+            height: dims[1],
+            depth: dims[2],
+            data,
+            numeric_type: kind,
+        }
+    }
+
+    // AI-FUNC-SUMMARY: Run the original whole-source single-dispatch GPU transform for the same bounds; returns i64 output voxels.
+    #[allow(clippy::too_many_arguments)]
+    fn untiled(
+        gpu: &mut GpuVolumeTransformPipeline,
+        volume: &Volume3D,
+        background: i64,
+        rot: &Matrix3<f64>,
+        centroid: &Vector3<f64>,
+        min: &Vector3<f64>,
+        max: &Vector3<f64>,
+        mode: InterpolationMode,
+    ) -> Vec<i64> {
+        let (x0, x1) = float_bounds_to_inclusive_i64(min.x, max.x, 1e-3);
+        let (y0, y1) = float_bounds_to_inclusive_i64(min.y, max.y, 1e-3);
+        let (z0, z1) = float_bounds_to_inclusive_i64(min.z, max.z, 1e-3);
+        let src: Vec<i32> = volume.data.iter().map(|&v| v as i32).collect();
+        let origin = Vector3::new(x0 as f64, y0 as f64, z0 as f64);
+        gpu.rotate_and_crop(
+            &src,
+            volume.width as u32,
+            volume.height as u32,
+            volume.depth as u32,
+            background as i32,
+            rot,
+            centroid,
+            &origin,
+            (x1 - x0 + 1) as u32,
+            (y1 - y0 + 1) as u32,
+            (z1 - z0 + 1) as u32,
+            matches!(mode, InterpolationMode::Trilinear) as u32,
+        )
+        .unwrap()
+        .into_iter()
+        .map(i64::from)
+        .collect()
+    }
+
+    // AI-FUNC-SUMMARY: Distance of the nearest f64 source coordinate component to a rounding tie, used to justify f32/f64 nearest mismatches.
+    fn tie_distance(rot: &Matrix3<f64>, centroid: &Vector3<f64>, min: &Vector3<f64>, out: [usize; 2], index: usize) -> f64 {
+        let (x0, y0, z0) = (min.x.floor(), min.y.floor(), min.z.floor());
+        let x = (index % out[0]) as f64;
+        let y = ((index / out[0]) % out[1]) as f64;
+        let z = (index / (out[0] * out[1])) as f64;
+        let s = rot * Vector3::new(x0 + x, y0 + y, z0 + z) + centroid;
+        s.iter().map(|v| ((v - v.floor()) - 0.5).abs()).fold(f64::INFINITY, f64::min)
+    }
+
+    // AI-FUNC-SUMMARY: Compare budget-forced GPU tilings (single slices, non-dividing slabs, rows, x runs) with the untiled GPU and CPU paths for identity, 90-degree and oblique rotations, nearest/trilinear and U8/U16/I32, then refuse a budget no tile fits.
+    #[test]
+    fn tiled_gpu_matches_untiled_and_cpu() {
+        let mut gpu = match GpuVolumeTransformPipeline::new() {
+            Ok(gpu) => gpu,
+            Err(error) => {
+                eprintln!("SKIP no GPU: {error}");
+                return;
+            }
+        };
+        let src = [13usize, 11, 7];
+        let rotations = [
+            ("identity", Matrix3::identity(), Vector3::new(6.25, 5.0, 3.0)),
+            (
+                "rot90",
+                Matrix3::new(0.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0),
+                Vector3::new(6.0, 5.0, 3.0),
+            ),
+            ("oblique", axis_rotation([1.0, 2.0, 3.0], 0.7), Vector3::new(6.1, 4.9, 3.05)),
+        ];
+        let mut shapes = std::collections::BTreeSet::new();
+        for (name, rot, centroid) in rotations {
+            let (min, max) = covering_bounds(src, &rot, &centroid, 2.5);
+            for kind in [VolumeNumericType::U8, VolumeNumericType::U16, VolumeNumericType::I32] {
+                for mode in [InterpolationMode::Nearest, InterpolationMode::Trilinear] {
+                    let trilinear = mode == InterpolationMode::Trilinear;
+                    let volume = fixture(src, kind, trilinear);
+                    let background = if kind == VolumeNumericType::I32 { -77 } else { 3 };
+                    let reference = untiled(&mut gpu, &volume, background, &rot, &centroid, &min, &max, mode);
+                    let cpu = rotate_and_crop(&volume, background, &rot, &centroid, &min, &max, mode);
+                    assert!(reference.contains(&background), "{name}: fixture must sample background");
+                    let (single, tiles) =
+                        rotate_and_crop_gpu(&volume, background, &rot, &centroid, &min, &max, mode, None).unwrap();
+                    assert_eq!(tiles, 1);
+                    assert_eq!(single.data, reference, "{name} {kind:?} {mode:?} single");
+                    let out = [cpu.width, cpu.height, cpu.depth];
+                    let origin = [min.x.floor() as isize, min.y.floor() as isize, min.z.floor() as isize];
+                    let full = plan_crop_gpu_tiles(src, &rot, &centroid, origin, out, None, None).unwrap();
+                    let mut budget = full.peak_bytes;
+                    let ratio = if name == "oblique" { 55 } else { 35 };
+                    while let Ok(plan) =
+                        plan_crop_gpu_tiles(src, &rot, &centroid, origin, out, Some(budget), None)
+                    {
+                        let (tiled, tiles) = rotate_and_crop_gpu(
+                            &volume, background, &rot, &centroid, &min, &max, mode, Some(budget),
+                        )
+                        .unwrap();
+                        assert_eq!(tiles, plan.tiles);
+                        assert_eq!(tiled.data, reference, "{name} {kind:?} {mode:?} tile {:?}", plan.tile_dims);
+                        let t = plan.tile_dims;
+                        shapes.insert((
+                            t[2] == 1,
+                            t[0] == out[0] && t[1] < out[1],
+                            t[0] < out[0],
+                            (0..3).any(|axis| !out[axis].is_multiple_of(t[axis])),
+                        ));
+                        budget = budget * ratio / 100;
+                    }
+                    let refused = rotate_and_crop_gpu(
+                        &volume, background, &rot, &centroid, &min, &max, mode, Some(budget.min(200)),
+                    )
+                    .unwrap_err();
+                    assert!(refused.contains("no single minimal tile fits"), "{refused}");
+                    match mode {
+                        InterpolationMode::Nearest if name != "oblique" => {
+                            assert_eq!(cpu.data, reference, "{name} {kind:?} nearest cpu");
+                        }
+                        InterpolationMode::Nearest => {
+                            let mut mismatches = 0;
+                            for (index, (a, b)) in cpu.data.iter().zip(&reference).enumerate() {
+                                if a != b {
+                                    mismatches += 1;
+                                    let d = tie_distance(&rot, &centroid, &min, [out[0], out[1]], index);
+                                    assert!(d < 1e-4, "{name} {kind:?} nearest mismatch {index} tie distance {d}");
+                                }
+                            }
+                            assert!(mismatches * 100 <= cpu.data.len());
+                        }
+                        InterpolationMode::Trilinear => {
+                            let bound = if kind == VolumeNumericType::I32 { 8 } else { 1 };
+                            for (a, b) in cpu.data.iter().zip(&reference) {
+                                assert!((a - b).abs() <= bound, "{name} {kind:?} trilinear {a} vs {b}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(shapes.iter().any(|s| s.0), "no single-slice tiles: {shapes:?}");
+        assert!(shapes.iter().any(|s| s.1), "no row tiles: {shapes:?}");
+        assert!(shapes.iter().any(|s| s.2), "no x-run tiles: {shapes:?}");
+        assert!(shapes.iter().any(|s| s.3), "no non-dividing tiles: {shapes:?}");
+    }
+
+    // AI-FUNC-SUMMARY: Release benchmark of untiled versus budget-forced ~4 and ~16 tile GPU transforms (1 warmup + 5 samples, identical outputs), printing raw seconds and medians.
+    #[test]
+    #[ignore = "release performance measurement"]
+    fn crop_gpu_tile_benchmark() {
+        let src = [192usize, 160, 96];
+        let rot = axis_rotation([0.3, -0.5, 1.0], 0.4);
+        let centroid = Vector3::new(95.5, 79.5, 47.5);
+        let (min, max) = covering_bounds(src, &rot, &centroid, 1.0);
+        let volume = fixture(src, VolumeNumericType::U16, true);
+        let (x0, x1) = float_bounds_to_inclusive_i64(min.x, max.x, 1e-3);
+        let (y0, y1) = float_bounds_to_inclusive_i64(min.y, max.y, 1e-3);
+        let (z0, z1) = float_bounds_to_inclusive_i64(min.z, max.z, 1e-3);
+        let out = [(x1 - x0 + 1) as usize, (y1 - y0 + 1) as usize, (z1 - z0 + 1) as usize];
+        let origin = [x0, y0, z0];
+        let full = plan_crop_gpu_tiles(src, &rot, &centroid, origin, out, None, None).unwrap();
+        let budget_for = |target: usize| {
+            let mut budget = full.peak_bytes;
+            loop {
+                let plan = plan_crop_gpu_tiles(src, &rot, &centroid, origin, out, Some(budget), None).unwrap();
+                if plan.tiles >= target {
+                    return (budget, plan.tiles);
+                }
+                budget = budget * 95 / 100;
+            }
+        };
+        let cases = [("untiled", None), ("tiles4", Some(budget_for(4))), ("tiles16", Some(budget_for(16)))];
+        for mode in [InterpolationMode::Nearest, InterpolationMode::Trilinear] {
+            let mut reference: Option<Vec<i64>> = None;
+            for (name, budget) in cases {
+                let mut samples = Vec::new();
+                let mut tiles = 0;
+                for repeat in 0..6 {
+                    let start = std::time::Instant::now();
+                    let (result, n) = rotate_and_crop_gpu(
+                        &volume, 0, &rot, &centroid, &min, &max, mode, budget.map(|b| b.0),
+                    )
+                    .unwrap();
+                    let seconds = start.elapsed().as_secs_f64();
+                    tiles = n;
+                    match &reference {
+                        Some(r) => assert_eq!(&result.data, r),
+                        None => reference = Some(result.data),
+                    }
+                    if repeat > 0 {
+                        samples.push(seconds);
+                    }
+                }
+                let mut sorted = samples.clone();
+                sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                println!(
+                    "crop_gpu_tiles mode={mode:?} case={name} budget={:?} tiles={tiles} out={}x{}x{} samples={samples:?} median={:.6}",
+                    budget.map(|b| b.0),
+                    out[0],
+                    out[1],
+                    out[2],
+                    sorted[2]
+                );
+            }
+        }
+    }
 }

@@ -1,6 +1,17 @@
 use nalgebra::{Matrix3, Vector3};
 
 const WORKGROUP_SIZE: u32 = 64;
+const PARAMS_BYTES: u64 = 160;
+
+// AI-FUNC-SUMMARY: Describe one output tile and the source sub-block (origin/dims inside the full source) uploaded for it; carries no GPU state.
+pub struct TransformTile<'a> {
+    pub block: &'a [i32],
+    pub block_origin: [u32; 3],
+    pub block_dims: [u32; 3],
+    pub source_dims: [u32; 3],
+    pub tile_offset: [u32; 3],
+    pub tile_dims: [u32; 3],
+}
 
 pub struct GpuVolumeTransformPipeline {
     device: wgpu::Device,
@@ -10,6 +21,7 @@ pub struct GpuVolumeTransformPipeline {
     params_buffer: wgpu::Buffer,
     out_buffer: wgpu::Buffer,
     staging_buffer: wgpu::Buffer,
+    guard_buffer: wgpu::Buffer,
     bind_group_layout: wgpu::BindGroupLayout,
     current_src_size: u64,
     current_out_size: u64,
@@ -66,6 +78,16 @@ impl GpuVolumeTransformPipeline {
                             },
                             count: None,
                         },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 3,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
                     ],
                 });
 
@@ -93,7 +115,7 @@ impl GpuVolumeTransformPipeline {
             });
             let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("params"),
-                size: 128,
+                size: PARAMS_BYTES,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
@@ -105,8 +127,16 @@ impl GpuVolumeTransformPipeline {
             });
 
             let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("volume_transform_staging"), size: 4,
+                label: Some("volume_transform_staging"), size: 8,
                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let guard_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("volume_transform_guard"),
+                size: 4,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             Ok(Self {
@@ -117,6 +147,7 @@ impl GpuVolumeTransformPipeline {
                 params_buffer,
                 out_buffer,
                 staging_buffer,
+                guard_buffer,
                 bind_group_layout: bgl,
                 current_src_size: 4,
                 current_out_size: 4,
@@ -125,11 +156,13 @@ impl GpuVolumeTransformPipeline {
     }
 
     // AI-FUNC-SUMMARY:
-    // Purpose: Rotate and crop a 3D volume on GPU.
+    // Purpose: Rotate and crop a whole 3D volume on GPU in one dispatch with the full source resident.
     // Inputs: source volume data (i32), dimensions, background value, rotation matrix, centroid,
     //         output origin (x0,y0,z0), output dimensions, interpolation mode (0=nearest, 1=trilinear).
     // Returns: Checked output volume or a capacity, parameter, device or readback error.
     // Side effects: Dispatches GPU compute, maps staging buffer.
+    // Notes: Equivalent to transform_tile with the whole source as block and the whole output as tile.
+    #[allow(clippy::too_many_arguments)]
     pub fn rotate_and_crop(
         &mut self,
         src_data: &[i32],
@@ -145,17 +178,96 @@ impl GpuVolumeTransformPipeline {
         out_d: u32,
         interp_mode: u32,
     ) -> Result<Vec<i32>, String> {
+        let tile = TransformTile {
+            block: src_data,
+            block_origin: [0, 0, 0],
+            block_dims: [src_w, src_h, src_d],
+            source_dims: [src_w, src_h, src_d],
+            tile_offset: [0, 0, 0],
+            tile_dims: [out_w, out_h, out_d],
+        };
+        self.transform_tile(&tile, background, rot, centroid, origin, interp_mode)
+    }
+
+    // AI-FUNC-SUMMARY: Return the device limits used to bound per-tile source blocks and outputs; side effects: none.
+    pub fn device_limits(&self) -> wgpu::Limits {
+        self.device.limits()
+    }
+
+    // AI-FUNC-SUMMARY:
+    // Purpose: Grow retained source-block and output/staging capacity once to the largest tile of a plan.
+    // Inputs: source-block bytes and output-tile bytes (each raised to at least 4).
+    // Returns: Ok or a captured allocation/validation error.
+    // Side effects: May replace source, output and staging buffers; never shrinks them.
+    // Notes: Pre-sizing avoids old/new buffer overlap between tiles, matching the crop memory plan.
+    pub fn reserve_capacity(&mut self, src_bytes: u64, out_bytes: u64) -> Result<(), String> {
+        let src_bytes = src_bytes.max(4);
+        let out_bytes = out_bytes.max(4);
+        super::runtime::scoped(&self.device.clone(), || {
+            if src_bytes > self.current_src_size {
+                self.resize_source_buffer(src_bytes);
+            }
+            if out_bytes > self.current_out_size {
+                self.resize_output_buffers(out_bytes)?;
+            }
+            Ok(())
+        })
+    }
+
+    // AI-FUNC-SUMMARY:
+    // Purpose: Transform one output tile using only an uploaded source sub-block while reproducing single-dispatch arithmetic.
+    // Inputs: tile descriptor (block values/origin/dims, full source dims, output tile offset/dims), background,
+    //         rotation, centroid, global output origin and interpolation mode (0=nearest, 1=trilinear).
+    // Returns: The tile's output voxels in x-fastest order, or a capacity, parameter, device, readback or halo error.
+    // Side effects: Uploads the block and parameters, dispatches compute, maps staging for the tile prefix plus guard word.
+    // Notes: The shader forms f32(tile_offset + local) and bounds-checks against full source dims, so every voxel equals the
+    //        whole-volume dispatch; an in-volume sample outside the block sets a guard and returns an error rather than a value.
+    pub fn transform_tile(
+        &mut self,
+        tile: &TransformTile<'_>,
+        background: i32,
+        rot: &Matrix3<f64>,
+        centroid: &Vector3<f64>,
+        origin: &Vector3<f64>,
+        interp_mode: u32,
+    ) -> Result<Vec<i32>, String> {
         let limits = self.device.limits();
-        let source = super::runtime::grid_plan([src_w, src_h, src_d], 1, &limits)?;
-        let output = super::runtime::grid_plan([out_w, out_h, out_d], WORKGROUP_SIZE, &limits)?;
-        if src_data.len() != source.total as usize {
+        super::runtime::grid_plan(tile.source_dims, 1, &limits)?;
+        let output = super::runtime::grid_plan(tile.tile_dims, WORKGROUP_SIZE, &limits)?;
+        let block_voxels = tile
+            .block_dims
+            .iter()
+            .try_fold(1u64, |acc, &d| acc.checked_mul(u64::from(d)))
+            .ok_or("crop GPU source block size overflows")?;
+        if tile.block.len() as u64 != block_voxels {
             return Err("crop GPU source length does not match dimensions".into());
+        }
+        for axis in 0..3 {
+            let end = tile.block_origin[axis]
+                .checked_add(tile.block_dims[axis])
+                .ok_or("crop GPU source block end overflows")?;
+            if end > tile.source_dims[axis] {
+                return Err("crop GPU source block exceeds source dimensions".into());
+            }
+            tile.tile_offset[axis]
+                .checked_add(tile.tile_dims[axis])
+                .ok_or("crop GPU tile end overflows")?;
+        }
+        let block_bytes = block_voxels
+            .checked_mul(4)
+            .ok_or("crop GPU source block bytes overflow")?;
+        if block_bytes > limits.max_buffer_size
+            || block_bytes > u64::from(limits.max_storage_buffer_binding_size)
+        {
+            return Err(format!(
+                "crop GPU source block requires {block_bytes} bytes, exceeding device buffer limits"
+            ));
         }
         if interp_mode > 1 {
             return Err("crop GPU interpolation mode is unsupported".into());
         }
         if interp_mode == 1
-            && (src_data.iter().any(|&v| (v as f32) as i64 != i64::from(v))
+            && (tile.block.iter().any(|&v| (v as f32) as i64 != i64::from(v))
                 || (background as f32) as i64 != i64::from(background))
         {
             return Err("crop GPU trilinear cannot represent input integers exactly as f32".into());
@@ -169,60 +281,44 @@ impl GpuVolumeTransformPipeline {
             return Err("crop GPU transform contains nonfinite f32 parameters".into());
         }
         super::runtime::scoped(&self.device.clone(), || {
-            let src_bytes = bytemuck::cast_slice::<i32, u8>(src_data);
-            let src_size = src_bytes.len() as u64;
-            if src_size > self.current_src_size {
-                self.src_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("src"),
-                    size: src_size,
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-                self.current_src_size = src_size;
+            if block_bytes > self.current_src_size {
+                self.resize_source_buffer(block_bytes);
             }
-            self.queue.write_buffer(&self.src_buffer, 0, src_bytes);
-
+            if !tile.block.is_empty() {
+                self.queue
+                    .write_buffer(&self.src_buffer, 0, bytemuck::cast_slice::<i32, u8>(tile.block));
+            }
             let out_total = output.bytes;
             if out_total > self.current_out_size {
-                self.resize_output_buffers(out_total);
+                self.resize_output_buffers(out_total)?;
             }
+            self.queue.write_buffer(&self.guard_buffer, 0, &0u32.to_le_bytes());
 
-            let mut param_data = Vec::with_capacity(128);
-            param_data.extend_from_slice(&src_w.to_le_bytes());
-            param_data.extend_from_slice(&src_h.to_le_bytes());
-            param_data.extend_from_slice(&src_d.to_le_bytes());
-            param_data.extend_from_slice(&out_w.to_le_bytes());
-            param_data.extend_from_slice(&out_h.to_le_bytes());
-            param_data.extend_from_slice(&out_d.to_le_bytes());
+            let mut param_data = Vec::with_capacity(PARAMS_BYTES as usize);
+            for value in tile.source_dims.iter().chain(tile.tile_dims.iter()) {
+                param_data.extend_from_slice(&value.to_le_bytes());
+            }
             param_data.extend_from_slice(&interp_mode.to_le_bytes());
             param_data.extend_from_slice(&background.to_le_bytes());
-
-            // Rotation matrix (row-major, f32, with padding for vec4 alignment)
-            param_data.extend_from_slice(&(rot[(0, 0)] as f32).to_le_bytes());
-            param_data.extend_from_slice(&(rot[(0, 1)] as f32).to_le_bytes());
-            param_data.extend_from_slice(&(rot[(0, 2)] as f32).to_le_bytes());
-            param_data.extend_from_slice(&0.0f32.to_le_bytes());
-            param_data.extend_from_slice(&(rot[(1, 0)] as f32).to_le_bytes());
-            param_data.extend_from_slice(&(rot[(1, 1)] as f32).to_le_bytes());
-            param_data.extend_from_slice(&(rot[(1, 2)] as f32).to_le_bytes());
-            param_data.extend_from_slice(&0.0f32.to_le_bytes());
-            param_data.extend_from_slice(&(rot[(2, 0)] as f32).to_le_bytes());
-            param_data.extend_from_slice(&(rot[(2, 1)] as f32).to_le_bytes());
-            param_data.extend_from_slice(&(rot[(2, 2)] as f32).to_le_bytes());
-            param_data.extend_from_slice(&0.0f32.to_le_bytes());
-
-            // Centroid (vec4)
-            param_data.extend_from_slice(&(centroid.x as f32).to_le_bytes());
-            param_data.extend_from_slice(&(centroid.y as f32).to_le_bytes());
-            param_data.extend_from_slice(&(centroid.z as f32).to_le_bytes());
-            param_data.extend_from_slice(&0.0f32.to_le_bytes());
-
-            // Origin (vec4)
-            param_data.extend_from_slice(&(origin.x as f32).to_le_bytes());
-            param_data.extend_from_slice(&(origin.y as f32).to_le_bytes());
-            param_data.extend_from_slice(&(origin.z as f32).to_le_bytes());
-            param_data.extend_from_slice(&0.0f32.to_le_bytes());
-
+            for row in 0..3 {
+                for col in 0..3 {
+                    param_data.extend_from_slice(&(rot[(row, col)] as f32).to_le_bytes());
+                }
+                param_data.extend_from_slice(&0.0f32.to_le_bytes());
+            }
+            for vector in [centroid, origin] {
+                for value in vector.iter() {
+                    param_data.extend_from_slice(&(*value as f32).to_le_bytes());
+                }
+                param_data.extend_from_slice(&0.0f32.to_le_bytes());
+            }
+            for triple in [tile.tile_offset, tile.block_origin, tile.block_dims] {
+                for value in triple {
+                    param_data.extend_from_slice(&value.to_le_bytes());
+                }
+                param_data.extend_from_slice(&0u32.to_le_bytes());
+            }
+            debug_assert_eq!(param_data.len() as u64, PARAMS_BYTES);
             self.queue.write_buffer(&self.params_buffer, 0, &param_data);
 
             let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -240,6 +336,10 @@ impl GpuVolumeTransformPipeline {
                     wgpu::BindGroupEntry {
                         binding: 2,
                         resource: self.out_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: self.guard_buffer.as_entire_binding(),
                     },
                 ],
             });
@@ -262,32 +362,51 @@ impl GpuVolumeTransformPipeline {
             }
 
             enc.copy_buffer_to_buffer(&self.out_buffer, 0, &self.staging_buffer, 0, out_total);
+            enc.copy_buffer_to_buffer(&self.guard_buffer, 0, &self.staging_buffer, out_total, 4);
             self.queue.submit(Some(enc.finish()));
 
-            let words = super::runtime::read_u32_prefix(&self.device, &self.staging_buffer, out_total)?;
+            let read_bytes = out_total.checked_add(4).ok_or("crop GPU readback size overflows")?;
+            let mut words =
+                super::runtime::read_u32_prefix(&self.device, &self.staging_buffer, read_bytes)?;
+            if words.pop() != Some(0) {
+                return Err("crop GPU tile sampled source outside its uploaded halo block".into());
+            }
             Ok(words.into_iter().map(|word| word as i32).collect())
         })
     }
-    // AI-FUNC-SUMMARY: Allocate output and staging capacity together; callers validate bytes and capture GPU errors.
-    fn resize_output_buffers(&mut self, bytes: u64) {
+
+    // AI-FUNC-SUMMARY: Replace the retained source-block buffer with the requested capacity; callers validate bytes and capture GPU errors.
+    fn resize_source_buffer(&mut self, bytes: u64) {
+        self.src_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("src"),
+            size: bytes,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        self.current_src_size = bytes;
+    }
+
+    // AI-FUNC-SUMMARY: Allocate output capacity and staging with one extra guard word; returns an error on size overflow; callers capture GPU errors.
+    fn resize_output_buffers(&mut self, bytes: u64) -> Result<(), String> {
+        let staging = bytes.checked_add(4).ok_or("crop GPU staging size overflows")?;
         self.out_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("out"), size: bytes,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
         self.staging_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("volume_transform_staging"), size: bytes,
+            label: Some("volume_transform_staging"), size: staging,
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         self.current_out_size = bytes;
+        Ok(())
     }
 
     // AI-FUNC-SUMMARY: Release retained output/readback peak while keeping source capacity and the compiled transform pipeline.
     pub fn release_output_capacity(&mut self) -> Result<(), String> {
         super::runtime::scoped(&self.device.clone(), || {
-            self.resize_output_buffers(4);
-            Ok(())
+            self.resize_output_buffers(4)
         })
     }
 
@@ -318,7 +437,7 @@ mod reuse_tests {
         assert_ne!(gpu.staging_buffer, staging);
         gpu.release_output_capacity().unwrap();
         assert_eq!(gpu.out_buffer.size(), 4);
-        assert_eq!(gpu.staging_buffer.size(), 4);
+        assert_eq!(gpu.staging_buffer.size(), 8);
         assert_eq!(gpu.current_out_size, 4);
         assert_eq!(run(&mut gpu, &[3,2,1], 3), vec![3,2,1]);
     }
