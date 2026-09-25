@@ -85,7 +85,7 @@ and tries to place it.
 | Field | Meaning |
 |---|---|
 | `target_volume_fraction` | Solid volume fraction the pack should reach (`0.02` = 2% filled here — deliberately small so the walkthrough finishes in well under a second; production runs typically target much higher fractions and take proportionally longer). |
-| `mode` | `1` strict (no boundary crossing), `2` loose (crossing allowed, walls ignored), `3` periodic (crossing allowed + periodic ghost-collision checks). This example uses `2`. |
+| `mode` | `1` strict (no boundary crossing), `2` loose (crossing allowed, walls ignored), `3` periodic (crossing allowed + periodic ghost-collision checks). This example uses `2`. Mode 3 also prints `[Info] Periodic images: N stored, M accepted ghosts instantiated, K ghost TriMesh builds` after `Final count`. |
 | `max_attempts` | Placement attempts allowed before the pipeline gives up and reports whatever volume fraction it reached. |
 | `min_neighbor_distance` | Minimum allowed gap between placed particle surfaces. |
 | `rotation_mode` / `rotation_axis_vector` | Controls candidate orientation before placement; `'none'` here means every candidate keeps its as-loaded orientation. |

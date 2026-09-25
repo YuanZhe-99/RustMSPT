@@ -145,5 +145,7 @@ box内部的颗粒不会产生任何镜像，因为所有 26 个偏移副本都�
 
 The earlier full-scan description above records the original implementation. Pack now caches accepted particle/periodic-image bbox and TriMesh data and incrementally indexes them. Small populations use a cached direct scan; larger populations use spatial candidates. Positive clearance uses one cached solid-distance predicate instead of separate collision/minimum-distance scans. No accepted geometry or ghosts are cloned per proposal. Candidate order, steering and clipped-volume acceptance remain unchanged.
 
+惰性周期镜像（PERF-11，2026-09-25）：模式 3 的周期镜像改为 `(particle_id, shift)` 描述，只有当查询 bbox 可能到达时才平移并构建碰撞体；平移后 bbox 与平移网格的 bbox 逐位相同，因此宽相位剪枝不改变任何判定。
+
 
 PERF-13 dense-bucket correction: membership switches within a bucket at 256 unique candidates, bounding the initial linear phase even for a single extremely dense bucket. Order and exclusions are unchanged.

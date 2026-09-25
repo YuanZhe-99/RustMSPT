@@ -34,11 +34,22 @@
 | `write_distribution_comparison_csv` | `src/pipeline/pack_targets.rs:495` | 写出 `<output_stem>_diameter_distribution.csv` 目标与实际对比报告。 |
 | `parse_csv_f64` | `src/pipeline/pack_targets.rs:564` | 解析一个必填的有限浮点 CSV 单元格，错误信息含行/列上下文。 |
 | `parse_optional_csv_f64` | `src/pipeline/pack_targets.rs:587` | 解析一个可选的浮点 CSV 单元格，空白表示"缺省"。 |
-| `PackCollider` | `src/pipeline/pack.rs:27` | Cached collider bbox and shape. |
-| `PackCollider::new` | `src/pipeline/pack.rs:34` | Prepare collision shape once. |
-| `PackCollider::blocks` | `src/pipeline/pack.rs:42` | Cached overlap or clearance predicate. |
-| `pack_blocked` | `src/pipeline/pack.rs:68` | Check incremental spatial candidates. |
-| `PackPipeline::run_in_pool` | `src/pipeline/pack.rs:221` | Packing work under configured pool. |
+| `PackCollider` | `src/pipeline/pack.rs:59` | 缓存的碰撞体 bbox 与形状。 |
+| `PackCollider::new` | `src/pipeline/pack.rs:66` | 只准备一次碰撞形状。 |
+| `PackCollider::blocks` | `src/pipeline/pack.rs:74` | 缓存的重叠或间隙判定。 |
+| `bbox_may_block` | `src/pipeline/pack.rs:103` | 精确判定自身的 bbox 拒绝（可选 bbox）。 |
+| `periodic_image_shifts` | `src/pipeline/pack.rs:114` | 按 `generate_periodic_ghosts` 顺序给出周期平移及平移后 bbox。 |
+| `PackImage` | `src/pipeline/pack.rs:148` | 已接受颗粒或 `(particle_id, shift)` 镜像，碰撞体按需构建。 |
+| `PackScene` | `src/pipeline/pack.rs:155` | 镜像存储、增量网格、无 bbox 列表与 ghost 构建计数。 |
+| `PackScene::new` | `src/pipeline/pack.rs:164` | 创建使用 domain/8 网格的空存储。 |
+| `PackScene::build_ghost` | `src/pipeline/pack.rs:175` | 平移并准备一个镜像（计数）。 |
+| `PackScene::collider` | `src/pipeline/pack.rs:183` | 线程安全的惰性镜像碰撞体。 |
+| `PackScene::reachable` | `src/pipeline/pack.rs:192` | bbox 在 gap 下可能阻挡查询的镜像。 |
+| `PackScene::blocks_any` | `src/pipeline/pack.rs:219` | 对可达镜像串行/并行 any()。 |
+| `PackScene::candidate_images` | `src/pipeline/pack.rs:244` | 完整旧版可行性判定，候选及已接受镜像均惰性实例化。 |
+| `PackScene::insert` | `src/pipeline/pack.rs:276` | 记录已接受颗粒及其镜像描述。 |
+| `PackScene::image_stats` | `src/pipeline/pack.rs:300` | 存储镜像数、已实例化 ghost 数、ghost 构建数。 |
+| `PackPipeline::run_in_pool` | `src/pipeline/pack.rs:442` | Packing work under configured pool. |
 
 **另请参阅：** 关于本流水线中大量使用的 `MeshMetrics` 与 `scale_mesh_to_equivalent_diameter`，见
 [geometry-analysis.md](geometry-analysis.md)。
@@ -513,8 +524,12 @@
 
 ### Cached legacy packing feasibility (PERF-11)
 
-`PackCollider::new(&Mesh)` retains bbox and optional parry TriMesh without another raw mesh copy. `blocks(other, gap)` keeps the old bbox rejection, uses cached solid collision at zero gap and cached solid distance below a positive gap. `pack_blocked` directly scans fewer than 32 colliders, otherwise queries an incremental grid plus every bbox-less collider. Candidate images are prepared once per proposal; accepted particle/image shapes are appended once and indexed. This replaces the previous `placed.clone()`, repeated ghost generation, shape construction and separate minimum-distance pass. The grid has at most eight cells on the longest domain axis. Void/nesting semantics and gap equality remain governed by the same prepared collision/distance functions. Periodic checks still include candidate ghosts against accepted real particles and ghosts. `PackPipeline::run` installs the worker pool around `run_in_pool`, including loading and finalization; proposal RNG remains sequential.
+`PackCollider::new(&Mesh)` retains bbox and optional parry TriMesh without another raw mesh copy. `blocks(other, gap)` keeps the old bbox rejection, uses cached solid collision at zero gap and cached solid distance below a positive gap. `PackScene::reachable` directly scans fewer than 32 stored images, otherwise queries an incremental grid plus every bbox-less image. Periodic images are lazy descriptors (see below). This replaces the previous `placed.clone()`, repeated ghost generation, shape construction and separate minimum-distance pass. The grid has at most eight cells on the longest domain axis. Void/nesting semantics and gap equality remain governed by the same prepared collision/distance functions. Periodic checks still include candidate ghosts against accepted real particles and ghosts. `PackPipeline::run` installs the worker pool around `run_in_pool`, including loading and finalization; proposal RNG remains sequential.
+
+### 惰性周期镜像（PERF-11，2026-09-25）
+
+模式 3 不再生成 ghost 副本。`PackScene` 对每个已接受颗粒只存一次，并对每个平移后 bbox 与域严格重叠的周期平移（与 `generate_periodic_ghosts` 相同的规则与顺序，经 `periodic_image_shifts`）存一个 `PackImage`，即 `(particle_id, shift, bbox)`；网格索引全部镜像。镜像碰撞体在首次使用时经 `OnceLock` 构建（在 rayon `any` 内线程安全），构建方式与原 `translate_mesh` 平移完全相同，精确判定看到的坐标与以前一致。`candidate_images` 先检查候选本体，然后仅当某已接受镜像的 bbox 可能阻挡时（`bbox_may_block`，即精确判定自身的 bbox 测试）才实例化该候选镜像；无法到达的镜像从不平移。舍入加法单调，故 `bbox + shift` 与平移后网格 bbox 逐位相同，剪枝不改变任何判定。检查中已构建的候选镜像在接受后复用。模式 3 输出 `Periodic images: stored, instantiated, ghost TriMesh builds`。`pack.rs` 中的对照测试将每个判定与原来的急切全 ghost 扫描比较，覆盖面/棱/角跨界、两个域（其一不在原点）、`-1` 与 `+1` 镜像同时与域重叠的近域宽颗粒、嵌套、接触及 gap 0/0.25/0.5；增量接受重放断言 ghost 构建数少于急切方式。
 
 ### 碰撞计数与网格统计（PERF-13 观测）
 
-`PackQueryStats`（私有）保存 relaxed `AtomicU64` 计数：`collision_tests`（`pack_blocked` 调用数）、`direct_scans`（碰撞体少于 32 或候选无包围盒）、`grid_queries`、`grid_candidates`（返回的邻居数）、`pair_tests`（`PackCollider::blocks` 调用数）、`bbox_rejects` 和 `narrow_phase`（进入精确重叠或距离判定）。`pack_blocked(candidate, colliders, grid, gap, stats)` 与 `PackCollider::blocks(other, gap, stats)` 通过引用接收它；计数从不参与决策，也不消耗 RNG，因此放置结果不变。在并行短路 `any` 下，pair/bbox/narrow 计数依赖调度，仅作诊断。放置循环结束后打印 `SpatialGrid::stats()`（网格实际被查询时）以及 `[GridStats] pack queries collision_tests=.. direct_scans=.. grid_queries=.. grid_candidates=.. pair_tests=.. bbox_rejects=.. narrow_phase=..`。
+`PackQueryStats`（私有）保存 relaxed `AtomicU64` 计数：`collision_tests`（`PackScene::reachable` 调用数：候选本体及每个周期候选镜像，包括实例化前已剪枝的镜像）、`direct_scans`（存储镜像少于 32 或查询无包围盒）、`grid_queries`、`grid_candidates`（返回的邻居数）、`pair_tests`（`PackCollider::blocks` 调用数，加上在 `reachable` 中被 bbox 剪枝的配对，后者同时计入 `bbox_rejects`）、`bbox_rejects` 和 `narrow_phase`（进入精确重叠或距离判定）。`PackScene::candidate_images(.., stats)`、`reachable`、`blocks_any` 与 `PackCollider::blocks(other, gap, stats)` 通过引用接收它；计数从不参与决策，也不消耗 RNG，因此放置结果不变。在并行短路 `any` 下，pair/bbox/narrow 计数依赖调度，仅作诊断。放置循环结束后打印 场景网格的 `SpatialGrid::stats()`（存储镜像至少 32 个、即网格实际被查询时）以及 `[GridStats] pack queries collision_tests=.. direct_scans=.. grid_queries=.. grid_candidates=.. pair_tests=.. bbox_rejects=.. narrow_phase=..`。

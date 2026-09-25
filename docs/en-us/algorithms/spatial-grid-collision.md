@@ -139,7 +139,7 @@ caught.
 Optimize and legacy pack both use cached geometry and spatial candidates:
 
 - **`run_sa_island`** builds the initial grid, updates only the accepted particle's membership, and leaves it unchanged on rejection. Whole-population migration rebuilds the grid. Prepared collision geometry and merged vertex ranges are retained between proposals.
-- **`PackPipeline::run`** caches each accepted particle and periodic image as a `PackCollider`. Small populations use a cached direct scan; larger populations query the incremental grid, then apply bbox and exact solid checks. Positive clearance uses a fused solid-distance predicate. Proposal RNG and acceptance remain sequential.
+- **`PackPipeline::run`** caches each accepted particle as a `PackCollider` and each mode-3 periodic image as a `(particle_id, shift)` descriptor whose collider is built only when a query's bbox can reach it. Small populations use a cached direct scan; larger populations query the incremental grid, then apply bbox and exact solid checks. The broad phase never changes a decision: a shifted bbox equals the translated mesh's bbox bit for bit. Positive clearance uses a fused solid-distance predicate. Proposal RNG and acceptance remain sequential.
 
 ## Cross-references
 

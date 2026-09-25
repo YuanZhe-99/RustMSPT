@@ -14,7 +14,9 @@
 | `parse_ascii_vertex` | `src/io/stl.rs:9` | 将一行 ASCII STL 的 `vertex x y z` 记录解析为 `Vec3`。 |
 | `quantize_key` | `src/io/stl.rs:21` | 将顶点量化为固定精度的整数键，用于容差去重。 |
 | `dedup_vertex` | `src/io/stl.rs:31` | 通过量化键查找，对照现有列表对顶点去重。 |
-| `parse_ascii_stl` | `src/io/stl.rs:52` | 将 ASCII STL 文本解析为顶点已去重的 `Mesh`。 |
+| `AsciiStlBuilder` | `src/io/stl.rs:47` | ASCII STL 增量状态：顶点、面、待组面顶点、去重表。 |
+| `AsciiStlBuilder::push_line` | `src/io/stl.rs:56` | 按原 lossy/trim/vertex 规则处理一行原始字节。 |
+| `parse_ascii_stream_or_binary` | `src/io/stl.rs:78` | 逐行流式解析 ASCII STL，未得到三角形时对保留字节回退 binary。 |
 | `parse_f32_le` | `src/io/stl.rs:93` | 解析小端序 `f32` 字节并向上转换为 `f64`。 |
 | `parse_binary_stl` | `src/io/stl.rs:104` | 将二进制 STL 字节解析为顶点已去重的 `Mesh`。 |
 | `looks_ascii_stl` | `src/io/stl.rs:151` | 启发式检测字节内容是否为 ASCII STL。 |
@@ -33,9 +35,12 @@
 | `load_tiff_or_folder` | `src/io/volume.rs:369` | 从文件或文件夹加载 TIFF 体数据（所有页/切片）。 |
 | `load_tiff_or_folder_with_range` | `src/io/volume.rs:379` | 在一个闭区间切片范围内，从文件或文件夹加载 TIFF 体数据。 |
 | `write_tiff_slice` | `src/io/volume.rs:446` | 将体数据的一个 z 切片写入 TIFF 编码器的一页。 |
+| `TiffPageEncoder` | `src/io/volume.rs:552` | 基于借用可 seek writer 的增量多页 TIFF 编码器。 |
+| `TiffPageEncoder::new` | `src/io/volume.rs:562` | 写入 TIFF 头并固定页尺寸与类型。 |
+| `TiffPageEncoder::write_slices` | `src/io/volume.rs:590` | 以连续页追加完整 z 切片。 |
 | `save_tiff_or_folder_with_ext` | `src/io/volume.rs:524` | 将 `Volume3D` 保存为多页 TIFF 文件或按切片逐一保存的 TIFF 文件夹，可配置扩展名。 |
 | `save_tiff_or_folder` | `src/io/volume.rs:586` | 使用默认的 `.tiff` 扩展名，将 `Volume3D` 保存为 TIFF 文件或切片文件序列。 |
-| `load_stl_from_reader` | `src/io/stl.rs:178` | Forward-reader STL with bounded binary records. |
+| `load_stl_from_reader` | `src/io/stl.rs:192` | Forward-reader STL: streamed ASCII lines and bounded binary records. |
 | `load_stl_hashed` | `src/io/stl.rs:193` | Single-pass STL parsing and raw digest. |
 | `parse_binary_reader` | `src/io/stl.rs:109` | Read binary triangle records with incremental deduplication. |
 | `read_stl_record` | `src/io/stl.rs:140` | Read complete record or report truncation. |
@@ -97,8 +102,8 @@
 - **参数：**
   - `path` — `.stl` 文件的路径。
 - **返回值：** 解析得到的 `Mesh`。
-- **副作用：** 将整个文件读入内存。
-- **说明：** 使用 `looks_ascii_stl` 嗅探格式。若嗅探结果为 ASCII，则尝试 `parse_ascii_stl`；若该解析失败（例如在看似合法的头部之后出现格式错误的内容），会静默回退到 `parse_binary_stl`，而不是向上传播 ASCII 解析错误。二进制解析在其他情况下则是终止路径。
+- **副作用：** 读取文件；binary 按记录有界读取，ASCII 逐行流式解析。
+- **说明：** 使用 `looks_ascii_stl` 嗅探格式。若嗅探结果为 ASCII，则流式调用 `parse_ascii_stream_or_binary`；若该解析失败（例如在看似合法的头部之后出现格式错误的内容），会静默回退到 `parse_binary_stl`，而不是向上传播 ASCII 解析错误。二进制解析在其他情况下则是终止路径。
 
 #### load_folder_stls
 
@@ -170,17 +175,22 @@
 - **返回值：** `v` 在 `vertices` 中的索引（已存在或新插入）。
 - **副作用：** 原地修改 `vertices` 和 `map`。
 
-#### parse_ascii_stl
+#### AsciiStlBuilder / push_line
 
-- **签名：** `fn parse_ascii_stl(content: &str, path: &Path) -> Result<Mesh>`
-- **源码位置：** `src/io/stl.rs:52`
-- **用途：** 将完整的 ASCII STL 文档解析为已去重的 `Mesh`。
-- **参数：**
-  - `content` — 完整的 STL 文本。
-  - `path` — 源路径，仅用于错误信息。
-- **返回值：** 解析得到的 `Mesh`（顶点已去重，每个面片对应一个 `Triangle`）。
-- **副作用：** 无（对给定字符串的纯解析）。
-- **说明：** 要求（修剪后的）内容以 `"solid"` 开头，否则返回 `RustMsptError::InvalidMesh`。解析按行进行，忽略所有不匹配 `vertex x y z` 模式的行（即 `facet normal`、`outer loop`、`endloop`、`endfacet`、`endsolid` 等行实际上被跳过而非校验）——无论周围的关键字是什么，每连续三行 `vertex` 都被视为一个三角形。若未解析出任何顶点或面，则返回 `RustMsptError::InvalidMesh`。
+- **签名：** `struct AsciiStlBuilder`；`fn push_line(&mut self, raw: &[u8])`
+- **源码：** `src/io/stl.rs:47`
+- **用途：** 取代原整段文本的 `parse_ascii_stl`：对一行原始字节（末尾 `\n` 可有可无）做 lossy 解码、trim 并用 `parse_ascii_vertex` 匹配；每满三个顶点生成一个去重后的 `Triangle`。
+- **副作用：** 修改 builder。
+- **说明：** `0x0A` 不会出现在 UTF-8 多字节序列内，因此按 `\n` 切行后逐行 lossy 解码与整段解码等价；`trim` 去掉 CR，CRLF 与 LF 的结果与 `str::lines` 相同。
+
+#### parse_ascii_stream_or_binary
+
+- **签名：** `fn parse_ascii_stream_or_binary(reader: impl BufRead, path: &Path) -> Result<Mesh>`
+- **源码：** `src/io/stl.rs:78`
+- **用途：** 逐行解析被嗅探为 ASCII 的 STL；若没有得到任何三角形，则把同一字节按 binary 解析（原有回退）。
+- **返回：** ASCII 网格，或 binary 回退的结果/错误。
+- **副作用：** 读到 EOF。
+- **说明：** 原始字节只保留到第一个 ASCII 三角形完成为止，此后 ASCII 结果已确定；被误判为 ASCII 的 binary 文件仍会完整保留，与之前相同。`tests/stl_stream_tests.rs::ascii_stream_matches_whole_text_oracle` 将顶点/面逐位与原整段解析比较（CRLF、制表符、科学计数、缺少 `endsolid`、无结尾换行、Unicode 空白、非法 UTF-8、单独 CR、`VERTEX`、不完整 facet、200 KB 长行、短读、摘要及 binary 回退）。
 
 #### parse_f32_le
 
@@ -456,7 +466,7 @@ Binary STL output now uses a 64 KiB BufWriter and explicitly flushes before succ
 
 ### Shared STL stream and digest (PERF-18)
 
-`load_stl_from_reader(reader, path)` accepts a forward-only reader. It sniffs at most 512 bytes, chains that prefix back for binary parsing, and preserves ASCII-first/fallback behavior. `parse_binary_reader` reads one 50-byte triangle record at a time, deduplicates in first-encounter order, grows geometry storage as records arrive, and drains permitted trailing data. Truncated header/records return InvalidMesh; other read errors propagate. A corrupt count does not cause a count-sized initial allocation. ASCII still buffers the existing full document.
+`load_stl_from_reader(reader, path)` accepts a forward-only reader. It sniffs at most 512 bytes, chains that prefix back for binary parsing, and preserves ASCII-first/fallback behavior. `parse_binary_reader` reads one 50-byte triangle record at a time, deduplicates in first-encounter order, grows geometry storage as records arrive, and drains permitted trailing data. Truncated header/records return InvalidMesh; other read errors propagate. A corrupt count does not cause a count-sized initial allocation. ASCII is streamed line by line (see below).
 
 `load_stl_hashed(path)` returns `(Mesh, sha256, bytes)` from one file pass through `HashingReader`, including ignored binary trailers in the digest/count. Placement shape loading uses this entry, preserving input list and first-face shell order. `HashingReader::finish` describes consumed bytes only; successful STL parsing drains its input before finishing. Independent `sha256_file` remains bounded and unchanged.
 
@@ -475,3 +485,9 @@ Binary STL output now uses a 64 KiB BufWriter and explicitly flushes before succ
 ### RAW 汇总缓冲预留（2026-09-23）
 
 RAW 平面大小、文件字节数和选定输出体素数均使用 checked arithmetic。首个选定切片成功解码后，以 `try_reserve_exact` 一次预留最终体素数，后续按序追加不再触发几何增长。首片格式错误仍先于预留返回，分配失败显式传播。双文件解码上限和 512 KiB 并行阈值保持不变。Vec 容量请求不是进程 RSS 上限，单片临时缓冲仍与最终输出共存。见 PLAN.Performance.md §63。
+
+### ASCII STL 流式解析（PERF-18，2026-09-25）
+
+ASCII STL 现在从 reader 逐行解析（`parse_ascii_stream_or_binary`），第一个三角形完成后不再缓存文件文本；512 字节嗅探、ASCII 优先、对同一字节的 binary 回退，以及 `load_stl_hashed` 的单遍摘要（仍读到 EOF）均不变。Release 测量（忽略测试 `ascii_stream_memory_benchmark`；200,000 facet、35.5 MB CRLF 文件、600,000 顶点、5 轮）：原整段解析峰值存活堆 114.2 MB（参考实现按精确大小读文件，原 `read_to_end` 的增长只会更高），流式为 78.8 MB，即节省约一个文件大小；耗时中位 0.346 s 对 0.371 s，慢约 7 %，来自逐行复制，处于共享机器噪声范围内。剩余峰值为网格与去重表。
+
+`TiffPageEncoder`（2026-09-25）将 `write_tiff_pages` 的逐页循环公开，调用方可向同一个多页 TIFF 追加若干切片块；`write_tiff_pages` 也改用它，两者输出字节相同。调用方在释放编码器后自行 flush writer。

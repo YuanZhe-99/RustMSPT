@@ -251,7 +251,6 @@
 | `parse_ascii_vertex` | I/O | `src/io/stl.rs:9` | 将一行 ASCII STL 的 `vertex x y z` 解析为一个 `Vec3`。 |
 | `quantize_key` | I/O | `src/io/stl.rs:21` | 将一个顶点量化为固定精度的整数键，用于容差去重。 |
 | `dedup_vertex` | I/O | `src/io/stl.rs:31` | 通过量化键查找，对某个顶点与已有列表进行去重比对。 |
-| `parse_ascii_stl` | I/O | `src/io/stl.rs:52` | 将 ASCII STL 文本解析为一个顶点已去重的 `Mesh`。 |
 | `parse_f32_le` | I/O | `src/io/stl.rs:93` | 解析小端序的 `f32` 字节并向上转换为 `f64`。 |
 | `parse_binary_stl` | I/O | `src/io/stl.rs:104` | 将二进制 STL 字节解析为一个顶点已去重的 `Mesh`。 |
 | `looks_ascii_stl` | I/O | `src/io/stl.rs:151` | 启发式地检测字节内容是否为 ASCII STL。 |
@@ -354,7 +353,7 @@
 | `PHASE_MATRIX` | Pipeline — Packing | `src/pipeline/placement_labels.rs:13` | 标签场中相编码 0。 |
 | `VoxelLabelsHeader` | Pipeline — Packing | `src/pipeline/placement_labels.rs:22` | 标签体数据的说明：间距、原点、排布与相表。 |
 | `PhaseLabel` | Pipeline — Packing | `src/pipeline/placement_labels.rs:39` | 一个相编码及其名称。 |
-| `write_voxel_labels` | Pipeline — Packing | `src/pipeline/placement_labels.rs:57` | 写出三相标签场与逐体素颗粒标识场。 |
+| `write_voxel_labels` | Pipeline — Packing | `src/pipeline/placement_labels.rs:60` | 写出三相标签场与逐体素颗粒标识场。 |
 | `particle_at` | Pipeline — Packing | `src/pipeline/placement_labels.rs:233` | 查找包含某点的已放置颗粒。 |
 | `point_in_particle` | Pipeline — Packing | `src/pipeline/placement_labels.rs:245` | 对单个颗粒网格做射线奇偶包含判定。 |
 | `VoidReport` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:278` | 运行如何处理冻结孔隙，以及如何度量它。 |
@@ -734,11 +733,22 @@
 | `SpatialQueryScratch` | Geometry Core | `src/geometry/spatial.rs:5` | Retained neighbors and membership storage. |
 | `SpatialGrid::query_into` | Geometry Core | `src/geometry/spatial.rs:136` | Fill reusable query scratch. |
 
-| `PackCollider` | Pipeline Packing | `src/pipeline/pack.rs:27` | Cached collider bbox and shape. |
-| `PackCollider::new` | Pipeline Packing | `src/pipeline/pack.rs:34` | Prepare collision shape once. |
-| `PackCollider::blocks` | Pipeline Packing | `src/pipeline/pack.rs:71` | Cached overlap or clearance predicate; updates PackQueryStats counters. |
-| `pack_blocked` | Pipeline Packing | `src/pipeline/pack.rs:100` | Check incremental spatial candidates; counts queries in PackQueryStats. |
-| `PackPipeline::run_in_pool` | Pipeline Packing | `src/pipeline/pack.rs:221` | Packing work under configured pool. |
+| `PackCollider` | Pipeline Packing | `src/pipeline/pack.rs:59` | 缓存的碰撞体 bbox 与形状。 |
+| `PackCollider::new` | Pipeline Packing | `src/pipeline/pack.rs:66` | 只准备一次碰撞形状。 |
+| `PackCollider::blocks` | Pipeline Packing | `src/pipeline/pack.rs:74` | 缓存的重叠或间隙判定；更新 PackQueryStats 计数。 |
+| `bbox_may_block` | Pipeline Packing | `src/pipeline/pack.rs:103` | 精确判定自身的 bbox 拒绝（可选 bbox）。 |
+| `periodic_image_shifts` | Pipeline Packing | `src/pipeline/pack.rs:114` | 按 `generate_periodic_ghosts` 顺序给出周期平移及平移后 bbox。 |
+| `PackImage` | Pipeline Packing | `src/pipeline/pack.rs:148` | 已接受颗粒或 `(particle_id, shift)` 镜像，碰撞体按需构建。 |
+| `PackScene` | Pipeline Packing | `src/pipeline/pack.rs:155` | 镜像存储、增量网格、无 bbox 列表与 ghost 构建计数。 |
+| `PackScene::new` | Pipeline Packing | `src/pipeline/pack.rs:164` | 创建使用 domain/8 网格的空存储。 |
+| `PackScene::build_ghost` | Pipeline Packing | `src/pipeline/pack.rs:175` | 平移并准备一个镜像（计数）。 |
+| `PackScene::collider` | Pipeline Packing | `src/pipeline/pack.rs:183` | 线程安全的惰性镜像碰撞体。 |
+| `PackScene::reachable` | Pipeline Packing | `src/pipeline/pack.rs:192` | bbox 在 gap 下可能阻挡查询的镜像；在 PackQueryStats 中计数。 |
+| `PackScene::blocks_any` | Pipeline Packing | `src/pipeline/pack.rs:219` | 对可达镜像串行/并行 any()。 |
+| `PackScene::candidate_images` | Pipeline Packing | `src/pipeline/pack.rs:244` | 完整旧版可行性判定，候选及已接受镜像均惰性实例化。 |
+| `PackScene::insert` | Pipeline Packing | `src/pipeline/pack.rs:276` | 记录已接受颗粒及其镜像描述。 |
+| `PackScene::image_stats` | Pipeline Packing | `src/pipeline/pack.rs:300` | 存储镜像数、已实例化 ghost 数、ghost 构建数。 |
+| `PackPipeline::run_in_pool` | Pipeline Packing | `src/pipeline/pack.rs:442` | Packing work under configured pool. |
 
 | `MeasurePipeline::run_in_pool` | Pipeline Core | `src/pipeline/measure.rs:83` | Method-specific measurement in configured pool. |
 
@@ -749,13 +759,26 @@
 | `grid_plan` | GPU | `src/gpu/runtime.rs:67` | Validate product, buffer and dispatch limits. |
 | `GpuVoxelPipeline::voxelize_limited` | GPU | `src/gpu/voxel.rs:179` | Fallible voxel execution with bounded dispatch. |
 
-| `particle_at_prepared` | Pipeline Placement | `src/pipeline/placement_labels.rs:253` | First particle in ordered cached candidates. |
+| `particle_at_prepared` | Pipeline Placement | `src/pipeline/placement_labels.rs:326` | First particle in ordered cached candidates. |
+| `LABEL_SLAB_VOXELS` | Pipeline Placement | `src/pipeline/placement_labels.rs:46` | 每个标签切片块的目标体素数（4,194,304）。 |
+| `label_dims` | Pipeline Placement | `src/pipeline/placement_labels.rs:111` | 标签网格尺寸，含溢出检查。 |
+| `LabelQuery` | Pipeline Placement | `src/pipeline/placement_labels.rs:124` | 所有切片块共享的颗粒查询、bbox 网格与 void。 |
+| `LabelQuery::new` | Pipeline Placement | `src/pipeline/placement_labels.rs:136` | 每次运行只准备一次查询上下文。 |
+| `LabelQuery::centre` | Pipeline Placement | `src/pipeline/placement_labels.rs:170` | 体素中心世界坐标。 |
+| `LabelQuery::fill_slab` | Pipeline Placement | `src/pipeline/placement_labels.rs:184` | 将一个 z 切片块分类写入 phase/id 缓冲。 |
+| `write_label_stacks` | Pipeline Placement | `src/pipeline/placement_labels.rs:257` | 按切片块流式写出两个标签 TIFF。 |
 
 | `map_vertices` | Geometry Core | `src/geometry/mesh_ops.rs:162` | Serial or parallel independent vertex mapping. |
 
 | `forge_owned` | Geometry Volume/Collision | `src/geometry/forging.rs:66` | Ownership-consuming FFD and ROI transform. |
 
-| `load_stl_from_reader` | I/O | `src/io/stl.rs:178` | Forward-reader STL with bounded binary records. |
+| `load_stl_from_reader` | I/O | `src/io/stl.rs:192` | Forward-reader STL: streamed ASCII lines and bounded binary records. |
+| `AsciiStlBuilder` | I/O | `src/io/stl.rs:47` | ASCII STL 增量状态：顶点、面、待组面顶点、去重表。 |
+| `AsciiStlBuilder::push_line` | I/O | `src/io/stl.rs:56` | 按原 lossy/trim/vertex 规则处理一行原始字节。 |
+| `parse_ascii_stream_or_binary` | I/O | `src/io/stl.rs:78` | 逐行流式解析 ASCII STL，未得到三角形时对保留字节回退 binary。 |
+| `TiffPageEncoder` | I/O | `src/io/volume.rs:552` | 基于借用可 seek writer 的增量多页 TIFF 编码器。 |
+| `TiffPageEncoder::new` | I/O | `src/io/volume.rs:562` | 写入 TIFF 头并固定页尺寸与类型。 |
+| `TiffPageEncoder::write_slices` | I/O | `src/io/volume.rs:590` | 以连续页追加完整 z 切片。 |
 | `load_stl_hashed` | I/O | `src/io/stl.rs:193` | Single-pass STL parsing and raw digest. |
 | `parse_binary_reader` | I/O | `src/io/stl.rs:109` | Read binary triangle records with incremental deduplication. |
 | `read_stl_record` | I/O | `src/io/stl.rs:140` | Read complete record or report truncation. |
@@ -798,9 +821,9 @@
 
 | `GpuShellS2Pipeline::release_batch_capacity` | `src/gpu/s2_shell.rs:230` | Shell batch buffer capacity management; occupancy retained. |
 
-| `MeshRenderPipeline::with_worker_pool` | `src/pipeline/mesh_render.rs:122` | Execute scene preparation, rendering and fallback within the worker budget. |
+| `MeshRenderPipeline::with_worker_pool` | `src/pipeline/mesh_render.rs:193` | Execute scene preparation, rendering and fallback within the worker budget. |
 
-| `MeshRenderPipeline::run_in_pool` | `src/pipeline/mesh_render.rs:147` | Execute scene preparation, rendering and fallback within the worker budget. |
+| `MeshRenderPipeline::run_in_pool` | `src/pipeline/mesh_render.rs:218` | Execute scene preparation, rendering and fallback within the worker budget. |
 
 | `SceneRenderMemory::plan` | `src/compute/render_memory.rs:20` | Checked scene preview workset, budget and buffer planning without allocation. |
 
@@ -877,6 +900,7 @@
 | 函数 | 位置 | 契约 |
 |---|---|---|
 | `consume_frames` | `src/pipeline/mesh_render.rs:25` | 有序有界 PNG writer；回退前等待结束，保留写出错误，单 worker/视图顺序执行。 |
+| `render_and_write_overlapped` | `src/pipeline/mesh_render.rs:73` | 通过 rayon::join 有序重叠 CPU 渲染与 PNG 写出；最多一帧在写；写错后停止后续视图。 |
 | `collect_opaque_hits` | `src/geometry/scene_render.rs:96` | 最近距离限定的命中组，保持 Face 优先及覆盖线深度。 |
 | `consume_file_batches` | `src/io/volume.rs:47` | 当前池最多解码两文件，按源顺序消费/验证，失败后不启动后续批次。 |
 | `write_tiff_pages` | `src/io/volume.rs:552` | 借用 writer 顺序编码 TIFF，显式最终刷新并传播错误。 |
@@ -899,8 +923,8 @@
 | `SpatialGrid::stats` | Geometry Core | `src/geometry/spatial.rs:181` | 一遍扫描的占用统计。 |
 | `map_vertices_centroid` | Geometry Core | `src/geometry/mesh_ops.rs:265` | 顶点映射并返回逐位一致的映射后质心。 |
 | `split_mesh_into_granules_reference` | Geometry Core | `src/geometry/mesh_ops.rs:136` | 仅测试用的原颗粒拆分 oracle。 |
-| `PackQueryStats` | Pipeline Packing | `src/pipeline/pack.rs:29` | relaxed 原子碰撞计数。 |
-| `PackQueryStats::summary_line` | Pipeline Packing | `src/pipeline/pack.rs:41` | 格式化 pack 查询计数。 |
+| `PackQueryStats` | Pipeline Packing | `src/pipeline/pack.rs:32` | relaxed 原子碰撞计数。 |
+| `PackQueryStats::summary_line` | Pipeline Packing | `src/pipeline/pack.rs:44` | 格式化 pack 查询计数。 |
 | `SharedGpuDevice` | GPU | `src/gpu/context.rs` | 按选择器共享的进程级设备/队列/适配器信息与已编译管线缓存。 |
 | `SharedGpuDevice::cached_pipeline` | GPU | `src/gpu/context.rs` | 每个 (kind, WGSL 源) 在设备上只编译一次；失败不缓存。 |
 | `shared_gpu_device` / `shared_device` / `shared_device_for` / `device_cache` | GPU | `src/gpu/context.rs` | 惰性创建并返回 `RUSTMSPT_GPU_DEVICE` 对应的共享设备；剔除已丢失设备。 |

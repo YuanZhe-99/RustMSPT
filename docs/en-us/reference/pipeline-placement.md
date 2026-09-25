@@ -41,9 +41,9 @@ selects the original loop instead, which is documented in
 | `PHASE_MATRIX` | `src/pipeline/placement_labels.rs:13` | Phase code 0 in the written label field. |
 | `VoxelLabelsHeader` | `src/pipeline/placement_labels.rs:22` | What the label stacks are: spacing, origin, layout, phase table. |
 | `PhaseLabel` | `src/pipeline/placement_labels.rs:39` | One phase code and its name. |
-| `write_voxel_labels` | `src/pipeline/placement_labels.rs:57` | Writes the three-phase label field and the per-voxel particle id field. |
-| `particle_at` | `src/pipeline/placement_labels.rs:233` | Finds which placed particle, if any, contains a point. |
-| `point_in_particle` | `src/pipeline/placement_labels.rs:245` | Ray-parity containment for one particle mesh. |
+| `write_voxel_labels` | `src/pipeline/placement_labels.rs:60` | Writes the three-phase label field and the per-voxel particle id field. |
+| `particle_at` | `src/pipeline/placement_labels.rs:306` | Finds which placed particle, if any, contains a point. |
+| `point_in_particle` | `src/pipeline/placement_labels.rs:318` | Ray-parity containment for one particle mesh. |
 | `VoidReport` | `src/pipeline/placement_outputs.rs:278` | What the run did with the frozen void, and how it measured it. |
 | `build_void_report` | `src/pipeline/placement.rs:1170` | Describes the frozen void for the report, including its volume method. |
 | `PlacementPipeline` | `src/pipeline/placement.rs:38` | Pipeline struct holding a validated `ResolvedPlacement`. |
@@ -111,7 +111,14 @@ selects the original loop instead, which is documented in
 | `load_shape_library` | `src/pipeline/placement_library.rs:85` | Loads, splits, measures and filters the shape files. |
 | `filter_reason` | `src/pipeline/placement_library.rs:234` | Says which library filter a shell failed, if any. |
 | `shell_geometry_sha256` | `src/pipeline/placement_library.rs:274` | Digests a shell's geometry so a re-ordered file is detectable. |
-| `particle_at_prepared` | `src/pipeline/placement_labels.rs:253` | First particle in ordered cached candidates. |
+| `particle_at_prepared` | `src/pipeline/placement_labels.rs:326` | First particle in ordered cached candidates. |
+| `LABEL_SLAB_VOXELS` | `src/pipeline/placement_labels.rs:46` | Target voxels per label slab (4,194,304). |
+| `label_dims` | `src/pipeline/placement_labels.rs:111` | Label grid dimensions with overflow check. |
+| `LabelQuery` | `src/pipeline/placement_labels.rs:124` | Prepared particle queries, bbox grid and void shared by all slabs. |
+| `LabelQuery::new` | `src/pipeline/placement_labels.rs:136` | Prepare the per-run query context once. |
+| `LabelQuery::centre` | `src/pipeline/placement_labels.rs:170` | Voxel-centre world position. |
+| `LabelQuery::fill_slab` | `src/pipeline/placement_labels.rs:184` | Classify one z-slab into phase/id buffers. |
+| `write_label_stacks` | `src/pipeline/placement_labels.rs:257` | Stream both label TIFF stacks slab by slab. |
 
 ## Reading order
 
@@ -221,9 +228,13 @@ its unit test observes pool size and worker indices inside nested `par_iter` wor
 
 ### Label preparation (PERF-12)
 
-`voxel_labels` prepares immutable per-particle mesh queries and a bounded spatial grid once. Parallel 1024-voxel tiles query their enclosing box once, sort candidate slice indices, and preserve original particle ownership order and void-first classification. Worker scratch retains ray hits. `particle_at_prepared` returns the first acceptance id and bbox-test count, reduced without shared atomics. The test-only original particle scan is the differential oracle. Output phase/id arrays and file schema are unchanged; full-array allocation and streaming I/O remain pending.
+`voxel_labels` prepares immutable per-particle mesh queries and a bounded spatial grid once. Parallel 1024-voxel tiles query their enclosing box once, sort candidate slice indices, and preserve original particle ownership order and void-first classification. Worker scratch retains ray hits. `particle_at_prepared` returns the first acceptance id and bbox-test count, reduced without shared atomics. The test-only original particle scan is the differential oracle. Output phase/id arrays and file schema are unchanged; output is now slab-streamed (below).
 
-Shape library input now uses `load_stl_hashed` so geometry and source digest come from one byte stream. Binary raw-file buffering is bounded; ASCII retains the legacy text parser. Source/shell order and digests are unchanged.
+### Slab-streamed label output (PERF-12, 2026-09-25)
+
+`write_voxel_labels` no longer allocates the phase and particle-id volumes whole. `write_label_stacks` opens both TIFFs, prepares `LabelQuery` once, and for each z-slab of `max(1, LABEL_SLAB_VOXELS / (nx*ny))` slices fills two reused slab buffers with `fill_slab` (same 1024-voxel tiles, void first, lowest candidate index wins) and appends them through `TiffPageEncoder`, the page loop `save_tiff_or_folder` uses. Peak label memory is two slab buffers (at most ~64 MiB of `i64` for large slices, or one slice each when a slice alone exceeds the target) instead of `2 * 8 * nx*ny*nz` bytes. File bytes, header, spacing/origin and manifest order are unchanged: `slab_label_stacks_are_byte_identical_to_whole_volume_output` compares against a whole-volume `Volume3D` + `save_tiff_or_folder` reference for slab sizes 1, 2, 3, 4, 7, 29, 30, 31 and 1000 on a 28x20x30 grid with a void overlapping a particle, and the 1/2/8-worker placement label tests still pass. The printed `bbox_tests` count now also reports `slab_slices`; with a slab boundary not aligned to 1024 voxels the tile partition, and therefore that diagnostic count, can differ slightly from a whole-volume pass. On an error mid-stream both TIFFs may be left partially written.
+
+Shape library input now uses `load_stl_hashed` so geometry and source digest come from one byte stream. Binary raw-file buffering is bounded; ASCII is parsed line by line from the same stream. Source/shell order and digests are unchanged.
 
 ### Stage timing (PERF-00)
 

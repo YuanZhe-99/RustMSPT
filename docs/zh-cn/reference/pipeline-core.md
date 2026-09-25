@@ -232,7 +232,7 @@
 | `forge` | `load`、`vf_before`、`transform`、`vf_after`、`orient_shift`、`write_stl`、`write_report` | `total` |
 | `scale` | `load`、`stats_before`、`transform`、`orient_stats_after`、`write_stl` | `total` |
 | `render` | `load`、`prepare`、`render_and_backend`、`encode_write` | `total_in_pool` |
-| `mesh-render` | `load`、`scene`、`cameras`；尝试 GPU 时有 `gpu_render_write`；CPU 渲染时有 `cpu_prepare`、`cpu_render`、`encode_write`（各视图累计） | `total_in_pool` |
+| `mesh-render` | `load`、`scene`、`cameras`；尝试 GPU 时有 `gpu_render_write`；CPU 渲染时有 `cpu_prepare`、`cpu_render`、`encode_write`（各视图累计；第 i 个视图渲染与第 i-1 个视图写出相互重叠）及 `cpu_render_write_wall`（二者的墙钟时间） | `total_in_pool` |
 | `crop` | `load`、`background`、`pca`、`transform_and_backend`、`trim`、`encode_write`（名称不变） | `total_in_pool` |
 
 `total_in_pool` 不含 CLI 解析、配置加载和线程池创建；`scripts/perf_matrix.py` 中的 `process_wall` 度量整个进程。计时行只写到 stdout，从不进入输出文件、记录或报告，因此输出与 placement 确定性不变。旧版 `pack` 和 `optimize` 另外打印 `[GridStats]` 行（见 `pipeline-packing.md` 和 `pipeline-optimize.md`）。

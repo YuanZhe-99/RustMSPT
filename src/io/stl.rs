@@ -2,7 +2,7 @@ use crate::error::{Result, RustMsptError};
 use crate::types::{Mesh, Triangle, Vec3};
 use std::collections::HashMap;
 use std::fs;
-use std::io::{BufReader, BufWriter, Cursor, Read, Write};
+use std::io::{BufRead, BufReader, BufWriter, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 
 // AI-FUNC-SUMMARY: Parse one ASCII STL "vertex x y z" line into a Vec3; returns Some(Vec3) on valid format, None otherwise; side effects: None.
@@ -43,50 +43,64 @@ fn dedup_vertex(
     idx
 }
 
-// AI-FUNC-SUMMARY:
-// Purpose: Parse an ASCII STL document into a Mesh with deduplicated vertices.
-// Inputs: STL text content and source path (for error messages).
-// Returns: Parsed Mesh.
-// Side effects: None.
-// Notes: Returns InvalidMesh error if header missing or no valid triangles found.
-fn parse_ascii_stl(content: &str, path: &Path) -> Result<Mesh> {
-    let trimmed = content.trim_start();
-    if !trimmed.starts_with("solid") {
-        return Err(RustMsptError::InvalidMesh(format!(
-            "ASCII STL header missing in {}",
-            path.display()
-        )));
-    }
+#[derive(Default)]
+struct AsciiStlBuilder {
+    vertices: Vec<Vec3>,
+    faces: Vec<Triangle>,
+    pending: Vec<Vec3>,
+    map: HashMap<(i64, i64, i64), usize>,
+}
 
-    let mut vertices: Vec<Vec3> = Vec::new();
-    let mut faces: Vec<Triangle> = Vec::new();
-    let mut face_buffer: Vec<Vec3> = Vec::new();
-    let mut vertex_map: HashMap<(i64, i64, i64), usize> = HashMap::new();
-
-    for line in content.lines().map(str::trim) {
-        if let Some(v) = parse_ascii_vertex(line) {
-            face_buffer.push(v);
-            if face_buffer.len() == 3 {
-                let a_v = face_buffer.remove(0);
-                let b_v = face_buffer.remove(0);
-                let c_v = face_buffer.remove(0);
-
-                let a = dedup_vertex(&mut vertices, &mut vertex_map, a_v);
-                let b = dedup_vertex(&mut vertices, &mut vertex_map, b_v);
-                let c = dedup_vertex(&mut vertices, &mut vertex_map, c_v);
-                faces.push(Triangle { a, b, c });
+impl AsciiStlBuilder {
+    // AI-FUNC-SUMMARY: Consume one raw ASCII STL line (terminator optional), applying the legacy lossy-UTF-8/trim/vertex rules and emitting a deduplicated face after every third vertex; side effects: mutates builder state.
+    fn push_line(&mut self, raw: &[u8]) {
+        let raw = raw.strip_suffix(b"\n").unwrap_or(raw);
+        let text = String::from_utf8_lossy(raw);
+        if let Some(v) = parse_ascii_vertex(text.trim()) {
+            self.pending.push(v);
+            if self.pending.len() == 3 {
+                let a = dedup_vertex(&mut self.vertices, &mut self.map, self.pending[0]);
+                let b = dedup_vertex(&mut self.vertices, &mut self.map, self.pending[1]);
+                let c = dedup_vertex(&mut self.vertices, &mut self.map, self.pending[2]);
+                self.pending.clear();
+                self.faces.push(Triangle { a, b, c });
             }
         }
     }
+}
 
-    if vertices.is_empty() || faces.is_empty() {
-        return Err(RustMsptError::InvalidMesh(format!(
-            "No valid triangles parsed from {}",
-            path.display()
-        )));
+// AI-FUNC-SUMMARY:
+// Purpose: Stream an ASCII-sniffed STL line by line into a Mesh, falling back to binary parsing of the same bytes when no ASCII triangle is found.
+// Inputs: buffered reader positioned at the first byte of the file (sniff prefix included) and source path for errors.
+// Returns: Parsed Mesh (ASCII result if any triangle parsed, otherwise the legacy binary fallback result).
+// Side effects: Reads the reader to EOF.
+// Notes: Raw bytes are retained only until the first ASCII triangle completes, after which success is certain; a misdetected binary file is therefore still fully retained for fallback, exactly like the former whole-text buffer. Line splitting on b'\n' then per-line lossy UTF-8 and trim is equivalent to the former whole-text lossy conversion because 0x0A never occurs inside a UTF-8 sequence.
+fn parse_ascii_stream_or_binary(mut reader: impl BufRead, path: &Path) -> Result<Mesh> {
+    let mut builder = AsciiStlBuilder::default();
+    let mut retained = Vec::new();
+    let mut retaining = true;
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        if reader.read_until(b'\n', &mut line)? == 0 {
+            break;
+        }
+        if retaining {
+            retained.extend_from_slice(&line);
+        }
+        builder.push_line(&line);
+        if retaining && !builder.faces.is_empty() {
+            retaining = false;
+            retained = Vec::new();
+        }
     }
-
-    Ok(Mesh { vertices, faces })
+    if builder.faces.is_empty() {
+        return parse_binary_stl(&retained, path);
+    }
+    Ok(Mesh {
+        vertices: builder.vertices,
+        faces: builder.faces,
+    })
 }
 
 // AI-FUNC-SUMMARY: Parse little-endian f32 bytes and upcast to f64; returns f64; side effects: None.
@@ -174,17 +188,15 @@ pub fn load_stl(path: &Path) -> Result<Mesh> {
     )
 }
 
-// AI-FUNC-SUMMARY: Load an STL from a forward reader, retaining legacy ASCII sniff/fallback and streaming binary triangle records; ASCII retains its existing full-text buffer.
+// AI-FUNC-SUMMARY: Load an STL from a forward reader, retaining legacy 512-byte ASCII sniff and binary fallback; ASCII is parsed line by line and binary by 50-byte records, neither buffering the whole file once an ASCII triangle is found.
 pub fn load_stl_from_reader(mut reader: impl Read, path: &Path) -> Result<Mesh> {
     let mut prefix = Vec::with_capacity(512);
     reader.by_ref().take(512).read_to_end(&mut prefix)?;
     if looks_ascii_stl(&prefix) {
-        reader.read_to_end(&mut prefix)?;
-        let text = String::from_utf8_lossy(&prefix);
-        if let Ok(mesh) = parse_ascii_stl(&text, path) {
-            return Ok(mesh);
-        }
-        return parse_binary_stl(&prefix, path);
+        return parse_ascii_stream_or_binary(
+            BufReader::with_capacity(64 * 1024, Cursor::new(prefix).chain(reader)),
+            path,
+        );
     }
     parse_binary_reader(Cursor::new(prefix).chain(reader), path)
 }

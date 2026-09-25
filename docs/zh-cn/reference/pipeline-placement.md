@@ -39,9 +39,9 @@
 | `PHASE_MATRIX` | `src/pipeline/placement_labels.rs:13` | 标签场中相编码 0。 |
 | `VoxelLabelsHeader` | `src/pipeline/placement_labels.rs:22` | 标签体数据的说明：间距、原点、排布与相表。 |
 | `PhaseLabel` | `src/pipeline/placement_labels.rs:39` | 一个相编码及其名称。 |
-| `write_voxel_labels` | `src/pipeline/placement_labels.rs:57` | 写出三相标签场与逐体素颗粒标识场。 |
-| `particle_at` | `src/pipeline/placement_labels.rs:233` | 查找包含某点的已放置颗粒。 |
-| `point_in_particle` | `src/pipeline/placement_labels.rs:245` | 对单个颗粒网格做射线奇偶包含判定。 |
+| `write_voxel_labels` | `src/pipeline/placement_labels.rs:60` | 写出三相标签场与逐体素颗粒标识场。 |
+| `particle_at` | `src/pipeline/placement_labels.rs:306` | 查找包含某点的已放置颗粒。 |
+| `point_in_particle` | `src/pipeline/placement_labels.rs:318` | 对单个颗粒网格做射线奇偶包含判定。 |
 | `VoidReport` | `src/pipeline/placement_outputs.rs:278` | 运行如何处理冻结孔隙，以及如何度量它。 |
 | `build_void_report` | `src/pipeline/placement.rs:1170` | 为报告描述冻结孔隙，含其体积计算方法。 |
 | `PlacementPipeline` | `src/pipeline/placement.rs:38` | 持有已校验 `ResolvedPlacement` 的流水线结构体。 |
@@ -109,7 +109,14 @@
 | `load_shape_library` | `src/pipeline/placement_library.rs:85` | 加载、拆分、度量并过滤形状文件。 |
 | `filter_reason` | `src/pipeline/placement_library.rs:234` | 指出某个壳未通过哪条形状库过滤规则。 |
 | `shell_geometry_sha256` | `src/pipeline/placement_library.rs:274` | 对壳的几何计算摘要，使文件重排可被察觉。 |
-| `particle_at_prepared` | `src/pipeline/placement_labels.rs:253` | First particle in ordered cached candidates. |
+| `particle_at_prepared` | `src/pipeline/placement_labels.rs:326` | First particle in ordered cached candidates. |
+| `LABEL_SLAB_VOXELS` | `src/pipeline/placement_labels.rs:46` | 每个标签切片块的目标体素数（4,194,304）。 |
+| `label_dims` | `src/pipeline/placement_labels.rs:111` | 标签网格尺寸，含溢出检查。 |
+| `LabelQuery` | `src/pipeline/placement_labels.rs:124` | 所有切片块共享的颗粒查询、bbox 网格与 void。 |
+| `LabelQuery::new` | `src/pipeline/placement_labels.rs:136` | 每次运行只准备一次查询上下文。 |
+| `LabelQuery::centre` | `src/pipeline/placement_labels.rs:170` | 体素中心世界坐标。 |
+| `LabelQuery::fill_slab` | `src/pipeline/placement_labels.rs:184` | 将一个 z 切片块分类写入 phase/id 缓冲。 |
+| `write_label_stacks` | `src/pipeline/placement_labels.rs:257` | 按切片块流式写出两个标签 TIFF。 |
 
 ## 阅读顺序
 
@@ -207,9 +214,13 @@ run_placement
 
 ### Label preparation (PERF-12)
 
-`voxel_labels` prepares immutable per-particle mesh queries and a bounded spatial grid once. Parallel 1024-voxel tiles query their enclosing box once, sort candidate slice indices, and preserve original particle ownership order and void-first classification. Worker scratch retains ray hits. `particle_at_prepared` returns the first acceptance id and bbox-test count, reduced without shared atomics. The test-only original particle scan is the differential oracle. Output phase/id arrays and file schema are unchanged; full-array allocation and streaming I/O remain pending.
+`voxel_labels` prepares immutable per-particle mesh queries and a bounded spatial grid once. Parallel 1024-voxel tiles query their enclosing box once, sort candidate slice indices, and preserve original particle ownership order and void-first classification. Worker scratch retains ray hits. `particle_at_prepared` returns the first acceptance id and bbox-test count, reduced without shared atomics. The test-only original particle scan is the differential oracle. Output phase/id arrays and file schema are unchanged; output is now slab-streamed (below).
 
-Shape library input now uses `load_stl_hashed` so geometry and source digest come from one byte stream. Binary raw-file buffering is bounded; ASCII retains the legacy text parser. Source/shell order and digests are unchanged.
+### 标签按切片块流式输出（PERF-12，2026-09-25）
+
+`write_voxel_labels` 不再整体分配 phase 与 particle-id 两个体数据。`write_label_stacks` 打开两个 TIFF，只准备一次 `LabelQuery`，按每块 `max(1, LABEL_SLAB_VOXELS / (nx*ny))` 个切片循环：用 `fill_slab` 填充两个复用的切片块缓冲（仍为 1024 体素 tile、void 优先、最小候选下标优先），再经 `TiffPageEncoder`（即 `save_tiff_or_folder` 使用的逐页循环）追加。标签峰值内存为两个切片块缓冲（大切片时最多约 64 MiB 的 `i64`；单个切片已超过目标时每块一个切片），而非 `2 * 8 * nx*ny*nz` 字节。文件字节、header、spacing/origin 及清单顺序不变：`slab_label_stacks_are_byte_identical_to_whole_volume_output` 在 28x20x30 网格、void 与颗粒重叠的场景下，将切片块大小 1、2、3、4、7、29、30、31、1000 的输出与整卷 `Volume3D` + `save_tiff_or_folder` 参考逐字节比较；1/2/8 worker 的 placement 标签测试仍通过。输出的 `bbox_tests` 同时报告 `slab_slices`；切片块边界未对齐 1024 体素时 tile 划分及该诊断计数可能与整卷略有不同。中途出错时两个 TIFF 可能只写了一部分。
+
+Shape library input now uses `load_stl_hashed` so geometry and source digest come from one byte stream. Binary raw-file buffering is bounded; ASCII is parsed line by line from the same stream. Source/shell order and digests are unchanged.
 
 ### 阶段计时（PERF-00）
 

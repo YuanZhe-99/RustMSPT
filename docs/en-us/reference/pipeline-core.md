@@ -232,7 +232,7 @@ Every non-meshgen pipeline prints wall-clock stage lines in one format, `[Timing
 | `forge` | `load`, `vf_before`, `transform`, `vf_after`, `orient_shift`, `write_stl`, `write_report` | `total` |
 | `scale` | `load`, `stats_before`, `transform`, `orient_stats_after`, `write_stl` | `total` |
 | `render` | `load`, `prepare`, `render_and_backend`, `encode_write` | `total_in_pool` |
-| `mesh-render` | `load`, `scene`, `cameras`, then `gpu_render_write` when a GPU attempt was made, and `cpu_prepare`, `cpu_render`, `encode_write` (per-view sums) when the CPU renderer ran | `total_in_pool` |
+| `mesh-render` | `load`, `scene`, `cameras`, then `gpu_render_write` when a GPU attempt was made, and `cpu_prepare`, `cpu_render`, `encode_write` (per-view sums; they overlap because view i renders while view i-1 is written) and `cpu_render_write_wall` (their wall time) when the CPU renderer ran | `total_in_pool` |
 | `crop` | `load`, `background`, `pca`, `transform_and_backend`, `trim`, `encode_write` (unchanged names) | `total_in_pool` |
 
 `total_in_pool` excludes CLI parsing, config loading and pool creation; `process_wall` in `scripts/perf_matrix.py` measures the whole process. Timing lines go to stdout only and never into output files, records or reports, so outputs and placement determinism are unchanged. Legacy `pack` and `optimize` additionally print `[GridStats]` lines (see `pipeline-packing.md` and `pipeline-optimize.md`).
