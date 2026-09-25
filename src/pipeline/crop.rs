@@ -464,13 +464,16 @@ impl MomentState {
 }
 
 const PCA_DEGENERATE_REL_TOL: f64 = 1e-3;
+/// Below this magnitude a principal axis is treated as perpendicular to its own scan axis, so the
+/// diagonal cannot decide its sign and the largest-component rule does instead.
+const PCA_SIGN_DIAGONAL_TOL: f64 = 1e-6;
 
 // AI-FUNC-SUMMARY:
 // Purpose: Turn a covariance matrix into a right-handed crop frame whose columns are principal axes in descending eigenvalue order.
 // Inputs: symmetric covariance matrix.
 // Returns: rotation matrix (columns = frame axes).
 // Side effects: None.
-// Notes: Adjacent sorted eigenvalues within PCA_DEGENERATE_REL_TOL of the largest magnitude form one eigenspace. A full 3-D eigenspace yields exactly the scan axes. A 2-D eigenspace's columns are the scan axes x, y, z (in that order) projected into it and Gram-Schmidt orthonormalized, accepting an axis only when its residual norm is >= 0.5 (enough axes always exist), so each column has a positive component along its source axis. A non-degenerate column is sign-fixed so its largest-magnitude component (lowest axis on exact ties) is positive, because the eigen-solver's sign flips under last-bit covariance changes. A negative determinant then flips column 2.
+// Notes: Adjacent sorted eigenvalues within PCA_DEGENERATE_REL_TOL of the largest magnitude form one eigenspace. A full 3-D eigenspace yields exactly the scan axes. A 2-D eigenspace's columns are the scan axes x, y, z (in that order) projected into it and Gram-Schmidt orthonormalized, accepting an axis only when its residual norm is >= 0.5 (enough axes always exist), so each column has a positive component along its source axis. A non-degenerate column k is sign-fixed so its component along scan axis k is positive - the frame closest to the scan axes, so an upright sample stays upright - because the eigen-solver's sign flips under last-bit covariance changes; only when that component is below PCA_SIGN_DIAGONAL_TOL does the largest-magnitude component (lowest axis on exact ties) decide. A negative determinant then flips the non-degenerate column with the smallest diagonal magnitude (highest index on ties), which gives up the least rotation; column 2 only if every column is degenerate. The earlier largest-component-only rule turned the repository CT 180 degrees and reversed its slice axis (PLAN.Performance.md §68).
 fn pca_frame(cov: Matrix3<f64>) -> Matrix3<f64> {
     let eig = SymmetricEigen::new(cov);
     let mut order = [0usize, 1usize, 2usize];
@@ -482,6 +485,7 @@ fn pca_frame(cov: Matrix3<f64>) -> Matrix3<f64> {
     let values = order.map(|i| eig.eigenvalues[i]);
     let mut columns = order.map(|i| eig.eigenvectors.column(i).into_owned());
     let scale = values.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+    let mut free = [false; 3];
     let mut start = 0;
     while start < 3 {
         let mut end = start + 1;
@@ -489,8 +493,13 @@ fn pca_frame(cov: Matrix3<f64>) -> Matrix3<f64> {
             end += 1;
         }
         if end - start == 1 {
+            free[start] = true;
             let c = &mut columns[start];
-            let lead = (0..3).fold(0, |best, i| if c[i].abs() > c[best].abs() { i } else { best });
+            let lead = if c[start].abs() >= PCA_SIGN_DIAGONAL_TOL {
+                start
+            } else {
+                (0..3).fold(0, |best, i| if c[i].abs() > c[best].abs() { i } else { best })
+            };
             if c[lead] < 0.0 {
                 *c = -*c;
             }
@@ -523,8 +532,15 @@ fn pca_frame(cov: Matrix3<f64>) -> Matrix3<f64> {
     }
     let mut rot = Matrix3::from_columns(&columns);
     if rot.determinant() < 0.0 {
-        let c2 = -rot.column(2).into_owned();
-        rot.set_column(2, &c2);
+        let flip = (0..3)
+            .filter(|&k| free[k])
+            .fold(None, |best: Option<usize>, k| match best {
+                Some(b) if rot[(b, b)].abs() < rot[(k, k)].abs() => Some(b),
+                _ => Some(k),
+            })
+            .unwrap_or(2);
+        let c = -rot.column(flip).into_owned();
+        rot.set_column(flip, &c);
     }
     rot
 }
@@ -1635,6 +1651,27 @@ mod performance_tests {
                 let old = rotate_and_crop(&volume, 0, &oracle.0, &oracle.1, &oracle.2, &oracle.3, InterpolationMode::Nearest);
                 assert_eq!(new.data, old.data);
                 reference = Some(actual);
+            }
+        }
+    }
+
+    // AI-FUNC-SUMMARY: A sample rotated about the scan z axis must come back upright: for covariances with distinct eigenvalues rotated 50 degrees about z (the repository CT's shape) and 140 degrees, with tiny noise, pca_frame returns the pure z rotation - non-negative diagonal, z column +z, right-handed - never the 180-degree turn the largest-component rule produced.
+    #[test]
+    fn frame_keeps_the_scan_orientation_of_a_sample_rotated_about_z() {
+        for (degrees, noise) in [(50.0f64, 0.0), (50.0, 1e-9), (140.0, 0.0), (-35.0, 1e-9)] {
+            let (s, c) = degrees.to_radians().sin_cos();
+            let r = Matrix3::new(c, -s, 0.0, s, c, 0.0, 0.0, 0.0, 1.0);
+            let d = Matrix3::from_diagonal(&Vector3::new(9.0, 4.0, 1.0));
+            let mut cov = r * d * r.transpose();
+            cov[(0, 1)] += noise;
+            cov[(1, 0)] += noise;
+            let frame = pca_frame(cov);
+            assert!(frame.determinant() > 0.999_999, "{degrees}: {frame}");
+            assert!(frame[(2, 2)] > 0.999_999, "{degrees}: slice axis must stay +z: {frame}");
+            let expected = if c >= 0.0 { r } else { Matrix3::new(-c, s, 0.0, -s, -c, 0.0, 0.0, 0.0, 1.0) };
+            assert!((frame - expected).norm() < 1e-6, "{degrees}: {frame} vs {expected}");
+            for k in 0..3 {
+                assert!(frame[(k, k)] >= 0.0, "{degrees}: diagonal {k} negative: {frame}");
             }
         }
     }
