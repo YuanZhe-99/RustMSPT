@@ -18,6 +18,7 @@ struct ShellReduction {
 }
 
 pub struct GpuShellS2Pipeline {
+    shared: std::sync::Arc<super::context::SharedGpuDevice>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     pipeline: wgpu::ComputePipeline,
@@ -65,9 +66,9 @@ fn offset_has_overlap(shift: [isize; 3], dims: [u32; 3]) -> bool {
 impl GpuShellS2Pipeline {
     // AI-FUNC-SUMMARY:
     // Purpose: Initialize wgpu and create the shell S2 compute pipeline.
-    // Inputs: none (device/queue created fresh).
+    // Inputs: none (uses the process-wide shared device).
     // Returns: Ok(GpuShellS2Pipeline) or init error string.
-    // Side effects: Blocking device initialization honoring RUSTMSPT_GPU_DEVICE.
+    // Side effects: Creates the shared device honoring RUSTMSPT_GPU_DEVICE on first use; reuses cached pipelines.
     pub fn new() -> Result<Self, String> {
         let mut gpu =
             Self::new_with_shader(include_str!("shaders/s2_shell_pairs.wgsl"), WORKGROUP_SIZE)?;
@@ -77,15 +78,15 @@ impl GpuShellS2Pipeline {
 
     // AI-FUNC-SUMMARY: Build shell resources from the production shader or a frozen test reference for identical-input comparisons.
     fn new_with_shader(source: &str, offsets_per_workgroup: u32) -> Result<Self, String> {
-        let (device, queue) = super::context::request_adapter_device("rustmspt shell s2 device")?;
-        Self::build_on_device(device, queue, source, offsets_per_workgroup)
+        Self::build_on_device(super::context::shared_device()?, source, offsets_per_workgroup)
     }
 
-    // AI-FUNC-SUMMARY: Build production shell resources on a caller-owned device/queue without adapter selection or device creation; caller serializes shared-device operations.
-    pub(crate) fn with_device(device: wgpu::Device, queue: wgpu::Queue) -> Result<Self, String> {
+    // AI-FUNC-SUMMARY: Build production shell resources on an already-held shared device without adapter selection or device creation; caller serializes use of resident buffers.
+    pub(crate) fn with_device(
+        shared: std::sync::Arc<super::context::SharedGpuDevice>,
+    ) -> Result<Self, String> {
         let mut gpu = Self::build_on_device(
-            device,
-            queue,
+            shared,
             include_str!("shaders/s2_shell_pairs.wgsl"),
             WORKGROUP_SIZE,
         )?;
@@ -93,88 +94,91 @@ impl GpuShellS2Pipeline {
         Ok(gpu)
     }
 
-    // AI-FUNC-SUMMARY: Compile shell resources on supplied GPU handles under balanced error scopes; no adapter/device initialization.
+    // AI-FUNC-SUMMARY: Fetch or compile the shell pipeline for this source on the shared device and allocate per-instance buffers under balanced error scopes; no adapter/device initialization.
     fn build_on_device(
-        device: wgpu::Device,
-        queue: wgpu::Queue,
+        shared: std::sync::Arc<super::context::SharedGpuDevice>,
         source: &str,
         offsets_per_workgroup: u32,
     ) -> Result<Self, String> {
+        let (device, queue) = (shared.device().clone(), shared.queue().clone());
         super::runtime::scoped(&device.clone(), || {
-            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("s2_shell"),
-                source: wgpu::ShaderSource::Wgsl(source.into()),
-            });
+            let (pipeline, bgl) = shared.cached_pipeline("s2_shell", source, |device| {
+                let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("s2_shell"),
+                    source: wgpu::ShaderSource::Wgsl(source.into()),
+                });
 
-            let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("shell_bgl"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
+                let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("shell_bgl"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
                         },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
                         },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
                         },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 3,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
                         },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 4,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 4,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
                         },
-                        count: None,
-                    },
-                ],
-            });
+                    ],
+                });
 
-            let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("shell_pl"),
-                bind_group_layouts: &[&bgl],
-                push_constant_ranges: &[],
-            });
-            let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("shell_pipeline"),
-                layout: Some(&pl),
-                module: &shader,
-                entry_point: Some("main"),
-                compilation_options: Default::default(),
-                cache: None,
-            });
+                let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("shell_pl"),
+                    bind_group_layouts: &[&bgl],
+                    push_constant_ranges: &[],
+                });
+                let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("shell_pipeline"),
+                    layout: Some(&pl),
+                    module: &shader,
+                    entry_point: Some("main"),
+                    compilation_options: Default::default(),
+                    cache: None,
+                });
+                (pipeline, bgl)
+            })?;
 
             let occupancy_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("occupancy"),
@@ -222,6 +226,7 @@ impl GpuShellS2Pipeline {
             });
 
             Ok(Self {
+                shared: shared.clone(),
                 device,
                 queue,
                 pipeline,
@@ -252,43 +257,46 @@ impl GpuShellS2Pipeline {
         Ok(())
     }
 
-    // AI-FUNC-SUMMARY: Lazily compile the integer tile reducer and grow its per-offset outputs under the caller's GPU error scope.
-    fn ensure_reduction(&mut self, count: u32) {
+    // AI-FUNC-SUMMARY: Lazily fetch the cached integer tile reducer and grow this instance's per-offset outputs under the caller's GPU error scope; returns a compile error without caching it.
+    fn ensure_reduction(&mut self, count: u32) -> Result<(), String> {
         let bytes = u64::from(count) * 4;
         if self
             .reduction
             .as_ref()
             .is_some_and(|r| r.valid.size() >= bytes)
         {
-            return;
+            return Ok(());
         }
         let pipeline = if let Some(r) = &self.reduction {
             r.pipeline.clone()
         } else {
-            let module = self
-                .device
-                .create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("shell tile reduction"),
-                    source: wgpu::ShaderSource::Wgsl(
-                        include_str!("shaders/s2_shell_reduce.wgsl").into(),
-                    ),
-                });
-            let layout = self
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("shell reduction layout"),
-                    bind_group_layouts: &[&self.bind_group_layout],
-                    push_constant_ranges: &[],
-                });
-            self.device
-                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some("shell reduction"),
-                    layout: Some(&layout),
-                    module: &module,
-                    entry_point: Some("main"),
-                    compilation_options: Default::default(),
-                    cache: None,
-                })
+            let layout = self.bind_group_layout.clone();
+            self.shared.cached_pipeline(
+                "s2_shell_reduce",
+                include_str!("shaders/s2_shell_reduce.wgsl"),
+                |device| {
+                    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                        label: Some("shell tile reduction"),
+                        source: wgpu::ShaderSource::Wgsl(
+                            include_str!("shaders/s2_shell_reduce.wgsl").into(),
+                        ),
+                    });
+                    let pipeline_layout =
+                        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                            label: Some("shell reduction layout"),
+                            bind_group_layouts: &[&layout],
+                            push_constant_ranges: &[],
+                        });
+                    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                        label: Some("shell reduction"),
+                        layout: Some(&pipeline_layout),
+                        module: &module,
+                        entry_point: Some("main"),
+                        compilation_options: Default::default(),
+                        cache: None,
+                    })
+                },
+            )?
         };
         let make = |label| {
             self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -303,6 +311,7 @@ impl GpuShellS2Pipeline {
             valid: make("shell final valid"),
             hits: make("shell final hits"),
         });
+        Ok(())
     }
 
     // AI-FUNC-SUMMARY: Resize offset/output/readback buffers together for a nonempty bounded batch; caller owns the GPU error scope.
@@ -527,7 +536,7 @@ impl GpuShellS2Pipeline {
                 let output_tiles = if reduce { 1 } else { tiles };
                 let out_needed = u64::from(total_offsets) * u64::from(output_tiles) * 4;
                 if reduce {
-                    self.ensure_reduction(total_offsets);
+                    self.ensure_reduction(total_offsets)?;
                 }
                 let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("shell_bg"),
@@ -671,10 +680,10 @@ mod reuse_tests {
             BoundingBox::from_size(Vec3::new(3.0, 1.0, 1.0)),
         )
         .unwrap();
-        let (device, queue) = voxel.device_queue();
-        let mut shell = GpuShellS2Pipeline::with_device(device.clone(), queue.clone()).unwrap();
-        assert_eq!(shell.device, device);
-        assert_eq!(shell.queue, queue);
+        let shared = voxel.shared_device();
+        let mut shell = GpuShellS2Pipeline::with_device(shared.clone()).unwrap();
+        assert_eq!(&shell.device, shared.device());
+        assert_eq!(&shell.queue, shared.queue());
         assert_eq!(voxel.voxelize(3, 1, 1, 1.0).unwrap(), vec![1; 3]);
         let resident = voxel.occupancy_buffer();
         assert_eq!(
@@ -714,8 +723,7 @@ mod reuse_tests {
             super::super::voxel::GpuVoxelPipeline::new(&crate::geometry::box_mesh(bbox), bbox)
                 .unwrap();
         assert_eq!(voxel.voxelize_count(3, 1, 1, 1.0).unwrap(), 3);
-        let (device, queue) = voxel.device_queue();
-        let mut gpu = GpuShellS2Pipeline::with_device(device, queue).unwrap();
+        let mut gpu = GpuShellS2Pipeline::with_device(voxel.shared_device()).unwrap();
         let consumed = Cell::new(0usize);
         let total = MAX_OFFSETS * 4 + 17;
         let offsets = (0..total).map(|i| {

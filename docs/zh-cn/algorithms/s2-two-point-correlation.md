@@ -249,3 +249,5 @@ GPU exact 现逐半径延迟生成一个 shell Vec，经 compute_s2_shell_reside
 GPU exact 现使用 shell_offset_iter，单个半径内部也只保留嵌套范围游标；保持原 x/y/z 顺序、原点特殊情况和半开平方距离判定。需要随机访问的公共 Vec API 保持不变。用 peekable 判定该半径是否有支持，生成数量在消费时累计。普通范围沿用原整数范数，更大范数用 u128 避免有符号乘法溢出。仍扫描包围立方体，降低分配并未改变 O(半径³) 搜索复杂度。
 
 新建的驻留 GPU exact 求值在后端选择和执行中共用 ExactMemoryPlan。设 T=max(36×faces,4)、M=4×cells、B 为批次部分结果槽数，保守逻辑峰值为 2T+M+128+80B，计入待完成三角/offset 上传和批次增长时同时存在的新旧缓冲；128 字节覆盖固定参数/计数/占位资源。B 从 200000 按 MiB 预算缩小，至少 1；最小批次仍超限则在设备初始化前拒绝，由调用方执行配置的回退策略。该模型不含驱动/编译器内部资源和 CPU 内存，仅适用于新建生产 direct-shell exact 求值，不声称覆盖实验 tiled/reduced 或任意已有高水位管线。旧 exact 网格硬限制仍独立存在。
+
+**半径分批与共享设备（PERF-03/05/08）。** GPU MC 不再限制 `r_max < 128`：按每批最多 128 个半径（WGSL `radii` 数组长度）分批求值，每批传入 `radius_base`；着色器以全局编号 `radius * samples + sample` 作为随机数键，因此固定种子下的整数计数与批大小无关，也与 `r_max` 无关。唯一约束是 `(r_max + 1) * samples <= u32::MAX`。CPU 合并工作组部分和的代价为 O((r_max+1) * ceil(samples/256))。所有 GPU 管线现按 `RUSTMSPT_GPU_DEVICE` 选择器共享一个进程级逻辑设备，并在每个设备上只编译一次各着色器；见 `reference/gpu.md` 的“共享设备与管线缓存（PERF-03）”。measure 与 optimize 对任意 `r_max` 均可使用 GPU MC。

@@ -1,8 +1,37 @@
-// AI-FUNC-SUMMARY: Run a synchronous GPU operation under balanced validation, allocation and internal error scopes; return the operation result or a captured device error, without catching Rust panics.
+static SCOPE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+thread_local! {
+    static SCOPE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+struct ScopeDepth;
+
+impl Drop for ScopeDepth {
+    // AI-FUNC-SUMMARY: Leave one nesting level of the calling thread's error-scope region, including during unwinding; returns None; side effects: decrements the thread-local depth.
+    fn drop(&mut self) {
+        SCOPE_DEPTH.with(|d| d.set(d.get() - 1));
+    }
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Run a synchronous GPU operation under balanced validation, allocation and internal error scopes.
+// Inputs: device whose scope stack is used; work closure issuing GPU commands.
+// Returns: The operation result, or the captured device errors joined into one string.
+// Side effects: Holds a process-wide reentrant lock for the outermost scope on each thread, polls the device.
+// Notes: wgpu 24 error scopes are per device, not per thread, and devices are shared process-wide, so
+// outermost regions are serialized to keep another thread's pushes/pops from capturing this thread's
+// errors. Nested calls on the same thread reuse the held lock. Rust panics are not caught.
 pub(super) fn scoped<T>(
     device: &wgpu::Device,
     work: impl FnOnce() -> Result<T, String>,
 ) -> Result<T, String> {
+    let _lock = if SCOPE_DEPTH.with(|d| d.get()) == 0 {
+        Some(SCOPE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner()))
+    } else {
+        None
+    };
+    SCOPE_DEPTH.with(|d| d.set(d.get() + 1));
+    let _depth = ScopeDepth;
     for filter in [
         wgpu::ErrorFilter::Validation,
         wgpu::ErrorFilter::OutOfMemory,

@@ -204,3 +204,5 @@ mesh-MC 岛现以 IslandVolumes 缓存每粒子连通分量的域内体积。可
 | `IslandVolumes::fraction` | `src/pipeline/optimize_volume.rs:46` | Sum cached scalars in merged component order, then clamp. |
 | `OptimizeS2::evaluate_with_vf` | `src/pipeline/optimize_execution.rs:242` | Evaluate mesh MC with optional validated VF; reject geometric cache for voxel methods. |
 | `calculate_s2_mesh_mc_seeded_with_vf` | `src/geometry/s2.rs:765` | Preserve fixed-seed mesh MC samples while using caller-provided VF. |
+
+**GPU 局部上传（PERF-10）。** GPU MC 三角形上传现在将新的合并网格与驻留缓冲的主机影子副本逐位比较，只写入发生变化的面区间（移动一个粒子即只上传该粒子的面）；三角形数量变化、缓冲扩容、区间超过 64 段或变化面超过一半时回退为整体写入；`GpuS2Pipeline::upload_stats` 记录字节数。体素占据仍为整体更新。

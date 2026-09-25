@@ -3,6 +3,7 @@ use crate::types::{BoundingBox, Mesh};
 const WORKGROUP_SIZE: u32 = 64;
 
 pub struct GpuVoxelPipeline {
+    shared: std::sync::Arc<super::context::SharedGpuDevice>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     pipeline: wgpu::ComputePipeline,
@@ -56,9 +57,9 @@ impl GpuVoxelPipeline {
         self.occupancy_buffer.clone()
     }
 
-    // AI-FUNC-SUMMARY: Clone device/queue handles for sequential stages of the same run; creates no new device and does not share mutable pipeline buffers.
-    pub(crate) fn device_queue(&self) -> (wgpu::Device, wgpu::Queue) {
-        (self.device.clone(), self.queue.clone())
+    // AI-FUNC-SUMMARY: Share the process device handle for sequential stages of the same run; creates no new device and does not share mutable pipeline buffers.
+    pub(crate) fn shared_device(&self) -> std::sync::Arc<super::context::SharedGpuDevice> {
+        self.shared.clone()
     }
 
     // AI-FUNC-SUMMARY:
@@ -67,7 +68,8 @@ impl GpuVoxelPipeline {
     // Returns: Ok(GpuVoxelPipeline) or init error string.
     // Side effects: Blocking device initialization honoring RUSTMSPT_GPU_DEVICE, followed by triangle upload.
     pub fn new(mesh: &Mesh, bbox: BoundingBox) -> Result<Self, String> {
-        let (device, queue) = super::context::request_adapter_device("rustmspt voxel device")?;
+        let shared = super::context::shared_device()?;
+        let (device, queue) = (shared.device().clone(), shared.queue().clone());
 
         super::runtime::scoped(&device.clone(), || {
             let bytes = mesh
@@ -80,60 +82,63 @@ impl GpuVoxelPipeline {
             {
                 return Err("GPU voxel triangle buffer exceeds device limits".into());
             }
-            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("voxelize"),
-                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/voxelize.wgsl").into()),
-            });
+            let (pipeline, bgl) = shared.cached_pipeline("voxelize", include_str!("shaders/voxelize.wgsl"), |device| {
+                let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("voxelize"),
+                    source: wgpu::ShaderSource::Wgsl(include_str!("shaders/voxelize.wgsl").into()),
+                });
 
-            let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("vox_bgl"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
+                let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("vox_bgl"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
                         },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
                         },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
                         },
-                        count: None,
-                    },
-                ],
-            });
+                    ],
+                });
 
-            let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("vox_pl"),
-                bind_group_layouts: &[&bgl],
-                push_constant_ranges: &[],
-            });
-            let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("vox_pipeline"),
-                layout: Some(&pl),
-                module: &shader,
-                entry_point: Some("main"),
-                compilation_options: Default::default(),
-                cache: None,
-            });
+                let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("vox_pl"),
+                    bind_group_layouts: &[&bgl],
+                    push_constant_ranges: &[],
+                });
+                let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("vox_pipeline"),
+                    layout: Some(&pl),
+                    module: &shader,
+                    entry_point: Some("main"),
+                    compilation_options: Default::default(),
+                    cache: None,
+                });
+                (pipeline, bgl)
+            })?;
 
             let tri_data = build_triangle_buffer(mesh, bbox);
             let tri_bytes = bytemuck::cast_slice::<f32, u8>(&tri_data);
@@ -166,6 +171,7 @@ impl GpuVoxelPipeline {
                 mapped_at_creation: false,
             });
             Ok(Self {
+                shared: shared.clone(),
                 device,
                 queue,
                 pipeline,
@@ -214,34 +220,38 @@ impl GpuVoxelPipeline {
         .map(|result| result[0])
     }
 
-    // AI-FUNC-SUMMARY: Lazily compile the binary occupancy reducer and allocate its four-byte result under the caller's error scope.
-    fn ensure_counter(&mut self) {
+    // AI-FUNC-SUMMARY: Lazily fetch the cached binary occupancy reducer and allocate this instance's four-byte result under the caller's error scope; returns a compile error without caching it.
+    fn ensure_counter(&mut self) -> Result<(), String> {
         if self.counter.is_some() {
-            return;
+            return Ok(());
         }
-        let module = self
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("voxel count"),
-                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/voxel_count.wgsl").into()),
-            });
-        let layout = self
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("voxel count layout"),
-                bind_group_layouts: &[&self.bind_group_layout],
-                push_constant_ranges: &[],
-            });
-        let pipeline = self
-            .device
-            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("voxel count"),
-                layout: Some(&layout),
-                module: &module,
-                entry_point: Some("main"),
-                compilation_options: Default::default(),
-                cache: None,
-            });
+        let layout = self.bind_group_layout.clone();
+        let pipeline = self.shared.cached_pipeline(
+            "voxel_count",
+            include_str!("shaders/voxel_count.wgsl"),
+            |device| {
+                let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("voxel count"),
+                    source: wgpu::ShaderSource::Wgsl(
+                        include_str!("shaders/voxel_count.wgsl").into(),
+                    ),
+                });
+                let pipeline_layout =
+                    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: Some("voxel count layout"),
+                        bind_group_layouts: &[&layout],
+                        push_constant_ranges: &[],
+                    });
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("voxel count"),
+                    layout: Some(&pipeline_layout),
+                    module: &module,
+                    entry_point: Some("main"),
+                    compilation_options: Default::default(),
+                    cache: None,
+                })
+            },
+        )?;
         let output = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("voxel occupied count"),
             size: 4,
@@ -249,6 +259,7 @@ impl GpuVoxelPipeline {
             mapped_at_creation: false,
         });
         self.counter = Some((pipeline, output));
+        Ok(())
     }
 
     // AI-FUNC-SUMMARY: Execute voxelization with an additional per-axis dispatch cap; used by the public device-limited path and small deterministic multidimensional-dispatch tests.
@@ -338,7 +349,7 @@ impl GpuVoxelPipeline {
             }
 
             if count_only {
-                self.ensure_counter();
+                self.ensure_counter()?;
                 let (pipeline, output) = self.counter.as_ref().unwrap();
                 let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("voxel count bindings"),

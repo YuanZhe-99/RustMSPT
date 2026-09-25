@@ -1,8 +1,9 @@
 //! Logical MC GPU peak accounting, including retained capacity and pending uploads.
 
 pub(crate) const MC_BLOCK_SAMPLES: usize = 256;
+pub(crate) const MC_RADIUS_BATCH: usize = 128;
 
-// AI-FUNC-SUMMARY: Bound an update-plus-evaluation peak using current triangle/output capacity, queued upload bytes and next workload; count old plus new allocations conservatively on growth and reject arithmetic overflow without allocating.
+// AI-FUNC-SUMMARY: Bound an update-plus-evaluation peak using current triangle/output capacity, queued upload bytes and next workload; outputs are sized for one radius batch of at most MC_RADIUS_BATCH radii; count old plus new allocations conservatively on growth and reject arithmetic overflow without allocating.
 pub(crate) fn mc_evaluation_peak(
     triangle_capacity: u64,
     output_capacity: u64,
@@ -18,6 +19,7 @@ pub(crate) fn mc_evaluation_peak(
         .ok_or_else(overflow)?;
     let output = r_max
         .checked_add(1)
+        .map(|n| n.min(MC_RADIUS_BATCH))
         .and_then(|n| n.checked_mul(samples.max(200).div_ceil(MC_BLOCK_SAMPLES)))
         .and_then(|n| u64::try_from(n).ok())
         .and_then(|n| n.checked_mul(4))
@@ -74,6 +76,10 @@ mod tests {
         assert!(mc_evaluation_peak(4, 4, u64::MAX, 0, 0, 200).is_err());
         assert!(mc_evaluation_peak(4, 4, 0, usize::MAX, 0, 200).is_err());
         assert!(mc_evaluation_peak(4, 4, 0, 0, usize::MAX, 200).is_err());
+        assert_eq!(
+            mc_evaluation_peak(4, 4, 0, 0, 10_000, 256).unwrap(),
+            mc_evaluation_peak(4, 4, 0, 0, MC_RADIUS_BATCH - 1, 256).unwrap()
+        );
         assert!(check_mc_budget(1024 * 1024, Some(1)).is_ok());
         assert!(check_mc_budget(1024 * 1024 + 1, Some(1)).is_err());
         assert!(check_mc_budget(0, Some(u64::MAX)).is_err());

@@ -1,12 +1,24 @@
 use crate::types::{BoundingBox, Mesh};
 
 const WORKGROUP_SIZE: u32 = crate::compute::mc_memory::MC_BLOCK_SAMPLES as u32;
-const MAX_RADII: usize = 128;
+const MAX_RADII: usize = crate::compute::mc_memory::MC_RADIUS_BATCH;
+const COALESCE_FACES: usize = 8;
+const MAX_UPLOAD_RUNS: usize = 64;
+
+// AI-FUNC-SUMMARY: Report triangle-buffer upload traffic of one MC pipeline: full and partial update counts plus byte totals.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GpuUploadStats {
+    pub full_uploads: u64,
+    pub partial_uploads: u64,
+    pub unchanged_updates: u64,
+    pub total_bytes: u64,
+    pub last_bytes: u64,
+}
 
 // AI-FUNC-SUMMARY: GPU-accelerated Monte Carlo S2 pipeline using wgpu compute shaders.
 // Holds the wgpu device, queue, compute pipeline, and pre-allocated buffers for triangle
 // data, parameters, and per-radius workgroup output (hit/valid partial counts). Call `calculate_s2_gpu`
-// to dispatch the Monte Carlo kernel for all radii in a single dispatch.
+// to dispatch the Monte Carlo kernel in radius batches of at most MAX_RADII radii each.
 pub struct GpuS2Pipeline {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -25,8 +37,12 @@ pub struct GpuS2Pipeline {
     last_cpu_reduce: std::time::Duration,
     #[cfg(test)]
     last_readback_bytes: u64,
+    #[cfg(test)]
+    test_radius_batch: Option<usize>,
     pending_upload_bytes: u64,
     num_triangles: u32,
+    resident: Vec<f32>,
+    upload_stats: GpuUploadStats,
     bind_group_layout: wgpu::BindGroupLayout,
 }
 
@@ -54,7 +70,8 @@ fn build_triangle_buffer(mesh: &Mesh, bbox: BoundingBox) -> Vec<f32> {
 // AI-FUNC-SUMMARY:
 // Purpose: Pack shader parameters into a byte buffer matching the WGSL Params struct layout.
 // Inputs: triangle count, radii slice, seed, bounding box (used for normalized size), sample count per radius.
-// Returns: Vec<u8> matching the WGSL Params struct with std430 alignment. Bbox min is always (0,0,0).
+// Returns: Vec<u8> matching the WGSL Params struct with std430 alignment. Bbox min is always (0,0,0);
+// the word after it carries radius_base, the global radius of batch slot 0.
 // Side effects: None.
 fn pack_params(
     num_triangles: u32,
@@ -62,6 +79,7 @@ fn pack_params(
     seed: u32,
     bbox: BoundingBox,
     samples_per_radius: u32,
+    radius_base: u32,
 ) -> Vec<u8> {
     let mut buf = Vec::with_capacity(16 + 16 + 16 + 16 + MAX_RADII * 4);
 
@@ -74,7 +92,7 @@ fn pack_params(
     buf.extend_from_slice(&0.0f32.to_le_bytes());
     buf.extend_from_slice(&0.0f32.to_le_bytes());
     buf.extend_from_slice(&0.0f32.to_le_bytes());
-    buf.extend_from_slice(&0u32.to_le_bytes());
+    buf.extend_from_slice(&radius_base.to_le_bytes());
 
     buf.extend_from_slice(&(size.x as f32).to_le_bytes());
     buf.extend_from_slice(&(size.y as f32).to_le_bytes());
@@ -97,23 +115,31 @@ fn pack_params(
     buf
 }
 
-// AI-FUNC-SUMMARY: Validate logical sample ids and radius-aligned workgroup/buffer limits before allocation; return samples per radius, total partial-count slots and two-dimensional dispatch, or an error.
+// AI-FUNC-SUMMARY:
+// Purpose: Validate global logical sample ids and the largest radius batch's workgroup/buffer limits before allocation.
+// Inputs: inclusive r_max, requested samples per radius, radius batch size (1..=MAX_RADII), device limits.
+// Returns: (samples per radius, partial-count slots of the largest batch, its two-dimensional dispatch) or an error.
+// Side effects: None.
+// Notes: Any r_max is accepted as long as (r_max + 1) * samples fits the u32 logical id space the RNG is keyed on.
 fn dispatch_plan(
     r_max: usize,
     samples: usize,
+    batch: usize,
     limits: &wgpu::Limits,
 ) -> Result<(u32, u32, [u32; 2]), String> {
-    if r_max >= MAX_RADII {
-        return Err(format!(
-            "GPU MC r_max must be below {MAX_RADII}, got {r_max}"
-        ));
+    if batch == 0 || batch > MAX_RADII {
+        return Err(format!("GPU MC radius batch must be 1..={MAX_RADII}"));
     }
+    let radii = u32::try_from(r_max)
+        .ok()
+        .and_then(|r| r.checked_add(1))
+        .ok_or("GPU MC radius count exceeds u32")?;
     let samples = u32::try_from(samples.max(200))
         .map_err(|_| "GPU MC sample count exceeds u32".to_string())?;
-    (r_max as u32 + 1)
+    radii
         .checked_mul(samples)
         .ok_or("GPU MC invocation count overflow")?;
-    let total = (r_max as u32 + 1) * samples.div_ceil(WORKGROUP_SIZE);
+    let total = radii.min(batch as u32) * samples.div_ceil(WORKGROUP_SIZE);
     let grid = super::runtime::grid_plan([total, 1, 1], 1, limits)?;
     Ok((samples, total, grid.dispatch))
 }
@@ -139,6 +165,48 @@ fn check_mesh_capacity(mesh: &Mesh, limits: &wgpu::Limits) -> Result<(), String>
     check_buffer_size((bytes as u64).max(4), limits)
 }
 
+// AI-FUNC-SUMMARY: Triangle storage usage; COPY_SRC lets tests read the resident contents back; returns buffer usages; side effects: None.
+fn triangle_usage() -> wgpu::BufferUsages {
+    wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Find the triangle ranges whose uploaded f32 bits differ between two equal-length triangle buffers.
+// Inputs: resident and next 9-float-per-triangle buffers of equal length.
+// Returns: Some(sorted disjoint face ranges, gaps of up to COALESCE_FACES merged) or None when a full write is cheaper.
+// Side effects: None.
+// Notes: Compares bit patterns, so the uploaded bytes are identical to a full write; None when more than
+// MAX_UPLOAD_RUNS runs remain or more than half the faces would be written.
+fn changed_face_runs(resident: &[f32], next: &[f32]) -> Option<Vec<std::ops::Range<usize>>> {
+    let faces = next.len() / 9;
+    let mut runs: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut written = 0usize;
+    for face in 0..faces {
+        let span = face * 9..face * 9 + 9;
+        let same = resident[span.clone()]
+            .iter()
+            .zip(&next[span])
+            .all(|(a, b)| a.to_bits() == b.to_bits());
+        if same {
+            continue;
+        }
+        match runs.last_mut() {
+            Some(last) if face - last.end <= COALESCE_FACES => {
+                written += face + 1 - last.end;
+                last.end = face + 1;
+            }
+            _ => {
+                if runs.len() == MAX_UPLOAD_RUNS {
+                    return None;
+                }
+                runs.push(face..face + 1);
+                written += 1;
+            }
+        }
+    }
+    (written * 2 <= faces).then_some(runs)
+}
+
 impl GpuS2Pipeline {
     // AI-FUNC-SUMMARY:
     // Purpose: Initialize wgpu device/queue and create the Monte Carlo S2 compute pipeline.
@@ -155,86 +223,91 @@ impl GpuS2Pipeline {
         bbox: BoundingBox,
         shader_source: &str,
     ) -> Result<Self, String> {
-        let (device, queue) = super::context::request_adapter_device("rustmspt s2 device")?;
+        let shared = super::context::shared_device()?;
+        let (device, queue) = (shared.device().clone(), shared.queue().clone());
 
         super::runtime::scoped(&device.clone(), || {
             check_mesh_capacity(mesh, &device.limits())?;
-            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("s2_monte_carlo"),
-                source: wgpu::ShaderSource::Wgsl(shader_source.into()),
-            });
-
-            let bind_group_layout =
-                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("s2_mc_bgl"),
-                    entries: &[
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::COMPUTE,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 1,
-                            visibility: wgpu::ShaderStages::COMPUTE,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 2,
-                            visibility: wgpu::ShaderStages::COMPUTE,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Storage { read_only: false },
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 3,
-                            visibility: wgpu::ShaderStages::COMPUTE,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Storage { read_only: false },
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
-                            },
-                            count: None,
-                        },
-                    ],
+            let (pipeline, bind_group_layout) = shared.cached_pipeline("s2_monte_carlo", shader_source, |device| {
+                let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("s2_monte_carlo"),
+                    source: wgpu::ShaderSource::Wgsl(shader_source.into()),
                 });
 
-            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("s2_mc_pl"),
-                bind_group_layouts: &[&bind_group_layout],
-                push_constant_ranges: &[],
-            });
+                let bind_group_layout =
+                    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                        label: Some("s2_mc_bgl"),
+                        entries: &[
+                            wgpu::BindGroupLayoutEntry {
+                                binding: 0,
+                                visibility: wgpu::ShaderStages::COMPUTE,
+                                ty: wgpu::BindingType::Buffer {
+                                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                    has_dynamic_offset: false,
+                                    min_binding_size: None,
+                                },
+                                count: None,
+                            },
+                            wgpu::BindGroupLayoutEntry {
+                                binding: 1,
+                                visibility: wgpu::ShaderStages::COMPUTE,
+                                ty: wgpu::BindingType::Buffer {
+                                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                    has_dynamic_offset: false,
+                                    min_binding_size: None,
+                                },
+                                count: None,
+                            },
+                            wgpu::BindGroupLayoutEntry {
+                                binding: 2,
+                                visibility: wgpu::ShaderStages::COMPUTE,
+                                ty: wgpu::BindingType::Buffer {
+                                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                    has_dynamic_offset: false,
+                                    min_binding_size: None,
+                                },
+                                count: None,
+                            },
+                            wgpu::BindGroupLayoutEntry {
+                                binding: 3,
+                                visibility: wgpu::ShaderStages::COMPUTE,
+                                ty: wgpu::BindingType::Buffer {
+                                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                    has_dynamic_offset: false,
+                                    min_binding_size: None,
+                                },
+                                count: None,
+                            },
+                        ],
+                    });
 
-            let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("s2_mc_pipeline"),
-                layout: Some(&pipeline_layout),
-                module: &shader,
-                entry_point: Some("main"),
-                compilation_options: Default::default(),
-                cache: None,
-            });
+                let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("s2_mc_pl"),
+                    bind_group_layouts: &[&bind_group_layout],
+                    push_constant_ranges: &[],
+                });
+
+                let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("s2_mc_pipeline"),
+                    layout: Some(&pipeline_layout),
+                    module: &shader,
+                    entry_point: Some("main"),
+                    compilation_options: Default::default(),
+                    cache: None,
+                });
+                (pipeline, bind_group_layout)
+            })?;
 
             let tri_data = build_triangle_buffer(mesh, bbox);
             let tri_bytes = bytemuck::cast_slice::<f32, u8>(&tri_data);
             let triangle_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("triangles"),
                 size: (tri_bytes.len() as u64).max(4),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                usage: triangle_usage(),
                 mapped_at_creation: false,
             });
             queue.write_buffer(&triangle_buffer, 0, tri_bytes);
+            let initial_bytes = tri_bytes.len() as u64;
 
             let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("params"),
@@ -286,8 +359,17 @@ impl GpuS2Pipeline {
                 last_cpu_reduce: std::time::Duration::ZERO,
                 #[cfg(test)]
                 last_readback_bytes: 0,
-                pending_upload_bytes: tri_bytes.len() as u64,
+                #[cfg(test)]
+                test_radius_batch: None,
+                pending_upload_bytes: initial_bytes,
                 num_triangles: mesh.faces.len() as u32,
+                resident: tri_data,
+                upload_stats: GpuUploadStats {
+                    full_uploads: 1,
+                    total_bytes: initial_bytes,
+                    last_bytes: initial_bytes,
+                    ..Default::default()
+                },
                 bind_group_layout,
             })
         })
@@ -313,33 +395,76 @@ impl GpuS2Pipeline {
     }
 
     // AI-FUNC-SUMMARY:
-    // Purpose: Update the triangle buffer for a new mesh without recreating the pipeline.
+    // Purpose: Make the GPU triangle buffer equal to a new mesh, uploading only the triangles that differ from what is resident.
     // Inputs: mesh and bounding box for normalized triangle data.
     // Returns: Success or a capacity/upload error.
-    // Side effects: Re-uploads triangle data to GPU. Allocates new buffer if mesh size changed.
+    // Side effects: Writes changed triangle runs (or the whole buffer) to the GPU, grows the buffer when needed,
+    // replaces the host shadow copy and updates upload statistics and pending-upload accounting.
+    // Notes: The diff is against the host shadow of the resident contents, so it is correct whichever caller
+    // uploaded last (islands sharing one instance, rejected moves, migration). A changed triangle count, a
+    // grown buffer, more than MAX_UPLOAD_RUNS runs or more than half the bytes changed fall back to one full write.
     pub fn update_mesh(&mut self, mesh: &Mesh, bbox: BoundingBox) -> Result<(), String> {
         check_mesh_capacity(mesh, &self.device.limits())?;
         super::runtime::scoped(&self.device.clone(), || {
             let tri_data = build_triangle_buffer(mesh, bbox);
             let tri_bytes = bytemuck::cast_slice::<f32, u8>(&tri_data);
             let needed = tri_bytes.len() as u64;
+            let mut grown = false;
             if needed > self.triangle_buffer.size() {
                 self.triangle_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("triangles"),
                     size: needed,
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    usage: triangle_usage(),
                     mapped_at_creation: false,
                 });
+                grown = true;
             }
+            let runs = if grown || tri_data.len() != self.resident.len() {
+                None
+            } else {
+                changed_face_runs(&self.resident, &tri_data)
+            };
+            let written = match &runs {
+                None => {
+                    self.queue.write_buffer(&self.triangle_buffer, 0, tri_bytes);
+                    needed
+                }
+                Some(runs) => {
+                    let mut bytes = 0u64;
+                    for run in runs {
+                        let range = run.start * 36..run.end * 36;
+                        self.queue.write_buffer(
+                            &self.triangle_buffer,
+                            range.start as u64,
+                            &tri_bytes[range.clone()],
+                        );
+                        bytes += range.len() as u64;
+                    }
+                    bytes
+                }
+            };
             let pending = self
                 .pending_upload_bytes
-                .checked_add(needed)
+                .checked_add(written)
                 .ok_or("GPU MC pending upload size overflow")?;
-            self.queue.write_buffer(&self.triangle_buffer, 0, tri_bytes);
             self.pending_upload_bytes = pending;
             self.num_triangles = mesh.faces.len() as u32;
+            self.resident = tri_data;
+            let stats = &mut self.upload_stats;
+            match &runs {
+                None => stats.full_uploads += 1,
+                Some(runs) if runs.is_empty() => stats.unchanged_updates += 1,
+                Some(_) => stats.partial_uploads += 1,
+            }
+            stats.total_bytes = stats.total_bytes.saturating_add(written);
+            stats.last_bytes = written;
             Ok(())
         })
+    }
+
+    // AI-FUNC-SUMMARY: Return this pipeline's triangle upload statistics; returns a copy; side effects: None.
+    pub fn upload_stats(&self) -> GpuUploadStats {
+        self.upload_stats
     }
 
     // AI-FUNC-SUMMARY:
@@ -417,7 +542,13 @@ impl GpuS2Pipeline {
             })
     }
 
-    // AI-FUNC-SUMMARY: Evaluate a fixed MC seed and merge workgroup integer partials in u64; return per-radius hit/valid totals for exact reference comparisons.
+    // AI-FUNC-SUMMARY:
+    // Purpose: Evaluate a fixed MC seed in radius batches and merge workgroup integer partials in u64.
+    // Inputs: bounding box, inclusive r_max (any value whose logical ids fit u32), samples per radius, seed.
+    // Returns: Per-radius [hits, valid] totals, or a capacity, execution or mapping error.
+    // Side effects: Grows output/staging to the largest batch, writes params and reads back once per batch.
+    // Notes: Logical sample ids are global (radius * samples + sample), so counts are identical for any batch size.
+    // The CPU merge touches each partial once: O((r_max + 1) * ceil(samples / 256)) additions in total.
     fn calculate_s2_gpu_counts(
         &mut self,
         bbox: BoundingBox,
@@ -427,22 +558,31 @@ impl GpuS2Pipeline {
     ) -> Result<Vec<[u64; 2]>, String> {
         #[allow(unused_mut)]
         let mut limits = self.device.limits();
+        #[allow(unused_mut)]
+        let mut batch = MAX_RADII;
         #[cfg(test)]
-        if let Some(limit) = self.test_dispatch_limit {
-            limits.max_compute_workgroups_per_dimension = limit;
+        {
+            if let Some(limit) = self.test_dispatch_limit {
+                limits.max_compute_workgroups_per_dimension = limit;
+            }
+            if let Some(size) = self.test_radius_batch {
+                batch = size;
+            }
         }
         #[allow(unused_mut)]
-        let (samples_per_radius, partial_count, mut dispatch) =
-            dispatch_plan(r_max, samples, &limits)?;
+        let (samples_per_radius, partial_count, _) =
+            dispatch_plan(r_max, samples, batch, &limits)?;
         #[allow(unused_mut)]
         let mut output_count = partial_count;
         #[allow(unused_mut)]
         let mut per_radius = samples_per_radius.div_ceil(WORKGROUP_SIZE);
         #[cfg(test)]
         if self.reference_samples {
+            if r_max >= batch {
+                return Err("per-sample reference shader supports a single radius batch".into());
+            }
             output_count = (r_max as u32 + 1) * samples_per_radius;
             per_radius = samples_per_radius;
-            dispatch = [output_count.div_ceil(WORKGROUP_SIZE), 1];
             check_buffer_size(u64::from(output_count) * 4, &self.device.limits())?;
         }
         let size = bbox.size();
@@ -453,18 +593,7 @@ impl GpuS2Pipeline {
             return Err("GPU MC bbox must have finite positive f32 extents".into());
         }
         super::runtime::scoped(&self.device.clone(), || {
-            let radii: Vec<f32> = (0..=r_max).map(|r| r as f32).collect();
             self.ensure_output_capacity(output_count);
-
-            let param_data =
-                pack_params(self.num_triangles, &radii, seed, bbox, samples_per_radius);
-            let pending = self
-                .pending_upload_bytes
-                .checked_add(param_data.len() as u64)
-                .ok_or("GPU MC pending upload size overflow")?;
-            self.queue.write_buffer(&self.params_buffer, 0, &param_data);
-            self.pending_upload_bytes = pending;
-
             let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("s2_mc_bg"),
                 layout: &self.bind_group_layout,
@@ -487,64 +616,110 @@ impl GpuS2Pipeline {
                     },
                 ],
             });
-
-            let mut encoder = self
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("s2_mc_encoder"),
-                });
-            {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("s2_mc_pass"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&self.pipeline);
-                pass.set_bind_group(0, &bind_group, &[]);
-                pass.dispatch_workgroups(dispatch[0], dispatch[1], 1);
-            }
-
-            let readback_size = (output_count as u64) * 4;
-            encoder.copy_buffer_to_buffer(
-                &self.out_hits_buffer,
-                0,
-                &self.staging_hits,
-                0,
-                readback_size,
-            );
-            encoder.copy_buffer_to_buffer(
-                &self.out_valids_buffer,
-                0,
-                &self.staging_valids,
-                0,
-                readback_size,
-            );
-            self.queue.submit(Some(encoder.finish()));
-
-            let hits_u32 =
-                super::runtime::read_u32_prefix(&self.device, &self.staging_hits, readback_size)?;
-            let valids_u32 =
-                super::runtime::read_u32_prefix(&self.device, &self.staging_valids, readback_size)?;
-
-            self.pending_upload_bytes = 0;
             #[cfg(test)]
-            let reduce_start = std::time::Instant::now();
+            let mut reduce_total = std::time::Duration::ZERO;
+            #[cfg(test)]
+            let mut readback_total = 0u64;
             let mut out = vec![[0u64; 2]; r_max + 1];
             let sp = per_radius as usize;
-            for (r, slot) in out.iter_mut().enumerate().take(r_max + 1) {
-                let start = r * sp;
-                let end = ((r + 1) * sp).min(output_count as usize);
-                if start >= end {
-                    continue;
+            for base in (0..=r_max).step_by(batch) {
+                let last = (base + batch - 1).min(r_max);
+                let radii: Vec<f32> = (base..=last).map(|r| r as f32).collect();
+                #[allow(unused_mut)]
+                let mut batch_outputs = radii.len() as u32 * per_radius;
+                #[allow(unused_mut)]
+                let mut dispatch =
+                    super::runtime::grid_plan([batch_outputs, 1, 1], 1, &limits)?.dispatch;
+                #[cfg(test)]
+                if self.reference_samples {
+                    batch_outputs = output_count;
+                    dispatch = [output_count.div_ceil(WORKGROUP_SIZE), 1];
                 }
-                let total_hits: u64 = hits_u32[start..end].iter().map(|&v| v as u64).sum();
-                let total_valid: u64 = valids_u32[start..end].iter().map(|&v| v as u64).sum();
-                *slot = [total_hits, total_valid];
+                let param_data = pack_params(
+                    self.num_triangles,
+                    &radii,
+                    seed,
+                    bbox,
+                    samples_per_radius,
+                    base as u32,
+                );
+                let pending = self
+                    .pending_upload_bytes
+                    .checked_add(param_data.len() as u64)
+                    .ok_or("GPU MC pending upload size overflow")?;
+                self.queue.write_buffer(&self.params_buffer, 0, &param_data);
+                self.pending_upload_bytes = pending;
+
+                let mut encoder =
+                    self.device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("s2_mc_encoder"),
+                        });
+                {
+                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("s2_mc_pass"),
+                        timestamp_writes: None,
+                    });
+                    pass.set_pipeline(&self.pipeline);
+                    pass.set_bind_group(0, &bind_group, &[]);
+                    pass.dispatch_workgroups(dispatch[0], dispatch[1], 1);
+                }
+
+                let readback_size = u64::from(batch_outputs) * 4;
+                encoder.copy_buffer_to_buffer(
+                    &self.out_hits_buffer,
+                    0,
+                    &self.staging_hits,
+                    0,
+                    readback_size,
+                );
+                encoder.copy_buffer_to_buffer(
+                    &self.out_valids_buffer,
+                    0,
+                    &self.staging_valids,
+                    0,
+                    readback_size,
+                );
+                self.queue.submit(Some(encoder.finish()));
+
+                let hits_u32 = super::runtime::read_u32_prefix(
+                    &self.device,
+                    &self.staging_hits,
+                    readback_size,
+                )?;
+                let valids_u32 = super::runtime::read_u32_prefix(
+                    &self.device,
+                    &self.staging_valids,
+                    readback_size,
+                )?;
+                self.pending_upload_bytes = 0;
+                #[cfg(test)]
+                let reduce_start = std::time::Instant::now();
+                #[cfg(test)]
+                {
+                    readback_total += readback_size * 2;
+                }
+                for (slot, r) in (base..=last).enumerate() {
+                    let start = slot * sp;
+                    let end = ((slot + 1) * sp).min(batch_outputs as usize);
+                    if start >= end {
+                        continue;
+                    }
+                    let total_hits: u64 = hits_u32[start..end].iter().map(|&v| v as u64).sum();
+                    let total_valid: u64 =
+                        valids_u32[start..end].iter().map(|&v| v as u64).sum();
+                    out[r] = [total_hits, total_valid];
+                }
+                #[cfg(test)]
+                {
+                    reduce_total += reduce_start.elapsed();
+                }
             }
 
             #[cfg(test)]
             {
-                self.last_cpu_reduce = reduce_start.elapsed();
-                self.last_readback_bytes = readback_size * 2;
+                self.last_cpu_reduce = reduce_total;
+                self.last_readback_bytes = readback_total;
             }
             Ok(out)
         })
@@ -587,22 +762,27 @@ mod execution_tests {
     #[test]
     fn dispatch_limits_reject_before_allocation() {
         let mut limits = wgpu::Limits::default();
-        assert!(dispatch_plan(127, 200, &limits).is_ok());
-        assert!(dispatch_plan(128, 200, &limits).is_err());
-        assert!(dispatch_plan(usize::MAX, 200, &limits).is_err());
-        assert!(dispatch_plan(0, usize::MAX, &limits).is_err());
-        assert!(dispatch_plan(127, u32::MAX as usize, &limits).is_err());
+        let b = MAX_RADII;
+        assert!(dispatch_plan(127, 200, b, &limits).is_ok());
+        assert_eq!(dispatch_plan(128, 200, b, &limits).unwrap().1, 128);
+        assert_eq!(dispatch_plan(10_000, 200, b, &limits).unwrap().1, 128);
+        assert!(dispatch_plan(0, 200, 0, &limits).is_err());
+        assert!(dispatch_plan(0, 200, MAX_RADII + 1, &limits).is_err());
+        assert!(dispatch_plan(usize::MAX, 200, b, &limits).is_err());
+        assert!(dispatch_plan(0, usize::MAX, b, &limits).is_err());
+        assert!(dispatch_plan(127, u32::MAX as usize, b, &limits).is_err());
         limits.max_compute_workgroups_per_dimension = 1;
-        assert_eq!(dispatch_plan(0, 256, &limits).unwrap(), (256, 1, [1, 1]));
-        assert!(dispatch_plan(0, 257, &limits).is_err());
+        assert_eq!(dispatch_plan(0, 256, b, &limits).unwrap(), (256, 1, [1, 1]));
+        assert!(dispatch_plan(0, 257, b, &limits).is_err());
+        assert_eq!(dispatch_plan(5, 256, 1, &limits).unwrap(), (256, 1, [1, 1]));
         limits.max_storage_buffer_binding_size = 3;
-        assert!(dispatch_plan(0, 256, &limits).is_err());
+        assert!(dispatch_plan(0, 256, b, &limits).is_err());
         limits.max_storage_buffer_binding_size = 4;
         limits.max_buffer_size = 3;
-        assert!(dispatch_plan(0, 256, &limits).is_err());
+        assert!(dispatch_plan(0, 256, b, &limits).is_err());
     }
 
-    // AI-FUNC-SUMMARY: Trigger a real invalid GPU mapping under error scopes, verify balanced recovery, and exercise empty geometry and radius refusal.
+    // AI-FUNC-SUMMARY: Trigger a real invalid GPU mapping under error scopes, verify balanced recovery, and exercise empty geometry and logical radius-overflow refusal.
     #[test]
     fn mapping_errors_are_results_and_scopes_recover() {
         let bbox = BoundingBox::from_size(Vec3::new(1.0, 1.0, 1.0));
@@ -619,9 +799,9 @@ mod execution_tests {
         });
         assert!(error.is_err());
         assert!(gpu
-            .calculate_s2_gpu(bbox, 128, 200)
+            .calculate_s2_gpu(bbox, usize::MAX, 200)
             .unwrap_err()
-            .contains("r_max"));
+            .contains("radius count"));
         let tiny_bbox = BoundingBox::from_size(Vec3::new(1e-300, 1.0, 1.0));
         assert!(gpu
             .calculate_s2_gpu(tiny_bbox, 0, 200)
@@ -697,7 +877,7 @@ mod execution_tests {
         assert_eq!(gpu.staging_valids.size(), 4);
         assert_eq!(gpu.calculate_s2_gpu(bbox, 0, 200).unwrap(), vec![0.0]);
     }
-    // AI-FUNC-SUMMARY: Verify budget rejection is allocation-free, queued geometry uploads are counted and cleared after completion, and retained large outputs require release before a small cap can be honored.
+    // AI-FUNC-SUMMARY: Verify budget rejection is allocation-free, queued geometry uploads (none for an unchanged mesh) are counted and cleared after completion, and retained large outputs require release before a small cap can be honored.
     #[test]
     fn mc_budget_tracks_live_capacity_and_uploads() {
         let bbox = BoundingBox::from_size(Vec3::new(1.0, 1.0, 1.0));
@@ -714,6 +894,10 @@ mod execution_tests {
         assert!(gpu.check_evaluation_budget(&mesh, 0, 200, Some(0)).is_err());
         assert_eq!(original, gpu.out_hits_buffer);
         gpu.update_mesh(&mesh, bbox).unwrap();
+        assert_eq!(gpu.pending_upload_bytes, 432, "an unchanged mesh uploads nothing");
+        let mut moved = mesh.clone();
+        crate::geometry::translate_mesh(&mut moved, Vec3::new(0.25, 0.0, 0.0));
+        gpu.update_mesh(&moved, bbox).unwrap();
         assert_eq!(gpu.pending_upload_bytes, 864);
         assert!(gpu.check_evaluation_budget(&mesh, 0, 200, Some(1)).is_ok());
         gpu.calculate_s2_gpu(bbox, 0, 200).unwrap();
@@ -858,12 +1042,13 @@ mod execution_tests {
     fn mc_two_dimensional_dispatch_preserves_samples() {
         let mut limits = wgpu::Limits::default();
         assert_eq!(
-            dispatch_plan(0, 65_536 * 256, &limits).unwrap(),
+            dispatch_plan(0, 65_536 * 256, MAX_RADII, &limits).unwrap(),
             (65_536 * 256, 65_536, [65_535, 2])
         );
         limits.max_compute_workgroups_per_dimension = 3;
-        assert_eq!(dispatch_plan(3, 257, &limits).unwrap(), (257, 8, [3, 3]));
-        assert!(dispatch_plan(4, 257, &limits).is_err());
+        assert_eq!(dispatch_plan(3, 257, MAX_RADII, &limits).unwrap(), (257, 8, [3, 3]));
+        assert!(dispatch_plan(4, 257, MAX_RADII, &limits).is_err());
+        assert_eq!(dispatch_plan(4, 257, 2, &limits).unwrap(), (257, 4, [3, 2]));
         let bbox = BoundingBox::from_size(Vec3::new(4.0, 4.0, 4.0));
         let mesh = box_mesh(BoundingBox {
             min: Vec3::new(0.5, 0.5, 0.5),
@@ -919,5 +1104,173 @@ mod execution_tests {
             after, before,
             "padded workgroup wrote into retained spare capacity"
         );
+    }
+}
+
+#[cfg(test)]
+mod batching_and_upload_tests {
+    use super::*;
+    use crate::geometry::{box_mesh, merge_meshes, translate_mesh};
+    use crate::types::Vec3;
+
+    // AI-FUNC-SUMMARY: Read the resident triangle buffer prefix back as raw u32 words for byte-exact oracles; returns the words or a mapping error.
+    fn resident_words(gpu: &GpuS2Pipeline) -> Result<Vec<u32>, String> {
+        let bytes = u64::from(gpu.num_triangles) * 36;
+        super::super::runtime::scoped(&gpu.device, || {
+            let staging = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("triangle oracle"),
+                size: bytes.max(4),
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let mut encoder = gpu
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+            encoder.copy_buffer_to_buffer(&gpu.triangle_buffer, 0, &staging, 0, bytes);
+            gpu.queue.submit(Some(encoder.finish()));
+            super::super::runtime::read_u32_prefix(&gpu.device, &staging, bytes)
+        })
+    }
+
+    // AI-FUNC-SUMMARY: Build two separated boxes in a 400-wide domain, the second shifted by `shift`; returns the merged mesh.
+    fn two_boxes(shift: f64) -> Mesh {
+        let a = box_mesh(BoundingBox {
+            min: Vec3::new(50.0, 50.0, 50.0),
+            max: Vec3::new(200.0, 350.0, 350.0),
+        });
+        let mut b = box_mesh(BoundingBox {
+            min: Vec3::new(250.0, 50.0, 50.0),
+            max: Vec3::new(350.0, 350.0, 350.0),
+        });
+        translate_mesh(&mut b, Vec3::new(shift, shift * 0.5, 0.0));
+        merge_meshes(&[a, b])
+    }
+
+    // AI-FUNC-SUMMARY: Verify radius batching reproduces single-batch integer counts exactly for any batch size, supports r_max beyond the shader array and leaves low-radius counts independent of r_max.
+    #[test]
+    fn radius_batches_match_single_batch_counts() {
+        let bbox = BoundingBox::from_size(Vec3::new(400.0, 400.0, 400.0));
+        let mesh = two_boxes(0.0);
+        let mut gpu = match GpuS2Pipeline::new(&mesh, bbox) {
+            Ok(gpu) => gpu,
+            Err(error) => {
+                eprintln!("SKIP: GPU MC unavailable: {error}");
+                return;
+            }
+        };
+        for seed in [0u32, 7, u32::MAX] {
+            let single = gpu.calculate_s2_gpu_counts(bbox, 127, 257, seed).unwrap();
+            for size in [1usize, 7, 64] {
+                gpu.test_radius_batch = Some(size);
+                assert_eq!(
+                    gpu.calculate_s2_gpu_counts(bbox, 127, 257, seed).unwrap(),
+                    single,
+                    "batch={size} seed={seed}"
+                );
+            }
+            gpu.test_radius_batch = None;
+            let wide = gpu.calculate_s2_gpu_counts(bbox, 300, 257, seed).unwrap();
+            assert_eq!(wide.len(), 301);
+            assert_eq!(&wide[..128], &single[..]);
+            assert_eq!(gpu.last_readback_bytes, 301 * 2 * 8);
+            assert!(wide.iter().all(|&[h, v]| h <= v && v <= 257));
+            assert!(wide[200][1] > 0 && wide[200][0] > 0);
+            gpu.test_radius_batch = Some(13);
+            assert_eq!(gpu.calculate_s2_gpu_counts(bbox, 300, 257, seed).unwrap(), wide);
+            gpu.test_radius_batch = None;
+        }
+        assert_eq!(gpu.calculate_s2_gpu(bbox, 300, 257).unwrap().len(), 301);
+    }
+
+    // AI-FUNC-SUMMARY: Verify diffed partial uploads leave GPU triangle bytes and fixed-seed counts identical to a full re-upload across moves, restores, no-ops and layout changes, and record their byte counts.
+    #[test]
+    fn partial_triangle_upload_matches_full_upload() {
+        let bbox = BoundingBox::from_size(Vec3::new(400.0, 400.0, 400.0));
+        let base = two_boxes(0.0);
+        let mut gpu = match GpuS2Pipeline::new(&base, bbox) {
+            Ok(gpu) => gpu,
+            Err(error) => {
+                eprintln!("SKIP: GPU MC unavailable: {error}");
+                return;
+            }
+        };
+        let full_bytes = base.faces.len() as u64 * 36;
+        assert_eq!(gpu.upload_stats().full_uploads, 1);
+        let particle_bytes = 12 * 36;
+        let mut last = base.clone();
+        for (step, shift) in [3.5, -7.25, 0.0, 11.0, 11.0].into_iter().enumerate() {
+            let next = two_boxes(shift);
+            let before = gpu.upload_stats();
+            gpu.update_mesh(&next, bbox).unwrap();
+            let after = gpu.upload_stats();
+            let expected = if next.vertices == last.vertices { 0 } else { particle_bytes };
+            assert_eq!(after.last_bytes, expected, "step {step}");
+            assert_eq!(after.full_uploads, before.full_uploads);
+            assert_eq!(after.total_bytes, before.total_bytes + expected);
+            let words = resident_words(&gpu).unwrap();
+            let oracle: Vec<u32> = build_triangle_buffer(&next, bbox)
+                .into_iter()
+                .map(f32::to_bits)
+                .collect();
+            assert_eq!(words, oracle, "step {step}");
+            let mut fresh = GpuS2Pipeline::new(&next, bbox).unwrap();
+            assert_eq!(
+                gpu.calculate_s2_gpu_counts(bbox, 140, 300, 99).unwrap(),
+                fresh.calculate_s2_gpu_counts(bbox, 140, 300, 99).unwrap(),
+                "step {step}"
+            );
+            eprintln!(
+                "MC_UPLOAD step={step} bytes={} full_equivalent={full_bytes}",
+                after.last_bytes
+            );
+            last = next;
+        }
+        let stats = gpu.upload_stats();
+        assert_eq!(stats.unchanged_updates, 1);
+        assert_eq!(stats.partial_uploads, 4);
+        let single = box_mesh(BoundingBox {
+            min: Vec3::new(10.0, 10.0, 10.0),
+            max: Vec3::new(20.0, 20.0, 20.0),
+        });
+        gpu.update_mesh(&single, bbox).unwrap();
+        assert_eq!(gpu.upload_stats().full_uploads, 2);
+        assert_eq!(gpu.upload_stats().last_bytes, 12 * 36);
+        let moved_bbox = BoundingBox {
+            min: Vec3::new(-1.0, 0.0, 0.0),
+            max: Vec3::new(400.0, 400.0, 400.0),
+        };
+        gpu.update_mesh(&single, moved_bbox).unwrap();
+        assert_eq!(gpu.upload_stats().full_uploads, 3);
+        let words = resident_words(&gpu).unwrap();
+        let oracle: Vec<u32> = build_triangle_buffer(&single, moved_bbox)
+            .into_iter()
+            .map(f32::to_bits)
+            .collect();
+        assert_eq!(words, oracle);
+    }
+
+    // AI-FUNC-SUMMARY: Check run coalescing and full-write fallback thresholds of the host diff without a GPU.
+    #[test]
+    fn changed_face_runs_coalesce_and_fall_back() {
+        let resident = vec![0.0f32; 9 * 100];
+        let mut next = resident.clone();
+        assert_eq!(changed_face_runs(&resident, &next), Some(vec![]));
+        next[9 * 3] = 1.0;
+        next[9 * 10 + 4] = 1.0;
+        next[9 * 40] = -0.0;
+        assert_eq!(changed_face_runs(&resident, &next), Some(vec![3..11, 40..41]));
+        let mut many = resident.clone();
+        for face in (0..100).step_by(10).take(9) {
+            many[face * 9] = 2.0;
+        }
+        assert_eq!(changed_face_runs(&resident, &many).unwrap().len(), 9);
+        let half: Vec<f32> = (0..9 * 100).map(|i| if i < 9 * 51 { 1.0 } else { 0.0 }).collect();
+        assert_eq!(changed_face_runs(&resident, &half), None);
+        let resident = vec![0.0f32; 9 * 10_000];
+        let mut scattered = resident.clone();
+        for face in (0..10_000).step_by(20).take(MAX_UPLOAD_RUNS + 1) {
+            scattered[face * 9] = 1.0;
+        }
+        assert_eq!(changed_face_runs(&resident, &scattered), None);
     }
 }

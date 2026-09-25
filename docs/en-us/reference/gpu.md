@@ -14,8 +14,12 @@ This module implements wgpu compute pipelines plus offscreen STL rasterization, 
 | `GpuContext::caps` | `src/gpu/context.rs:11` | Returns `BackendCaps` describing this GPU context. |
 | `GpuInitError` | `src/gpu/context.rs:22` | Error type wrapping a GPU initialization failure message. |
 | `GpuInitError` (`Display` impl) | `src/gpu/context.rs:22` | Formats the error message. |
-| `try_init_gpu` | `src/gpu/context.rs:38` | Probes for a wgpu adapter/device and returns a `GpuContext`; used by `compute::policy::select_backend`. |
-| `request_adapter_device` | `src/gpu/context.rs` | Shared filtered adapter/device request used by rendering. |
+| `try_init_gpu` | `src/gpu/context.rs` | Probes the shared device for the current selector and returns a `GpuContext`; used by `compute::policy::select_backend`. |
+| `SharedGpuDevice` | `src/gpu/context.rs` | Process-wide device/queue/adapter info plus the compiled-pipeline cache for one selector. |
+| `SharedGpuDevice::cached_pipeline` | `src/gpu/context.rs` | Compile a pipeline bundle once per (kind, WGSL source) on this device; failures are not cached. |
+| `shared_gpu_device` / `shared_device` | `src/gpu/context.rs` | Return (creating lazily) the shared device for `RUSTMSPT_GPU_DEVICE`; evicts lost devices. |
+| `release_shared_gpu_devices` | `src/gpu/context.rs` | Drop every cached device; called at the end of the CLI entry point. |
+| `gpu_device_creation_count` / `gpu_pipeline_build_count` | `src/gpu/context.rs` | Observable process counters for logical devices created and pipeline bundles compiled. |
 | `GpuRenderPipeline` | `src/gpu/render.rs` | Offscreen STL rasterization pipeline. |
 | `GpuRenderPipeline::new` | `src/gpu/render.rs` | Compiles `render.wgsl` and creates render state. |
 | `GpuRenderPipeline::render` | `src/gpu/render.rs` | Rasterizes and reads back top-row-first RGBA8. |
@@ -25,12 +29,14 @@ This module implements wgpu compute pipelines plus offscreen STL rasterization, 
 | `dispatch_plan` | `src/gpu/s2.rs:101` | Validate logical MC ids, partial buffers and two-dimensional dispatch. |
 | `check_buffer_size` | `src/gpu/s2.rs:115` | Check single-buffer and storage limits. |
 | `check_mesh_capacity` | `src/gpu/s2.rs:125` | Check triangle count and upload capacity. |
-| `scoped` | `src/gpu/runtime.rs:2` | Capture scoped GPU errors and balance all scopes. |
+| `scoped` | `src/gpu/runtime.rs` | Capture scoped GPU errors and balance all scopes under a process-wide reentrant scope lock. |
 | `read_u32` | `src/gpu/runtime.rs:29` | Check mapping completion before copying and unmapping u32 readback. |
 | `GpuS2Pipeline::new` | `src/gpu/s2.rs:141` | Initializes the wgpu device and Monte Carlo S2 compute pipeline. |
-| `GpuS2Pipeline::update_mesh` | `src/gpu/s2.rs:277` | Re-uploads triangle data for a new mesh without recreating the pipeline. |
+| `GpuS2Pipeline::update_mesh` | `src/gpu/s2.rs` | Makes the triangle buffer equal to a new mesh, uploading only triangles that differ from the resident copy. |
+| `GpuS2Pipeline::upload_stats` / `GpuUploadStats` | `src/gpu/s2.rs` | Observable full/partial/unchanged upload counts and bytes. |
+| `changed_face_runs` | `src/gpu/s2.rs` | Host diff of resident vs new triangle bits into coalesced face runs, or `None` for a full write. |
 | `GpuS2Pipeline::ensure_output_capacity` | `src/gpu/s2.rs:302` | Grows the output buffers if the invocation count exceeds current capacity. |
-| `GpuS2Pipeline::calculate_s2_gpu` | `src/gpu/s2.rs:351` | Dispatches the Monte Carlo S2 kernel for all radii and reads back results. |
+| `GpuS2Pipeline::calculate_s2_gpu` | `src/gpu/s2.rs` | Dispatches the Monte Carlo S2 kernel in radius batches of at most 128 and reads back results. |
 | `OffsetEntry` | `src/gpu/s2_shell.rs:6` | Packed `(radius_idx, dx, dy, dz)` shell-offset record matching the WGSL layout. |
 | `point_inside` (s2_monte_carlo.wgsl) | `src/gpu/shaders/s2_monte_carlo.wgsl:85` | Classify ray parity with overflow recovery. |
 | `point_inside_overflow` (s2_monte_carlo.wgsl) | `src/gpu/shaders/s2_monte_carlo.wgsl:62` | Classify ray parity with overflow recovery. |
@@ -67,7 +73,7 @@ pub struct GpuContext {
 ```
 
 - **Source:** `src/gpu/context.rs:3`
-- **Purpose:** Opaque handle returned by `try_init_gpu()` describing the GPU adapter that was successfully probed, along with the buffer-size limits reported by that adapter. It does not retain the `wgpu::Device`/`wgpu::Queue` themselves — those are dropped at the end of `try_init_gpu`; this struct exists purely as a capability descriptor for backend selection.
+- **Purpose:** Opaque handle returned by `try_init_gpu()` describing the GPU adapter that was successfully probed, along with the buffer-size limits reported by that adapter. It does not retain the `wgpu::Device`/`wgpu::Queue` themselves — those live in the shared device cache (`SharedGpuDevice`); this struct exists purely as a capability descriptor for backend selection.
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -109,7 +115,7 @@ pub struct GpuInitError(String);
   - If unset, the default `wgpu::PowerPreference::default()` adapter is requested normally (no fallback-adapter forcing).
   - If set and parseable as a `usize`, it is treated as an **index** into `instance.enumerate_adapters(wgpu::Backends::all())`; out-of-range indices produce a `GpuInitError` reporting the requested index and the number of adapters found.
   - If set and not a valid integer, it is treated as a **case-sensitive substring** matched against each enumerated adapter's `AdapterInfo.name`; the first match is used. No match produces a `GpuInitError`.
-- **Notes:** The device/queue obtained here (`_device`, `_queue`) are intentionally unused after adapter/device limits are read — this function is a *capability probe*, not a pipeline constructor. Each of the four pipeline constructors below (`GpuS2Pipeline::new`, `GpuShellS2Pipeline::new`, `GpuVoxelPipeline::new`, `GpuVolumeTransformPipeline::new`) performs its own independent adapter/device request and does **not** reuse the context returned by `try_init_gpu`; all four constructors honor `RUSTMSPT_GPU_DEVICE`; voxel, shell and volume-transform use `request_adapter_device`.
+- **Notes:** Since PERF-03 the probe goes through `shared_gpu_device()`: the first probe for a selector creates the process-wide logical device and later probes and every pipeline constructor (`GpuS2Pipeline`, `GpuShellS2Pipeline`, `GpuVoxelPipeline`, `GpuVolumeTransformPipeline`, `GpuRenderPipeline`, `GpuScenePipeline`) reuse it. A failed selector is never cached. See "Shared device and pipeline cache (PERF-03)" below.
 
 ---
 
@@ -150,7 +156,7 @@ pub struct GpuS2Pipeline {
 | `num_triangles` | `u32` | Current triangle count, used when packing params. |
 | `bind_group_layout` | `wgpu::BindGroupLayout` | Layout describing the four storage-buffer bindings above. |
 
-Module-level constants: `WORKGROUP_SIZE: u32 = 256`, `MAX_RADII: usize = 128` (the shader's `Params.radii` array is fixed-size at 128 entries; the execution entry rejects r_max >= 128 before packing).
+Module-level constants: `WORKGROUP_SIZE: u32 = 256`, `MAX_RADII: usize = MC_RADIUS_BATCH = 128` (the shader's `Params.radii` array is fixed-size at 128 entries, so evaluation runs in radius batches of at most 128; any `r_max` is accepted as long as `(r_max + 1) * samples` fits u32), `COALESCE_FACES = 8`, `MAX_UPLOAD_RUNS = 64` (partial-upload diff limits).
 
 #### build_triangle_buffer (s2.rs)
 
@@ -166,7 +172,7 @@ Module-level constants: `WORKGROUP_SIZE: u32 = 256`, `MAX_RADII: usize = 128` (t
 
 #### pack_params
 
-- **Signature:** `fn pack_params(num_triangles: u32, radii: &[f32], seed: u32, bbox: BoundingBox, samples_per_radius: u32) -> Vec<u8>`
+- **Signature:** `fn pack_params(num_triangles: u32, radii: &[f32], seed: u32, bbox: BoundingBox, samples_per_radius: u32, radius_base: u32) -> Vec<u8>`
 - **Source:** `src/gpu/s2.rs:50`
 - **Purpose:** Serialize the Monte Carlo shader's `Params` struct fields into a raw byte buffer matching the WGSL struct's `std430`-style layout and alignment (each `vec3<f32>` padded to 16 bytes).
 - **Parameters:**
@@ -175,7 +181,8 @@ Module-level constants: `WORKGROUP_SIZE: u32 = 256`, `MAX_RADII: usize = 128` (t
   - `seed: u32` — RNG seed consumed by the shader's `pcg_hash`-based sampler.
   - `bbox: BoundingBox` — used only for `bbox.size()`; the packed `bbox_min` is hardcoded to `(0,0,0)` because triangle data is already normalized to that origin by `build_triangle_buffer`.
   - `samples_per_radius: u32` — number of Monte Carlo samples per radius.
-- **Returns:** `Vec<u8>` of length `16 + 16 + 16 + 16 + MAX_RADII * 4` bytes: header (`num_triangles`, `num_radii`, `samples_per_radius`, `seed`), `bbox_min` (always zero, padded vec4), `bbox_max`/size (padded vec4), `ray_dir` (padded vec4, taken from `geometry::s2::RAY_DIR_GPU`), then the fixed-size `radii` array.
+  - `radius_base: u32` — global radius of batch slot 0; stored in the word after `bbox_min` (WGSL `Params.radius_base`, formerly padding).
+- **Returns:** `Vec<u8>` of length `16 + 16 + 16 + 16 + MAX_RADII * 4` bytes: header (`num_triangles`, `num_radii`, `samples_per_radius`, `seed`), `bbox_min` (always zero) plus `radius_base`, `bbox_max`/size (padded vec4), `ray_dir` (padded vec4, taken from `geometry::s2::RAY_DIR_GPU`), then the fixed-size `radii` array.
 - **Side effects:** None (pure function).
 - **Notes:** The ray direction is imported from `super::super::geometry::s2::RAY_DIR_GPU`, i.e. `crate::geometry::s2::RAY_DIR_GPU`, so CPU and GPU ray-casting use an identical fixed ray direction for inside/outside classification.
 
@@ -191,16 +198,17 @@ Module-level constants: `WORKGROUP_SIZE: u32 = 256`, `MAX_RADII: usize = 128` (t
   - `bbox: BoundingBox` — bounding box for coordinate normalization (see `build_triangle_buffer`).
 - **Returns:** `Ok(GpuS2Pipeline)` on success; `Err(String)` describing the failure (no adapter, adapter-filter mismatch, or device request failure).
 - **Side effects:** Performs a full wgpu adapter/device request (blocking, via `pollster::block_on`), compiles the shader module, creates the bind group layout/pipeline layout/compute pipeline, and allocates + uploads the triangle, params, and output buffers. Output and readback buffers start at 4 bytes each and grow to the actual invocation count.
-- **Notes:** Uses the shared `request_adapter_device` selector; device creation is still per constructor, with unchanged empty features/default limits.
+- **Notes:** Uses the process-wide shared device and the cached `s2_monte_carlo` pipeline (keyed by shader source, so the frozen test reference compiles separately); only the buffers are per instance. Empty features/default limits are unchanged.
 
 #### GpuS2Pipeline::update_mesh
 
 - **Signature:** `pub fn update_mesh(&mut self, mesh: &Mesh, bbox: BoundingBox) -> Result<(), String>`
 - **Source:** `src/gpu/s2.rs:277`
-- **Purpose:** Replace the pipeline's uploaded triangle data with a new mesh, without tearing down and recreating the device/pipeline — used when the same `GpuS2Pipeline` is reused across multiple particles/meshes in a batch.
+- **Purpose:** Make the uploaded triangle data equal to a new mesh without recreating the device/pipeline, uploading only the triangles whose f32 bits differ from the resident copy (PERF-10) — used by optimize for every SA candidate.
 - **Parameters:** `mesh: &Mesh`, `bbox: BoundingBox` — same semantics as `new`.
 - **Returns:** `Ok(())` or a triangle-capacity/upload error.
-- **Side effects:** Re-uploads normalized triangle data via `queue.write_buffer`. If the new mesh's byte size exceeds the current `triangle_buffer`'s capacity, a new, larger buffer is allocated and `triangle_buffer` is replaced; otherwise the existing buffer is reused in place. Updates `self.num_triangles`.
+- **Side effects:** Builds the full normalized triangle buffer on the host, diffs it against the host shadow of what is resident (`changed_face_runs`) and writes only the changed face runs with `queue.write_buffer` sub-range writes. A different triangle count, a grown buffer, more than `MAX_UPLOAD_RUNS` runs or more than half the faces changed fall back to one full write. Replaces the shadow, updates `num_triangles`, pending-upload accounting and `upload_stats()`.
+- **Oracle:** because the diff is against what is actually resident (not against the caller's previous candidate), it is correct across rejected moves, restores, migration and islands interleaving on the shared instance; `partial_triangle_upload_matches_full_upload` reads the GPU buffer back and compares it word-for-word and by fixed-seed MC counts with a fresh full upload after every step. The host diff is still O(faces); only transfer bytes shrink.
 - **Notes:** Because the buffer only grows (never shrinks) on reallocation, repeatedly calling this with meshes of varying size is safe but can retain peak-size GPU memory for the pipeline's lifetime.
 
 #### GpuS2Pipeline::ensure_output_capacity
@@ -217,7 +225,7 @@ Module-level constants: `WORKGROUP_SIZE: u32 = 256`, `MAX_RADII: usize = 128` (t
 
 - **Signature:** `pub fn calculate_s2_gpu(&mut self, bbox: BoundingBox, r_max: usize, samples: usize) -> Result<Vec<f64>, String>`
 - **Source:** `src/gpu/s2.rs:351`
-- **Purpose:** Compute the Monte Carlo two-point correlation function S2(r) on the GPU for every integer radius from 0 to `r_max`, in a single dispatch covering all radii.
+- **Purpose:** Compute the Monte Carlo two-point correlation function S2(r) on the GPU for every integer radius from 0 to `r_max`, in radius batches of at most 128 (one dispatch and readback per batch).
 - **Parameters:**
   - `bbox: BoundingBox` — bounding box used to pack shader params (size only; origin is already normalized).
   - `r_max: usize` — largest radius (inclusive) to evaluate; radii are the integers `0..=r_max`.
@@ -230,10 +238,10 @@ Module-level constants: `WORKGROUP_SIZE: u32 = 256`, `MAX_RADII: usize = 128` (t
 
 `GpuS2Pipeline::new`, `update_mesh`, and `calculate_s2_gpu` use balanced wgpu validation, out-of-memory, and internal error scopes. The latter two now return `Result` rather than unconditional success/data. A map callback must succeed before any mapped memory is accessed. Rust panics are not caught.
 
-- `dispatch_plan(r_max, samples, limits) -> Result<(u32,u32,[u32;2]), String>` checks `r_max < 128`, sample conversion and invocation multiplication, workgroup count, storage binding size and buffer size before output allocation or radius-vector construction. The minimum remains 200 samples.
+- `dispatch_plan(r_max, samples, batch, limits) -> Result<(u32,u32,[u32;2]), String>` checks the batch size (1..=128), that `(r_max + 1) * samples` fits the u32 logical id space, and the largest batch's workgroup count, storage binding size and buffer size before output allocation. The minimum remains 200 samples. `r_max >= 128` is no longer rejected.
 - `check_buffer_size(bytes, limits) -> Result<(), String>` checks both storage and single-buffer limits.
 - `check_mesh_capacity(mesh, limits) -> Result<(), String>` checks triangle count and byte arithmetic before flattening; empty geometry uses a four-byte placeholder.
-- `runtime::scoped<T>(device, work) -> Result<T,String>` collects all three scope classes and pops every scope even when the operation returns an error. Callers must serialize operations on the device; this is not a panic-catching boundary.
+- `runtime::scoped<T>(device, work) -> Result<T,String>` collects all three scope classes and pops every scope even when the operation returns an error. wgpu 24 error scopes are per device, not per thread, and the device is now shared process-wide, so the outermost `scoped` on each thread takes a process-wide lock (nested calls on the same thread reenter through a thread-local depth). This is not a panic-catching boundary.
 - `runtime::read_u32(device, buffer) -> Result<Vec<u32>,String>` checks callback/channel errors, copies mapped u32 data, and unmaps on success.
 
 MC bbox extents must be positive and finite after f32 conversion. These checks cover device limits, not a configured total-memory budget; peak working-set planning and high-water buffer retention remain separate work. Only MC currently uses this runtime helper; voxel/shell/crop/render APIs are unchanged. The legacy `calculate_s2_with_gpu` wrapper logs execution failures and retries continuous CPU mesh MC, preserving the method the GPU attempted. It has no strict-fallback parameter. Optimize implements its own explicit fallback policy.
@@ -518,9 +526,7 @@ Module-level constant: `WORKGROUP_SIZE: u32 = 64` (applied along the output X di
 
 ## `render.rs` — `GpuRenderPipeline`
 
-`request_adapter_device(label)` performs a blocking adapter/device request honoring `RUSTMSPT_GPU_DEVICE`; it returns `(Device, Queue)` or an error string.
-
-`GpuRenderPipeline::new() -> Result<Self, String>` compiles `render.wgsl`, creates a uniform bind-group layout, and builds a two-sided triangle-list pipeline targeting `Rgba8Unorm` with `Depth32Float` depth.
+`GpuRenderPipeline::new() -> Result<Self, String>` obtains the shared device, fetches (compiling once) `render.wgsl`, creates a uniform bind-group layout, and builds a two-sided triangle-list pipeline targeting `Rgba8Unorm` with `Depth32Float` depth.
 
 `GpuRenderPipeline::render(&mut self, mesh, camera, width, height, settings) -> Result<RenderedImage, String>` expands each face to three position/flat-normal vertices, uploads the shared view-projection and appearance values, renders offscreen, copies color to a mapped staging buffer, strips 256-byte row padding, and returns RGBA8. Empty geometry returns a background image. Private helpers `build_render_vertices` and `to_wgsl_mat4` prepare flat vertices and column-major f32 matrices.
 
@@ -539,15 +545,15 @@ The constructor honors `RUSTMSPT_GPU_DEVICE` through the common adapter selector
 `GpuRenderPipeline::new` and `render` use balanced validation, allocation and internal error scopes. `render` rejects zero/oversize textures, vertex-count overflow, and oversize vertex/staging buffers before allocation. Readback checks the mapping callback before accessing mapped memory. An initialized device returning a render error is a test failure, not an unavailable-adapter skip.
 
 
-GPU selection regression: direct voxel and shell constructors are tested in child processes with nonexistent adapter names and out-of-range indices. Both must report the requested selector; default-device substitution is forbidden. Common selection does not yet imply shared device or compiled-pipeline caching.
+GPU selection regression: direct voxel and shell constructors are tested in child processes with nonexistent adapter names and out-of-range indices. Both must report the requested selector; default-device substitution is forbidden. Since PERF-03 the selected device and compiled pipelines are also shared (see below); failed selectors are still never cached.
 
 
-`context::request_adapter` is the single adapter-selection implementation for capability probing and all GPU pipeline constructors. `request_adapter_device` requests a fresh logical device using that adapter. MC, voxel, shell, transforms and renderers therefore share name/index/default semantics. This refactor does not cache devices.
+`context::select_adapter` is the single adapter-selection implementation for capability probing and all GPU pipeline constructors; `shared_device_for` requests one logical device from it per selector and caches it (see the PERF-03 section below). MC, voxel, shell, transforms and renderers therefore share name/index/default semantics and, since PERF-03, the device itself.
 
 
 ### Backend instance lifetime (PERF-03)
 
-`shared_instance` retains one instance in OnceLock. Adapter selection and disposal of unselected adapters are serialized because wgpu 24's EGL enumeration can otherwise race its context access. Selected GL adapters are recreated from private instances, keeping device operations isolated. Every adapter is used for only one device request, as required by wgpu's API contract. No failed selector/device result is memoized. This avoids repeated backend-instance initialization for non-GL paths; it does not yet share devices, queues or compiled pipelines. Initial unsynchronized shared-instance tests exposed EGL BadAccess and are retained alongside the corrected regression logs.
+`shared_instance` retains one instance in OnceLock. Adapter selection and disposal of unselected adapters are serialized because wgpu 24's EGL enumeration can otherwise race its context access. Selected GL adapters are recreated from private instances, keeping device operations isolated. Every adapter is used for only one device request, as required by wgpu's API contract. No failed selector/device result is memoized. This avoids repeated backend-instance initialization for non-GL paths; device, queue and compiled-pipeline sharing is described in the PERF-03 cache section below. Initial unsynchronized shared-instance tests exposed EGL BadAccess and are retained alongside the corrected regression logs.
 
 
 ### MC output and staging capacity (PERF-03)
@@ -619,7 +625,7 @@ The experimental tiled path can also enable a second device pass (`s2_shell_redu
 
 | Function | Source | Contract |
 |---|---|---|
-| `GpuShellS2Pipeline::ensure_reduction` | `src/gpu/s2_shell.rs:211` | Lazily compile the device tile reducer and grow its final buffers under the caller error scope. |
+| `GpuShellS2Pipeline::ensure_reduction` | `src/gpu/s2_shell.rs` | Lazily fetch the cached tile reducer and grow its final buffers under the caller error scope; returns compile errors. |
 
 Production shell evaluation now filters offsets whose unsigned displacement magnitude reaches any grid dimension before GPU upload. Filtering preserves input order and uses a reusable bounded host batch, not a second full offset list. An unsupported-only request returns the same VF/zero curve without uploading occupancy or allocating result buffers. Test reference constructors can disable filtering so raw invalid-offset shader behavior remains covered. Per-offset ratios and their equal weighting are unchanged; this filter does not remove empty tiles inside otherwise supported offsets.
 
@@ -629,11 +635,11 @@ Production shell evaluation now filters offsets whose unsigned displacement magn
 
 | Function | Source | Contract |
 |---|---|---|
-| `GpuShellS2Pipeline::with_device` | `src/gpu/s2_shell.rs:84` | Build production shell resources on supplied device/queue; no new device. |
+| `GpuShellS2Pipeline::with_device` | `src/gpu/s2_shell.rs` | Build production shell resources on a held `Arc<SharedGpuDevice>`; no new device. |
 | `GpuShellS2Pipeline::build_on_device` | `src/gpu/s2_shell.rs:96` | Compile shell resources on supplied handles with balanced GPU error scopes. |
 | `GpuShellS2Pipeline::compute_s2_shell_resident` | `src/gpu/s2_shell.rs:385` | Read a same-device occupancy buffer directly; caller serializes producer and consumer. |
 | `GpuShellS2Pipeline::compute_shell_input` | `src/gpu/s2_shell.rs:410` | Shared execution for host-uploaded or resident occupancy with identical offset semantics. |
-| `GpuVoxelPipeline::device_queue` | `src/gpu/voxel.rs:59` | Clone device/queue handles for sequential stages; no device creation. |
+| `GpuVoxelPipeline::shared_device` | `src/gpu/voxel.rs` | Share the process device handle (`Arc<SharedGpuDevice>`) for sequential stages; no device creation. |
 | `GpuVoxelPipeline::occupancy_buffer` | `src/gpu/voxel.rs:54` | Clone completed occupancy storage handle; producer must not overwrite while consumed. |
 
 GPU exact now constructs the shell stage on the voxel stage’s Device/Queue and binds its occupancy buffer directly. Shell construction does not select an adapter or request another device, and the shell does not allocate/upload a duplicate occupancy field. Both stages run sequentially with separate error scopes. Voxel occupancy counting now runs on the device and only a four-byte count is read for VF; upstream backend capability probes remain separate. Standalone host-occupancy shell calls retain their upload behavior, and later host calls cannot overwrite the producer’s borrowed buffer.
@@ -643,7 +649,7 @@ GPU exact now constructs the shell stage on the voxel stage’s Device/Queue and
 | Function | Source | Contract |
 |---|---|---|
 | `GpuVoxelPipeline::voxelize_count` | `src/gpu/voxel.rs:199` | Voxelize and return only the occupied-cell count; retain the device field. |
-| `GpuVoxelPipeline::ensure_counter` | `src/gpu/voxel.rs:218` | Lazily construct the integer counter and four-byte output under caller error scope. |
+| `GpuVoxelPipeline::ensure_counter` | `src/gpu/voxel.rs` | Lazily fetch the cached integer counter and allocate the four-byte output under caller error scope; returns compile errors. |
 | `GpuVoxelPipeline::voxelize_impl` | `src/gpu/voxel.rs:267` | Checked common voxel execution with full-grid or count-only readback. |
 
 GPU exact now lazily generates one shell-radius Vec at a time and passes its offsets through `compute_s2_shell_resident_stream`. Host batches retain at most the existing partial-slot allowance; they can span radius boundaries while preserving offset order. The support flags used for interpolation are captured when each shell is generated, eliminating the former second enumeration. All offsets, including unsupported tails, are consumed on successful evaluation. Memory is bounded by one radius shell plus a batch, not by a constant independent of radius; an individual large-radius shell is still materialized. Count diagnostics use u128 so aggregate generated counts are not silently saturated.
@@ -655,3 +661,22 @@ GPU exact now lazily generates one shell-radius Vec at a time and passes its off
 GPU exact now uses `shell_offset_iter`, retaining only nested range cursors even within one radius. It preserves the original x/y/z order, origin special case and half-open squared-distance test; the public Vec API remains unchanged for random-access consumers. Support is detected with a peekable iterator and every generated offset is counted as consumed. Safe ordinary integer norms match the Vec implementation; larger norms use u128 to avoid signed multiplication overflow. Enumeration still scans the enclosing cube, so this reduces allocation without changing its O(radius³) search complexity.
 
 Fresh resident GPU exact evaluations use `ExactMemoryPlan` for both backend selection and execution. With triangle storage T=max(36*faces,4), occupancy M=4*cells, and B partial slots, the conservative logical peak is 2T+M+128+80B. This includes pending triangle/offset uploads and simultaneous old/new batch buffers; the 128-byte allowance covers fixed parameter/count/placeholder resources. B is reduced from 200,000 to fit an optional MiB budget, with a minimum of one. If even that does not fit, execution rejects before GPU initialization and the caller applies its fallback policy. The model excludes driver/compiler internals and CPU memory, applies to a fresh production direct-shell evaluation, and does not claim to budget experimental tiled/reduced or arbitrary retained pipelines. Existing hard exact-grid limits remain independent.
+
+
+### Shared device and pipeline cache (PERF-03)
+
+wgpu 24 lets an `Adapter` create only one logical device, so the cache sits above adapter selection: `shared_device_for(selector)` keeps a process-wide `HashMap<Option<String>, Arc<SharedGpuDevice>>` keyed by the exact `RUSTMSPT_GPU_DEVICE` value (unset is its own key). The first request for a selector selects an adapter through the unchanged `select_adapter` (serialized shared-instance enumeration; selected GL adapters still come from a private instance), requests one device with empty features/default limits, installs a device-lost callback and increments `gpu_device_creation_count()`. Creation happens under the cache lock, so concurrent constructors create one device. Errors are returned and never inserted, so an invalid selector keeps failing and does not poison later valid requests. An entry whose device reported loss (driver loss or `Device::destroy`) is evicted and recreated on the next request.
+
+`SharedGpuDevice::cached_pipeline(kind, source, build)` stores one Clone-able pipeline bundle (pipeline plus bind-group layout, or both scene pipelines) per `(kind, WGSL source text)` on that device. Compilation runs under its own error scope inside `runtime::scoped`, so the scope lock is always taken before the map lock; a failed compile (validation error) is returned and not cached. `gpu_pipeline_build_count()` counts successful compilations. Families: `s2_monte_carlo`, `voxelize`, `voxel_count`, `s2_shell` (per source: direct, cooperative, tiled test shaders), `s2_shell_reduce`, `volume_transform`, `render`, `scene_render`. Buffers, bind groups, staging and uniforms remain per instance; the queue is shared, but no mutable buffer is.
+
+`GpuVoxelPipeline::shared_device()` and `GpuShellS2Pipeline::with_device(Arc<SharedGpuDevice>)` replace the former `device_queue()`/`with_device(device, queue)` pair for the exact path. `release_shared_gpu_devices()` drains the cache; the CLI calls it after the subcommand returns so logical devices are still destroyed before process exit, as they were when each pipeline owned its device.
+
+Tests: `context::tests::pipeline_cache_reuses_success_and_never_caches_failure` (same object on reuse, invalid WGSL fails twice and leaves no entry) and the single-test integration binary `tests/gpu_device_cache_tests.rs` (every constructor family built four times plus eight concurrent threads: 1 device, 6 compilations; invalid selector errors twice without creating a device; `destroy` evicts, recreates exactly one device and recompiles each family once).
+
+### MC radius batching (PERF-05/08)
+
+`calculate_s2_gpu_counts` loops over radius batches of at most `MC_RADIUS_BATCH = 128`. Each batch writes `radius_base` into the params, dispatches `batch_radii * ceil(samples/256)` workgroups, reads back that prefix and merges partials into the global output. The shader keys the RNG on the global logical id `(radius_base + slot) * samples + sample`, so counts are identical for any batch size and radius `r`'s counts do not depend on `r_max` (`radius_batches_match_single_batch_counts` compares batch sizes 1/7/13/64/128 and r_max 127 vs 300 at fixed seeds). Output/staging capacity and `mc_evaluation_peak` are sized for one batch. The CPU merge reads each u32 partial once: O((r_max+1) * ceil(samples/256)) additions, 8 bytes per partial of readback; no second-level GPU reduction was added because this merge is already linear in the readback. The frozen per-sample reference shader is single-batch only. Optimize and measure no longer route `r_max >= 128` to the CPU.
+
+### SA partial triangle upload (PERF-10)
+
+See `GpuS2Pipeline::update_mesh` above. `changed_face_runs(resident, next)` compares f32 bit patterns face by face, merges changed faces separated by at most `COALESCE_FACES = 8` unchanged faces into one run, and returns `None` (full write) above `MAX_UPLOAD_RUNS = 64` runs or when more than half the faces would be written. `GpuUploadStats { full_uploads, partial_uploads, unchanged_updates, total_bytes, last_bytes }` is available through `upload_stats()`. The triangle buffer now also carries `COPY_SRC` so tests can read it back.
