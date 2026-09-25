@@ -2,12 +2,23 @@
 
 pub(crate) const MC_BLOCK_SAMPLES: usize = 256;
 pub(crate) const MC_RADIUS_BATCH: usize = 128;
+pub(crate) const MC_PARAMS_BYTES: u64 = 608;
+pub(crate) const MC_UNCERTAIN_WORDS: usize = 7;
+pub(crate) const MC_UNCERTAIN_INITIAL: usize = 1024;
 
-// AI-FUNC-SUMMARY: Bound an update-plus-evaluation peak using current triangle/output capacity, queued upload bytes and next workload; outputs are sized for one radius batch of at most MC_RADIUS_BATCH radii; count old plus new allocations conservatively on growth and reject arithmetic overflow without allocating.
+// AI-FUNC-SUMMARY: Byte size of an uncertain-sample list holding `entries` records (4-byte counter plus 7 words per entry), saturating on overflow; returns u64; side effects: None.
+pub(crate) fn mc_uncertain_bytes(entries: usize) -> u64 {
+    (entries as u64)
+        .saturating_mul(MC_UNCERTAIN_WORDS as u64 * 4)
+        .saturating_add(4)
+}
+
+// AI-FUNC-SUMMARY: Bound an update-plus-evaluation peak using current triangle/output/uncertain-list capacity, queued upload bytes and next workload; outputs are sized for one radius batch of at most MC_RADIUS_BATCH radii; the certification list and its staging count at their retained size or the initial capacity; count old plus new allocations conservatively on growth and reject arithmetic overflow without allocating. List regrowth after an uncertain overflow is bounded by device limits, not by this estimate.
 pub(crate) fn mc_evaluation_peak(
     triangle_capacity: u64,
     output_capacity: u64,
     pending_upload: u64,
+    uncertain_capacity: u64,
     faces: usize,
     r_max: usize,
     samples: usize,
@@ -40,7 +51,13 @@ pub(crate) fn mc_evaluation_peak(
         .checked_add(output_peak.checked_mul(4).ok_or_else(overflow)?)
         .and_then(|n| n.checked_add(pending_upload))
         .and_then(|n| n.checked_add(triangles))
-        .and_then(|n| n.checked_add(576 * 2))
+        .and_then(|n| n.checked_add(MC_PARAMS_BYTES * 2))
+        .and_then(|n| {
+            uncertain_capacity
+                .max(mc_uncertain_bytes(MC_UNCERTAIN_INITIAL))
+                .checked_mul(2)
+                .and_then(|list| n.checked_add(list))
+        })
         .ok_or_else(overflow)
 }
 
@@ -66,19 +83,23 @@ mod tests {
     #[test]
     fn mc_budget_counts_growth_and_pending_uploads() {
         assert_eq!(
-            mc_evaluation_peak(4, 4, 0, 2, 1, 200).unwrap(),
-            4 + 72 + 4 * (4 + 8) + 72 + 1152
+            mc_evaluation_peak(4, 4, 0, 0, 2, 1, 200).unwrap(),
+            4 + 72 + 4 * (4 + 8) + 72 + 1216 + 2 * (4 + 28 * 1024)
         );
         assert_eq!(
-            mc_evaluation_peak(720, 3200, 144, 1, 0, 200).unwrap(),
-            720 + 4 * 3200 + 144 + 36 + 1152
+            mc_evaluation_peak(720, 3200, 144, 0, 1, 0, 200).unwrap(),
+            720 + 4 * 3200 + 144 + 36 + 1216 + 2 * (4 + 28 * 1024)
         );
-        assert!(mc_evaluation_peak(4, 4, u64::MAX, 0, 0, 200).is_err());
-        assert!(mc_evaluation_peak(4, 4, 0, usize::MAX, 0, 200).is_err());
-        assert!(mc_evaluation_peak(4, 4, 0, 0, usize::MAX, 200).is_err());
         assert_eq!(
-            mc_evaluation_peak(4, 4, 0, 0, 10_000, 256).unwrap(),
-            mc_evaluation_peak(4, 4, 0, 0, MC_RADIUS_BATCH - 1, 256).unwrap()
+            mc_evaluation_peak(720, 3200, 144, 1_000_000, 1, 0, 200).unwrap(),
+            720 + 4 * 3200 + 144 + 36 + 1216 + 2_000_000
+        );
+        assert!(mc_evaluation_peak(4, 4, u64::MAX, 0, 0, 0, 200).is_err());
+        assert!(mc_evaluation_peak(4, 4, 0, 0, usize::MAX, 0, 200).is_err());
+        assert!(mc_evaluation_peak(4, 4, 0, 0, 0, usize::MAX, 200).is_err());
+        assert_eq!(
+            mc_evaluation_peak(4, 4, 0, 0, 0, 10_000, 256).unwrap(),
+            mc_evaluation_peak(4, 4, 0, 0, 0, MC_RADIUS_BATCH - 1, 256).unwrap()
         );
         assert!(check_mc_budget(1024 * 1024, Some(1)).is_ok());
         assert!(check_mc_budget(1024 * 1024 + 1, Some(1)).is_err());

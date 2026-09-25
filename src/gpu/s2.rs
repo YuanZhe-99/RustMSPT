@@ -4,6 +4,8 @@ const WORKGROUP_SIZE: u32 = crate::compute::mc_memory::MC_BLOCK_SAMPLES as u32;
 const MAX_RADII: usize = crate::compute::mc_memory::MC_RADIUS_BATCH;
 const COALESCE_FACES: usize = 8;
 const MAX_UPLOAD_RUNS: usize = 64;
+const PARAMS_BYTES: u64 = crate::compute::mc_memory::MC_PARAMS_BYTES;
+const UNCERTAIN_WORDS: usize = crate::compute::mc_memory::MC_UNCERTAIN_WORDS;
 
 // AI-FUNC-SUMMARY: Report triangle-buffer upload traffic of one MC pipeline: full and partial update counts plus byte totals.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -29,6 +31,14 @@ pub struct GpuS2Pipeline {
     out_valids_buffer: wgpu::Buffer,
     staging_hits: wgpu::Buffer,
     staging_valids: wgpu::Buffer,
+    uncertain_buffer: wgpu::Buffer,
+    uncertain_staging: wgpu::Buffer,
+    reference: super::certify::CertReference,
+    cert_stats: super::certify::GpuCertificationStats,
+    #[cfg(test)]
+    record_all: bool,
+    #[cfg(test)]
+    last_uncertain: Vec<(u32, [f32; 3], [f32; 3])>,
     #[cfg(test)]
     reference_samples: bool,
     #[cfg(test)]
@@ -71,7 +81,8 @@ fn build_triangle_buffer(mesh: &Mesh, bbox: BoundingBox) -> Vec<f32> {
 // Purpose: Pack shader parameters into a byte buffer matching the WGSL Params struct layout.
 // Inputs: triangle count, radii slice, seed, bounding box (used for normalized size), sample count per radius.
 // Returns: Vec<u8> matching the WGSL Params struct with std430 alignment. Bbox min is always (0,0,0);
-// the word after it carries radius_base, the global radius of batch slot 0.
+// the word after it carries radius_base, the global radius of batch slot 0; `tail` appends the certification
+// block (exact f32 mesh early-out bounds and flags) after the 128 radii.
 // Side effects: None.
 fn pack_params(
     num_triangles: u32,
@@ -80,8 +91,9 @@ fn pack_params(
     bbox: BoundingBox,
     samples_per_radius: u32,
     radius_base: u32,
+    tail: &[u8],
 ) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(16 + 16 + 16 + 16 + MAX_RADII * 4);
+    let mut buf = Vec::with_capacity(PARAMS_BYTES as usize);
 
     buf.extend_from_slice(&num_triangles.to_le_bytes());
     buf.extend_from_slice(&(radii.len() as u32).to_le_bytes());
@@ -112,6 +124,7 @@ fn pack_params(
             buf.extend_from_slice(&0.0f32.to_le_bytes());
         }
     }
+    buf.extend_from_slice(tail);
     buf
 }
 
@@ -278,6 +291,16 @@ impl GpuS2Pipeline {
                                 },
                                 count: None,
                             },
+                            wgpu::BindGroupLayoutEntry {
+                                binding: 4,
+                                visibility: wgpu::ShaderStages::COMPUTE,
+                                ty: wgpu::BindingType::Buffer {
+                                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                    has_dynamic_offset: false,
+                                    min_binding_size: None,
+                                },
+                                count: None,
+                            },
                         ],
                     });
 
@@ -311,7 +334,7 @@ impl GpuS2Pipeline {
 
             let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("params"),
-                size: (16 + 16 + 16 + 16 + MAX_RADII * 4) as u64,
+                size: PARAMS_BYTES,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
@@ -340,6 +363,10 @@ impl GpuS2Pipeline {
             };
             let staging_hits = staging("staging_hits");
             let staging_valids = staging("staging_valids");
+            let (uncertain_buffer, uncertain_staging) = uncertain_buffers(
+                &device,
+                crate::compute::mc_memory::MC_UNCERTAIN_INITIAL,
+            );
 
             Ok(Self {
                 device,
@@ -351,6 +378,14 @@ impl GpuS2Pipeline {
                 out_valids_buffer,
                 staging_hits,
                 staging_valids,
+                uncertain_buffer,
+                uncertain_staging,
+                reference: super::certify::CertReference::new(mesh, bbox.min),
+                cert_stats: Default::default(),
+                #[cfg(test)]
+                record_all: false,
+                #[cfg(test)]
+                last_uncertain: Vec::new(),
                 #[cfg(test)]
                 reference_samples: false,
                 #[cfg(test)]
@@ -387,6 +422,7 @@ impl GpuS2Pipeline {
             self.triangle_buffer.size(),
             self.out_hits_buffer.size(),
             self.pending_upload_bytes,
+            self.uncertain_buffer.size(),
             mesh.faces.len(),
             r_max,
             samples,
@@ -450,6 +486,7 @@ impl GpuS2Pipeline {
             self.pending_upload_bytes = pending;
             self.num_triangles = mesh.faces.len() as u32;
             self.resident = tri_data;
+            self.reference = super::certify::CertReference::new(mesh, bbox.min);
             let stats = &mut self.upload_stats;
             match &runs {
                 None => stats.full_uploads += 1,
@@ -465,6 +502,11 @@ impl GpuS2Pipeline {
     // AI-FUNC-SUMMARY: Return this pipeline's triangle upload statistics; returns a copy; side effects: None.
     pub fn upload_stats(&self) -> GpuUploadStats {
         self.upload_stats
+    }
+
+    // AI-FUNC-SUMMARY: Return cumulative f32 certification counters (valid samples evaluated, samples recomputed on the CPU, list regrowths, host time); returns a copy; side effects: None.
+    pub fn certification_stats(&self) -> super::certify::GpuCertificationStats {
+        self.cert_stats
     }
 
     // AI-FUNC-SUMMARY:
@@ -507,10 +549,16 @@ impl GpuS2Pipeline {
         });
     }
 
-    // AI-FUNC-SUMMARY: Release retained output/readback peak capacity while preserving uploaded geometry and the compiled pipeline; return any device allocation error.
+    // AI-FUNC-SUMMARY: Release retained output/readback and uncertain-list peak capacity (list back to its initial size) while preserving uploaded geometry and the compiled pipeline; return any device allocation error.
     pub fn release_output_capacity(&mut self) -> Result<(), String> {
         super::runtime::scoped(&self.device.clone(), || {
             self.resize_output_buffers(1);
+            let (buffer, staging) = uncertain_buffers(
+                &self.device,
+                crate::compute::mc_memory::MC_UNCERTAIN_INITIAL,
+            );
+            self.uncertain_buffer = buffer;
+            self.uncertain_staging = staging;
             Ok(())
         })
     }
@@ -520,7 +568,7 @@ impl GpuS2Pipeline {
     // Inputs: bounding box, r_max (inclusive), sample count per radius.
     // Returns: S2 values indexed by radius or a capacity, execution or mapping error.
     // Side effects: Dispatches GPU compute work; maps staging buffers for readback.
-    // Notes: r=0 is set to 0.0 (caller should overwrite with volume fraction). Uses f32 on GPU for positions; results are f64 on CPU.
+    // Notes: r=0 is set to 0.0 (caller should overwrite with volume fraction). Classification is f32-certified: queries the GPU cannot prove are recomputed on the CPU, see certification_stats().
     pub fn calculate_s2_gpu(
         &mut self,
         bbox: BoundingBox,
@@ -546,8 +594,10 @@ impl GpuS2Pipeline {
     // Purpose: Evaluate a fixed MC seed in radius batches and merge workgroup integer partials in u64.
     // Inputs: bounding box, inclusive r_max (any value whose logical ids fit u32), samples per radius, seed.
     // Returns: Per-radius [hits, valid] totals, or a capacity, execution or mapping error.
-    // Side effects: Grows output/staging to the largest batch, writes params and reads back once per batch.
+    // Side effects: Grows output/staging to the largest batch, writes params and reads back once per batch; re-evaluates
+    // uncertain samples with the CPU f64 predicate (regrowing and re-dispatching an overflowed list) and updates certification counters.
     // Notes: Logical sample ids are global (radius * samples + sample), so counts are identical for any batch size.
+    // Every count equals the CPU reference evaluated at the GPU's own f32 sample points in the origin-shifted frame.
     // The CPU merge touches each partial once: O((r_max + 1) * ceil(samples / 256)) additions in total.
     fn calculate_s2_gpu_counts(
         &mut self,
@@ -594,28 +644,16 @@ impl GpuS2Pipeline {
         }
         super::runtime::scoped(&self.device.clone(), || {
             self.ensure_output_capacity(output_count);
-            let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("s2_mc_bg"),
-                layout: &self.bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: self.triangle_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: self.params_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: self.out_hits_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: self.out_valids_buffer.as_entire_binding(),
-                    },
-                ],
-            });
+            #[allow(unused_mut)]
+            let mut flags = 0u32;
+            #[cfg(test)]
+            {
+                if self.record_all {
+                    flags |= 1;
+                }
+                self.last_uncertain.clear();
+            }
+            let tail = self.reference.params_tail(flags);
             #[cfg(test)]
             let mut reduce_total = std::time::Duration::ZERO;
             #[cfg(test)]
@@ -642,6 +680,7 @@ impl GpuS2Pipeline {
                     bbox,
                     samples_per_radius,
                     base as u32,
+                    &tail,
                 );
                 let pending = self
                     .pending_upload_bytes
@@ -650,37 +689,21 @@ impl GpuS2Pipeline {
                 self.queue.write_buffer(&self.params_buffer, 0, &param_data);
                 self.pending_upload_bytes = pending;
 
-                let mut encoder =
-                    self.device
-                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                            label: Some("s2_mc_encoder"),
-                        });
-                {
-                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                        label: Some("s2_mc_pass"),
-                        timestamp_writes: None,
-                    });
-                    pass.set_pipeline(&self.pipeline);
-                    pass.set_bind_group(0, &bind_group, &[]);
-                    pass.dispatch_workgroups(dispatch[0], dispatch[1], 1);
-                }
-
                 let readback_size = u64::from(batch_outputs) * 4;
-                encoder.copy_buffer_to_buffer(
-                    &self.out_hits_buffer,
-                    0,
-                    &self.staging_hits,
-                    0,
-                    readback_size,
-                );
-                encoder.copy_buffer_to_buffer(
-                    &self.out_valids_buffer,
-                    0,
-                    &self.staging_valids,
-                    0,
-                    readback_size,
-                );
-                self.queue.submit(Some(encoder.finish()));
+                let uncertain_count = loop {
+                    let count = self.dispatch_batch(dispatch, readback_size)?;
+                    let capacity =
+                        (self.uncertain_buffer.size() - 4) / (UNCERTAIN_WORDS as u64 * 4);
+                    if u64::from(count) <= capacity {
+                        break count as usize;
+                    }
+                    let bytes = crate::compute::mc_memory::mc_uncertain_bytes(count as usize);
+                    check_buffer_size(bytes, &self.device.limits())?;
+                    let (buffer, staging) = uncertain_buffers(&self.device, count as usize);
+                    self.uncertain_buffer = buffer;
+                    self.uncertain_staging = staging;
+                    self.cert_stats.list_regrowths += 1;
+                };
 
                 let hits_u32 = super::runtime::read_u32_prefix(
                     &self.device,
@@ -692,6 +715,15 @@ impl GpuS2Pipeline {
                     &self.staging_valids,
                     readback_size,
                 )?;
+                let entries = if uncertain_count > 0 {
+                    super::runtime::read_u32_prefix(
+                        &self.device,
+                        &self.uncertain_staging,
+                        crate::compute::mc_memory::mc_uncertain_bytes(uncertain_count),
+                    )?
+                } else {
+                    Vec::new()
+                };
                 self.pending_upload_bytes = 0;
                 #[cfg(test)]
                 let reduce_start = std::time::Instant::now();
@@ -709,11 +741,13 @@ impl GpuS2Pipeline {
                     let total_valid: u64 =
                         valids_u32[start..end].iter().map(|&v| v as u64).sum();
                     out[r] = [total_hits, total_valid];
+                    self.cert_stats.queries += total_valid;
                 }
                 #[cfg(test)]
                 {
                     reduce_total += reduce_start.elapsed();
                 }
+                self.resolve_uncertain(&entries, samples_per_radius, base..=last, &mut out)?;
             }
 
             #[cfg(test)]
@@ -724,6 +758,136 @@ impl GpuS2Pipeline {
             Ok(out)
         })
     }
+
+    // AI-FUNC-SUMMARY:
+    // Purpose: Run one radius batch: clear the uncertain counter, dispatch the MC kernel, copy partial counts and the whole uncertain list to staging, and read the uncertain counter.
+    // Inputs: two-dimensional dispatch, byte size of each partial-count readback.
+    // Returns: The number of uncertain samples the kernel reported (may exceed list capacity), or a mapping error.
+    // Side effects: Writes 4 bytes, submits one command buffer; hit/valid/list staging hold this batch's results.
+    fn dispatch_batch(&mut self, dispatch: [u32; 2], readback_size: u64) -> Result<u32, String> {
+        self.queue
+            .write_buffer(&self.uncertain_buffer, 0, &0u32.to_le_bytes());
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("s2_mc_bg"),
+            layout: &self.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.triangle_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.out_hits_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.out_valids_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: self.uncertain_buffer.as_entire_binding(),
+                },
+            ],
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("s2_mc_encoder"),
+            });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("s2_mc_pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(dispatch[0], dispatch[1], 1);
+        }
+        encoder.copy_buffer_to_buffer(&self.out_hits_buffer, 0, &self.staging_hits, 0, readback_size);
+        encoder.copy_buffer_to_buffer(
+            &self.out_valids_buffer,
+            0,
+            &self.staging_valids,
+            0,
+            readback_size,
+        );
+        encoder.copy_buffer_to_buffer(
+            &self.uncertain_buffer,
+            0,
+            &self.uncertain_staging,
+            0,
+            self.uncertain_buffer.size(),
+        );
+        self.queue.submit(Some(encoder.finish()));
+        Ok(super::runtime::read_u32_prefix(&self.device, &self.uncertain_staging, 4)?[0])
+    }
+
+    // AI-FUNC-SUMMARY:
+    // Purpose: Re-evaluate the batch's uncertain samples at their exact f32 GPU points with the CPU f64 predicate and add their hits.
+    // Inputs: raw list words (counter then 7-word records), samples per radius, the batch's global radii, per-radius totals.
+    // Returns: Success, or an error if a record names a radius outside the batch.
+    // Side effects: Increments hits in `out`; updates certification counters; serial by design (callers may hold a GPU mutex inside a Rayon worker).
+    fn resolve_uncertain(
+        &mut self,
+        entries: &[u32],
+        samples_per_radius: u32,
+        radii: std::ops::RangeInclusive<usize>,
+        out: &mut [[u64; 2]],
+    ) -> Result<(), String> {
+        if entries.len() <= 1 {
+            return Ok(());
+        }
+        let start = std::time::Instant::now();
+        let records: Vec<(u32, [f32; 3], [f32; 3])> = entries[1..]
+            .chunks_exact(UNCERTAIN_WORDS)
+            .map(|w| {
+                let f = |i: usize| f32::from_bits(w[i]);
+                (w[0], [f(1), f(2), f(3)], [f(4), f(5), f(6)])
+            })
+            .collect();
+        let points: Vec<[f32; 3]> = records.iter().flat_map(|(_, p, q)| [*p, *q]).collect();
+        let inside = self.reference.classify(&points);
+        for (k, (id, _, _)) in records.iter().enumerate() {
+            let r = (id / samples_per_radius) as usize;
+            if !radii.contains(&r) {
+                return Err(format!(
+                    "GPU MC uncertain record {id} lies outside radius batch {radii:?}"
+                ));
+            }
+            if inside[2 * k] && inside[2 * k + 1] {
+                out[r][0] += 1;
+            }
+        }
+        self.cert_stats.uncertain += records.len() as u64;
+        self.cert_stats.cpu_recompute_seconds += start.elapsed().as_secs_f64();
+        #[cfg(test)]
+        self.last_uncertain.extend(records);
+        Ok(())
+    }
+}
+
+// AI-FUNC-SUMMARY: Allocate an uncertain-sample list (atomic counter plus 7-word records) and its map-read staging for `entries` records; callers check limits and hold an error scope.
+fn uncertain_buffers(device: &wgpu::Device, entries: usize) -> (wgpu::Buffer, wgpu::Buffer) {
+    let size = crate::compute::mc_memory::mc_uncertain_bytes(entries.max(1));
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("s2_mc_uncertain"),
+        size,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_SRC
+            | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let staging = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("s2_mc_uncertain_staging"),
+        size,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    (buffer, staging)
 }
 
 #[cfg(test)]
@@ -1272,5 +1436,169 @@ mod batching_and_upload_tests {
             scattered[face * 9] = 1.0;
         }
         assert_eq!(changed_face_runs(&resident, &scattered), None);
+    }
+}
+
+#[cfg(test)]
+mod certification_tests {
+    use super::*;
+    use crate::geometry::point_inside_mesh;
+    use crate::gpu::certify::fixtures::{adversarial_meshes, shifted};
+    use crate::types::Vec3;
+
+    // AI-FUNC-SUMMARY: CPU f64 evaluation of the identical GPU sample points: record every valid sample's exact f32 p/q, classify both with point_inside_mesh on the origin-shifted mesh, and return per-radius [hits, valid].
+    fn cpu_counts_of_gpu_points(
+        gpu: &mut GpuS2Pipeline,
+        bbox: BoundingBox,
+        r_max: usize,
+        samples: usize,
+        seed: u32,
+    ) -> Vec<[u64; 2]> {
+        gpu.record_all = true;
+        let recorded = gpu.calculate_s2_gpu_counts(bbox, r_max, samples, seed).unwrap();
+        gpu.record_all = false;
+        let spr = samples.max(200) as u32;
+        let mut out = vec![[0u64; 2]; r_max + 1];
+        let to_vec = |p: [f32; 3]| Vec3::new(p[0] as f64, p[1] as f64, p[2] as f64);
+        for &(id, p, q) in &gpu.last_uncertain {
+            let r = (id / spr) as usize;
+            out[r][1] += 1;
+            let mesh = gpu.reference.mesh();
+            if point_inside_mesh(mesh, to_vec(p)) && point_inside_mesh(mesh, to_vec(q)) {
+                out[r][0] += 1;
+            }
+        }
+        assert_eq!(recorded, out, "record-all substitution must equal the direct CPU evaluation");
+        out
+    }
+
+    // AI-FUNC-SUMMARY: Certified GPU MC hit/valid counts equal a CPU f64 evaluation of the identical sample points for fixed seeds on adversarial meshes (coincident duplicates, sub-1e-6 slab, shared faces, faces on grid planes, ray-through-vertex/edge octahedra, tiny features) at the origin and translated by 1e9, across radius batches; the frozen uncertified shader is shown to disagree on the slab.
+    #[test]
+    fn certified_mc_counts_equal_cpu_on_same_points() {
+        if let Err(error) = super::super::context::try_init_gpu() {
+            eprintln!("SKIP: GPU device unavailable: {error:?}");
+            return;
+        }
+        let mut uncertain_total = 0u64;
+        for (name, mesh) in adversarial_meshes(0.25) {
+            for shift in [0.0, 1e9] {
+                let (mesh, bbox) = shifted(&mesh, shift);
+                let mut gpu = GpuS2Pipeline::new(&mesh, bbox).unwrap();
+                for (seed, r_max, batch) in [(7u32, 3usize, None), (0xdead_beef, 5, Some(2))] {
+                    gpu.test_radius_batch = batch;
+                    let before = gpu.certification_stats();
+                    let certified = gpu.calculate_s2_gpu_counts(bbox, r_max, 3000, seed).unwrap();
+                    let after = gpu.certification_stats();
+                    let reference = cpu_counts_of_gpu_points(&mut gpu, bbox, r_max, 3000, seed);
+                    assert_eq!(certified, reference, "{name} shift={shift} seed={seed}");
+                    uncertain_total += after.uncertain - before.uncertain;
+                    eprintln!(
+                        "MC_CERT mesh={name} shift={shift:e} seed={seed} uncertain={} valid={}",
+                        after.uncertain - before.uncertain,
+                        after.queries - before.queries
+                    );
+                    if name == "coincident_duplicates" {
+                        assert!(after.uncertain > before.uncertain);
+                    }
+                }
+                gpu.test_radius_batch = None;
+                if name == "thin_slab" && shift == 0.0 {
+                    let mut baseline = GpuS2Pipeline::new_with_shader(
+                        &mesh,
+                        bbox,
+                        include_str!("../../tests/fixtures/s2_monte_carlo_uncertified.wgsl"),
+                    )
+                    .unwrap();
+                    let raw = baseline.calculate_s2_gpu_counts(bbox, 3, 3000, 7).unwrap();
+                    let exact = cpu_counts_of_gpu_points(&mut gpu, bbox, 3, 3000, 7);
+                    eprintln!("MC_CERT uncertified thin_slab raw={raw:?} exact={exact:?}");
+                    assert_ne!(raw, exact, "the uncertified f32 dedup must be shown to fail here");
+                }
+            }
+        }
+        assert!(uncertain_total > 0);
+    }
+
+    // AI-FUNC-SUMMARY: Force an uncertain-list overflow from a one-record list; the batch is re-dispatched with a regrown list and yields the same exact counts.
+    #[test]
+    fn mc_uncertain_list_overflow_regrows() {
+        if let Err(error) = super::super::context::try_init_gpu() {
+            eprintln!("SKIP: GPU device unavailable: {error:?}");
+            return;
+        }
+        let (_, mesh) = adversarial_meshes(0.25)
+            .into_iter()
+            .find(|(name, _)| *name == "coincident_duplicates")
+            .unwrap();
+        let bbox = BoundingBox::from_size(Vec3::new(4.0, 4.0, 4.0));
+        let mut gpu = GpuS2Pipeline::new(&mesh, bbox).unwrap();
+        let expected = gpu.calculate_s2_gpu_counts(bbox, 2, 2000, 11).unwrap();
+        super::super::runtime::scoped(&gpu.device.clone(), || {
+            let (buffer, staging) = uncertain_buffers(&gpu.device, 1);
+            gpu.uncertain_buffer = buffer;
+            gpu.uncertain_staging = staging;
+            Ok(())
+        })
+        .unwrap();
+        let before = gpu.certification_stats().list_regrowths;
+        assert_eq!(gpu.calculate_s2_gpu_counts(bbox, 2, 2000, 11).unwrap(), expected);
+        assert_eq!(gpu.certification_stats().list_regrowths, before + 1);
+        gpu.release_output_capacity().unwrap();
+        assert_eq!(
+            gpu.uncertain_buffer.size(),
+            crate::compute::mc_memory::mc_uncertain_bytes(crate::compute::mc_memory::MC_UNCERTAIN_INITIAL)
+        );
+    }
+
+    // AI-FUNC-SUMMARY: Release benchmark: certified versus frozen uncertified MC on an ordinary sphere and data/input/particles.stl with identical seeds; one warmup then five alternating samples, logging seconds and recompute ratios.
+    #[test]
+    #[ignore = "release MC certification overhead benchmark"]
+    fn certification_overhead_benchmark() {
+        let sphere = crate::geometry::icosphere_mesh(Vec3::new(2.0, 2.0, 2.0), 1.3, 3);
+        let mut cases = vec![("icosphere_l3", sphere, BoundingBox::from_size(Vec3::new(4.0, 4.0, 4.0)), 16usize)];
+        if let Ok(particles) = crate::io::load_stl(std::path::Path::new("data/input/particles.stl")) {
+            let bbox = crate::geometry::mesh_bbox(&particles).unwrap();
+            cases.push(("particles", particles, bbox, 16));
+        }
+        for (name, mesh, bbox, r_max) in cases {
+            let samples = 4000;
+            let mut certified = GpuS2Pipeline::new(&mesh, bbox).expect("benchmark requires GPU");
+            let mut baseline = GpuS2Pipeline::new_with_shader(
+                &mesh,
+                bbox,
+                include_str!("../../tests/fixtures/s2_monte_carlo_uncertified.wgsl"),
+            )
+            .unwrap();
+            let run = |gpu: &mut GpuS2Pipeline, seed: u32| {
+                let start = std::time::Instant::now();
+                let counts = gpu.calculate_s2_gpu_counts(bbox, r_max, samples, seed).unwrap();
+                (start.elapsed().as_secs_f64(), counts)
+            };
+            run(&mut certified, 1);
+            run(&mut baseline, 1);
+            let warm = certified.certification_stats();
+            for sample in 0..5u32 {
+                let seed = 100 + sample;
+                let (c, b) = if sample % 2 == 0 {
+                    (run(&mut certified, seed), run(&mut baseline, seed))
+                } else {
+                    let b = run(&mut baseline, seed);
+                    (run(&mut certified, seed), b)
+                };
+                let differing = c.1.iter().zip(&b.1).filter(|(x, y)| x != y).count();
+                eprintln!(
+                    "MC_CERT_BENCH mesh={name} faces={} r_max={r_max} samples={samples} sample={sample} certified_seconds={:.6} uncertified_seconds={:.6} radii_with_different_counts={differing}",
+                    mesh.faces.len(), c.0, b.0
+                );
+            }
+            let stats = certified.certification_stats();
+            eprintln!(
+                "MC_CERT_BENCH mesh={name} runs=5 uncertain={} valid={} ratio={:.3e} cpu_recompute={:.6}s",
+                stats.uncertain - warm.uncertain,
+                stats.queries - warm.queries,
+                (stats.uncertain - warm.uncertain) as f64 / (stats.queries - warm.queries) as f64,
+                stats.cpu_recompute_seconds - warm.cpu_recompute_seconds
+            );
+        }
     }
 }

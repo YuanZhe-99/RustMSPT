@@ -241,17 +241,33 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `GpuS2Pipeline::ensure_output_capacity` | GPU | `src/gpu/s2.rs:302` | Grows the output buffers if the invocation count exceeds current capacity. |
 | `GpuS2Pipeline::calculate_s2_gpu` | GPU | `src/gpu/s2.rs` | Dispatches the Monte Carlo S2 kernel in radius batches of at most 128 and reads back results. |
 | `OffsetEntry` | GPU | `src/gpu/s2_shell.rs:6` | Packed `(radius_idx, dx, dy, dz)` shell-offset record matching the WGSL layout. |
-| `point_inside` (s2_monte_carlo.wgsl) | GPU | `src/gpu/shaders/s2_monte_carlo.wgsl:85` | Classify ray parity with overflow recovery. |
-| `point_inside_overflow` (s2_monte_carlo.wgsl) | GPU | `src/gpu/shaders/s2_monte_carlo.wgsl:62` | Classify ray parity with overflow recovery. |
-| `point_inside` (voxelize.wgsl) | GPU | `src/gpu/shaders/voxelize.wgsl:63` | Classify ray parity with overflow recovery. |
-| `point_inside_overflow` (voxelize.wgsl) | GPU | `src/gpu/shaders/voxelize.wgsl:40` | Classify ray parity with overflow recovery. |
+| `point_inside` (s2_monte_carlo.wgsl) | GPU | `src/gpu/shaders/s2_monte_carlo.wgsl` | Certified parity returning 0/1/uncertain (exact bbox early-out, proven-distinct hits). |
+| `point_inside_overflow` (s2_monte_carlo.wgsl) | GPU | `src/gpu/shaders/s2_monte_carlo.wgsl` | Certified >64-hit recovery proving every gap exceeds the CPU dedup band. |
+| `point_inside` (voxelize.wgsl) | GPU | `src/gpu/shaders/voxelize.wgsl` | Certified parity returning 0/1/uncertain (exact bbox early-out, proven-distinct hits). |
+| `point_inside_overflow` (voxelize.wgsl) | GPU | `src/gpu/shaders/voxelize.wgsl` | Certified >64-hit recovery proving every gap exceeds the CPU dedup band. |
+| `cert_ray_triangle` / `cert_triangle` / `cert_ge` / `cert_ratio_err` / `max3` (MC and voxel shaders) | GPU | `src/gpu/shaders/*.wgsl` | Moller-Trumbore with forward error bounds deciding each CPU threshold as true/false/unknown. |
+| `record_uncertain` (s2_monte_carlo.wgsl) | GPU | `src/gpu/shaders/s2_monte_carlo.wgsl` | Append (logical id, exact p, exact q) to the uncertain list. |
+| `GpuCertificationStats` (+ `recompute_ratio`, `describe`, `accumulate`) | GPU | `src/gpu/certify.rs` | Cumulative certification counters and CPU recompute ratio. |
+| `CertReference` (+ `new`, `params_tail`, `classify`) | GPU | `src/gpu/certify.rs` | Origin-shifted f64 CPU reference and exact f32 early-out bounds. |
+| `f32_at_least` / `f32_at_most` | GPU | `src/gpu/certify.rs` | Directed f64-to-f32 rounding. |
+| `GpuS2Pipeline::certification_stats` | GPU | `src/gpu/s2.rs` | Cumulative MC certification counters. |
+| `GpuS2Pipeline::dispatch_batch` | GPU | `src/gpu/s2.rs` | Dispatch one radius batch and read the uncertain counter. |
+| `GpuS2Pipeline::resolve_uncertain` | GPU | `src/gpu/s2.rs` | CPU re-evaluation of uncertain samples at exact GPU points. |
+| `uncertain_buffers` (s2.rs) | GPU | `src/gpu/s2.rs` | Allocate the MC uncertain list and staging. |
+| `GpuVoxelPipeline::certification_stats` | GPU | `src/gpu/voxel.rs` | Cumulative voxel certification counters. |
+| `GpuVoxelPipeline::dispatch_voxels` | GPU | `src/gpu/voxel.rs` | Dispatch voxelization (and reducer) and read the uncertain counter. |
+| `GpuVoxelPipeline::new_with_shader` | GPU | `src/gpu/voxel.rs` | Construct from supplied WGSL. |
+| `voxel_center` / `voxel_uncertain_buffers` / `occupancy_usage` | GPU | `src/gpu/voxel.rs` | Exact f32 cell center, voxel list allocation, patchable occupancy usage. |
+| `mc_uncertain_bytes` | Compute | `src/compute/mc_memory.rs` | MC uncertain-list bytes. |
+| `voxel_uncertain_entries` / `exact_cert_bytes` | Compute | `src/compute/exact_memory.rs` | Planned voxel uncertain-list capacity and logical bytes. |
+| `OptimizeS2::gpu_certification_summary` | Pipeline | `src/pipeline/optimize_execution.rs` | Describe the shared GPU MC certification counters. |
 | `GpuShellS2Pipeline` | GPU | `src/gpu/s2_shell.rs:13` | GPU pipeline state for exact shell-pair S2 computation. |
 | `build_offset_buffer` | GPU | `src/gpu/s2_shell.rs:30` | Converts `(radius_idx, [dx,dy,dz])` tuples into `OffsetEntry` records. |
 | `GpuShellS2Pipeline::new` | GPU | `src/gpu/s2_shell.rs:48` | Initializes the wgpu device and shell S2 compute pipeline. |
 | `GpuShellS2Pipeline::compute_s2_shell` | GPU | `src/gpu/s2_shell.rs:181` | Dispatches exact shell-pair counting over an occupancy grid and reads back S2(r). |
 | `GpuVoxelPipeline` | GPU | `src/gpu/voxel.rs:5` | GPU pipeline state for mesh voxelization. |
 | `build_triangle_buffer` (voxel.rs) | GPU | `src/gpu/voxel.rs:17` | Builds a normalized `f32` triangle position buffer for the voxelization pipeline (separate copy from `s2.rs`). |
-| `pack_params` (voxel.rs) | GPU | `src/gpu/voxel.rs:32` | Serialize the 48-byte voxel parameters with the ray at byte 32. |
+| `pack_params` (voxel.rs) | GPU | `src/gpu/voxel.rs` | Serialize the 80-byte voxel parameters: ray at byte 32, certification tail from byte 48. |
 | `GpuVoxelPipeline::new` | GPU | `src/gpu/voxel.rs:57` | Initializes the wgpu device and voxelization compute pipeline. |
 | `GpuVoxelPipeline::voxelize` | GPU | `src/gpu/voxel.rs:168` | Dispatches ray-casting voxelization and reads back the occupancy grid. |
 | `GpuVolumeTransformPipeline` | GPU | `src/gpu/volume_transform.rs:5` | GPU pipeline state for volume rotate-and-crop. |

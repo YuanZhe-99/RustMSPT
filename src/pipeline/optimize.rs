@@ -989,6 +989,9 @@ impl OptimizePipeline {
         fs::write(&history_path, history_log.join("\n"))?;
         timer.stage("write_history");
 
+        if let Some(summary) = evaluator.gpu_certification_summary() {
+            println!("[Info] Optimize GPU mesh_mc {summary}");
+        }
         println!("[Info] Optimization completed.");
         println!("[Info] Best loss: {best_loss:.6}");
         println!("[Info] Final volume: {:.6}", mesh_volume(&best_mesh_oriented));

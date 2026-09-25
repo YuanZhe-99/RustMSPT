@@ -1,4 +1,5 @@
 mod runtime;
+pub mod certify;
 pub mod context;
 pub mod render;
 pub mod s2;
@@ -12,6 +13,7 @@ pub use context::{
     shared_gpu_device, try_init_gpu, GpuContext, SharedGpuDevice,
 };
 pub use render::GpuRenderPipeline;
+pub use certify::GpuCertificationStats;
 pub use s2::{GpuS2Pipeline, GpuUploadStats};
 pub use s2_shell::GpuShellS2Pipeline;
 pub use scene_render::{GpuClipPlane, GpuSceneOptions, GpuScenePipeline};

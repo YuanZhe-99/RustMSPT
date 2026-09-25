@@ -447,7 +447,7 @@
 
 `configured_mode(&AccelerationConfig) -> Result<AccelerationMode>` 一次读取严格的 cpu/gpu/auto 环境覆盖，不探测 GPU。`resolve_execution(config, requested, workload, threshold, supports_gpu, estimated_gpu_bytes) -> Result<BackendSelection>` 先处理 CPU/小 auto，再检查方法支持、实现的选项和任务估算字节/MB 预算，最后探测 GPU。未支持选项明确报错；禁止回退时 GPU 失败返回错误。估算不等于驱动实际显存。Measure 已采用此方法感知策略，其余管线继续迁移。
 
-新建的驻留 GPU exact 求值在后端选择和执行中共用 ExactMemoryPlan。设 T=max(36×faces,4)、M=4×cells、B 为批次部分结果槽数，保守逻辑峰值为 2T+M+128+80B，计入待完成三角/offset 上传和批次增长时同时存在的新旧缓冲；128 字节覆盖固定参数/计数/占位资源。B 从 200000 按 MiB 预算缩小，至少 1；最小批次仍超限则在设备初始化前拒绝，由调用方执行配置的回退策略。该模型不含驱动/编译器内部资源和 CPU 内存，仅适用于新建生产 direct-shell exact 求值，不声称覆盖实验 tiled/reduced 或任意已有高水位管线。旧 exact 网格硬限制仍独立存在。
+新建的驻留 GPU exact 求值在后端选择和执行中共用 ExactMemoryPlan。设 T=max(36×faces,4)、M=4×cells、B 为批次部分结果槽数，保守逻辑峰值为 2T+M+128+C+80B（C = `exact_cert_bytes(cells)`，即体素认证列表、其 staging 与参数尾部），计入待完成三角/offset 上传和批次增长时同时存在的新旧缓冲；128 字节覆盖固定参数/计数/占位资源。B 从 200000 按 MiB 预算缩小，至少 1；最小批次仍超限则在设备初始化前拒绝，由调用方执行配置的回退策略。该模型不含驱动/编译器内部资源和 CPU 内存，仅适用于新建生产 direct-shell exact 求值，不声称覆盖实验 tiled/reduced 或任意已有高水位管线。旧 exact 网格硬限制仍独立存在。
 
 | Symbol | Source | Contract |
 |---|---|---|

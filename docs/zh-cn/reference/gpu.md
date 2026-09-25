@@ -30,17 +30,30 @@
 | `GpuS2Pipeline::ensure_output_capacity` | `src/gpu/s2.rs:302` | 若调用次数超出当前容量，则扩容输出缓冲区。 |
 | `GpuS2Pipeline::calculate_s2_gpu` | `src/gpu/s2.rs:351` | 针对所有半径分派蒙特卡洛 S2 内核并回读结果。 |
 | `OffsetEntry` | `src/gpu/s2_shell.rs:6` | 与 WGSL 布局匹配的打包 `(radius_idx, dx, dy, dz)` 壳层偏移记录。 |
-| `point_inside` (s2_monte_carlo.wgsl) | `src/gpu/shaders/s2_monte_carlo.wgsl:85` | 计算射线奇偶性并完整恢复溢出命中。 |
-| `point_inside_overflow` (s2_monte_carlo.wgsl) | `src/gpu/shaders/s2_monte_carlo.wgsl:62` | 计算射线奇偶性并完整恢复溢出命中。 |
-| `point_inside` (voxelize.wgsl) | `src/gpu/shaders/voxelize.wgsl:63` | 计算射线奇偶性并完整恢复溢出命中。 |
-| `point_inside_overflow` (voxelize.wgsl) | `src/gpu/shaders/voxelize.wgsl:40` | 计算射线奇偶性并完整恢复溢出命中。 |
+| `point_inside` (s2_monte_carlo.wgsl) | `src/gpu/shaders/s2_monte_carlo.wgsl` | 认证奇偶性：精确 bbox 排除、认证命中、证明互异的 64 命中路径；返回 0/1/不确定。 |
+| `point_inside_overflow` (s2_monte_carlo.wgsl) | `src/gpu/shaders/s2_monte_carlo.wgsl` | 认证的超 64 命中恢复，证明每个相邻间隔超过 CPU 去重带。 |
+| `point_inside` (voxelize.wgsl) | `src/gpu/shaders/voxelize.wgsl` | 认证奇偶性：精确 bbox 排除、认证命中、证明互异的 64 命中路径；返回 0/1/不确定。 |
+| `point_inside_overflow` (voxelize.wgsl) | `src/gpu/shaders/voxelize.wgsl` | 认证的超 64 命中恢复，证明每个相邻间隔超过 CPU 去重带。 |
+| `cert_ray_triangle` / `cert_triangle` / `cert_ge` / `cert_ratio_err` / `max3`（两个着色器） | `src/gpu/shaders/*.wgsl` | 带前向误差界的 Moller-Trumbore，将每个 CPU 阈值判为真/假/未知。 |
+| `record_uncertain` (s2_monte_carlo.wgsl) | `src/gpu/shaders/s2_monte_carlo.wgsl` | 将（逻辑 id、精确 p、精确 q）追加到不确定列表。 |
+| `GpuCertificationStats`（含 `recompute_ratio`、`describe`、`accumulate`） | `src/gpu/certify.rs` | 累计认证计数与 CPU 重算比例。 |
+| `CertReference`（含 `new`、`params_tail`、`classify`、仅测试的 `mesh`） | `src/gpu/certify.rs` | 原点平移的 f64 CPU 参考与精确 f32 提前排除界。 |
+| `f32_at_least` / `f32_at_most` | `src/gpu/certify.rs` | 定向 f64→f32 舍入，使 f32 比较等价于 f64 比较。 |
+| `GpuS2Pipeline::certification_stats` | `src/gpu/s2.rs` | MC 累计认证计数。 |
+| `GpuS2Pipeline::dispatch_batch` | `src/gpu/s2.rs` | 清零不确定计数器、dispatch 一个半径批次、复制结果与列表并读取计数器。 |
+| `GpuS2Pipeline::resolve_uncertain` | `src/gpu/s2.rs` | 在精确 GPU 点上用 CPU 判定重算不确定样本。 |
+| `uncertain_buffers` (s2.rs) | `src/gpu/s2.rs` | 分配 MC 不确定列表及 staging。 |
+| `GpuVoxelPipeline::certification_stats` | `src/gpu/voxel.rs` | 体素累计认证计数。 |
+| `GpuVoxelPipeline::dispatch_voxels` | `src/gpu/voxel.rs` | 清零计数器、dispatch 体素化（及归约）、复制结果与列表并读取计数器。 |
+| `GpuVoxelPipeline::new_with_shader` | `src/gpu/voxel.rs` | 由给定 WGSL 构造（测试传入冻结的未认证基线）。 |
+| `voxel_center` / `voxel_uncertain_buffers` / `occupancy_usage` | `src/gpu/voxel.rs` | 精确 f32 单元中心、不确定列表分配、可修补占据场用途。 |
 | `GpuShellS2Pipeline` | `src/gpu/s2_shell.rs:13` | 精确壳层对 S2 计算的 GPU 流水线状态。 |
 | `build_offset_buffer` | `src/gpu/s2_shell.rs:30` | 将 `(radius_idx, [dx,dy,dz])` 元组转换为 `OffsetEntry` 记录。 |
 | `GpuShellS2Pipeline::new` | `src/gpu/s2_shell.rs:48` | 初始化 wgpu 设备与壳层 S2 计算流水线。 |
 | `GpuShellS2Pipeline::compute_s2_shell` | `src/gpu/s2_shell.rs:181` | 在占据网格上分派精确壳层对计数并回读 S2(r)。 |
 | `GpuVoxelPipeline` | `src/gpu/voxel.rs:5` | 网格体素化的 GPU 流水线状态。 |
 | `build_triangle_buffer`（voxel.rs） | `src/gpu/voxel.rs:17` | 为体素化流水线构建归一化的 `f32` 三角形位置缓冲区（与 `s2.rs` 中的实现相互独立）。 |
-| `pack_params`（voxel.rs） | `src/gpu/voxel.rs:32` | 序列化 48 字节参数，射线方向从字节 32 开始。 |
+| `pack_params`（voxel.rs） | `src/gpu/voxel.rs` | 序列化 80 字节参数：射线方向从字节 32 开始，认证尾部从字节 48 开始。 |
 | `GpuVoxelPipeline::new` | `src/gpu/voxel.rs:57` | 初始化 wgpu 设备与体素化计算流水线。 |
 | `GpuVoxelPipeline::voxelize` | `src/gpu/voxel.rs:168` | 分派光线投射体素化并回读占据网格。 |
 | `GpuVolumeTransformPipeline` | `src/gpu/volume_transform.rs:5` | 体数据旋转裁剪的 GPU 流水线状态。 |
@@ -244,8 +257,9 @@ MC bbox 尺寸转为 f32 后必须有限且为正。这里检查设备限制，�
 
 `s2_monte_carlo.wgsl` 和 `voxelize.wgsl` 分别实现以下私有函数：
 
-- `point_inside(point: vec3<f32>) -> bool`：保留排序 64 次命中的快速路径。在**第 65 次正向三角形命中**时，对原射线调用 `point_inside_overflow`。容量计数包含重复三角形命中。
-- `point_inside_overflow(point: vec3<f32>, dir: vec3<f32>) -> bool`：逐轮扫描全部三角形，寻找比上一个保留交点远超过 `1e-6` 的最近正向交点（首轮接受任意正向交点），统计保留交点的奇偶性。辅助空间为常数，无写入或 CPU 读回；扫描轮数最多为三角形数量，找不到下一个交点时提前结束。
+- `point_inside(point: vec3<f32>) -> u32`：返回 0（外）、1（内）或 `CERT_UNKNOWN`（2）。先做精确 f32 网格 bbox 排除，再逐三角形认证命中（`cert_triangle`）；任一三角形不确定则查询不确定。保留排序 64 次命中的快速路径，并要求排序后每个相邻间隔超过 `1e-8 + 2 max(err_t) + u t`。在**第 65 次确定命中**时调用 `point_inside_overflow`。容量计数包含重复三角形命中。
+- `point_inside_overflow(point, dir, pm) -> u32`：一轮计算最大命中距离误差界；之后每步选择上一个之后的最近命中，并统计其去重带内的命中数，多于一个即不确定。辅助空间为常数，工作量 O(T x U)。
+- `cert_ray_triangle(o, d, a, b, c, pm) -> CertHit {t, err, state}`：采用 CPU 阈值与前向误差界的 Moller-Trumbore；先用无除法分子测试排除近平行远处三角形。误差界推导见算法文档“GPU 射线奇偶性的 f32 认证”。
 
 去重规则与 GPU 快速路径相同：比较的是上一个**保留**距离，而非上一个原始距离。CPU 的 `1e-8` 容差和 f64 判定仍有区别。
 恢复不丢弃、不重抽 MC 样本，MC 的 bbox 预筛仍保留。T 个三角形、U 个不同正向命中的恢复成本为 O(T×U)，最坏 O(T²)；复杂场景可能明显变慢。这是正确性恢复，不代表通用 GPU 提速，也未解决设备或 map 错误。
@@ -399,7 +413,7 @@ pub struct GpuVoxelPipeline {
 #### pack_params（voxel.rs）
 
 - **签名：** `fn pack_params(num_triangles: u32, nx: u32, ny: u32, nz: u32, pitch: f32) -> Vec<u8>`
-- **用途：** 序列化 48 字节 WGSL 存储布局：三角形数量位于字节 0，尺寸位于 4/8/12，pitch 位于 16，20/24/28 为零填充，射线方向位于 32/36/40，44 为尾部填充。
+- **用途：** 序列化 48 字节 WGSL 存储布局：三角形数量位于字节 0，尺寸位于 4/8/12，pitch 位于 16，20/24/28 为零填充，射线方向位于 32/36/40，44 为填充，随后是 32 字节认证尾部：`mesh_lo` 位于 48/52/56，`flags` 位于 60，`mesh_hi` 位于 64/68/72，76 为填充（共 80 字节）。
 - **返回值及副作用：** 参数字节，无副作用。完整写入 `RAY_DIR_GPU` 的三个分量，符合 WGSL `vec3` 的 16 字节对齐。
 
 #### GpuVoxelPipeline::new
@@ -411,7 +425,7 @@ pub struct GpuVoxelPipeline {
 - **用途：** 初始化 wgpu，编译 `voxelize.wgsl` 计算流水线，并为给定网格上传归一化三角形数据。
 - **参数：** `mesh: &Mesh`、`bbox: BoundingBox` —— 待体素化的网格及其包围盒（用于归一化）。
 - **返回值：** `Ok(GpuVoxelPipeline)` 或适配器/设备失败时的 `Err(String)`。
-- **副作用：** 阻塞的 wgpu 适配器/设备请求（默认电源偏好，不使用 `RUSTMSPT_GPU_DEVICE` 过滤）、着色器编译、绑定组/流水线布局创建、三角形缓冲区分配加上传、参数缓冲区分配（48 字节），以及一个最小的 4 字节占位占据缓冲区（在首次 `voxelize` 调用时增长）。
+- **副作用：** 阻塞的 wgpu 适配器/设备请求（默认电源偏好，不使用 `RUSTMSPT_GPU_DEVICE` 过滤）、着色器编译、绑定组/流水线布局创建、三角形缓冲区分配加上传、参数缓冲区分配（80 字节）、初始 1024 条不确定单元列表及其 staging、原点平移的 f64 `CertReference`，以及一个最小的 4 字节占位占据缓冲区（在首次 `voxelize` 调用时增长）。
 - **说明：** 与 `GpuShellS2Pipeline::new` 一样，此构造函数不遵循 `RUSTMSPT_GPU_DEVICE`。
 
 #### GpuVoxelPipeline::voxelize
@@ -599,7 +613,7 @@ checked planner 按可见三角形每面 120、启用 segment 每条 64、marker
 
 ### Optimize MC 显存预算
 
-优化器的共享 GPU MC 管线以空几何启动，各阶段上传实际求值网格。mc_evaluation_peak 保守计算 triangle、四个 output/readback、576 字节参数缓冲、待执行队列上传以及本次几何/参数上传；增长时计入旧容量加新容量。启动按输入面数和最大配置阶段样本数检查，每次求值在同一 GPU mutex 内重新检查实际保留容量后才上传。因此更大的参考网格或保留峰值也可能触发原有同方法 CPU 回退或严格阶段错误。待上传字节仅在成功回读后清零。驱动内部及 CPU 网格/读回向量不属于逻辑 GPU 预算；分批和自动缩容仍待完成，release_output_capacity 提供显式释放。本节取代早先“显式预算始终回退”的说明。
+优化器的共享 GPU MC 管线以空几何启动，各阶段上传实际求值网格。mc_evaluation_peak 保守计算 triangle、四个 output/readback、608 字节参数缓冲、不确定样本列表及其 staging、待执行队列上传以及本次几何/参数上传；增长时计入旧容量加新容量。启动按输入面数和最大配置阶段样本数检查，每次求值在同一 GPU mutex 内重新检查实际保留容量后才上传。因此更大的参考网格或保留峰值也可能触发原有同方法 CPU 回退或严格阶段错误。待上传字节仅在成功回读后清零。驱动内部及 CPU 网格/读回向量不属于逻辑 GPU 预算；分批和自动缩容仍待完成，release_output_capacity 提供显式释放。本节取代早先“显式预算始终回退”的说明。
 
 | `mc_evaluation_peak` | `src/compute/mc_memory.rs:4` | Check logical MC peak including retained capacity and pending uploads. |
 
@@ -683,6 +697,32 @@ wgpu 24 中一个 `Adapter` 只能创建一个逻辑设备，因此缓存位于�
 `GpuVoxelPipeline::shared_device()` 与 `GpuShellS2Pipeline::with_device(Arc<SharedGpuDevice>)` 取代原 `device_queue()`/`with_device(device, queue)`。`release_shared_gpu_devices()` 清空缓存；CLI 在子命令返回后调用，使逻辑设备仍在进程退出前销毁。`try_init_gpu` 现在探测共享设备，不再每次创建并丢弃设备；`request_adapter_device` 已删除。
 
 测试：`context::tests::pipeline_cache_reuses_success_and_never_caches_failure` 与单测试集成二进制 `tests/gpu_device_cache_tests.rs`（各类构造器重复四轮并 8 线程并发：1 个设备、6 次编译；无效选择器两次报错且不创建设备；`destroy` 后剔除、仅重建一个设备并各族重编译一次）。
+
+### f32 射线奇偶性认证（PERF-05）
+
+设计与误差界推导见 `algorithms/s2-two-point-correlation.md` 的“GPU 射线奇偶性的 f32 认证”。函数契约：
+
+| 函数 | 源码 | 契约 |
+|---|---|---|
+| `GpuCertificationStats { queries, uncertain, list_regrowths, cpu_recompute_seconds }` | `src/gpu/certify.rs` | 每个管线的累计计数。MC 查询 = 有效样本；体素查询 = 单元。`recompute_ratio()` = uncertain/queries（无查询时为 0），`describe()` 生成一行日志，`accumulate(&other)` 累加计数。以 `rustmspt::gpu::GpuCertificationStats` 重新导出。 |
+| `f32_at_least(x: f64) -> f32` / `f32_at_most(x: f64) -> f32` | `src/gpu/certify.rs` | 不小于 x 的最小 f32 / 不大于 x 的最大 f32。对 f32 点 p，`p < f32_at_least(L)` 当且仅当 `p < L`，`p > f32_at_most(H)` 当且仅当 `p > H`。 |
+| `CertReference::new(mesh, origin)` | `src/gpu/certify.rs` | 在 f64 中将每个顶点平移 `origin`；`mesh_lo`/`mesh_hi` 为 CPU 的 `bb.min - 1e-9`/`bb.max + 1e-9` 向外舍入到 f32（空网格为 +inf/-inf）。 |
+| `CertReference::params_tail(flags) -> Vec<u8>` | `src/gpu/certify.rs` | 32 字节 WGSL 尾部：`mesh_lo`、`flags`（位 0 = 记录全部有效 MC 样本，仅测试）、`mesh_hi`、填充。 |
+| `CertReference::classify(points) -> Vec<bool>` | `src/gpu/certify.rs` | 在平移坐标系中对精确 f32 点做 CPU f64 判定，串行；少于 16 点用 `point_inside_mesh`，否则用预处理 BVH 查询。 |
+| `GpuS2Pipeline::certification_stats()` | `src/gpu/s2.rs` | MC 计数副本。 |
+| `GpuS2Pipeline::dispatch_batch(dispatch, readback) -> Result<u32, String>` | `src/gpu/s2.rs` | 清零列表计数器、dispatch 一个半径批次、复制 hit/valid 部分和及整条列表到 staging，返回报告的不确定数（可能超过容量）。 |
+| `GpuS2Pipeline::resolve_uncertain(entries, spr, radii, out)` | `src/gpu/s2.rs` | 解码 7 字记录、判定 p 与 q，二者都在内时为半径 `id / spr` 加一次命中；记录不在批次内则报错。更新计数。 |
+| `uncertain_buffers(device, entries)` | `src/gpu/s2.rs` | 分配 `4 + 28*entries` 字节的列表（STORAGE/COPY_SRC/COPY_DST）与可映射 staging。 |
+| `GpuVoxelPipeline::certification_stats()` | `src/gpu/voxel.rs` | 体素计数副本。 |
+| `GpuVoxelPipeline::dispatch_voxels(dispatch, bytes, count_only) -> Result<u32, String>` | `src/gpu/voxel.rs` | 清零计数器、dispatch 体素化与（计数模式）归约、复制结果和列表，返回报告的不确定数。 |
+| `GpuVoxelPipeline::voxelize_impl`（已修改） | `src/gpu/voxel.rs` | 将列表预设为 `voxel_uncertain_entries(cells)`，溢出时扩容并重新 dispatch，判定不确定中心，加入完整结果或计数，并把在内单元写 `1` 到驻留占据场。 |
+| `GpuVoxelPipeline::new_with_shader(mesh, bbox, source)` | `src/gpu/voxel.rs` | 共享构造函数；`new` 传入认证着色器。 |
+| `voxel_center(i, pitch) -> f32` | `src/gpu/voxel.rs` | `(i as f32 + 0.5) * pitch`，与着色器逐位一致。 |
+| `voxel_uncertain_buffers(device, entries)` / `occupancy_usage()` | `src/gpu/voxel.rs` | `4 + 4*entries` 字节的体素列表/staging；占据场用途新增 `COPY_DST` 以便修补。 |
+| `mc_uncertain_bytes(entries)` / `MC_UNCERTAIN_INITIAL` / `MC_PARAMS_BYTES` | `src/compute/mc_memory.rs` | MC 列表字节（初始 1024 条）、608 字节参数。`mc_evaluation_peak` 新增 `uncertain_capacity` 参数。 |
+| `voxel_uncertain_entries(cells)` / `exact_cert_bytes(cells)` | `src/compute/exact_memory.rs` | 规划体素列表 `max(1024, cells/64)` 及其逻辑字节（列表 + staging + 2×32 字节参数尾部）。 |
+
+`release_output_capacity`（MC）与 `release_grid_capacity`（体素）也会把不确定列表缩回初始大小。测试：`gpu::s2::certification_tests`（对抗性样例在原点与 1e9 偏移、两个 seed、分批半径下，MC 计数等于对相同 GPU 点的 CPU 求值；强制列表溢出）与 `gpu::voxel::certification_tests`（占据、计数和驻留场逐单元等于 CPU 参考；两种模式下强制溢出）；二者均断言冻结的未认证着色器（`tests/fixtures/*_uncertified.wgsl`）在 3e-7 薄板上出错。两个模块中被忽略的 release 基准 `certification_overhead_benchmark` 比较认证与未认证运行。
 
 ### MC 半径分批（PERF-05/08）
 

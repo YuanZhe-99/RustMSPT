@@ -183,4 +183,5 @@ fn optimize_one_mib_gpu_budget_executes() {
     assert!(history.contains("method=mesh_mc"));
     assert!(history.contains("Final Best S2:"));
     assert!(dir.path().join("output.stl").exists());
+    assert!(text.contains("Optimize GPU mesh_mc f32 certification:"), "{text}");
 }

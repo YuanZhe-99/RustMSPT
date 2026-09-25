@@ -202,7 +202,7 @@ Tests of already-shipped pipelines do not imply hardware GPU performance validat
 
 ### Optimize MC memory budget
 
-The optimizer starts its shared GPU MC pipeline with empty geometry; each stage uploads the mesh it actually evaluates. `mc_evaluation_peak` bounds the triangle buffer, four output/readback buffers, 576-byte parameter storage, pending queue uploads and the next mesh/parameter uploads. Growth conservatively counts old plus new allocations. Startup uses the input face count and maximum configured stage sample count; every actual evaluation rechecks current retained capacities under the same GPU mutex before upload. A larger reference mesh or retained high-water capacity can therefore trigger the existing same-method fallback (or a stage-labelled strict error). Pending upload bytes reset only after successful readback. Driver internals and CPU mesh/readback vectors are outside this logical GPU budget. Batch splitting/automatic high-water trimming remain separate work; `release_output_capacity` provides explicit release.
+The optimizer starts its shared GPU MC pipeline with empty geometry; each stage uploads the mesh it actually evaluates. `mc_evaluation_peak` bounds the triangle buffer, four output/readback buffers, 608-byte parameter storage, the uncertain-sample list and its staging, pending queue uploads and the next mesh/parameter uploads. Growth conservatively counts old plus new allocations. Startup uses the input face count and maximum configured stage sample count; every actual evaluation rechecks current retained capacities under the same GPU mutex before upload. A larger reference mesh or retained high-water capacity can therefore trigger the existing same-method fallback (or a stage-labelled strict error). Pending upload bytes reset only after successful readback. Driver internals and CPU mesh/readback vectors are outside this logical GPU budget. Batch splitting/automatic high-water trimming remain separate work; `release_output_capacity` provides explicit release.
 
 ### Immutable migration snapshots
 
@@ -225,3 +225,7 @@ Mesh-MC islands now cache each particle’s connected-component clipped-volume c
 ### Grid statistics and query counters (PERF-13 observability)
 
 At the end of each island `run_sa_island` prints `SpatialGrid::stats()` as `[GridStats] optimize island=<id> buckets=..` and `[GridStats] optimize island=<id> queries grid_queries=.. grid_candidates=.. bbox_rejects=.. narrow_phase=.. distance_checks=..`, counting candidate and ghost queries, bbox rejections, exact overlap tests and exact distance tests in the serial collision loop. The counters are plain local integers incremented beside the existing branches; no decision, RNG draw or history entry changes.
+
+### GPU MC certification summary
+
+`OptimizeS2::gpu_certification_summary() -> Option<String>` (`src/pipeline/optimize_execution.rs`) briefly locks the shared GPU MC mutex and describes its cumulative `GpuCertificationStats` (valid samples, samples recomputed on the CPU, ratio). It returns `None` on CPU or after a fallback removed the GPU instance. `OptimizePipeline::run` prints it as `[Info] Optimize GPU mesh_mc f32 certification: ...` before `Optimization completed.`

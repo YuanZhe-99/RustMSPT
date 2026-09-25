@@ -210,3 +210,7 @@ mesh-MC 岛现以 IslandVolumes 缓存每粒子连通分量的域内体积。可
 每个岛结束时，`run_sa_island` 打印 `SpatialGrid::stats()`（`[GridStats] optimize island=<id> buckets=..`）以及 `[GridStats] optimize island=<id> queries grid_queries=.. grid_candidates=.. bbox_rejects=.. narrow_phase=.. distance_checks=..`，统计串行碰撞循环中的候选与 ghost 查询、包围盒拒绝、精确重叠测试和精确距离测试。计数是紧挨现有分支递增的局部整数；不改变任何决策、RNG 抽样或历史记录。
 
 **GPU 局部上传（PERF-10）。** GPU MC 三角形上传现在将新的合并网格与驻留缓冲的主机影子副本逐位比较，只写入发生变化的面区间（移动一个粒子即只上传该粒子的面）；三角形数量变化、缓冲扩容、区间超过 64 段或变化面超过一半时回退为整体写入；`GpuS2Pipeline::upload_stats` 记录字节数。体素占据仍为整体更新。
+
+### GPU MC 认证摘要
+
+`OptimizeS2::gpu_certification_summary() -> Option<String>`（`src/pipeline/optimize_execution.rs`）短暂锁定共享 GPU MC mutex，描述其累计 `GpuCertificationStats`（有效样本、CPU 重算样本数、比例）。CPU 执行或回退已移除 GPU 实例时返回 `None`。`OptimizePipeline::run` 在 `Optimization completed.` 之前打印 `[Info] Optimize GPU mesh_mc f32 certification: ...`。
