@@ -11,6 +11,7 @@ use crate::geometry::{VoidIndex, VoidVolumeMethod};
 use crate::io::{load_stl, save_stl, sha256_file};
 use crate::pipeline::placement_feasibility::{
     check_placement, Candidate, FeasibilityContext, PlacedParticle, RejectReason,
+    PAIR_PARALLEL_MIN,
 };
 use crate::pipeline::placement_library::{load_shape_library, ShapeLibrary};
 use crate::pipeline::placement_outputs::*;
@@ -513,6 +514,7 @@ fn try_place_one(
             neighbourhood_band: (config.position.mode == PositionMode::VoidNeighbourhood)
                 .then_some(config.position.band)
                 .flatten(),
+            pair_parallel_min: PAIR_PARALLEL_MIN,
         };
         // The full volume is exact from the source shell: scaling by s multiplies
         // volume by s^3. Summing the transformed mesh's tetrahedra on every

@@ -15,6 +15,9 @@ This page documents `src/geometry/metrics.rs` (mesh manifold validation and volu
 | `ray_intersects_triangle` | `src/geometry/s2.rs:26` | Möller–Trumbore ray-triangle intersection test. |
 | `point_inside_mesh` | `src/geometry/s2.rs:63` | Ray-casting point-in-mesh containment test (odd-hit rule). |
 | `build_bbox_occupancy` | `src/geometry/s2.rs:112` | Parallel voxelization of a mesh into a boolean occupancy grid. |
+| `part_voxel_ranges` | `src/geometry/s2.rs` | Prepared query and clamped voxel range per connected component; the single definition shared by full and incremental voxelization. |
+| `particle_voxel_coverage` | `src/geometry/s2.rs` | Voxel indices whose centres lie inside one particle, once per containing component, in component/x/y/z order. |
+| `VoxelCoverage` | `src/geometry/s2.rs` | Per-voxel coverage counts (number of components containing the centre) with matching occupancy (count > 0); replace re-queries only the moved particle, restore rolls back without queries. Equals VoxelS2::new on the merged mesh exactly. |
 | `shell_offsets_for_distance` | `src/geometry/s2.rs:184` | Enumerates integer voxel offsets lying within a spherical shell annulus. |
 | `fill_missing_s2_with_smooth_interpolation` | `src/geometry/s2.rs:217` | Fills unsupported S2 radii via linear or cubic-spline interpolation. |
 | `fft_index_3d` | `src/geometry/s2.rs:328` | Converts a 3D FFT-grid index to a flat index (identical logic to `index_3d_to_flat`). |

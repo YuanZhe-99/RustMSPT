@@ -114,6 +114,14 @@
 | `ray_intersects_triangle` | Geometry — Analysis | `src/geometry/s2.rs:26` | Möller–Trumbore 光线-三角形相交测试。 |
 | `point_inside_mesh` | Geometry — Analysis | `src/geometry/s2.rs:63` | 光线投射的点-网格包含测试（奇数命中规则）。 |
 | `build_bbox_occupancy` | Geometry — Analysis | `src/geometry/s2.rs:112` | 将网格并行体素化为一个布尔占用网格。 |
+| `occupancy_dims` | Geometry — Analysis | `src/geometry/s2.rs` | 给定域和体素尺寸的占据网格维度。 |
+| `part_voxel_ranges` | Geometry — Analysis | `src/geometry/s2.rs` | 每个连通分量的预备查询及截断后的体素范围；全量与增量体素化共用。 |
+| `particle_voxel_coverage` | Geometry — Analysis | `src/geometry/s2.rs` | 体素中心位于某颗粒内部的扁平索引，每个包含它的连通分量各记一次。 |
+| `VoxelCoverage` | Geometry — Analysis | `src/geometry/s2.rs` | SA 用的逐体素覆盖计数及对应占据场；计数 > 0 即占据。 |
+| `VoxelCoverage::new` | Geometry — Analysis | `src/geometry/s2.rs` | 为整个粒子群建立计数；网格等于对合并网格调用 VoxelS2::new。 |
+| `VoxelCoverage::replace` | Geometry — Analysis | `src/geometry/s2.rs` | 只重新查询被移动的颗粒，替换其列表并返回旧列表用于回滚。 |
+| `VoxelCoverage::restore` | Geometry — Analysis | `src/geometry/s2.rs` | 拒绝后恢复旧列表，不做包含查询。 |
+| `VoxelCoverage::grid` | Geometry — Analysis | `src/geometry/s2.rs` | 以可求值的 VoxelS2 借出维护中的占据场。 |
 | `shell_offsets_for_distance` | Geometry — Analysis | `src/geometry/s2.rs:184` | 枚举位于一个球壳环带内的整数体素偏移量。 |
 | `fill_missing_s2_with_smooth_interpolation` | Geometry — Analysis | `src/geometry/s2.rs:217` | 通过线性或三次样条插值填补不受支持的 S2 半径值。 |
 | `fft_index_3d` | Geometry — Analysis | `src/geometry/s2.rs:328` | 将三维 FFT 网格索引转换为扁平索引（与 `index_3d_to_flat` 逻辑相同）。 |
@@ -417,6 +425,10 @@
 | `Candidate` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:132` | 候选放置，附带已预先算好的廉价量。 |
 | `Accepted` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:146` | 通过检查过程中顺带算出的结果。 |
 | `check_placement` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:171` | 按序运行全部可行性规则，返回拦下它的那一条。 |
+| `PAIR_PARALLEL_MIN` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:15` | 需要精确距离的颗粒对达到该数量时，placement 并行计算这些距离；经端到端测量默认为 usize::MAX（串行）。 |
+| `pair_needs_exact_test` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs` | 中心球与包围盒测试，决定邻居是否需要精确颗粒对测试。 |
+| `first_pair_rejection` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs` | 串行相交/嵌套扫描，再对首个失败之前的颗粒对有序并行计算距离；返回值与串行完全一致。 |
+| `solid_pair_rejection` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs` | 单个候选-邻居对的相交检查，其后是嵌套检查。 |
 | `retained_depth` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:382` | 跨界颗粒仍伸入域内的深度。 |
 | `ToolRecord` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:15` | 记录与报告中出现的构建身份。 |
 | `StopReason` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:53` | 运行可用的四词固定停止原因词表。 |
@@ -923,6 +935,11 @@
 | `IslandVolumes::replace` | `src/pipeline/optimize_volume.rs:33` | Update one particle and return prior entries for rollback. |
 | `IslandVolumes::restore` | `src/pipeline/optimize_volume.rs:41` | Restore entries after rejection. |
 | `IslandVolumes::fraction` | `src/pipeline/optimize_volume.rs:46` | Sum cached scalars in merged component order, then clamp. |
+| `OptimizeS2::voxel_coverage` | `src/pipeline/optimize_execution.rs` | 为 voxel 方法按解析后的 pitch 建立岛内增量覆盖；mesh MC 返回 None。 |
+| `OptimizeS2::evaluate_voxel_grid` | `src/pipeline/optimize_execution.rs` | 在维护的网格上计算固定的 voxel S2 定义；mesh MC 报错。 |
+| `INCREMENTAL_VOXEL_OCCUPANCY` | `src/pipeline/optimize_execution.rs` | 启用 SA 增量体素占据（默认开启；按构造精确）。 |
+| `island_s2` | `src/pipeline/optimize.rs` | SA 阶段求值：有覆盖时用覆盖，否则用合并网格及可选缓存 VF。 |
+| `COVERAGE_REFRESH_INTERVAL` | `src/pipeline/optimize.rs` | 两次完整重建覆盖之间的候选求值次数（64）。 |
 | `OptimizeS2::evaluate_with_vf` | `src/pipeline/optimize_execution.rs:242` | Evaluate mesh MC with optional validated VF; reject geometric cache for voxel methods. |
 | `calculate_s2_mesh_mc_seeded_with_vf` | `src/geometry/s2.rs:765` | Preserve fixed-seed mesh MC samples while using caller-provided VF. |
 
