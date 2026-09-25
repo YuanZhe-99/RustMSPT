@@ -103,27 +103,29 @@ pub fn point_inside_mesh(mesh: &Mesh, point: Vec3) -> bool {
     unique_hits % 2 == 1
 }
 
-// AI-FUNC-SUMMARY:
-// Purpose: Voxelize a mesh inside a bounding box by ray-casting point containment tests.
-// Inputs: mesh, bounding box, voxel pitch.
-// Returns: Tuple of (occupancy boolean grid, [nx, ny, nz] grid dimensions).
-// Side effects: None.
-// Notes: Parallel x-slabs reuse scratch and prepared per-granule BVHs; voxel ranges are clamped to the domain.
-fn build_bbox_occupancy(mesh: &Mesh, bbox: BoundingBox, voxel_pitch: f64) -> (Vec<bool>, [usize; 3]) {
-    let size = bbox.size();
-    let nx = ((size.x / voxel_pitch).ceil() as usize).max(1);
-    let ny = ((size.y / voxel_pitch).ceil() as usize).max(1);
-    let nz = ((size.z / voxel_pitch).ceil() as usize).max(1);
-    let mut occ = vec![false; nx * ny * nz];
+type PartVoxelRange<'a> = (PreparedMeshQuery<'a>, usize, usize, usize, usize, usize, usize);
 
-    let parts = split_mesh_into_granules(mesh);
-    let source_parts: Vec<&Mesh> = if parts.is_empty() {
-        vec![mesh]
-    } else {
-        parts.iter().collect()
-    };
+// AI-FUNC-SUMMARY: Grid dimensions of the occupancy lattice for a domain and pitch; returns [nx, ny, nz], each at least 1; side effects: none.
+fn occupancy_dims(bbox: BoundingBox, voxel_pitch: f64) -> [usize; 3] {
+    let size = bbox.size();
+    [
+        ((size.x / voxel_pitch).ceil() as usize).max(1),
+        ((size.y / voxel_pitch).ceil() as usize).max(1),
+        ((size.z / voxel_pitch).ceil() as usize).max(1),
+    ]
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Prepare each connected component of a mesh with its clamped voxel index range.
+// Inputs: the component meshes (or the whole mesh when splitting found none), the domain, pitch and grid dimensions.
+// Returns: one prepared query per component whose range is non-empty, in component order.
+// Side effects: None.
+// Notes: The single definition of which voxel centres a component is asked about, shared by full
+// voxelization and by the incremental coverage counts so both use exactly the same predicate.
+fn part_voxel_ranges<'a>(parts: &[&'a Mesh], bbox: BoundingBox, voxel_pitch: f64, dims: [usize; 3]) -> Vec<PartVoxelRange<'a>> {
+    let [nx, ny, nz] = dims;
     let mut part_ranges = Vec::new();
-    for p in source_parts {
+    for p in parts {
         let Some(pb) = mesh_bbox(p) else {
             continue;
         };
@@ -140,11 +142,37 @@ fn build_bbox_occupancy(mesh: &Mesh, bbox: BoundingBox, voxel_pitch: f64) -> (Ve
             part_ranges.push((PreparedMeshQuery::new(p), x0, x1, y0, y1, z0, z1));
         }
     }
+    part_ranges
+}
+
+// AI-FUNC-SUMMARY: Voxel centre coordinate along one axis; returns the world coordinate of index i; side effects: none.
+fn voxel_centre(min: f64, i: usize, voxel_pitch: f64) -> f64 {
+    min + (i as f64 + 0.5) * voxel_pitch
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Voxelize a mesh inside a bounding box by ray-casting point containment tests.
+// Inputs: mesh, bounding box, voxel pitch.
+// Returns: Tuple of (occupancy boolean grid, [nx, ny, nz] grid dimensions).
+// Side effects: None.
+// Notes: Parallel x-slabs reuse scratch and prepared per-granule BVHs; voxel ranges are clamped to the domain.
+fn build_bbox_occupancy(mesh: &Mesh, bbox: BoundingBox, voxel_pitch: f64) -> (Vec<bool>, [usize; 3]) {
+    let dims = occupancy_dims(bbox, voxel_pitch);
+    let [nx, ny, nz] = dims;
+    let mut occ = vec![false; nx * ny * nz];
+
+    let parts = split_mesh_into_granules(mesh);
+    let source_parts: Vec<&Mesh> = if parts.is_empty() {
+        vec![mesh]
+    } else {
+        parts.iter().collect()
+    };
+    let part_ranges = part_voxel_ranges(&source_parts, bbox, voxel_pitch, dims);
 
     occ.par_chunks_mut(ny * nz)
         .enumerate()
         .for_each_init(MeshQueryScratch::default, |scratch, (x, slab)| {
-            let cx = bbox.min.x + (x as f64 + 0.5) * voxel_pitch;
+            let cx = voxel_centre(bbox.min.x, x, voxel_pitch);
 
             for (p, x0, x1, y0, y1, z0, z1) in &part_ranges {
                 if x < *x0 || x >= *x1 {
@@ -152,18 +180,14 @@ fn build_bbox_occupancy(mesh: &Mesh, bbox: BoundingBox, voxel_pitch: f64) -> (Ve
                 }
 
                 for y in *y0..*y1 {
-                    let cy = bbox.min.y + (y as f64 + 0.5) * voxel_pitch;
+                    let cy = voxel_centre(bbox.min.y, y, voxel_pitch);
                     for z in *z0..*z1 {
                         let idx = y * nz + z;
                         if slab[idx] {
                             continue;
                         }
 
-                        let center = Vec3::new(
-                            cx,
-                            cy,
-                            bbox.min.z + (z as f64 + 0.5) * voxel_pitch,
-                        );
+                        let center = Vec3::new(cx, cy, voxel_centre(bbox.min.z, z, voxel_pitch));
                         if p.contains_point(center, scratch) {
                             slab[idx] = true;
                         }
@@ -172,7 +196,117 @@ fn build_bbox_occupancy(mesh: &Mesh, bbox: BoundingBox, voxel_pitch: f64) -> (Ve
             }
         });
 
-    (occ, [nx, ny, nz])
+    (occ, dims)
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: List the voxels whose centres lie inside one particle, once per connected component containing them.
+// Inputs: the particle mesh, the domain, pitch and grid dimensions.
+// Returns: flat voxel indices in component, x, y, z order; a voxel inside two components appears twice.
+// Side effects: None.
+// Notes: Uses part_voxel_ranges and the same prepared containment test and voxel centres as
+// build_bbox_occupancy, so the union over particles of these lists is exactly the full occupancy.
+// Parallel over x columns with an indexed collect, so the list order is independent of worker count.
+fn particle_voxel_coverage(mesh: &Mesh, bbox: BoundingBox, voxel_pitch: f64, dims: [usize; 3]) -> Vec<usize> {
+    let [_, ny, nz] = dims;
+    let parts = split_mesh_into_granules(mesh);
+    let source_parts: Vec<&Mesh> = if parts.is_empty() {
+        vec![mesh]
+    } else {
+        parts.iter().collect()
+    };
+    let part_ranges = part_voxel_ranges(&source_parts, bbox, voxel_pitch, dims);
+    let mut covered = Vec::new();
+    for (p, x0, x1, y0, y1, z0, z1) in &part_ranges {
+        let columns: Vec<Vec<usize>> = (*x0..*x1)
+            .into_par_iter()
+            .map_init(MeshQueryScratch::default, |scratch, x| {
+                let cx = voxel_centre(bbox.min.x, x, voxel_pitch);
+                let mut hits = Vec::new();
+                for y in *y0..*y1 {
+                    let cy = voxel_centre(bbox.min.y, y, voxel_pitch);
+                    for z in *z0..*z1 {
+                        let center = Vec3::new(cx, cy, voxel_centre(bbox.min.z, z, voxel_pitch));
+                        if p.contains_point(center, scratch) {
+                            hits.push(index_3d_to_flat(x, y, z, ny, nz));
+                        }
+                    }
+                }
+                hits
+            })
+            .collect();
+        covered.extend(columns.into_iter().flatten());
+    }
+    covered
+}
+
+/// Per-voxel coverage counts for a population of particles, kept in step with rigid moves.
+///
+/// A voxel's count is the number of particle components whose solid contains its centre, and it
+/// is occupied exactly when that count is positive. Moving one particle subtracts its old list
+/// and adds its new one, so a voxel another particle still covers is never cleared.
+pub(crate) struct VoxelCoverage {
+    counts: Vec<u32>,
+    covered: Vec<Vec<usize>>,
+    grid: VoxelS2,
+    bbox: BoundingBox,
+}
+
+impl VoxelCoverage {
+    // AI-FUNC-SUMMARY: Build coverage counts and the matching occupancy for every particle in order; returns the coverage; side effects: parallel containment queries.
+    // Notes: Uses the same pitch floor and dimensions as VoxelS2::new, so grid() equals VoxelS2::new over the merged population.
+    pub(crate) fn new<'a>(meshes: impl Iterator<Item = &'a Mesh>, bbox: BoundingBox, pitch: f64) -> Self {
+        let pitch = pitch.max(1e-9);
+        let dims = occupancy_dims(bbox, pitch);
+        let total = dims[0] * dims[1] * dims[2];
+        let mut counts = vec![0u32; total];
+        let mut covered = Vec::new();
+        for mesh in meshes {
+            let list = particle_voxel_coverage(mesh, bbox, pitch, dims);
+            for &i in &list {
+                counts[i] += 1;
+            }
+            covered.push(list);
+        }
+        let occupancy = counts.iter().map(|&c| c > 0).collect();
+        Self {
+            counts,
+            covered,
+            grid: VoxelS2 { occupancy, dims, pitch },
+            bbox,
+        }
+    }
+
+    // AI-FUNC-SUMMARY: Swap one particle's coverage list for a new one, updating counts and occupancy only where they change; returns the previous list; side effects: mutates counts, occupancy and the stored list.
+    fn apply(&mut self, index: usize, list: Vec<usize>) -> Vec<usize> {
+        let old = std::mem::replace(&mut self.covered[index], list);
+        for &i in &old {
+            self.counts[i] -= 1;
+        }
+        for &i in &self.covered[index] {
+            self.counts[i] += 1;
+        }
+        for &i in old.iter().chain(self.covered[index].iter()) {
+            self.grid.occupancy[i] = self.counts[i] > 0;
+        }
+        old
+    }
+
+    // AI-FUNC-SUMMARY: Re-query one moved particle and replace its coverage; returns its previous list for an exact rollback; side effects: parallel containment queries over that particle's components only.
+    pub(crate) fn replace(&mut self, index: usize, mesh: &Mesh) -> Vec<usize> {
+        let list = particle_voxel_coverage(mesh, self.bbox, self.grid.pitch, self.grid.dims);
+        self.apply(index, list)
+    }
+
+    // AI-FUNC-SUMMARY: Restore a list returned by replace after a rejected move, with no containment queries; returns nothing; side effects: mutates counts and occupancy.
+    pub(crate) fn restore(&mut self, index: usize, old: Vec<usize>) {
+        self.apply(index, old);
+    }
+
+    // AI-FUNC-SUMMARY: The current occupancy as an evaluable grid; returns a borrowed VoxelS2; side effects: none.
+    pub(crate) fn grid(&self) -> &VoxelS2 {
+        &self.grid
+    }
 }
 
 // AI-FUNC-SUMMARY:
@@ -1662,4 +1796,178 @@ mod shell_iterator_tests {
         }
     }
 
+}
+
+#[cfg(test)]
+mod voxel_coverage_tests {
+    use super::*;
+    use crate::geometry::{icosphere_mesh, merge_meshes, translate_mesh};
+    use rand::SeedableRng;
+    use std::time::Instant;
+
+    // AI-FUNC-SUMMARY: Assert incremental occupancy equals a fresh full voxelization of the merged population; returns nothing; side effects: panics with the step label on mismatch.
+    fn assert_matches_full(coverage: &VoxelCoverage, parts: &[Mesh], bbox: BoundingBox, pitch: f64, label: &str) {
+        let full = VoxelS2::new(&merge_meshes(parts), bbox, pitch);
+        assert_eq!(coverage.grid().dims, full.dims, "{label}: dims");
+        let differing = coverage
+            .grid()
+            .occupancy
+            .iter()
+            .zip(&full.occupancy)
+            .filter(|(a, b)| a != b)
+            .count();
+        assert_eq!(differing, 0, "{label}: {differing} voxels differ from full voxelization");
+    }
+
+    // AI-FUNC-SUMMARY: Oracle over accepted/rejected moves, overlapping particles, domain-crossing moves, a two-component particle, periodic refresh, removal and migration; asserts occupancy and exact S2 equal full re-voxelization at every step; no file output.
+    #[test]
+    fn incremental_coverage_matches_full_voxelization() {
+        let bbox = BoundingBox {
+            min: Vec3::new(0.0, 0.0, 0.0),
+            max: Vec3::new(12.0, 10.0, 9.0),
+        };
+        let pitch = 0.5;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(20260925);
+        let mut parts: Vec<Mesh> = (0..7)
+            .map(|i| {
+                icosphere_mesh(
+                    Vec3::new(2.0 + 1.3 * i as f64, 2.0 + 0.9 * (i % 3) as f64, 3.0 + 0.7 * (i % 2) as f64),
+                    0.8 + 0.25 * (i % 4) as f64,
+                    2,
+                )
+            })
+            .collect();
+        let far = icosphere_mesh(Vec3::new(9.0, 7.0, 6.0), 0.9, 2);
+        parts[3] = merge_meshes(&[parts[3].clone(), far]);
+        let nested = icosphere_mesh(Vec3::new(2.0, 2.0, 3.0), 0.3, 1);
+        parts.push(nested);
+        let mut coverage = VoxelCoverage::new(parts.iter(), bbox, pitch);
+        assert_matches_full(&coverage, &parts, bbox, pitch, "initial");
+        let mut crossed = 0usize;
+        for step in 0..240 {
+            let index = rng.gen_range(0..parts.len());
+            let original = parts[index].clone();
+            let reach = if step % 5 == 0 { 6.0 } else { 1.2 };
+            let shift = Vec3::new(
+                rng.gen_range(-reach..reach),
+                rng.gen_range(-reach..reach),
+                rng.gen_range(-reach..reach),
+            );
+            translate_mesh(&mut parts[index], shift);
+            if let Some(b) = mesh_bbox(&parts[index]) {
+                if b.min.x < bbox.min.x || b.max.x > bbox.max.x || b.min.z < bbox.min.z || b.max.z > bbox.max.z {
+                    crossed += 1;
+                }
+            }
+            let old = coverage.replace(index, &parts[index]);
+            assert_matches_full(&coverage, &parts, bbox, pitch, &format!("step {step} candidate"));
+            if step % 64 == 63 {
+                coverage = VoxelCoverage::new(parts.iter(), bbox, pitch);
+                assert_matches_full(&coverage, &parts, bbox, pitch, &format!("step {step} refresh"));
+            }
+            if rng.gen_bool(0.4) {
+                parts[index] = original;
+                coverage.restore(index, old);
+                assert_matches_full(&coverage, &parts, bbox, pitch, &format!("step {step} rejected"));
+            }
+            if step % 40 == 0 {
+                let full = VoxelS2::new(&merge_meshes(&parts), bbox, pitch);
+                assert_eq!(
+                    coverage.grid().calculate_exact_with(6, ExactCpuMethod::Direct),
+                    full.calculate_exact_with(6, ExactCpuMethod::Direct),
+                    "step {step}: exact S2"
+                );
+            }
+        }
+        assert!(crossed > 20, "only {crossed} boundary-crossing moves");
+        parts.remove(2);
+        coverage = VoxelCoverage::new(parts.iter(), bbox, pitch);
+        assert_matches_full(&coverage, &parts, bbox, pitch, "after removal");
+        let migrated: Vec<Mesh> = parts.iter().rev().take(4).cloned().collect();
+        coverage = VoxelCoverage::new(migrated.iter(), bbox, pitch);
+        assert_matches_full(&coverage, &migrated, bbox, pitch, "after migration");
+        let empty: Vec<Mesh> = Vec::new();
+        coverage = VoxelCoverage::new(empty.iter(), bbox, pitch);
+        assert!(coverage.grid().occupancy.iter().all(|&v| !v));
+    }
+
+    // AI-FUNC-SUMMARY: Release timing of one SA step's occupancy update (replace, and replace plus restore) against full voxelization of the merged population at realistic grid sizes; prints medians of 5 after 1 warmup; no file output.
+    #[test]
+    #[ignore = "release incremental occupancy benchmark"]
+    fn incremental_coverage_benchmark() {
+        for (side, particles, radius, pitch) in [(32.0, 60usize, 2.2, 0.5), (64.0, 120, 3.5, 0.5), (64.0, 400, 2.4, 0.5), (100.0, 300, 4.0, 1.0)] {
+            let bbox = BoundingBox {
+                min: Vec3::new(0.0, 0.0, 0.0),
+                max: Vec3::new(side, side, side),
+            };
+            let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+            let mut parts: Vec<Mesh> = (0..particles)
+                .map(|_| {
+                    icosphere_mesh(
+                        Vec3::new(rng.gen_range(0.0..side), rng.gen_range(0.0..side), rng.gen_range(0.0..side)),
+                        radius * rng.gen_range(0.7..1.3),
+                        3,
+                    )
+                })
+                .collect();
+            let mut coverage = VoxelCoverage::new(parts.iter(), bbox, pitch);
+            let occupied = coverage.grid().occupancy.iter().filter(|&&v| v).count();
+            let total = coverage.grid().occupancy.len();
+            let moves: Vec<(usize, Vec3)> = (0..20)
+                .map(|_| (rng.gen_range(0..particles), Vec3::new(rng.gen_range(-1.0..1.0), rng.gen_range(-1.0..1.0), rng.gen_range(-1.0..1.0))))
+                .collect();
+            let mut full_samples = Vec::new();
+            let mut inc_samples = Vec::new();
+            let mut rollback_samples = Vec::new();
+            for round in 0..6 {
+                let t = Instant::now();
+                for (index, shift) in &moves {
+                    translate_mesh(&mut parts[*index], *shift);
+                    let grid = VoxelS2::new(&merge_meshes(&parts), bbox, pitch);
+                    std::hint::black_box(&grid);
+                    translate_mesh(&mut parts[*index], shift.scale(-1.0));
+                }
+                let full = t.elapsed().as_secs_f64() / moves.len() as f64;
+                let t = Instant::now();
+                for (index, shift) in &moves {
+                    translate_mesh(&mut parts[*index], *shift);
+                    let old = coverage.replace(*index, &parts[*index]);
+                    std::hint::black_box(coverage.grid());
+                    translate_mesh(&mut parts[*index], shift.scale(-1.0));
+                    let _ = coverage.replace(*index, &parts[*index]);
+                    drop(old);
+                }
+                let incremental = t.elapsed().as_secs_f64() / moves.len() as f64 / 2.0;
+                let t = Instant::now();
+                for (index, shift) in &moves {
+                    translate_mesh(&mut parts[*index], *shift);
+                    let old = coverage.replace(*index, &parts[*index]);
+                    translate_mesh(&mut parts[*index], shift.scale(-1.0));
+                    coverage.restore(*index, old);
+                }
+                let replace_restore = t.elapsed().as_secs_f64() / moves.len() as f64;
+                if round > 0 {
+                    full_samples.push(full);
+                    inc_samples.push(incremental);
+                    rollback_samples.push(replace_restore);
+                }
+            }
+            for v in [&mut full_samples, &mut inc_samples, &mut rollback_samples] {
+                v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            }
+            println!(
+                "grid {total} voxels ({:.3} occupied), {particles} particles, threads {}: full voxelization {:.6e} s, incremental replace {:.6e} s, replace+restore {:.6e} s, full/replace {:.1}x",
+                occupied as f64 / total as f64,
+                rayon::current_num_threads(),
+                full_samples[2],
+                inc_samples[2],
+                rollback_samples[2],
+                full_samples[2] / inc_samples[2]
+            );
+            assert_eq!(
+                coverage.grid().occupancy,
+                VoxelS2::new(&merge_meshes(&parts), bbox, pitch).occupancy
+            );
+        }
+    }
 }

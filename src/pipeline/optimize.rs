@@ -9,6 +9,7 @@ use crate::geometry::{
     orient_components_to_positive_volume, rotate_mesh_around_center, split_mesh_into_granules,
     to_parry_trimesh, vec_norm, volume_fraction_of_meshes_in_bbox, wrap_mesh_centroid_to_box,
 };
+use crate::geometry::s2::VoxelCoverage;
 use crate::geometry::spatial::{SpatialGrid, estimate_cell_size};
 use crate::io::{load_folder_stls, load_stl, save_stl};
 use crate::pipeline::rotation::{parse_rotation_mode, sample_rotation_axis, RotationMode};
@@ -70,6 +71,28 @@ fn prepare_particle(mesh: crate::types::Mesh) -> ParticlePrepared {
     let bbox = mesh_bbox(&mesh);
     let shape = to_parry_trimesh(&mesh);
     ParticlePrepared { mesh, bbox, shape }
+}
+
+/// Candidate evaluations between full rebuilds of the incremental voxel coverage. The counts are
+/// integers and exact, so the rebuild guards against a future bookkeeping error rather than drift.
+const COVERAGE_REFRESH_INTERVAL: usize = 64;
+
+// AI-FUNC-SUMMARY: Evaluate one SA stage from the island's maintained state: voxel coverage when present, otherwise the merged mesh with the optional cached mesh-MC VF; returns S2 or the evaluator's error; side effects: those of the evaluator.
+#[allow(clippy::too_many_arguments)]
+fn island_s2(
+    evaluator: &OptimizeS2,
+    merged: &crate::types::Mesh,
+    bbox: BoundingBox,
+    r_max: usize,
+    samples: usize,
+    stage: &'static str,
+    volumes: Option<&IslandVolumes>,
+    coverage: Option<&VoxelCoverage>,
+) -> Result<Vec<f64>> {
+    match coverage {
+        Some(cache) => evaluator.evaluate_voxel_grid(cache.grid(), r_max, samples, stage),
+        None => evaluator.evaluate_with_vf(merged, bbox, r_max, samples, stage, volumes.map(IslandVolumes::fraction)),
+    }
 }
 
 // AI-FUNC-SUMMARY: Merge prepared particles once without temporary mesh clones, returning stable vertex ranges for rigid candidate updates; rebuild after population migration.
@@ -306,7 +329,7 @@ fn selective_prune_to_target_vf(
 // Inputs: island_id, num_islands, initial prepared particles, target S2, optimization params, box bounds, boundary mode/params, rotation mode, fixed S2 evaluator, optional global best for migration, migration interval, and mutable history log.
 // Returns: IslandResult with best particles, loss, S2, and timing, or a propagated evaluator error.
 // Side effects: Mutates history_log; prints progress and, at the end, one [GridStats] occupancy line plus grid-query/bbox-reject/narrow-phase/distance counters (observation only, no RNG or decision change); exchanges coherent geometry/loss/S2 snapshots through global_best; evaluates all stages with the run-wide evaluator in the installed pool.
-// Notes: Three move types (60% local translate+rotate, 30% move toward neighbor, 10% random reposition). Updates only moved-particle grid cells after acceptance; migration rebuilds the grid. Adaptive temperature adjusts within acceptance window.
+// Notes: Three move types (60% local translate+rotate, 30% move toward neighbor, 10% random reposition). Updates only moved-particle grid cells after acceptance; migration rebuilds the grid. Adaptive temperature adjusts within acceptance window. Voxel methods keep island-local coverage counts (VoxelCoverage): a candidate re-queries only the moved particle, rejection restores its old list, migration and every 64th update rebuild; mesh MC keeps IslandVolumes.
 #[allow(clippy::too_many_arguments)]
 fn run_sa_island(
     island_id: usize,
@@ -349,7 +372,9 @@ fn run_sa_island(
     let (mut merged, mut vertex_ranges) = merge_prepared_particles(&prepared);
     let mut volumes = (evaluator.method == S2Method::MeshMc).then(|| IslandVolumes::new(prepared.iter().map(|p| &p.mesh), box_bounds));
     let mut volume_updates = 0usize;
-    let mut current_s2 = evaluator.evaluate_with_vf(&merged, box_bounds, params.r_max, params.mc_samples.max(2000), "initial", volumes.as_ref().map(IslandVolumes::fraction))?;
+    let mut coverage = evaluator.voxel_coverage(prepared.iter().map(|p| &p.mesh), box_bounds);
+    let mut coverage_updates = 0usize;
+    let mut current_s2 = island_s2(evaluator, &merged, box_bounds, params.r_max, params.mc_samples.max(2000), "initial", volumes.as_ref(), coverage.as_ref())?;
     let mut current_loss = l2_norm(&current_s2, target);
     push_history_s2(history_log, "Post-Pruning S2", &current_s2);
     history_log.push(format!("Post-Pruning Loss: {current_loss:.6}"));
@@ -675,7 +700,14 @@ fn run_sa_island(
                 volumes = Some(IslandVolumes::new(prepared.iter().map(|p| &p.mesh), box_bounds));
             }
         }
-        let candidate_s2 = evaluator.evaluate_with_vf(&merged, box_bounds, params.r_max, iter_samples, "candidate", volumes.as_ref().map(IslandVolumes::fraction))?;
+        let old_coverage = coverage.as_mut().map(|cache| cache.replace(idx, &prepared[idx].mesh));
+        if coverage.is_some() {
+            coverage_updates += 1;
+            if coverage_updates.is_multiple_of(COVERAGE_REFRESH_INTERVAL) {
+                coverage = evaluator.voxel_coverage(prepared.iter().map(|p| &p.mesh), box_bounds);
+            }
+        }
+        let candidate_s2 = island_s2(evaluator, &merged, box_bounds, params.r_max, iter_samples, "candidate", volumes.as_ref(), coverage.as_ref())?;
         s2_time += s2_start.elapsed();
         let candidate_loss = l2_norm(&candidate_s2, target);
         let delta = candidate_loss - current_loss;
@@ -705,6 +737,7 @@ fn run_sa_island(
             }
         } else {
             if let (Some(cache), Some(old)) = (&mut volumes, old_volume) { cache.restore(idx, old); }
+            if let (Some(cache), Some(old)) = (&mut coverage, old_coverage) { cache.restore(idx, old); }
             prepared[idx] = original;
             merged.vertices[vertex_ranges[idx].clone()].copy_from_slice(&prepared[idx].mesh.vertices);
         }
@@ -737,7 +770,9 @@ fn run_sa_island(
                     grid = SpatialGrid::build(&bboxes_for_rebuild, box_bounds, cell_size);
                     volumes = (evaluator.method == S2Method::MeshMc).then(|| IslandVolumes::new(prepared.iter().map(|p| &p.mesh), box_bounds));
                     volume_updates = 0;
-                    current_s2 = evaluator.evaluate_with_vf(&merged, box_bounds, params.r_max, params.mc_samples.max(2000), "migration", volumes.as_ref().map(IslandVolumes::fraction))?;
+                    coverage = evaluator.voxel_coverage(prepared.iter().map(|p| &p.mesh), box_bounds);
+                    coverage_updates = 0;
+                    current_s2 = island_s2(evaluator, &merged, box_bounds, params.r_max, params.mc_samples.max(2000), "migration", volumes.as_ref(), coverage.as_ref())?;
                     current_loss = l2_norm(&current_s2, target);
                     history_log.push(format!(
                         "Island {island_id} Iter {iter}: migrated best loss {:.6}", best.loss

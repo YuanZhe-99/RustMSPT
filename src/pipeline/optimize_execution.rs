@@ -3,6 +3,7 @@ use crate::compute::policy::{select_backend, BackendSelection, FallbackReason};
 use crate::config::OptimizationParams;
 use crate::error::{Result, RustMsptError};
 use crate::geometry::calculate_s2;
+use crate::geometry::s2::{VoxelCoverage, VoxelS2};
 use crate::types::{BoundingBox, Mesh};
 use rayon::prelude::*;
 #[cfg(any(feature = "gpu", test))]
@@ -131,6 +132,12 @@ fn select_s2_backend(
     }
     Ok(selection)
 }
+
+/// Maintain voxel occupancy incrementally (per-voxel coverage counts) during SA for voxel methods
+/// instead of re-voxelizing the merged population for every candidate. Exact by construction and
+/// pinned by `incremental_coverage_matches_full_voxelization`; switch it off to fall back to full
+/// voxelization.
+pub(super) const INCREMENTAL_VOXEL_OCCUPANCY: bool = true;
 
 pub(super) struct OptimizeS2 {
     pub(super) method: S2Method,
@@ -287,6 +294,32 @@ impl OptimizeS2 {
             } else {
                 "monte_carlo"
             },
+            samples,
+        ))
+    }
+
+    // AI-FUNC-SUMMARY: Build island-local incremental voxel coverage when the fixed method is voxel based and the incremental path is enabled; returns None for mesh MC or when disabled; side effects: parallel containment queries.
+    // Notes: Uses the evaluator's resolved pitch, so coverage.grid() is the same grid calculate_s2 would voxelize from the merged mesh.
+    pub(super) fn voxel_coverage<'a>(&self, meshes: impl Iterator<Item = &'a Mesh>, bbox: BoundingBox) -> Option<VoxelCoverage> {
+        (INCREMENTAL_VOXEL_OCCUPANCY && self.method != S2Method::MeshMc)
+            .then(|| VoxelCoverage::new(meshes, bbox, self.pitch))
+    }
+
+    // AI-FUNC-SUMMARY: Evaluate the fixed voxel S2 definition on an already maintained occupancy grid; returns S2 or InvalidConfig for mesh MC; records the test-only execution observation.
+    // Notes: Equivalent to calculate_s2 on the merged mesh with the same pitch and method, minus the voxelization.
+    pub(super) fn evaluate_voxel_grid(&self, grid: &VoxelS2, r_max: usize, samples: usize, _stage: &'static str) -> Result<Vec<f64>> {
+        if self.method == S2Method::MeshMc {
+            return Err(RustMsptError::InvalidConfig("incremental voxel occupancy cannot evaluate mesh_mc S2".into()));
+        }
+        #[cfg(test)]
+        self.observations.lock().unwrap().push((
+            _stage,
+            rayon::current_num_threads(),
+            rayon::current_thread_index(),
+        ));
+        Ok(grid.calculate(
+            r_max,
+            if self.method == S2Method::VoxelExact { "exact" } else { "monte_carlo" },
             samples,
         ))
     }
@@ -455,6 +488,40 @@ mod tests {
             ))
             .is_err()
         );
+    }
+
+    // AI-FUNC-SUMMARY: Verify the incremental voxel path gives the same exact S2 as full voxelization of the merged mesh for the resolved pitch (including the exact pitch<=0 fallback), and that mesh MC never builds coverage; no file output.
+    #[test]
+    fn incremental_voxel_grid_matches_merged_evaluation() {
+        let bbox = BoundingBox::from_size(Vec3::new(6.0, 5.0, 4.0));
+        let mut parts = vec![
+            crate::geometry::icosphere_mesh(Vec3::new(1.5, 1.5, 1.5), 1.1, 2),
+            crate::geometry::icosphere_mesh(Vec3::new(4.2, 3.0, 2.0), 1.3, 2),
+            crate::geometry::icosphere_mesh(Vec3::new(5.6, 0.4, 3.8), 0.9, 2),
+        ];
+        let merged = crate::geometry::merge_meshes(&parts);
+        for (method, pitch) in [("exact", 0.25), ("exact", 0.0)] {
+            let evaluator = OptimizeS2::new(&params(method, pitch), bbox, &merged).unwrap();
+            let mut coverage = evaluator.voxel_coverage(parts.iter(), bbox).expect("voxel methods build coverage");
+            for step in 0..6 {
+                let index = step % parts.len();
+                crate::geometry::translate_mesh(&mut parts[index], Vec3::new(0.37, -0.21, 0.15));
+                let old = coverage.replace(index, &parts[index]);
+                let merged = crate::geometry::merge_meshes(&parts);
+                assert_eq!(
+                    evaluator.evaluate_voxel_grid(coverage.grid(), 4, 200, "candidate").unwrap(),
+                    evaluator.evaluate(&merged, bbox, 4, 200, "candidate").unwrap(),
+                    "{method} {pitch} step {step}"
+                );
+                if step % 2 == 1 {
+                    crate::geometry::translate_mesh(&mut parts[index], Vec3::new(-0.37, 0.21, -0.15));
+                    coverage.restore(index, old);
+                }
+            }
+        }
+        let mesh_mc = OptimizeS2::new(&params("monte_carlo", 0.0), bbox, &merged).unwrap();
+        assert!(mesh_mc.voxel_coverage(parts.iter(), bbox).is_none());
+        assert!(mesh_mc.evaluate_voxel_grid(&crate::geometry::s2::VoxelS2::new(&merged, bbox, 1.0), 0, 200, "candidate").is_err());
     }
 
     // AI-FUNC-SUMMARY: Compare actual CPU evaluation against exact/voxel/mesh reference VF and observe the execution pool for every stage; no file output.

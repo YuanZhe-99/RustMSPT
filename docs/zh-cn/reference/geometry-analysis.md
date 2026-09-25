@@ -15,6 +15,9 @@
 | `ray_intersects_triangle` | `src/geometry/s2.rs:26` | Möller–Trumbore 光线-三角形相交测试。 |
 | `point_inside_mesh` | `src/geometry/s2.rs:63` | 光线投射的点在网格内包含测试（奇数命中规则）。 |
 | `build_bbox_occupancy` | `src/geometry/s2.rs:112` | 将网格并行体素化为布尔占据网格。 |
+| `part_voxel_ranges` | `src/geometry/s2.rs` | 每个连通分量的预备查询及截断体素范围；全量与增量体素化共用的唯一定义。 |
+| `particle_voxel_coverage` | `src/geometry/s2.rs` | 中心位于某颗粒内部的体素索引，每个包含它的分量各一次，按分量/x/y/z 顺序。 |
+| `VoxelCoverage` | `src/geometry/s2.rs` | 逐体素覆盖计数（包含该体素中心的分量数）及对应占据（计数 > 0）；replace 只重新查询被移动颗粒，restore 无查询回滚。与对合并网格调用 VoxelS2::new 完全相等。 |
 | `shell_offsets_for_distance` | `src/geometry/s2.rs:184` | 枚举落在球壳环带内的整数体素偏移量。 |
 | `fill_missing_s2_with_smooth_interpolation` | `src/geometry/s2.rs:217` | 通过线性或三次样条插值填补不受支持的 S2 半径。 |
 | `fft_index_3d` | `src/geometry/s2.rs:328` | 将三维 FFT 网格索引转换为一维索引（逻辑与 `index_3d_to_flat` 相同）。 |

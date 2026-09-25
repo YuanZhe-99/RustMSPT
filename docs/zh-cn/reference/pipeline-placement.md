@@ -74,6 +74,10 @@
 | `Candidate` | `src/pipeline/placement_feasibility.rs:132` | 候选放置，附带已预先算好的廉价量。 |
 | `Accepted` | `src/pipeline/placement_feasibility.rs:146` | 通过检查过程中顺带算出的结果。 |
 | `check_placement` | `src/pipeline/placement_feasibility.rs:171` | 按序运行全部可行性规则，返回拦下它的那一条。 |
+| `PAIR_PARALLEL_MIN` | `src/pipeline/placement_feasibility.rs:15` | 需要精确距离的颗粒对达到该数量时并行计算距离；默认 `usize::MAX`（串行），因为高密度端到端运行未见收益（共享 4 核主机上慢 0～10%），尽管 `pair_threshold_benchmark` 在两个以上无碰撞颗粒对时显示 1.4～2 倍。 |
+| `pair_needs_exact_test` | `src/pipeline/placement_feasibility.rs` | 单个邻居的中心球与包围盒分离测试；需要精确测试时返回 true。 |
+| `first_pair_rejection` | `src/pipeline/placement_feasibility.rs` | 先串行做相交/嵌套检查直到第一个失败对，再对其之前的颗粒对按序（`find_map_first`）并行计算距离；返回值与串行完全相同。 |
+| `solid_pair_rejection` | `src/pipeline/placement_feasibility.rs` | 单个颗粒对的相交检查，其后是嵌套检查。 |
 | `retained_depth` | `src/pipeline/placement_feasibility.rs:382` | 跨界颗粒仍伸入域内的深度。 |
 | `ToolRecord` | `src/pipeline/placement_outputs.rs:15` | 记录与报告中出现的构建身份。 |
 | `StopReason` | `src/pipeline/placement_outputs.rs:53` | 运行可用的四词固定停止原因词表。 |
@@ -151,6 +155,13 @@ run_placement
 
 **昂贵的工作被推迟到廉价拒绝之后。** parry 的 `TriMesh`、精确的域内体积、精确的两两距离，都只有在更
 廉价的检查无法定论时才会执行。把它们写成即时计算，在一次小规模运行上代价是十六倍。
+
+**并行的颗粒对检查从不改变结果。** 廉价的邻居测试串行执行；随后相交与嵌套检查串行进行到第一个失败的
+存活邻居为止，只有在它之前的颗粒对才需要代价占绝大部分的精确距离。当这样的颗粒对数量达到
+`FeasibilityContext::pair_parallel_min`（默认 `PAIR_PARALLEL_MIN`）时，这些距离用有序的
+`find_map_first` 并行计算，因此返回的原因始终是按邻居顺序和每对内部检查顺序的第一个，与串行扫描完全
+相同。计数器仍只由串行调用方递增。`forced_parallel_pair_checks_match_serial_attempt_by_attempt` 以固定
+候选序列分别强制串行和强制并行，在 1/2/4/8 个 worker 下逐次比较。
 
 **未达标是一种结果。** 什么也没放置的运行仍会写出报告、不写 STL、并以零码退出。只有配置不可用或输出
 无法写入才是错误。

@@ -121,6 +121,14 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `ray_intersects_triangle` | Geometry — Analysis | `src/geometry/s2.rs:26` | Möller–Trumbore ray-triangle intersection test. |
 | `point_inside_mesh` | Geometry — Analysis | `src/geometry/s2.rs:63` | Ray-casting point-in-mesh containment test (odd-hit rule). |
 | `build_bbox_occupancy` | Geometry — Analysis | `src/geometry/s2.rs:112` | Parallel voxelization of a mesh into a boolean occupancy grid. |
+| `occupancy_dims` | Geometry — Analysis | `src/geometry/s2.rs` | Occupancy grid dimensions for a domain and pitch. |
+| `part_voxel_ranges` | Geometry — Analysis | `src/geometry/s2.rs` | Prepared query and clamped voxel range per connected component; shared by full and incremental voxelization. |
+| `particle_voxel_coverage` | Geometry — Analysis | `src/geometry/s2.rs` | Flat voxel indices whose centres lie inside one particle, once per containing component. |
+| `VoxelCoverage` | Geometry — Analysis | `src/geometry/s2.rs` | Per-voxel coverage counts and matching occupancy for SA; occupied iff count > 0. |
+| `VoxelCoverage::new` | Geometry — Analysis | `src/geometry/s2.rs` | Build counts for a population; grid equals VoxelS2::new over the merged mesh. |
+| `VoxelCoverage::replace` | Geometry — Analysis | `src/geometry/s2.rs` | Re-query one moved particle, swap its list and return the old one for rollback. |
+| `VoxelCoverage::restore` | Geometry — Analysis | `src/geometry/s2.rs` | Restore a rejected move’s previous list without containment queries. |
+| `VoxelCoverage::grid` | Geometry — Analysis | `src/geometry/s2.rs` | Borrow the maintained occupancy as an evaluable VoxelS2. |
 | `shell_offsets_for_distance` | Geometry — Analysis | `src/geometry/s2.rs:184` | Enumerates integer voxel offsets lying within a spherical shell annulus. |
 | `fill_missing_s2_with_smooth_interpolation` | Geometry — Analysis | `src/geometry/s2.rs:217` | Fills unsupported S2 radii via linear or cubic-spline interpolation. |
 | `fft_index_3d` | Geometry — Analysis | `src/geometry/s2.rs:328` | Converts a 3D FFT-grid index to a flat index (identical logic to `index_3d_to_flat`). |
@@ -397,6 +405,10 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `Candidate` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:132` | A proposed placement with its cheap quantities precomputed. |
 | `Accepted` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:146` | What a passing check worked out along the way. |
 | `check_placement` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:171` | Runs every feasibility rule in order, returning the one that stopped it. |
+| `PAIR_PARALLEL_MIN` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:15` | Pairs needing an exact distance at which placement evaluates those distances in parallel; usize::MAX (serial) by default after end-to-end measurement. |
+| `pair_needs_exact_test` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs` | Centre-sphere and box tests deciding whether a neighbour needs the exact pair tests. |
+| `first_pair_rejection` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs` | Serial overlap/enclosure scan, then ordered parallel distances before the first failure; returns exactly the serial reason. |
+| `solid_pair_rejection` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs` | Overlap then enclosure test for one candidate-neighbour pair. |
 | `retained_depth` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:382` | How far a straddling particle still reaches inside the domain. |
 | `ToolRecord` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:15` | The build identity as it appears in a record or report. |
 | `StopReason` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:53` | The fixed four-word vocabulary a run may stop with. |
@@ -968,6 +980,11 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `IslandVolumes::replace` | `src/pipeline/optimize_volume.rs:33` | Update one particle and return prior entries for rollback. |
 | `IslandVolumes::restore` | `src/pipeline/optimize_volume.rs:41` | Restore entries after rejection. |
 | `IslandVolumes::fraction` | `src/pipeline/optimize_volume.rs:46` | Sum cached scalars in merged component order, then clamp. |
+| `OptimizeS2::voxel_coverage` | `src/pipeline/optimize_execution.rs` | Build island-local incremental coverage for voxel methods at the resolved pitch; None for mesh MC. |
+| `OptimizeS2::evaluate_voxel_grid` | `src/pipeline/optimize_execution.rs` | Evaluate the fixed voxel S2 definition on a maintained grid; error for mesh MC. |
+| `INCREMENTAL_VOXEL_OCCUPANCY` | `src/pipeline/optimize_execution.rs` | Enables incremental voxel occupancy in SA (on; exact by construction). |
+| `island_s2` | `src/pipeline/optimize.rs` | Evaluate an SA stage from coverage when present, else merged mesh with optional cached VF. |
+| `COVERAGE_REFRESH_INTERVAL` | `src/pipeline/optimize.rs` | Candidate evaluations between full coverage rebuilds (64). |
 | `OptimizeS2::evaluate_with_vf` | `src/pipeline/optimize_execution.rs:242` | Evaluate mesh MC with optional validated VF; reject geometric cache for voxel methods. |
 | `calculate_s2_mesh_mc_seeded_with_vf` | `src/geometry/s2.rs:765` | Preserve fixed-seed mesh MC samples while using caller-provided VF. |
 

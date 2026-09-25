@@ -76,6 +76,10 @@ selects the original loop instead, which is documented in
 | `Candidate` | `src/pipeline/placement_feasibility.rs:132` | A proposed placement with its cheap quantities precomputed. |
 | `Accepted` | `src/pipeline/placement_feasibility.rs:146` | What a passing check worked out along the way. |
 | `check_placement` | `src/pipeline/placement_feasibility.rs:171` | Runs every feasibility rule in order, returning the one that stopped it. |
+| `PAIR_PARALLEL_MIN` | `src/pipeline/placement_feasibility.rs:15` | Pairs needing an exact distance at which those distances run in parallel; `usize::MAX` (serial) by default because dense end-to-end runs measured no gain (0-10 % slower on a shared 4-core host), although `pair_threshold_benchmark` shows 1.4-2x from two clear pairs. |
+| `pair_needs_exact_test` | `src/pipeline/placement_feasibility.rs` | Centre-sphere and box separation tests for one neighbour; true when the exact tests must run. |
+| `first_pair_rejection` | `src/pipeline/placement_feasibility.rs` | Serial overlap/enclosure scan to the first failure, then ordered (`find_map_first`) parallel distances for the pairs before it; returns exactly the serial reason. |
+| `solid_pair_rejection` | `src/pipeline/placement_feasibility.rs` | Overlap then enclosure test for one pair. |
 | `retained_depth` | `src/pipeline/placement_feasibility.rs:382` | How far a straddling particle still reaches inside the domain. |
 | `ToolRecord` | `src/pipeline/placement_outputs.rs:15` | The build identity as it appears in a record or report. |
 | `StopReason` | `src/pipeline/placement_outputs.rs:53` | The fixed four-word vocabulary a run may stop with. |
@@ -156,6 +160,15 @@ accumulator rather than re-summing, so it cannot disagree with the decision it d
 **Expensive work is deferred behind cheap rejections.** The `parry` `TriMesh`, the exact in-box
 volume and the exact pair distance are each reached only when the cheaper tests have failed to settle
 the question. Writing them eagerly cost a factor of sixteen on a small run.
+
+**Parallel pair checks never change the answer.** The cheap neighbour tests run serially; overlap and
+enclosure then run serially up to the first failing survivor, and only the pairs before it need the
+exact distance, which is the whole cost. When `FeasibilityContext::pair_parallel_min` (default
+`PAIR_PARALLEL_MIN`) or more of them do, the distances run in parallel with the ordered
+`find_map_first`, so the returned reason is the first one in neighbour order and per-pair check order,
+exactly as a serial scan would return. Counters are still incremented only by the sequential caller.
+`forced_parallel_pair_checks_match_serial_attempt_by_attempt` replays a fixed candidate sequence
+forced serial and forced parallel on 1/2/4/8 workers and compares every attempt.
 
 **Stopping short is a result.** A run that places nothing writes its report, writes no STL, and exits
 zero. Only an unusable config or an unwritable output is an error.
