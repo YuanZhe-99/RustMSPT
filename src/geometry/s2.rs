@@ -1491,6 +1491,7 @@ pub(crate) fn try_calculate_s2_gpu_exact_limited(mesh: &Mesh, bbox: BoundingBox,
     let t0 = std::time::Instant::now();
 
     let mut vox_pipeline = crate::gpu::voxel::GpuVoxelPipeline::new(mesh, bbox)?;
+    vox_pipeline.set_regrowth_headroom(limit_mb.map(|mb| mb.saturating_mul(1024 * 1024).saturating_sub(memory.peak_bytes)));
     let occupied = vox_pipeline.voxelize_count(nx, ny, nz, pitch)?;
     let vf = occupied as f64 / total_vox as f64;
 

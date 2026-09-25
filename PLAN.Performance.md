@@ -1548,3 +1548,28 @@ GPU 全量（`env -u DISPLAY -u WAYLAND_DISPLAY cargo test --release --features 
 
 仍开放：候选 TriMesh 构建（原占 29%）现在是最大单项；可行方向是每个颗粒按 (壳层, 尺度) 预建一次局部 TriMesh、用 Isometry 查询，但这会改变碰撞谓词的浮点输入，决定可能在末位不同，需要单独论证与验收，未做。
 
+
+## 72. 大输入矩阵、split-filter 写出与证书列表预算（2026-09-25，本地）
+
+**PERF-00：`perf_matrix.py --large` 与 `--chain`。** §68 的默认输入只测到开销，本批给脚本加 `--large`（只改规模与目标，不改方法）：旧版 pack 目标 0.15、20,000 次尝试；placement VF 0.30；measure pitch 0.5、40 万 MC 样本；render 4096²；mesh-render 3072²；split-filter/forge/scale 使用 `dense_particles.stl`——带种子的 placement（200³ 域、VF 0.30，约 34 MB、1,755 个颗粒），作为依赖链步骤只生成一次。`--chain DIR` 复用已有依赖链，消除 pack 无种子导致的跨矩阵输入差异。中英文 `pipeline-core.md` 已记录。
+
+**大输入矩阵（二进制 `32c094c`，1 冷 + 3 暖，暖中位）。** 第一次运行时我在后台编译了两次 GPU 构建，measure/optimize/placement 等被污染（measure 8 worker 一度显示比 1 worker 慢），所以这些用例在无其他负载时单独重跑，下表取重跑值；render、mesh-render、crop 未受影响，取首轮值。证据：`data/output/performance/20260925-local-matrix/work-large/`、`work-large-rerun/`。
+
+| 管线 | 1 worker | 8 worker | S(8) | 备注 |
+|---|---|---|---|---|
+| render | 3.397 s | 0.641 s | 5.30 | |
+| mesh-render | 10.506 s | 2.096 s | 5.01 | |
+| measure | 0.871 s | 0.316 s | 2.76 | 峰值 RSS 131 → 255～267 MiB（每线程 FFT 工作区） |
+| placement | 2.550 s | 1.230 s | 2.07 | S(4)=2.02，4→8 几乎无增益 |
+| optimize | 7.868 s | 4.412 s | 1.78 | 无种子，波动大 |
+| crop | 0.039 s | 0.025 s | 1.55 | 仓库 CT 只有 3 片，仍太小 |
+| 旧版 pack | 0.362 s | 0.335 s | 1.08 | |
+| scale | 0.160 s | 0.168 s | 0.95 | 载入 0.13 s 占 81% |
+| forge | 0.271 s | 0.325 s | 0.83 | 载入 0.13 s + 两次 VF 各 0.06～0.07 s |
+| split-filter | 0.265 s | 0.416 s | 0.64 | 见下 |
+
+**split-filter 写出（已修复）。** 分阶段看，只有 `write_stl` 随 worker 变慢：1 worker 0.074 s，8 worker 0.222 s。原实现为限制“最多两个写入者”把保留颗粒按 2 个一组 `par_iter`，1,755 个小文件就是约 880 次线程池 fork/join，每次唤醒（本机约 80～170 µs）比写一个约 20 KB 的文件还贵。改为：保留颗粒平均面数 ≥ `WRITE_PAIR_MIN_FACES = 65,536` 时才两两并行，否则按序串行写（名称与错误仍按序号消费；串行模式遇错立即停止）。`write_stl` 在 1/2/4/8 worker 下为 0.074/0.067/0.067/0.072 s，`total_in_pool` 8 worker 0.416 → 0.252 s。新旧二进制在 1/8 worker 下输出的 1,755 个文件逐字节一致。（一次比较脚本把输出写到了仓库内被忽略的 `tmp/`，已移出仓库，未删除任何原有文件。）
+
+**PERF-04/05：证书列表扩容纳入预算（§67 第 5 项前半，已实施）。** MC：`GpuS2Pipeline::set_memory_limit_mb`（optimize 与 measure 在调用 `check_evaluation_budget` 的地方设置同一上限）；列表溢出需要扩容时，先用 `mc_regrowth_peak(retained, entries)` = 保留峰值（已含旧列表及其 staging）+ 新列表及 staging，与上限比较，超出则返回含 `certification list regrowth` 的错误，由调用方既有策略处理（auto 回退、禁止回退则报错）。体素：`GpuVoxelPipeline::set_regrowth_headroom`，exact 路径设为“预算 − 计划峰值”；扩容超出计划列表（每 64 单元 1 条、至少 1,024 条）时，额外字节（当前列表对 + 新列表对 − 计划列表对）不得超过余量。未设上限时行为与此前相同（只受设备限制）。测试：`mc_uncertain_list_regrowth_respects_the_budget`、`uncertain_list_regrowth_respects_the_budget_headroom`——零预算时拒绝并报名，宽裕预算时结果与 CPU 参考/原计数完全一致。逐三角形误差界预计算（§67 第 5 项后半）未做。
+
+仍开放：STL 载入（34 MB 约 0.13 s）是 split-filter/forge/scale 的最大单项，§67 第 9 项的“二进制 STL 并行解码”现在有了依据（载入占 scale 的 81%）；forge 的两次 VF 各约 0.06 s；placement 4→8 worker 几乎无增益（批末屏障，见 §70）；measure 的 RSS 随 worker 翻倍。

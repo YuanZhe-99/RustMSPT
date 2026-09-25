@@ -274,6 +274,7 @@ impl OptimizeS2 {
                     .lock()
                     .map_err(|_| RustMsptError::Gpu("GPU S2 mutex poisoned".into()))?;
                 let result = state.as_mut().map(|gpu| {
+                    gpu.set_memory_limit_mb(self.gpu_memory_limit_mb);
                     gpu.check_evaluation_budget(mesh, r_max, samples, self.gpu_memory_limit_mb)
                         .and_then(|()| gpu.update_mesh(mesh, bbox))
                         .and_then(|()| gpu.calculate_s2_gpu(bbox, r_max, samples))

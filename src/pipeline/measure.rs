@@ -203,6 +203,7 @@ impl MeasurePipeline {
                 } else {
                     crate::gpu::GpuS2Pipeline::new(&mesh, bbox)
                         .and_then(|mut gpu| {
+                            gpu.set_memory_limit_mb(params.acceleration.gpu_memory_limit_mb);
                             let s2 = gpu.calculate_s2_gpu(bbox, params.r_max, samples)?;
                             println!("[Info] measure {method} GPU {}", gpu.certification_stats().describe());
                             Ok(s2)

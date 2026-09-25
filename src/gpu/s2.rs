@@ -50,6 +50,7 @@ pub struct GpuS2Pipeline {
     #[cfg(test)]
     test_radius_batch: Option<usize>,
     pending_upload_bytes: u64,
+    memory_limit_mb: Option<u64>,
     num_triangles: u32,
     resident: Vec<f32>,
     upload_stats: GpuUploadStats,
@@ -397,6 +398,7 @@ impl GpuS2Pipeline {
                 #[cfg(test)]
                 test_radius_batch: None,
                 pending_upload_bytes: initial_bytes,
+                memory_limit_mb: None,
                 num_triangles: mesh.faces.len() as u32,
                 resident: tri_data,
                 upload_stats: GpuUploadStats {
@@ -408,6 +410,13 @@ impl GpuS2Pipeline {
                 bind_group_layout,
             })
         })
+    }
+
+    // AI-FUNC-SUMMARY: Set the logical GPU budget (MiB) that certification-list regrowth must respect; None leaves regrowth bounded by device limits only; side effects: stores the limit.
+    // Notes: Callers that check_evaluation_budget should set the same limit, so the one allocation the
+    // up-front estimate cannot foresee - a regrown uncertain list - is held to the budget as well.
+    pub fn set_memory_limit_mb(&mut self, limit_mb: Option<u64>) {
+        self.memory_limit_mb = limit_mb;
     }
 
     // AI-FUNC-SUMMARY: Check retained buffers, pending uploads and growth for the next mesh update/evaluation against an optional logical GPU budget before any allocation or upload.
@@ -699,6 +708,21 @@ impl GpuS2Pipeline {
                     }
                     let bytes = crate::compute::mc_memory::mc_uncertain_bytes(count as usize);
                     check_buffer_size(bytes, &self.device.limits())?;
+                    if let Some(limit) = self.memory_limit_mb {
+                        let retained = crate::compute::mc_memory::mc_evaluation_peak(
+                            self.triangle_buffer.size(),
+                            self.out_hits_buffer.size(),
+                            self.pending_upload_bytes,
+                            self.uncertain_buffer.size(),
+                            self.num_triangles as usize,
+                            r_max,
+                            samples,
+                        )?;
+                        let peak = crate::compute::mc_memory::mc_regrowth_peak(retained, count as usize)?;
+                        crate::compute::mc_memory::check_mc_budget(peak, Some(limit)).map_err(|e| {
+                            format!("GPU MC certification list regrowth to {count} entries: {e}")
+                        })?;
+                    }
                     let (buffer, staging) = uncertain_buffers(&self.device, count as usize);
                     self.uncertain_buffer = buffer;
                     self.uncertain_staging = staging;
@@ -1548,6 +1572,40 @@ mod certification_tests {
             gpu.uncertain_buffer.size(),
             crate::compute::mc_memory::mc_uncertain_bytes(crate::compute::mc_memory::MC_UNCERTAIN_INITIAL)
         );
+    }
+
+    // AI-FUNC-SUMMARY: A forced uncertain-list overflow is refused with a named error when the logical budget cannot hold the regrown list beside the old one, and succeeds with the exact counts under a generous budget.
+    #[test]
+    fn mc_uncertain_list_regrowth_respects_the_budget() {
+        if let Err(error) = super::super::context::try_init_gpu() {
+            eprintln!("SKIP: GPU device unavailable: {error:?}");
+            return;
+        }
+        let (_, mesh) = adversarial_meshes(0.25)
+            .into_iter()
+            .find(|(name, _)| *name == "coincident_duplicates")
+            .unwrap();
+        let bbox = BoundingBox::from_size(Vec3::new(4.0, 4.0, 4.0));
+        let mut gpu = GpuS2Pipeline::new(&mesh, bbox).unwrap();
+        let expected = gpu.calculate_s2_gpu_counts(bbox, 2, 2000, 11).unwrap();
+        let shrink = |gpu: &mut GpuS2Pipeline| {
+            super::super::runtime::scoped(&gpu.device.clone(), || {
+                let (buffer, staging) = uncertain_buffers(&gpu.device, 1);
+                gpu.uncertain_buffer = buffer;
+                gpu.uncertain_staging = staging;
+                Ok(())
+            })
+            .unwrap();
+        };
+        shrink(&mut gpu);
+        gpu.set_memory_limit_mb(Some(0));
+        let refused = gpu.calculate_s2_gpu_counts(bbox, 2, 2000, 11).unwrap_err();
+        assert!(refused.contains("regrowth"), "{refused}");
+        shrink(&mut gpu);
+        gpu.set_memory_limit_mb(Some(1024));
+        let before = gpu.certification_stats().list_regrowths;
+        assert_eq!(gpu.calculate_s2_gpu_counts(bbox, 2, 2000, 11).unwrap(), expected);
+        assert_eq!(gpu.certification_stats().list_regrowths, before + 1);
     }
 
     // AI-FUNC-SUMMARY: Release benchmark: certified versus frozen uncertified MC on an ordinary sphere and data/input/particles.stl with identical seeds; one warmup then five alternating samples, logging seconds and recompute ratios.

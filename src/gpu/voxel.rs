@@ -19,6 +19,7 @@ pub struct GpuVoxelPipeline {
     uncertain_staging: wgpu::Buffer,
     reference: super::certify::CertReference,
     cert_stats: super::certify::GpuCertificationStats,
+    regrowth_headroom: Option<u64>,
     #[cfg(test)]
     last_uncertain: Vec<u32>,
 }
@@ -242,6 +243,7 @@ impl GpuVoxelPipeline {
                 uncertain_staging,
                 reference: super::certify::CertReference::new(mesh, bbox.min),
                 cert_stats: Default::default(),
+                regrowth_headroom: None,
                 #[cfg(test)]
                 last_uncertain: Vec::new(),
             })
@@ -407,6 +409,15 @@ impl GpuVoxelPipeline {
                 {
                     return Err("GPU voxel uncertain list exceeds device limits".into());
                 }
+                if let Some(headroom) = self.regrowth_headroom {
+                    let planned_pair = 2 * (planned as u64 + 1) * 4;
+                    let extra = (2 * self.uncertain_buffer.size() + 2 * bytes).saturating_sub(planned_pair);
+                    if extra > headroom {
+                        return Err(format!(
+                            "GPU voxel certification list regrowth to {count} entries needs {extra} bytes beyond the planned list, over the {headroom}-byte budget headroom"
+                        ));
+                    }
+                }
                 let (buffer, staging) = voxel_uncertain_buffers(&self.device, count as usize);
                 self.uncertain_buffer = buffer;
                 self.uncertain_staging = staging;
@@ -570,6 +581,13 @@ impl GpuVoxelPipeline {
         );
         self.queue.submit(Some(enc.finish()));
         Ok(super::runtime::read_u32_prefix(&self.device, &self.uncertain_staging, 4)?[0])
+    }
+
+    // AI-FUNC-SUMMARY: Set the bytes a certification-list regrowth may add beyond the planned list (the logical budget minus the planned peak); None leaves regrowth bounded by device limits only; side effects: stores the headroom.
+    // Notes: The planned list is part of every exact memory plan; only a regrowth past it is unforeseen, and
+    // while it happens the current list and the new one are both alive, so both are charged.
+    pub fn set_regrowth_headroom(&mut self, headroom: Option<u64>) {
+        self.regrowth_headroom = headroom;
     }
 
     // AI-FUNC-SUMMARY: Return cumulative f32 certification counters (cells evaluated, cells recomputed on the CPU, list regrowths, host time); returns a copy; side effects: None.
@@ -934,6 +952,39 @@ mod certification_tests {
             assert_eq!(gpu.certification_stats().list_regrowths, before + 1);
             assert!(gpu.last_uncertain.len() > UNCERTAIN_INITIAL);
         }
+    }
+
+    // AI-FUNC-SUMMARY: A forced uncertain-list overflow past the planned list is refused with a named error when the budget headroom is zero, and succeeds with the exact grid under ample headroom.
+    #[test]
+    fn uncertain_list_regrowth_respects_the_budget_headroom() {
+        if let Err(error) = super::super::context::try_init_gpu() {
+            eprintln!("SKIP: GPU device unavailable: {error:?}");
+            return;
+        }
+        let (_, mesh) = adversarial_meshes(PITCH)
+            .into_iter()
+            .find(|(name, _)| *name == "coincident_duplicates")
+            .unwrap();
+        let bbox = BoundingBox::from_size(Vec3::new(4.0, 4.0, 4.0));
+        let (n, pitch) = (24u32, 4.0f32 / 24.0);
+        let mut gpu = GpuVoxelPipeline::new(&mesh, bbox).unwrap();
+        let expected = cpu_reference(&gpu, n, pitch);
+        let shrink = |gpu: &mut GpuVoxelPipeline| {
+            super::super::runtime::scoped(&gpu.device.clone(), || {
+                let (buffer, staging) = voxel_uncertain_buffers(&gpu.device, 1);
+                gpu.uncertain_buffer = buffer;
+                gpu.uncertain_staging = staging;
+                Ok(())
+            })
+            .unwrap();
+        };
+        shrink(&mut gpu);
+        gpu.set_regrowth_headroom(Some(0));
+        let refused = gpu.voxelize(n, n, n, pitch).unwrap_err();
+        assert!(refused.contains("regrowth"), "{refused}");
+        shrink(&mut gpu);
+        gpu.set_regrowth_headroom(Some(1 << 30));
+        assert_eq!(gpu.voxelize(n, n, n, pitch).unwrap(), expected);
     }
 
     // AI-FUNC-SUMMARY: Release benchmark: certified versus frozen uncertified voxelization on an ordinary sphere and data/input/particles.stl (64^3 grid); one warmup then five alternating samples, logging seconds and recompute ratios.

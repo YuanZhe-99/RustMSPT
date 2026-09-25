@@ -627,11 +627,16 @@ The checked planner counts visible triangles at 120 bytes each, enabled segments
 
 The optimizer starts its shared GPU MC pipeline with empty geometry; each stage uploads the mesh it actually evaluates. `mc_evaluation_peak` bounds the triangle buffer, four output/readback buffers, 608-byte parameter storage, the uncertain-sample list and its staging (retained size or the initial 1024 records), pending queue uploads and the next mesh/parameter uploads. Growth conservatively counts old plus new allocations. Startup uses the input face count and maximum configured stage sample count; every actual evaluation rechecks current retained capacities under the same GPU mutex before upload. A larger reference mesh or retained high-water capacity can therefore trigger the existing same-method fallback (or a stage-labelled strict error). Pending upload bytes reset only after successful readback. Driver internals and CPU mesh/readback vectors are outside this logical GPU budget. Batch splitting/automatic high-water trimming remain separate work; `release_output_capacity` provides explicit release.
 
+Certification-list regrowth is budgeted too (PLAN.Performance.md §72). `GpuS2Pipeline::set_memory_limit_mb` stores the caller's limit (optimize and measure set it beside `check_evaluation_budget`); before regrowing an overflowed uncertain list the pipeline checks `mc_regrowth_peak(retained_peak, entries)` - the retained peak plus the new list and its staging, both alive while the old pair still is - and refuses with a named `certification list regrowth` error that the caller's fallback policy then handles. The voxel pipeline gets `GpuVoxelPipeline::set_regrowth_headroom`, set by the exact path to the budget minus the planned peak; a regrowth past the planned list may add at most that many bytes. Tests: `mc_uncertain_list_regrowth_respects_the_budget`, `uncertain_list_regrowth_respects_the_budget_headroom`.
+
 | `mc_evaluation_peak` | `src/compute/mc_memory.rs:4` | Check logical MC peak including retained capacity and pending uploads. |
 
 | `check_mc_budget` | `src/compute/mc_memory.rs:44` | Check logical MC peak including retained capacity and pending uploads. |
 
 | `GpuS2Pipeline::check_evaluation_budget` | `src/gpu/s2.rs:275` | Check logical MC peak including retained capacity and pending uploads. |
+| `GpuS2Pipeline::set_memory_limit_mb` | `src/gpu/s2.rs` | Store the logical budget that uncertain-list regrowth must respect. |
+| `mc_regrowth_peak` | `src/compute/mc_memory.rs` | Retained peak plus a regrown uncertain list and its staging. |
+| `GpuVoxelPipeline::set_regrowth_headroom` | `src/gpu/voxel.rs` | Bytes a voxel uncertain-list regrowth may add beyond the planned list. |
 
 Measure continuous MC now uses the shared cold-growth peak planner, including queued geometry/parameter uploads; this supersedes the earlier `16 * invocations + triangle_bytes + 576` estimate. Exact-method budgeting is unchanged in this batch.
 

@@ -103,8 +103,13 @@ def set_yaml_key(text, dotted, value):
     return "\n".join(lines)
 
 
-def case_definitions(repo, chain):
-    """Return the benchmark cases. Each case builds (config_text, extra_args) for one run directory."""
+def case_definitions(repo, chain, large=False):
+    """Return the benchmark cases. Each case builds (config_text, extra_args) for one run directory.
+
+    `large` raises the work per run so worker scaling is measurable: the shipped inputs finish most
+    pipelines in 3-90 ms, which measures process and pool start-up rather than scaling
+    (PLAN.Performance.md section 68). It changes only sizes and targets, never a method.
+    """
     inp = repo / "data" / "input"
 
     def load(name):
@@ -113,7 +118,7 @@ def case_definitions(repo, chain):
     def split_filter(run, workers):
         t = load("split_filter_config.yaml")
         t = set_yaml_key(t, "cpu_max", workers)
-        t = set_yaml_key(t, "input.path", str(inp / "particles.stl"))
+        t = set_yaml_key(t, "input.path", str(chain / "dense_particles.stl" if large else inp / "particles.stl"))
         t = set_yaml_key(t, "output.folder", str(run / "split"))
         t = set_yaml_key(t, "output.report_path", str(run / "split_filter_report.txt"))
         return t, []
@@ -124,12 +129,17 @@ def case_definitions(repo, chain):
         t = set_yaml_key(t, "input.path", str(inp / "particles.stl"))
         t = set_yaml_key(t, "packing.target_diameter_distribution_csv", str(inp / "gu2019_fig7b_pore_distribution.csv"))
         t = set_yaml_key(t, "output.path", str(run / "packed_result.stl"))
+        if large:
+            t = set_yaml_key(t, "packing.target_volume_fraction", 0.15)
+            t = set_yaml_key(t, "packing.max_attempts", 20000)
         return t, []
 
     def placement(run, workers):
         t = load("placement_config.yaml")
         t = set_yaml_key(t, "placement.shapes.files", [str(inp / "particles.stl")])
         t = set_yaml_key(t, "placement.outputs.dir", str(run / "placement"))
+        if large:
+            t = set_yaml_key(t, "placement.target.volume_fraction", 0.30)
         return t, ["--threads", str(workers)]
 
     def optimize(run, workers, iterations):
@@ -146,17 +156,20 @@ def case_definitions(repo, chain):
         t = set_yaml_key(t, "measurement.cpu_max", workers)
         t = set_yaml_key(t, "measurement.stl_path", str(chain / "optimized_structure.stl"))
         t = set_yaml_key(t, "measurement.output_path", str(run / "measured_s2.txt"))
+        if large:
+            t = set_yaml_key(t, "measurement.voxel_pitch", 0.5)
+            t = set_yaml_key(t, "measurement.mc_samples", 400000)
         return t, []
 
     def forge(run, workers):
         t = load("forge_config.yaml")
-        t = set_yaml_key(t, "forging.input_stl_path", str(chain / "optimized_structure.stl"))
+        t = set_yaml_key(t, "forging.input_stl_path", str(chain / "dense_particles.stl" if large else chain / "optimized_structure.stl"))
         t = set_yaml_key(t, "forging.output_stl_path", str(run / "forged_mesh.stl"))
         return t, []
 
     def scale(run, workers):
         t = load("scale_config.yaml")
-        t = set_yaml_key(t, "input.stl_path", str(chain / "optimized_structure.stl"))
+        t = set_yaml_key(t, "input.stl_path", str(chain / "dense_particles.stl" if large else chain / "optimized_structure.stl"))
         t = set_yaml_key(t, "output.stl_path", str(run / "scaled_mesh.stl"))
         return t, []
 
@@ -165,6 +178,9 @@ def case_definitions(repo, chain):
         t = set_yaml_key(t, "render.cpu_max", workers)
         t = set_yaml_key(t, "render.stl_path", str(inp / "particles.stl"))
         t = set_yaml_key(t, "render.output_path", str(run / "rendered.png"))
+        if large:
+            t = set_yaml_key(t, "render.width", 4096)
+            t = set_yaml_key(t, "render.height", 4096)
         return t, []
 
     def mesh_render(run, workers):
@@ -172,6 +188,9 @@ def case_definitions(repo, chain):
         t = set_yaml_key(t, "cpu_max", workers)
         t = set_yaml_key(t, "mesh_render.input", str(repo / "data" / "fixtures" / "meshgen" / "good_cube.vtu"))
         t = set_yaml_key(t, "mesh_render.output_dir", str(run / "mesh_render"))
+        if large:
+            t = set_yaml_key(t, "mesh_render.width", 3072)
+            t = set_yaml_key(t, "mesh_render.height", 3072)
         return t, []
 
     def crop(run, workers):
@@ -181,7 +200,16 @@ def case_definitions(repo, chain):
         t = set_yaml_key(t, "output.path", str(run / "cropped_ct.tiff"))
         return t, []
 
+    def dense_source(run, workers):
+        t = load("placement_config.yaml")
+        t = set_yaml_key(t, "placement.shapes.files", [str(inp / "particles.stl")])
+        t = set_yaml_key(t, "placement.domain.max", [200, 200, 200])
+        t = set_yaml_key(t, "placement.target.volume_fraction", 0.30)
+        t = set_yaml_key(t, "placement.outputs.dir", str(run / "placement"))
+        return t, ["--threads", str(workers)]
+
     return {
+        "dense-source": ("pack", dense_source, False),
         "split-filter": ("split-filter", split_filter, False),
         "pack": ("pack", pack, False),
         "placement": ("pack", placement, False),
@@ -305,6 +333,8 @@ def main():
     parser.add_argument("--repeats", type=int, default=5, help="warm runs per case/worker pair")
     parser.add_argument("--optimize-iterations", type=int, default=None, help="override optimization.max_iterations (reduced runs)")
     parser.add_argument("--timeout", type=float, default=3600.0, help="per-process timeout in seconds")
+    parser.add_argument("--large", action="store_true", help="larger per-run work so worker scaling is measurable (sizes and targets only)")
+    parser.add_argument("--chain", default=None, help="reuse an existing chain directory (packed_result.stl, optimized_structure.stl) instead of regenerating it; pack is unseeded, so matrices only compare optimize/measure on a shared chain")
     args = parser.parse_args()
 
     repo = Path(args.repo).resolve()
@@ -317,8 +347,8 @@ def main():
     work.mkdir(parents=True, exist_ok=True)
     worker_counts = [int(w) for w in args.workers.split(",") if w.strip()]
     selected = [c.strip() for c in args.cases.split(",") if c.strip()]
-    chain = work / "chain"
-    cases = case_definitions(repo, chain)
+    chain = Path(args.chain).resolve() if args.chain else work / "chain"
+    cases = case_definitions(repo, chain, args.large)
     unknown = [c for c in selected if c not in cases]
     if unknown:
         sys.exit(f"unknown case(s): {unknown}; known: {sorted(cases)}")
@@ -339,12 +369,29 @@ def main():
         "warmup": args.warmup,
         "repeats": args.repeats,
         "optimize_iterations": args.optimize_iterations,
+        "large": args.large,
+        "chain_reused": str(chain) if args.chain else None,
         "cpu_count": os.cpu_count(),
         "chain": {},
         "cases": {},
     }
 
-    if any(cases[c][2] for c in selected):
+    dense_cases = {"split-filter", "forge", "scale"}
+    if args.large and dense_cases.intersection(selected) and not (chain / "dense_particles.stl").exists():
+        chain.mkdir(parents=True, exist_ok=True)
+        run = work / "chain_runs" / "dense-source"
+        subcommand, text, extra = build("dense-source", run, os.cpu_count() or 1)
+        print("[perf_matrix] chain: dense-source (seeded placement, 200^3 domain, VF 0.30)", flush=True)
+        record = run_once(binary, repo, subcommand, text, extra, run, os.cpu_count() or 1, args.timeout)
+        results["chain"]["dense-source"] = record
+        if record["returncode"] != 0:
+            sys.exit(f"chain step dense-source failed; see {run}/stderr.log")
+        shutil.copyfile(run / "placement" / "particles.stl", chain / "dense_particles.stl")
+    if args.chain:
+        for artefact in ("packed_result.stl", "optimized_structure.stl"):
+            if not (chain / artefact).exists():
+                sys.exit(f"--chain {chain} has no {artefact}")
+    elif any(cases[c][2] for c in selected if c not in dense_cases or not args.large):
         chain.mkdir(parents=True, exist_ok=True)
         for producer, artefact in (("pack", "packed_result.stl"), ("optimize", "optimized_structure.stl")):
             run = work / "chain_runs" / producer

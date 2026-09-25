@@ -615,11 +615,16 @@ checked planner 按可见三角形每面 120、启用 segment 每条 64、marker
 
 优化器的共享 GPU MC 管线以空几何启动，各阶段上传实际求值网格。mc_evaluation_peak 保守计算 triangle、四个 output/readback、608 字节参数缓冲、不确定样本列表及其 staging、待执行队列上传以及本次几何/参数上传；增长时计入旧容量加新容量。启动按输入面数和最大配置阶段样本数检查，每次求值在同一 GPU mutex 内重新检查实际保留容量后才上传。因此更大的参考网格或保留峰值也可能触发原有同方法 CPU 回退或严格阶段错误。待上传字节仅在成功回读后清零。驱动内部及 CPU 网格/读回向量不属于逻辑 GPU 预算；分批和自动缩容仍待完成，release_output_capacity 提供显式释放。本节取代早先“显式预算始终回退”的说明。
 
+证书列表的扩容现在也纳入预算（PLAN.Performance.md §72）。`GpuS2Pipeline::set_memory_limit_mb` 保存调用方的上限（optimize 与 measure 在 `check_evaluation_budget` 旁设置）；在扩容溢出的不确定列表之前，管线检查 `mc_regrowth_peak(retained_peak, entries)`——保留峰值加上新列表及其 staging（旧的一对此时仍存活）——超出则返回带 `certification list regrowth` 字样的错误，由调用方的回退策略处理。体素管线新增 `GpuVoxelPipeline::set_regrowth_headroom`，exact 路径把它设为预算减去计划峰值；超出计划列表的扩容最多只能增加这么多字节。测试：`mc_uncertain_list_regrowth_respects_the_budget`、`uncertain_list_regrowth_respects_the_budget_headroom`。
+
 | `mc_evaluation_peak` | `src/compute/mc_memory.rs:4` | Check logical MC peak including retained capacity and pending uploads. |
 
 | `check_mc_budget` | `src/compute/mc_memory.rs:44` | Check logical MC peak including retained capacity and pending uploads. |
 
 | `GpuS2Pipeline::check_evaluation_budget` | `src/gpu/s2.rs:275` | Check logical MC peak including retained capacity and pending uploads. |
+| `GpuS2Pipeline::set_memory_limit_mb` | `src/gpu/s2.rs` | Store the logical budget that uncertain-list regrowth must respect. |
+| `mc_regrowth_peak` | `src/compute/mc_memory.rs` | Retained peak plus a regrown uncertain list and its staging. |
+| `GpuVoxelPipeline::set_regrowth_headroom` | `src/gpu/voxel.rs` | Bytes a voxel uncertain-list regrowth may add beyond the planned list. |
 
 Measure 连续 MC 同步改用共享冷启动增长 peak planner，计入几何/参数待上传数据，取代早先 16×invocations+triangle_bytes+576 估计；本批 exact 预算不变。
 

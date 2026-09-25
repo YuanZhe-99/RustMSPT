@@ -13,7 +13,7 @@ pub(crate) fn mc_uncertain_bytes(entries: usize) -> u64 {
         .saturating_add(4)
 }
 
-// AI-FUNC-SUMMARY: Bound an update-plus-evaluation peak using current triangle/output/uncertain-list capacity, queued upload bytes and next workload; outputs are sized for one radius batch of at most MC_RADIUS_BATCH radii; the certification list and its staging count at their retained size or the initial capacity; count old plus new allocations conservatively on growth and reject arithmetic overflow without allocating. List regrowth after an uncertain overflow is bounded by device limits, not by this estimate.
+// AI-FUNC-SUMMARY: Bound an update-plus-evaluation peak using current triangle/output/uncertain-list capacity, queued upload bytes and next workload; outputs are sized for one radius batch of at most MC_RADIUS_BATCH radii; the certification list and its staging count at their retained size or the initial capacity; count old plus new allocations conservatively on growth and reject arithmetic overflow without allocating. List regrowth after an uncertain overflow is checked separately against the same budget with mc_regrowth_peak when the pipeline has one (GpuS2Pipeline::set_memory_limit_mb).
 pub(crate) fn mc_evaluation_peak(
     triangle_capacity: u64,
     output_capacity: u64,
@@ -59,6 +59,15 @@ pub(crate) fn mc_evaluation_peak(
                 .and_then(|list| n.checked_add(list))
         })
         .ok_or_else(overflow)
+}
+
+// AI-FUNC-SUMMARY: Peak while an overflowed uncertain list is regrown: the retained peak (which already counts the old list and its staging) plus the new list and its staging, both alive before the old pair is dropped; returns u64 or an overflow error; side effects: None.
+#[cfg(feature = "gpu")]
+pub(crate) fn mc_regrowth_peak(retained_peak: u64, entries: usize) -> Result<u64, String> {
+    mc_uncertain_bytes(entries)
+        .checked_mul(2)
+        .and_then(|list| retained_peak.checked_add(list))
+        .ok_or_else(|| "GPU MC working-set size overflow".to_string())
 }
 
 // AI-FUNC-SUMMARY: Check a logical GPU MC peak against an optional MiB cap; equality is allowed, cap conversion overflow and excess return errors without GPU probing.

@@ -11,6 +11,10 @@ use std::f64::consts::PI;
 use std::fs;
 use std::path::Path;
 
+/// Average kept-particle face count from which output files are written two at a time. Below it the
+/// pool fork/join per pair costs more than the write it overlaps (PLAN.Performance.md section 72).
+const WRITE_PAIR_MIN_FACES: usize = 65_536;
+
 pub struct SplitFilterPipeline {
     pub config: SplitFilterConfig,
 }
@@ -525,14 +529,29 @@ impl SplitFilterPipeline {
         timer.stage("filter");
         fs::create_dir_all(output_folder)?;
 
-        // Keep at most two STL writers active; consume errors in stable output-rank order.
-        for (batch, indices) in kept_indices.chunks(2).enumerate() {
-            let results: Vec<Result<()>> = indices.par_iter().enumerate().map(|(offset, &idx)| {
-                let rank = batch * 2 + offset;
-                let out_path = output_folder.join(format!("{}{num}.stl", prefix, num = rank + 1));
-                save_stl(&out_path, &particles[idx], "split_filter_particle")
-            }).collect();
-            for result in results { result?; }
+        // Keep at most two STL writers active; consume errors in stable output-rank order. Pairs of
+        // writers pay one pool fork/join per two files, which only a large file amortises: on a split
+        // of ~3,700 small granules it cost more than the writing (0.074 s serial against 0.222 s on 8
+        // workers, PLAN.Performance.md section 72), so small outputs are written one at a time.
+        let kept_faces: usize = kept_indices.iter().map(|&i| particles[i].faces.len()).sum();
+        let parallel_writes = kept_faces / kept_indices.len() >= WRITE_PAIR_MIN_FACES;
+        let write_rank = |rank: usize, idx: usize| {
+            let out_path = output_folder.join(format!("{}{num}.stl", prefix, num = rank + 1));
+            save_stl(&out_path, &particles[idx], "split_filter_particle")
+        };
+        if parallel_writes {
+            for (batch, indices) in kept_indices.chunks(2).enumerate() {
+                let results: Vec<Result<()>> = indices
+                    .par_iter()
+                    .enumerate()
+                    .map(|(offset, &idx)| write_rank(batch * 2 + offset, idx))
+                    .collect();
+                for result in results { result?; }
+            }
+        } else {
+            for (rank, &idx) in kept_indices.iter().enumerate() {
+                write_rank(rank, idx)?;
+            }
         }
         timer.stage("write_stl");
 
@@ -589,7 +608,6 @@ impl SplitFilterPipeline {
         Ok(())
     }
 }
-
 
 #[cfg(test)]
 mod metric_tests {

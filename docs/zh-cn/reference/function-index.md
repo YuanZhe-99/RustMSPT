@@ -890,6 +890,9 @@
 | `check_mc_budget` | `src/compute/mc_memory.rs:44` | Check logical MC peak including retained capacity and pending uploads. |
 
 | `GpuS2Pipeline::check_evaluation_budget` | `src/gpu/s2.rs:275` | Check logical MC peak including retained capacity and pending uploads. |
+| `GpuS2Pipeline::set_memory_limit_mb` | `src/gpu/s2.rs:275` | `src/gpu/s2.rs` | Store the logical budget that uncertain-list regrowth must respect. |
+| `mc_regrowth_peak` | `src/gpu/s2.rs:275` | `src/compute/mc_memory.rs` | Retained peak plus a regrown uncertain list and its staging. |
+| `GpuVoxelPipeline::set_regrowth_headroom` | `src/gpu/s2.rs:275` | `src/gpu/voxel.rs` | Bytes a voxel uncertain-list regrowth may add beyond the planned list. |
 
 | `exchange_best_snapshot` | `src/pipeline/optimize.rs:52` | Exchange immutable best Arc snapshots; release retired payload outside the lock. |
 
