@@ -1,6 +1,6 @@
 # RustMSPT 非 Mesh Gen 管线性能优化计划
 
-状态：按用户要求本 Session 完成当前批次后收尾（更新至 2026-09-24），下一 Session 交接见 §65。已实施子项及真实验证见第 10～64 节；PERF-00～19 的整体验收尚未完成。前文“源码确认”描述初始基线，当前实现以各批记录和源码为准。
+状态：2026-09-25 Cloud Session 完成 §66 所列批次后按用户要求阶段收尾，**后续交给本地 Agent**，交接见 §67（§65 为上一 Session 交接，保留作历史）。已实施子项及验证见第 10～66 节；PERF-00～19 的整体验收尚未完成。前文“源码确认”描述初始基线，当前实现以各批记录和源码为准。
 
 检查日期：2026-09-12。源码基线：`891badc09ae03fb99ab57d206451e75de226ee60`。
 
@@ -1395,3 +1395,56 @@ run_in_pool 增加完成阶段 wall time：load/background/pca/transform_and_bac
 - **PERF-15/16/17：** split-filter 连通分量发现和 forge/scale 后续热点需实测；CPU 编码重叠与渲染自动成本选择仍待做。§56 GPU writer 使用独立 scoped thread 加零容量通道，后续需审视其与 AGENTS 中新并行使用 Rayon 的约定及完整 worker 预算的一致性，不能在未验证阻塞/回退次序时机械替换。
 
 本轮收尾后没有授权扩展到 Mesh Gen，也不提交或清理工作区。继续时复核源码指纹与实际工作区差异；仅文档更新不会使 §64 的实现验证失效，但后续实现修改需要相应重新验证。
+
+
+## 66. Cloud Session 批次（2026-09-25，已合并至 `claude/blissful-franklin-lpf9g1`）
+
+环境：云容器 4 核/16 GB，无 /dev/dri；安装 mesa lavapipe（`mesa-vulkan-drivers`）作为软件 Vulkan，GPU 结论均为 llvmpipe，不是硬件验收。基线复现：合并前 `cargo test --release` 43 组 609 passed/0 failed/20 ignored，与 §64 一致。本批由 4+3 个并行 worktree agent 实施，逐个合并；未修改 `src/meshgen/`。证据日志只在云 scratchpad（不入库），数值记录于本节。
+
+**第一轮（已合并，全量回归通过）：**
+
+- **PERF-00/02/13 观测：** 新增 `src/pipeline/timing.rs`（`StageTimer`、`peak_rss_bytes` 读 VmHWM，不可用输出 `unavailable`）。split-filter、legacy pack、placement、optimize、measure、forge、scale、render、mesh-render、crop 统一输出 `[Timing] <pipeline> stage=<name> seconds=<f>`、`workers=<n>`、`peak_rss_bytes=<n|unavailable>`；crop 保持原阶段名。`SpatialGrid::stats()` + `[GridStats]` 行（pack/optimize），pack 查询计数为并行短路下的诊断值，随调度变化。新增 `scripts/perf_matrix.py`（1/2/4/8 worker、冷/暖分离、raw JSON + markdown，S(p)/E(p)）；首轮矩阵在其他构建并发时运行（load≈12/4 核），**加速比不可信，需本地安静机器重跑**。
+- **PERF-15：** `split_mesh_into_granules` 改 CSR 邻接 + 数组 remap，旧实现保留为 test oracle，输出逐项一致。release：2 万盒乱序 0.139→0.048 s，有序 0.043→0.0135 s，327,680 面单球 0.104→0.044 s。
+- **PERF-16：** `map_vertices_centroid` 融合 void 质心（串行融合、并行先映射再按序求和），与原顺序逐位一致（1/2/8 worker 测试）。ROI 平移融合和 |f|³V 体积捷径因非逐位一致未做。
+- **PERF-07：** FFT 轴补齐到 ≥2N−1 的最小 2/3/5-smooth 长度；FFT 相关值取整为整数配对数，FFT 与 direct 曲线逐位相同。固定 24M 阈值改为成本模型 `plan_exact_cpu`（FFT 2.0 ns·P·log2P vs direct 0.36 ns·W/并行折扣）+ 768 MiB 工作集预算，打印 `[Info] CPU exact S2 plan`。measure 的 1.5M 体素硬上限取消，仅在占据或任一内核超预算时拒绝（**无运行时上限**）。1 worker 12 例规划器均选中更快内核（例：96³/r3 FFT 0.428 s vs direct 0.051 s）。常数在共享机器上拟合，需本地重新校准。
+- **PERF-14 PCA：** 单遍行级精确整数矩 + Chan 合并（固定 65536 块升序），旧三遍保留为 oracle；13.1M 体素 1 worker 0.581→0.403 s，小体积也更快。近简并特征空间规范基（容差 1e-3，三重取扫描轴，二重按 x/y/z 投影 Gram-Schmidt）。**行为变化：** 非简并轴定号（最大分量为正），仓库真实 CT 帧第 1/2 列相对旧输出取反（绕主轴 180°），crop 输出与 §61–63 基线 SHA 不同，bounds 数值相同仅轴符号互换。
+- **PERF-03：** 进程级 `Arc<SharedGpuDevice>` 按 `RUSTMSPT_GPU_DEVICE` 键缓存，失败不缓存，device-lost 后逐出重建；`cached_pipeline` 每设备每 shader 只编译一次；六类构造器全部接入，缓冲仍按实例独立。`runtime::scoped` 加进程级错误作用域锁（共享设备下防止串线程捕获错误；会串行化跨线程 GPU 操作，今后可能成为吞吐限制）。`main` 结束时 `release_shared_gpu_devices()`。测试：4 轮 + 8 线程并发构造仅 1 个设备、6 次编译；非法 selector 两次报错不建设备。暖构造 0.00067 s。
+- **PERF-05/08：** GPU MC 取消 r_max<128 限制，按 128 半径分批（`radius_base`），随机数按全局样本编号，批大小不影响固定种子计数（1/7/13/64/128 批、r_max 127 vs 300 oracle）。剩余限制 `(r_max+1)*samples` ≤ u32。
+- **PERF-10：** `GpuS2Pipeline::update_mesh` 与驻留主机影子逐位比较，只上传变化面区间（间隙≤8 合并；面数变化/扩容/>64 区间/>50% 变化时整体上传），`upload_stats()` 可观测；逐字回读 + 固定种子 MC 与整体上传一致。主机端仍 O(faces) 比较。
+- **PERF-11：** 周期模式 3 以 `(particle_id, shift, bbox)` 存 image，仅在查询 bbox 可达时惰性构造平移网格/TriMesh（`OnceLock`）；oracle 覆盖面/棱/角包裹、接近域宽的粒子、重复 image、嵌套/接触、gap 0/0.25/0.5。真实运行存 112–122 image、只建 11–22 个 ghost。
+- **PERF-12：** 标签按 z-slab（`max(1, 4,194,304/(nx*ny))` 层）计算并经 `TiffPageEncoder` 流式写多页 TIFF，不再同时持有两个整卷 i64；slab 大小 1/2/3/4/7/29/30/31/1000 与整卷路径逐字节一致。中途错误可能留下部分 TIFF。
+- **PERF-17：** CPU mesh-render `render_and_write_overlapped`（`rayon::join`，最多一帧在写，按序，写错误停止后续渲染），1/2/4 worker 字节一致；实测比值 0.95–1.23，**无可靠收益**。GPU writer（std scoped thread + 零容量通道）未改为 Rayon：生产者为回调式，无法证明等价。mesh-render auto 的 gpu_min_pixels 默认保持 0（改动会改变图像而非仅成本）。
+- **PERF-18：** ASCII STL 逐行流式解析，嗅探/二进制回退/`load_stl_hashed` 摘要不变，oracle 覆盖 CRLF、tab、科学计数、缺 endsolid、无效 UTF-8、3 字节短读等。35.5 MB 文件峰值堆 114.2→78.8 MB，时间 0.346→0.371 s（噪声内）。
+- **PERF-19（§57 double free）：** 审计 mesh_render/scene_render 无 unsafe/裸指针；30+30 次 auto/8 worker 透明场景、valgrind 5 次、既有 CLI 测试循环 20 次均未复现。**仍未定位**，猜测为 Mesa/LLVM 退出时静态实例的 GL/EGL 析构。
+
+第一轮合并后全量回归：默认 `cargo test --release` 44 组 **629 passed/0 failed/28 ignored**；`cargo test --release --features gpu` 44 组 **682 passed/0 failed/36 ignored**，无设备跳过行。ignored 均为显式基准。
+
+**第二轮：**
+
+- **PERF-14 GPU 分块（已合并）：** 超出 `gpu_memory_limit_mb`/设备单缓冲上限时不再回退 CPU，而是按预算规划输出 tile（整卷→z slab→行组→x 段，二分最大尺寸），每 tile 逆映射 8 角点取源 AABB + f32 误差 margin，仅上传源子块；shader 用 `origin + f32(local + tile_offset)` 重建与整卷相同的绝对坐标，逐字节等于单次 dispatch；halo 越界由 atomic guard 报错。仅当单体素 tile 也放不下时 auto 回退/gpu 报错。llvmpipe 251×225×147 输出：未分块 0.219 s、4 tile 0.259 s、19 tile 0.495 s（分块价值在于适配预算，不在提速）。tile 串行、未重叠传输；主机输出整卷仍驻留。
+**PERF-05 f32 不确定性认证（已合并）：** 新增 `src/gpu/certify.rs`。MC 与体素 shader 对每个比较（det、u、v、u+v、t 及去重间隙）用一阶前向误差界（u=2^-24，逐三角形/逐查询，SAFETY=2，另含除零与 flush-to-zero 项）给出真/假/不确定；阈值改为与 CPU 相同（1e-10、锚定 1e-8 去重）。不确定查询写入原子列表（MC：逻辑样本 id + p/q 精确位；体素：单元索引，中心在主机逐位重建），主机用 CPU f64 谓词在 bbox 原点平移后的网格上重算并替换，体素结果回写驻留占据。列表溢出时按实际数量扩容重派发。`certification_stats()` 在 measure/optimize 日志中输出重算比例。测试：近平面/共享面/穿顶点与棱/3e-7 薄片/重复壳/1e9 偏移下与 CPU 逐单元、逐计数完全一致；旧未认证 shader 在薄片上错 743/4096 体素（保留为 `tests/fixtures/*_uncertified.wgsl` 基准）。重算比例 1.3e-3～1.3e-2；llvmpipe 开销：particles.stl MC 1.65→3.98 s、体素 2.22→4.66 s，普通球 0.8～1.3×。measure 1 MiB 批次期望值由 11456 改为 11353（计入认证列表）。列表超规划增长只受设备上限约束，未纳入逻辑预算；逐三角形界可预计算以减小 ALU 成本，未做。
+- **PERF-12 item 2（已合并，默认关闭）：** 候选的廉价球/盒测试串行；重叠与包围串行至首个失败对 f；仅 f 之前的对计算精确距离，达到 `pair_parallel_min` 时以 `find_map_first` 并行，结果与串行完全一致（1,500 个固定候选、1/2/4/8 worker 逐尝试原因/计数/变换一致）。端到端在共享机器上无收益（0～10% 退化），`PAIR_PARALLEL_MIN = usize::MAX`。精确距离占约 95% 成本，建议下一步做“超过 gap 即停止”的距离查询（需单独验证边界一致性）。
+- **PERF-10 item 5（已合并，默认开启）：** `VoxelCoverage` 每体素 u32 覆盖计数，移动只重查该粒子，拒绝无查询回滚，迁移与每 64 次更新全量重建；240 步 oracle 每步占据与全量体素化一致。单步 40～340× 便宜（2.1M 体素 1 线程 638→1.9 ms）；300 次 voxel_mc 优化 134.6→5.7 s（3 次中位），峰值 RSS 36→55 MB。`INCREMENTAL_VOXEL_OCCUPANCY` 可关闭；SA 结果质量未单独测（占据精确，预期无影响）。
+
+第二轮合并后的最终全量回归结果见 §67 首段。
+
+## 67. 本地 Agent 交接（2026-09-25）
+
+**Cloud Session 按用户要求在 §66 完成后停止。** 分支 `claude/blissful-franklin-lpf9g1` 已推送，包含 §66 全部合并；worktree agent 分支已并入，无未合并工作。本地需自行同步到 Gitea。整个 Performance Plan 仍未完成，以 §5 PERF-00～19 的完整验收为准。
+
+最终回归（§66 全部合并后）：见本节下方“最终回归”行；若该行缺失，说明云端在结果返回前停止，本地需先执行 `cargo test --release` 与 `cargo test --release --features gpu`。
+
+本地 Agent 优先事项：
+
+1. **重跑可信基准（PERF-00/19）：** 在安静机器用 `scripts/perf_matrix.py` 跑 1/2/4/8 worker 冷/暖矩阵（云端矩阵受并发构建污染，不可用）；如有真实 Intel/AMD/NVIDIA GPU，完成硬件 GPU release 基准与精度验收（云端仅 llvmpipe），并测量 f32 认证在硬件上的开销与重算比例。
+2. **重新校准 PERF-07 常数**（`plan_exact_cpu` 的 FFT/direct ns 系数）于空闲主机；决定 measure exact 是否需要运行时上限。
+3. **确认 PERF-14 crop 轴定号行为变化**（真实 CT 输出绕主轴 180°，与 §61–63 SHA 不同）是否可接受；如需旧朝向需另加兼容策略。
+4. **PERF-12：** 实现 gap 阈值提前终止的距离查询后再评估并行对检查阈值；安静机器复测 `PAIR_PARALLEL_MIN`。
+5. **PERF-05/04：** 认证列表增长纳入逻辑内存预算；逐三角形误差界预计算以降低 shader 开销。
+6. **PERF-14：** GPU tile 的上传/派发/回读流水重叠；halo guard 触发时放大块重试；主机输出分块写出。
+7. **PERF-17：** GPU writer 若改为 Rayon 需拉取式 GPU API；CPU 写出重叠无收益，可考虑保留或回退。
+8. **PERF-19：** §57 double free 仍未复现/定位；`runtime::scoped` 进程级锁在多设备下可能成为吞吐限制；clippy 库警告仍非零。
+9. 未触及：PERF-08 GPU BVH、PERF-09 shell 成本选择/生产启用 tile 实验、PERF-13 宽粒径层次网格（需证据）、PERF-18 二进制 STL 并行解码（需证明解析主导）、PERF-11 以外 pack 端到端计时（pack 未设种子）。
+
+文档：各 agent 已同步 en-us/zh-cn reference、algorithms、function-index；部分旧 function-index 行号可能过时。`AGENTS.md` 已追加本批的约定（见其末尾 2026-09-25 段落）。
+
