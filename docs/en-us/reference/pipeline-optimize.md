@@ -223,7 +223,7 @@ Mesh-MC islands now cache each particle’s connected-component clipped-volume c
 | `IslandVolumes::restore` | `src/pipeline/optimize_volume.rs:41` | Restore entries after rejection. |
 | `IslandVolumes::fraction` | `src/pipeline/optimize_volume.rs:46` | Sum cached scalars in merged component order, then clamp. |
 | `OptimizeS2::evaluate_with_vf` | `src/pipeline/optimize_execution.rs:262` | Evaluate mesh MC with optional validated VF; reject geometric cache for voxel methods. |
-| `calculate_s2_mesh_mc_seeded_with_vf` | `src/geometry/s2.rs:1185` | Preserve fixed-seed mesh MC samples while using caller-provided VF. |
+| `calculate_s2_mesh_mc_seeded_with_vf` | `src/geometry/s2.rs:1279` | Preserve fixed-seed mesh MC samples while using caller-provided VF. |
 
 ### Grid statistics and query counters (PERF-13 observability)
 

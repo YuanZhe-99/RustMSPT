@@ -511,9 +511,9 @@ const FFT_X_BAND_BYTES: usize = 8 * 1024 * 1024;
 
 pub(crate) const DEFAULT_CPU_EXACT_BUDGET_BYTES: u64 = 768 * 1024 * 1024;
 pub(crate) const NS_PER_FFT_UNIT: f64 = 7.0;
-pub(crate) const FFT_PARALLEL_EFFICIENCY: f64 = 0.18;
-pub(crate) const NS_PER_DIRECT_PAIR: f64 = 1.35;
-pub(crate) const DIRECT_PARALLEL_EFFICIENCY: f64 = 0.6;
+pub(crate) const FFT_PARALLEL_EFFICIENCY: f64 = 0.16;
+pub(crate) const NS_PER_DIRECT_PAIR: f64 = 0.115;
+pub(crate) const DIRECT_PARALLEL_EFFICIENCY: f64 = 0.3;
 
 // AI-FUNC-SUMMARY: Return the smallest 2,3,5-smooth length >= min_len (1 for 0/1) by enumerating 2^a*3^b*5^c with checked arithmetic; None on overflow.
 fn smooth_fft_length(min_len: usize) -> Option<usize> {
@@ -713,14 +713,15 @@ fn fft_working_set_bytes(dims: [usize; 3], padded: [usize; 3], r_max: usize, wor
     cells.checked_add(arrays)?.checked_add(scratch)?.checked_add(plans)?.checked_add(output)
 }
 
-// AI-FUNC-SUMMARY: Estimate the direct kernel's peak bytes with checked arithmetic: occupancy, output curve and, per concurrently processed radius, the in-domain offset list plus its per-offset integer counts; None on overflow.
+// AI-FUNC-SUMMARY: Estimate the direct kernel's peak bytes with checked arithmetic: occupancy, its packed bit copy (nx*ny*(ceil(nz/64)+1) words), output curve and, per concurrently processed radius, the in-domain offset list plus its per-offset integer counts; None on overflow.
 fn direct_working_set_bytes(dims: [usize; 3], r_max: usize, max_shell_offsets: u64, workers: usize) -> Option<u64> {
     let cells = dims.iter().try_fold(1u64, |a, &n| a.checked_mul(n as u64))?;
     let concurrent = (workers.max(1) as u64).min(r_max.max(1) as u64);
     let per_offset = (std::mem::size_of::<[isize; 3]>() + 2 * std::mem::size_of::<usize>()) as u64;
+    let packed = (dims[0] as u64).checked_mul(dims[1] as u64)?.checked_mul((dims[2].div_ceil(64) + 1) as u64)?.checked_mul(8)?;
     let shells = max_shell_offsets.checked_mul(per_offset)?.checked_mul(concurrent)?;
     let output = (r_max as u64).checked_add(1)?.checked_mul(32)?;
-    cells.checked_add(shells)?.checked_add(output)
+    cells.checked_add(packed)?.checked_add(shells)?.checked_add(output)
 }
 
 // AI-FUNC-SUMMARY:
@@ -728,7 +729,7 @@ fn direct_working_set_bytes(dims: [usize; 3], r_max: usize, max_shell_offsets: u
 // Inputs: grid dims, r_max, positive pitch, worker count, working-set budget in bytes.
 // Returns: ExactCpuPlan with both modeled wall times, both checked working sets, the selection and a reason string.
 // Side effects: None (enumerates the clamped offset box once in the current Rayon pool).
-// Notes: Constants are release fits on an idle 8-core host (exact_cost_model_calibration, PLAN.Performance.md §68). FFT time = NS_PER_FFT_UNIT*P*log2(P) / (1 + FFT_PARALLEL_EFFICIENCY*(workers-1)); direct time = NS_PER_DIRECT_PAIR*W / (1 + DIRECT_PARALLEL_EFFICIENCY*(min(workers, K)-1)). Only kernels whose working set fits are eligible; the cheaper eligible one wins (FFT on ties). When neither fits, direct is chosen because it needs the least memory and the reason says so. Both kernels return identical integer counts, so the choice never changes results.
+// Notes: Constants are release fits on an idle 8-core host (exact_cost_model_calibration; refit for the packed direct kernel, PLAN.Performance.md §79). FFT time = NS_PER_FFT_UNIT*P*log2(P) / (1 + FFT_PARALLEL_EFFICIENCY*(workers-1)); direct time = NS_PER_DIRECT_PAIR*W / (1 + DIRECT_PARALLEL_EFFICIENCY*(min(workers, K)-1)). Only kernels whose working set fits are eligible; the cheaper eligible one wins (FFT on ties). When neither fits, direct is chosen because it needs the least memory and the reason says so. Both kernels return identical integer counts, so the choice never changes results.
 pub(crate) fn plan_exact_cpu(dims: [usize; 3], r_max: usize, pitch: f64, workers: usize, budget_bytes: u64) -> ExactCpuPlan {
     let workers = workers.max(1);
     let padded_opt = padded_fft_dims(dims);
@@ -1028,7 +1029,99 @@ fn offset_in_domain(off: &[isize; 3], dims: [usize; 3]) -> bool {
     off.iter().zip(dims).all(|(d, n)| (d.unsigned_abs()) < n)
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Occupancy packed as one bit per voxel along z, one zero-padded row of u64 words per (x, y).
+// Notes: Each row carries one extra zero word so a shifted 64-bit read never leaves the row, and bits at z >= nz are zero, so a shifted AND needs no range mask: a pair whose partner falls past the row end meets a zero bit.
+struct OccupancyBits {
+    words: usize,
+    data: Vec<u64>,
+}
+
+impl OccupancyBits {
+    // AI-FUNC-SUMMARY: Pack a bool occupancy grid (x-major, z fastest) into per-(x, y) padded bit rows; returns OccupancyBits; side effects: allocates nx*ny*(ceil(nz/64)+1) words.
+    fn new(occ: &[bool], dims: [usize; 3]) -> Self {
+        let [nx, ny, nz] = dims;
+        let words = nz.div_ceil(64) + 1;
+        let mut data = vec![0u64; nx * ny * words];
+        for (row, bits) in occ.chunks_exact(nz.max(1)).zip(data.chunks_exact_mut(words)) {
+            for (z, &v) in row.iter().enumerate() {
+                if v {
+                    bits[z / 64] |= 1u64 << (z % 64);
+                }
+            }
+        }
+        Self { words, data }
+    }
+
+    // AI-FUNC-SUMMARY: Words of the (x, y) row; returns &[u64] of length `words`; side effects: None.
+    fn row(&self, x: usize, y: usize, ny: usize) -> &[u64] {
+        let start = (x * ny + y) * self.words;
+        &self.data[start..start + self.words]
+    }
+}
+
+// AI-FUNC-SUMMARY: Count z in 0..len with a[z] and b[z + shift] both set, for zero-padded bit rows; returns the count; side effects: None.
+// Notes: Word i of `a` is ANDed with the 64 bits of `b` starting at bit 64*i + shift, assembled from two words; bits of `a` at z >= len are cleared by the final mask, so the count covers exactly the valid run.
+fn shifted_and_count(a: &[u64], b: &[u64], shift: usize, len: usize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    let (word_shift, bit_shift) = (shift / 64, shift % 64);
+    let full = len / 64;
+    let mut hits = 0u32;
+    let fetch = |i: usize| -> u64 {
+        let lo = b[i + word_shift];
+        if bit_shift == 0 {
+            lo
+        } else {
+            (lo >> bit_shift) | (b[i + word_shift + 1] << (64 - bit_shift))
+        }
+    };
+    for i in 0..full {
+        hits += (a[i] & fetch(i)).count_ones();
+    }
+    let tail = len % 64;
+    if tail != 0 {
+        hits += (a[full] & fetch(full) & ((1u64 << tail) - 1)).count_ones();
+    }
+    hits as usize
+}
+
+// AI-FUNC-SUMMARY: Count (hits, valid) voxel pairs for one in-domain shift with 64-voxel AND + popcount over packed z rows; returns integers identical to direct_pair_counts; side effects: None.
+// Notes: A negative dz is the same count with the two endpoints exchanged (pairs (z, z+dz) are pairs (z', z'+|dz|) read from the other row), so every row reads `a` from z = 0 and `b` at a non-negative shift.
+fn direct_pair_counts_bits(bits: &OccupancyBits, dims: [usize; 3], off: [isize; 3]) -> (usize, usize) {
+    let [nx, ny, nz] = dims;
+    let [dx, dy, dz] = off;
+    let range = |d: isize, n: usize| {
+        if d < 0 {
+            (d.unsigned_abs(), n)
+        } else {
+            (0, n - d as usize)
+        }
+    };
+    let (x0, x1) = range(dx, nx);
+    let (y0, y1) = range(dy, ny);
+    let shift = dz.unsigned_abs();
+    let run = nz - shift;
+    let mut hits = 0usize;
+    for x in x0..x1 {
+        let x2 = (x as isize + dx) as usize;
+        for y in y0..y1 {
+            let y2 = (y as isize + dy) as usize;
+            let (first, second) = (bits.row(x, y, ny), bits.row(x2, y2, ny));
+            hits += if dz >= 0 {
+                shifted_and_count(first, second, shift, run)
+            } else {
+                shifted_and_count(second, first, shift, run)
+            };
+        }
+    }
+    (hits, (x1 - x0) * (y1 - y0) * run)
+}
+
 // AI-FUNC-SUMMARY: Count (hits, valid) voxel pairs for one in-domain shift by scanning contiguous z runs of both endpoints; returns integers identical to the per-voxel loop; side effects: None.
+// Notes: The bool-scan reference the packed kernel (direct_pair_counts_bits) is tested and benchmarked against.
+#[cfg(test)]
 fn direct_pair_counts(occ: &[bool], dims: [usize; 3], off: [isize; 3]) -> (usize, usize) {
     let [nx, ny, nz] = dims;
     let [dx, dy, dz] = off;
@@ -1078,7 +1171,7 @@ fn finish_exact_curve(results: Vec<(f64, bool)>, vf: f64) -> Vec<f64> {
 // Inputs: occupancy grid, dimensions, max radius, voxel pitch, volume fraction at r=0.
 // Returns: S2 values for r=0..r_max with smooth interpolation for unsupported radii.
 // Side effects: None.
-// Notes: Parallel over radii and, inside each radius, over its in-domain offsets (indexed collect, then an in-order sum), so results are bit-identical to calculate_s2_exact_fft for any worker count.
+// Notes: Parallel over radii and, inside each radius, over its in-domain offsets (indexed collect, then an in-order sum), so results are bit-identical to calculate_s2_exact_fft for any worker count. Pairs are counted 64 voxels at a time on a packed copy of the occupancy (OccupancyBits, nx*ny*(ceil(nz/64)+1) words).
 fn calculate_s2_exact_direct(
     occ: &[bool],
     nx: usize,
@@ -1089,6 +1182,7 @@ fn calculate_s2_exact_direct(
     vf: f64,
 ) -> Vec<f64> {
     let dims = [nx, ny, nz];
+    let bits = OccupancyBits::new(occ, dims);
     let min_len = (65536 / (nx * ny * nz).max(1)).max(1);
     let results: Vec<(f64, bool)> = (0..=r_max)
         .into_par_iter()
@@ -1105,7 +1199,7 @@ fn calculate_s2_exact_direct(
             let counts: Vec<(usize, usize)> = offsets
                 .par_iter()
                 .with_min_len(min_len)
-                .map(|&off| direct_pair_counts(occ, dims, off))
+                .map(|&off| direct_pair_counts_bits(&bits, dims, off))
                 .collect();
             let shell_sum = counts
                 .iter()
@@ -1643,6 +1737,40 @@ mod fft_workspace_tests {
         FFT_WORKSPACE.with(|slot| assert!(slot.borrow().is_none()));
     }
 
+    // AI-FUNC-SUMMARY: The packed AND + popcount kernel returns the bool scan's exact (hits, valid) for every in-domain shift on z lengths straddling word boundaries (1, 63, 64, 65, 130) and random, full and empty occupancy.
+    #[test]
+    fn packed_pair_counts_equal_the_bool_scan() {
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for dims in [[2, 3, 1], [3, 2, 63], [2, 2, 64], [3, 1, 65], [2, 2, 130]] {
+            let [nx, ny, nz] = dims;
+            for fill in 0..3 {
+                let occ: Vec<bool> = (0..nx * ny * nz)
+                    .map(|_| match fill { 0 => next() % 3 == 0, 1 => true, _ => false })
+                    .collect();
+                let bits = OccupancyBits::new(&occ, dims);
+                let reach = |n: usize| (n as isize - 1).min(70);
+                for dx in -reach(nx)..=reach(nx) {
+                    for dy in -reach(ny)..=reach(ny) {
+                        for dz in -reach(nz)..=reach(nz) {
+                            let off = [dx, dy, dz];
+                            assert_eq!(
+                                direct_pair_counts_bits(&bits, dims, off),
+                                direct_pair_counts(&occ, dims, off),
+                                "{dims:?} fill={fill} off={off:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // AI-FUNC-SUMMARY: Compare cached exact FFT shells with exhaustive direct pair enumeration for repeated changing occupancy under several worker budgets.
     #[test]
     fn cached_fft_matches_direct_shells_across_workers() {
@@ -1830,7 +1958,7 @@ mod exact_plan_tests {
     #[test]
     #[ignore = "release cost-model calibration"]
     fn exact_cost_model_calibration() {
-        let cases: [([usize; 3], usize); 6] = [([32, 32, 32], 2), ([32, 32, 32], 8), ([64, 64, 64], 2), ([64, 64, 64], 6), ([96, 96, 96], 3), ([128, 128, 32], 4)];
+        let cases: [([usize; 3], usize); 8] = [([32, 32, 32], 2), ([32, 32, 32], 8), ([64, 64, 64], 2), ([64, 64, 64], 6), ([96, 96, 96], 3), ([128, 128, 32], 4), ([48, 48, 48], 16), ([64, 64, 64], 16)];
         for workers in [1, 4, 8] {
             let pool = rayon::ThreadPoolBuilder::new().num_threads(workers).build().unwrap();
             pool.install(|| {
@@ -1858,6 +1986,32 @@ mod exact_plan_tests {
                     }
                 }
             });
+        }
+    }
+
+    // AI-FUNC-SUMMARY: Release benchmark: time the bool-scan and packed AND + popcount pair kernels over every in-domain offset of radii 1..=r_max on single-threaded grids, printing raw seconds and asserting equal counts.
+    #[test]
+    #[ignore = "release direct-kernel benchmark"]
+    fn packed_direct_kernel_benchmark() {
+        for (dims, r_max) in [([64usize, 64, 64], 6usize), ([96, 96, 96], 4), ([128, 128, 32], 4), ([48, 48, 200], 5)] {
+            let n = dims.iter().product::<usize>();
+            let occ: Vec<bool> = (0..n).map(|i| (i.wrapping_mul(2654435761) >> 7) % 10 < 3).collect();
+            let offsets: Vec<[isize; 3]> = (1..=r_max)
+                .flat_map(|r| shell_offset_iter(r as f64, 0.5).filter(|o| offset_in_domain(o, dims)).collect::<Vec<_>>())
+                .collect();
+            for sample in 0..3 {
+                let start = std::time::Instant::now();
+                let bools: Vec<_> = offsets.iter().map(|&o| direct_pair_counts(&occ, dims, o)).collect();
+                let bool_s = start.elapsed().as_secs_f64();
+                let start = std::time::Instant::now();
+                let bits = OccupancyBits::new(&occ, dims);
+                let packed: Vec<_> = offsets.iter().map(|&o| direct_pair_counts_bits(&bits, dims, o)).collect();
+                let packed_s = start.elapsed().as_secs_f64();
+                assert_eq!(bools, packed);
+                let pairs: usize = bools.iter().map(|c| c.1).sum();
+                println!("DIRECT_KERNEL dims={dims:?} r_max={r_max} offsets={} sample={sample} bool_s={bool_s:.6} packed_s={packed_s:.6} ns_per_pair_bool={:.4} ns_per_pair_packed={:.4} speedup={:.1}",
+                    offsets.len(), bool_s * 1e9 / pairs as f64, packed_s * 1e9 / pairs as f64, bool_s / packed_s);
+            }
         }
     }
 

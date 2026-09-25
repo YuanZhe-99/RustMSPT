@@ -108,7 +108,9 @@ for `r`, not a random sample — via one of two equivalent algorithms:
 - **Direct shell-pair enumeration** (`calculate_s2_exact_direct`). For each radius, iterate every
   offset in that radius's shell (see below), and for each offset scan every valid `(x, y, z)` grid
   position, checking occupancy at both `(x,y,z)` and `(x,y,z)+offset` directly — no FFT, but O(shell
-  size × grid size) per radius, parallelized over radii via rayon.
+  size × grid size) per radius, parallelized over radii via rayon. Occupancy is packed one bit per
+  voxel along z (`OccupancyBits`), so each offset's pairs along a row are counted 64 at a time with a
+  shifted AND and a popcount — 4-10x faster than scanning bools, with identical integer counts.
 
 `calculate_s2` picks between them with a **cost model under a memory budget** (`plan_exact_cpu`,
 PERF-07). FFT time is modeled as `c_fft · P · log2 P` for `P` padded cells; direct time as

@@ -17,28 +17,28 @@
 | `build_bbox_occupancy` | `src/geometry/s2.rs:160` | 将网格并行体素化为布尔占据网格。 |
 | `part_voxel_ranges` | `src/geometry/s2.rs:126` | 每个连通分量的预备查询及截断体素范围；全量与增量体素化共用的唯一定义。 |
 | `particle_voxel_coverage` | `src/geometry/s2.rs:212` | 中心位于某颗粒内部的体素索引，每个包含它的分量各一次，按分量/x/y/z 顺序。 |
-| `voxel_mc_rng` | `src/geometry/s2.rs:1374` | 为单个体素 MC 半径新建的无种子 Xoshiro256++（`SmallRng`），种子取自 `thread_rng`；不得用于带种子的路径。 |
-| `cached_mc_shells` | `src/geometry/s2.rs:1295` | 半径 1..=r_max 的壳层偏移，相同 `(r_max, pitch)` 键时复用。 |
-| `voxel_mc_radii` | `src/geometry/s2.rs:1318` | 逐半径的体素 MC 命中比例；仅在要求时按半径并行，两种方式估计量相同。 |
-| `VOXEL_MC_PARALLEL_MIN_SAMPLES` | `src/geometry/s2.rs:1287` | MC 总样本数低于 65,536 时各半径串行（实测确定）。 |
+| `voxel_mc_rng` | `src/geometry/s2.rs:1468` | 为单个体素 MC 半径新建的无种子 Xoshiro256++（`SmallRng`），种子取自 `thread_rng`；不得用于带种子的路径。 |
+| `cached_mc_shells` | `src/geometry/s2.rs:1389` | 半径 1..=r_max 的壳层偏移，相同 `(r_max, pitch)` 键时复用。 |
+| `voxel_mc_radii` | `src/geometry/s2.rs:1412` | 逐半径的体素 MC 命中比例；仅在要求时按半径并行，两种方式估计量相同。 |
+| `VOXEL_MC_PARALLEL_MIN_SAMPLES` | `src/geometry/s2.rs:1381` | MC 总样本数低于 65,536 时各半径串行（实测确定）。 |
 | `particle_voxel_coverage_in` | `src/geometry/s2.rs:231` | 对预处理分量范围做包含查询；按 x 列并行或串行，输出顺序相同。 |
 | `COVERAGE_PARALLEL_MIN_VOXELS` | `src/geometry/s2.rs:228` | 单颗粒候选体素少于 1,024 时覆盖查询串行（实测确定）。 |
 | `VoxelCoverage` | `src/geometry/s2.rs:266` | 逐体素覆盖计数（包含该体素中心的分量数）及对应占据（计数 > 0）；replace 只重新查询被移动颗粒，restore 无查询回滚。与对合并网格调用 VoxelS2::new 完全相等。 |
 | `shell_offsets_for_distance` | `src/geometry/s2.rs:336` | 枚举落在球壳环带内的整数体素偏移量。 |
 | `fill_missing_s2_with_smooth_interpolation` | `src/geometry/s2.rs:393` | 通过线性或三次样条插值填补不受支持的 S2 半径。 |
 | `fft_index_3d` | `src/geometry/s2.rs:504` | 将三维 FFT 网格索引转换为一维索引（逻辑与 `index_3d_to_flat` 相同）。 |
-| `FftWorkspace::transform` | `src/geometry/s2.rs:824` | 在复数缓冲区上原地执行可分离的三维 FFT/IFFT。 |
-| `autocorrelation_counts_fft` | `src/geometry/s2.rs:1020` | 通过 FFT 卷积计算占据自相关计数。 |
-| `calculate_s2_exact_direct` | `src/geometry/s2.rs:1082` | 通过按壳层偏移直接枚举点对来精确计算 S2（不使用 FFT）。 |
-| `calculate_s2_exact_fft` | `src/geometry/s2.rs:1125` | 使用基于 FFT 的自相关精确计算 S2。 |
-| `calculate_s2_monte_carlo_mesh` | `src/geometry/s2.rs:1175` | 直接在网格上采样的蒙特卡洛 S2 估计（不做体素化）。 |
-| `calculate_s2` | `src/geometry/s2.rs:1234` | 顶层 S2 调度函数；路由至精确方法（FFT 或直接法）或体素化蒙特卡洛。 |
-| `calculate_s2_seeded` | `src/geometry/s2.rs:1248` | 带可选种子的 `calculate_s2`：网格 MC 走 `calculate_s2_mesh_mc_seeded`，体素 MC 每个半径一条固定随机流；`None` 与 `calculate_s2` 完全相同。 |
-| `VoxelS2::calculate_seeded` | `src/geometry/s2.rs:1409` | 带可选蒙特卡洛种子的 `VoxelS2::calculate`。 |
-| `approximate_s2` | `src/geometry/s2.rs:1450` | 使用默认体素间距的蒙特卡洛 S2 估计便捷封装函数。 |
-| `l2_norm` | `src/geometry/s2.rs:1455` | 两个 S2 向量在其公共长度前缀上的欧氏距离。 |
-| `calculate_s2_with_gpu` | `src/geometry/s2.rs:1474` | 针对蒙特卡洛/"both" 方法的 GPU 加速 S2，带 CPU 回退。*（特性 `gpu`）* |
-| `calculate_s2_gpu_exact` | `src/geometry/s2.rs:1510` | GPU 加速的精确 S2（GPU 体素化 + GPU 壳层点对计数）。*（特性 `gpu`）* |
+| `FftWorkspace::transform` | `src/geometry/s2.rs:825` | 在复数缓冲区上原地执行可分离的三维 FFT/IFFT。 |
+| `autocorrelation_counts_fft` | `src/geometry/s2.rs:1021` | 通过 FFT 卷积计算占据自相关计数。 |
+| `calculate_s2_exact_direct` | `src/geometry/s2.rs:1175` | 通过按壳层偏移直接枚举点对来精确计算 S2（不使用 FFT）。 |
+| `calculate_s2_exact_fft` | `src/geometry/s2.rs:1219` | 使用基于 FFT 的自相关精确计算 S2。 |
+| `calculate_s2_monte_carlo_mesh` | `src/geometry/s2.rs:1269` | 直接在网格上采样的蒙特卡洛 S2 估计（不做体素化）。 |
+| `calculate_s2` | `src/geometry/s2.rs:1328` | 顶层 S2 调度函数；路由至精确方法（FFT 或直接法）或体素化蒙特卡洛。 |
+| `calculate_s2_seeded` | `src/geometry/s2.rs:1342` | 带可选种子的 `calculate_s2`：网格 MC 走 `calculate_s2_mesh_mc_seeded`，体素 MC 每个半径一条固定随机流；`None` 与 `calculate_s2` 完全相同。 |
+| `VoxelS2::calculate_seeded` | `src/geometry/s2.rs:1503` | 带可选蒙特卡洛种子的 `VoxelS2::calculate`。 |
+| `approximate_s2` | `src/geometry/s2.rs:1544` | 使用默认体素间距的蒙特卡洛 S2 估计便捷封装函数。 |
+| `l2_norm` | `src/geometry/s2.rs:1549` | 两个 S2 向量在其公共长度前缀上的欧氏距离。 |
+| `calculate_s2_with_gpu` | `src/geometry/s2.rs:1568` | 针对蒙特卡洛/"both" 方法的 GPU 加速 S2，带 CPU 回退。*（特性 `gpu`）* |
+| `calculate_s2_gpu_exact` | `src/geometry/s2.rs:1604` | GPU 加速的精确 S2（GPU 体素化 + GPU 壳层点对计数）。*（特性 `gpu`）* |
 | `PreparedMeshQuery` | `src/geometry/mesh_query.rs:20` | Immutable cached CPU parity query. |
 | `PreparedMeshQuery::new` | `src/geometry/mesh_query.rs:29` | Prepare bbox and triangle BVH. |
 | `PreparedMeshQuery::bbox` | `src/geometry/mesh_query.rs:68` | Return cached whole-mesh bbox. |
@@ -46,15 +46,15 @@
 | `MeshQueryScratch` | `src/geometry/mesh_query.rs:7` | Reusable hits and triangle-test counter. |
 | `build_nodes` | `src/geometry/mesh_query.rs:144` | Build median BVH with preorder escape links. |
 | `ray_reaches_box` | `src/geometry/mesh_query.rs:195` | Conservative positive-ray slab test. |
-| `VoxelS2` | `src/geometry/s2.rs:1277` | Owned reusable occupancy grid. |
-| `VoxelS2::new` | `src/geometry/s2.rs:1381` | Prepare CPU occupancy once. |
-| `VoxelS2::calculate` | `src/geometry/s2.rs:1404` | Compute exact or voxel MC on shared grid. |
-| `calculate_s2_mesh_mc_seeded` | `src/geometry/s2.rs:1180` | Reproducible sample-block mesh MC. |
-| `try_calculate_s2_gpu_exact` | `src/geometry/s2.rs:1522` | Fallible GPU exact with checked dimensions. |
-| `FftWorkspace` | `src/geometry/s2.rs:789` | Reusable FFT plans and complex arrays. |
-| `FftWorkspace::new` | `src/geometry/s2.rs:803` | Construct dimension-specific FFT workspace. |
-| `FftWorkspace::array_bytes` | `src/geometry/s2.rs:818` | Report retained complex-array capacities. |
-| `with_fft_correlation` | `src/geometry/s2.rs:964` | Evaluate occupancy FFT with bounded cache retention. |
+| `VoxelS2` | `src/geometry/s2.rs:1371` | Owned reusable occupancy grid. |
+| `VoxelS2::new` | `src/geometry/s2.rs:1475` | Prepare CPU occupancy once. |
+| `VoxelS2::calculate` | `src/geometry/s2.rs:1498` | Compute exact or voxel MC on shared grid. |
+| `calculate_s2_mesh_mc_seeded` | `src/geometry/s2.rs:1274` | Reproducible sample-block mesh MC. |
+| `try_calculate_s2_gpu_exact` | `src/geometry/s2.rs:1616` | Fallible GPU exact with checked dimensions. |
+| `FftWorkspace` | `src/geometry/s2.rs:790` | Reusable FFT plans and complex arrays. |
+| `FftWorkspace::new` | `src/geometry/s2.rs:804` | Construct dimension-specific FFT workspace. |
+| `FftWorkspace::array_bytes` | `src/geometry/s2.rs:819` | Report retained complex-array capacities. |
+| `with_fft_correlation` | `src/geometry/s2.rs:965` | Evaluate occupancy FFT with bounded cache retention. |
 | `FFT_RETAIN_BYTES` | `src/geometry/s2.rs:508` | Maximum retained FFT array bytes per calling thread. |
 | `smooth_fft_length` | `src/geometry/s2.rs:519` | 不小于给定值的最小 2,3,5-平滑长度。 |
 | `padded_fft_dims` | `src/geometry/s2.rs:556` | 各轴 >= 2N-1 的平滑填充。 |
@@ -66,12 +66,15 @@
 | `exact_shell_work` | `src/geometry/s2.rs:623` | 域内偏移数 K、精确配对工作量 W、最大壳。 |
 | `fft_working_set_bytes` | `src/geometry/s2.rs:695` | checked FFT 峰值字节估计。 |
 | `direct_working_set_bytes` | `src/geometry/s2.rs:717` | checked 直接法峰值字节估计。 |
-| `plan_exact_cpu` | `src/geometry/s2.rs:732` | 按成本模型/预算在 FFT 与直接法间选择。 |
-| `cached_exact_plan` | `src/geometry/s2.rs:772` | 复用计划，每个键只记录一次。 |
-| `offset_in_domain` | `src/geometry/s2.rs:1027` | 位移是否留下合法体素对。 |
-| `direct_pair_counts` | `src/geometry/s2.rs:1032` | 按连续 z 段统计单个位移的整数 (hits, valid)。 |
-| `finish_exact_curve` | `src/geometry/s2.rs:1064` | 汇总、插值并固定 S2(0)。 |
-| `VoxelS2::calculate_exact_with` | `src/geometry/s2.rs:1388` | 指定 CPU 内核计算 exact S2。 |
+| `plan_exact_cpu` | `src/geometry/s2.rs:733` | 按成本模型/预算在 FFT 与直接法间选择。 |
+| `cached_exact_plan` | `src/geometry/s2.rs:773` | 复用计划，每个键只记录一次。 |
+| `offset_in_domain` | `src/geometry/s2.rs:1028` | 位移是否留下合法体素对。 |
+| `direct_pair_counts` | `src/geometry/s2.rs:1125` | 仅测试用的 bool 扫描参照：按连续 z 段统计单个位移的整数 (hits, valid)。 |
+| `OccupancyBits` | `src/geometry/s2.rs:1035` | 沿 z 每体素一位打包的占据场，每个 (x, y) 一行补零的 u64。 |
+| `shifted_and_count` | `src/geometry/s2.rs:1065` | 以移位 AND + popcount 每次 64 个地统计 a[z] 与 b[z+shift] 同时为 1 的 z 数。 |
+| `direct_pair_counts_bits` | `src/geometry/s2.rs:1092` | 在打包行上统计单个位移的整数 (hits, valid)；与 bool 扫描完全相同。 |
+| `finish_exact_curve` | `src/geometry/s2.rs:1157` | 汇总、插值并固定 S2(0)。 |
+| `VoxelS2::calculate_exact_with` | `src/geometry/s2.rs:1482` | 指定 CPU 内核计算 exact S2。 |
 | `DEFAULT_CPU_EXACT_BUDGET_BYTES` | `src/geometry/s2.rs:512` | 默认 CPU exact 工作集预算（768 MiB）。 |
 | `NS_PER_FFT_UNIT` / `FFT_PARALLEL_EFFICIENCY` / `NS_PER_DIRECT_PAIR` / `DIRECT_PARALLEL_EFFICIENCY` | `src/geometry/s2.rs` | 校准后的成本模型常数。 |
 
@@ -340,7 +343,7 @@
   - `vf` — 体积分数，直接作为 `S2(0)` 使用。
 - **返回值：** 长度为 `r_max + 1` 的 `Vec<f64>`，每个半径对应一个 S2 值，不受支持的半径通过 `fill_missing_s2_with_smooth_interpolation` 填补。
 - **副作用：** 无（纯计算）；在半径之间以及半径内部的偏移之间并行。
-- **说明：** 对每个半径收集 `shell_offset_iter` 的域内偏移（顺序与 `shell_offsets_for_distance` 相同），用 `direct_pair_counts` 并行计数（按索引收集），再按偏移顺序平均 `hits/valid`。工作量为 `W = Σ 合法配对数`；内存为占据场加每个并发半径的一份偏移列表。结果与 `calculate_s2_exact_fft` 逐位相同。当其模型时间更低或 FFT 工作集超出预算时由 `plan_exact_cpu` 选择。
+- **说明：** 对每个半径收集 `shell_offset_iter` 的域内偏移（顺序与 `shell_offsets_for_distance` 相同），先把占据场一次打包为 `OccupancyBits`，再用 `direct_pair_counts_bits` 并行计数（按索引收集），再按偏移顺序平均 `hits/valid`。工作量为 `W = Σ 合法配对数`；内存为占据场、其打包副本（`nx*ny*(ceil(nz/64)+1)` 个字）加每个并发半径的一份偏移列表。结果与 `calculate_s2_exact_fft` 逐位相同。当其模型时间更低或 FFT 工作集超出预算时由 `plan_exact_cpu` 选择。
 - **另请参阅：** `shell_offsets_for_distance`、`fill_missing_s2_with_smooth_interpolation`、`calculate_s2`（唯一调用方，"exact" 大网格分支）、`calculate_s2_exact_fft`（针对较小网格的 FFT 替代方案）。
 
 #### calculate_s2_exact_fft
@@ -401,6 +404,7 @@ GPU exact 现使用 shell_offset_iter，单个半径内部也只保留嵌套范�
 `plan_exact_cpu(dims, r_max, pitch, workers, budget)` 返回 `ExactCpuPlan`：
 
 - `exact_shell_work` 只枚举一次域内偏移球的一个卦限（符号副本按重数加权，循环在 `r_max` 处截断），使用与壳迭代器相同的半开浮点边界，返回域内偏移数 `K`、精确直接工作量 `W = Σ (nx-|dx|)(ny-|dy|)(nz-|dz|)` 以及最大单半径偏移数；单元测试与暴力壳枚举对照。
+- 打包直接法内核后的重新拟合（2026-09-25）：`direct_pair_counts_bits` 取代 bool 扫描后（`packed_direct_kernel_benchmark` 中每个偏移快 4.1～10.2 倍），常数在 24 个校准用例上重新拟合，其中包括两个回到 FFT 区间的大半径用例（48³ 与 64³，r=16）：`NS_PER_DIRECT_PAIR` 1.35 → 0.115，`DIRECT_PARALLEL_EFFICIENCY` 0.6 → 0.3，`FFT_PARALLEL_EFFICIENCY` 0.18 → 0.16。规划器选错时最多损失 3.4%（最差为 8 worker 下 32³ r=8 与 48³ r=16 的近似平局）；旧常数会让 64³ r=6 选 FFT，而直接法现在快 6 倍。拟合效率位于实测范围内（4～8 worker 时直接法 0.34～0.88，FFT 0.08～0.31）。下面较早的记录保留作历史。
 - 模型时间：FFT 为 `NS_PER_FFT_UNIT·P·log2 P / (1 + FFT_PARALLEL_EFFICIENCY·(workers-1))`（P 为填充后单元数）；直接法为 `NS_PER_DIRECT_PAIR·W / (1 + DIRECT_PARALLEL_EFFICIENCY·(min(workers,K)-1))`。常数（7.0 ns、0.18、1.35 ns、0.6）来自被忽略的 release 测试 `exact_cost_model_calibration` 在空闲 8 核主机上 1/4/8 worker 的拟合（PLAN.Performance.md §68）：FFT 在 4/8 worker 时加速 1.7/2.1 倍，直接法 3.1/5.2 倍。使用这些常数时规划器在全部 18 个校准用例中都选中更快的内核；此前在共享 4 核主机上拟合的常数（2.0、无、0.36、1/3）在一个 8 worker 用例上选错，相差 10%。绝对时间与主机相关，决定选择的只是 FFT/直接法比值，两台主机上该比值一致（5.2 对 5.6）。
 - 工作集（checked `u64`）：FFT = 占据场 + 复数网格 + 一个 x 轴收集带（变换多于一个任务时；至多 `FFT_X_BAND_BYTES`，且不超过网格）+ 每 worker 行/scratch + 轴 plan + 输出；直接法 = 占据场 + 每个并发半径的域内偏移及逐偏移计数 + 输出。不包含 plan 内部不透明存储及其他线程保留的 16 MiB 缓存。
 - 只有工作集不超过预算的内核可选，取模型时间更小者（相等取 FFT）；都不满足时报告直接法，原因为 `no kernel fits budget`。
