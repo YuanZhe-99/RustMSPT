@@ -35,6 +35,14 @@ offset). Drawing them lazily would make the stream depend on which check short-c
 later reordering of the checks — and the checks *were* reordered, for speed, after they were first
 written — would silently move every placement in every run.
 
+**Speculation rewinds the stream.** Evaluating attempts in parallel does not break the first two
+rules, because the draws never leave the calling thread and their count never depends on the outcome:
+a batch draws its proposals serially, records the stream position after each (`get_word_pos`),
+evaluates them in parallel against the unchanged placed set, and on the first acceptance rewinds to
+that attempt's end (`set_word_pos`). Everything drawn after it is discarded and drawn again for the
+next particle, so the stream, the tallies and every acceptance are those of a one-at-a-time scan for
+any batch size.
+
 **One uniform primitive.** Everything is built from `u01(rng) = (next_u64() >> 11) · 2⁻⁵³`, not
 `rand`'s `gen_range` or `Uniform`, which are explicitly not value-stable across minor versions. The
 first outputs of the seeded stream are pinned as literals in a test, so a change to either the

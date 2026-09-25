@@ -35,7 +35,7 @@
 | `VoidIndex::sample_surface_point` | `src/geometry/void_index.rs:288` | 按面积加权在孔面上取点，并给出外法向。 |
 | `VoidIndex::overlap_volume` | `src/geometry/void_index.rs:330` | 以域锚定的体素计数给出颗粒落在孔隙内的体积。 |
 | `point_inside_mesh_local` | `src/geometry/void_index.rs:375` | 对无层次结构的小网格做射线奇偶判定。 |
-| `PlacementPipeline` | `src/pipeline/placement.rs:38` | 持有已校验 `ResolvedPlacement` 的流水线结构体。 |
+| `PlacementPipeline` | `src/pipeline/placement.rs:39` | 持有已校验 `ResolvedPlacement` 的流水线结构体。 |
 | `PHASE_MATRIX` | `src/pipeline/placement_labels.rs:13` | 标签场中相编码 0。 |
 | `VoxelLabelsHeader` | `src/pipeline/placement_labels.rs:22` | 标签体数据的说明：间距、原点、排布与相表。 |
 | `PhaseLabel` | `src/pipeline/placement_labels.rs:39` | 一个相编码及其名称。 |
@@ -43,29 +43,34 @@
 | `particle_at` | `src/pipeline/placement_labels.rs:306` | 查找包含某点的已放置颗粒。 |
 | `point_in_particle` | `src/pipeline/placement_labels.rs:318` | 对单个颗粒网格做射线奇偶包含判定。 |
 | `VoidReport` | `src/pipeline/placement_outputs.rs:278` | 运行如何处理冻结孔隙，以及如何度量它。 |
-| `build_void_report` | `src/pipeline/placement.rs:1170` | 为报告描述冻结孔隙，含其体积计算方法。 |
-| `PlacementPipeline` | `src/pipeline/placement.rs:38` | 持有已校验 `ResolvedPlacement` 的流水线结构体。 |
-| `PlacementOutcome` | `src/pipeline/placement.rs:61` | 一次完整运行的产出，供进程内调用方使用。 |
-| `run_placement` | `src/pipeline/placement.rs:76` | 在按配置创建的专用 Rayon 线程池中运行引擎并写出全部输出。 |
-| `with_placement_pool` | `src/pipeline/placement.rs:81` | 为一次操作创建并安装专用 Rayon 线程池，传播创建及执行错误。 |
-| `run_placement_in_pool` | `src/pipeline/placement.rs:90` | 在当前线程池内执行所有 placement 阶段，并记录实际 worker 数。 |
-| `resolve_threads` | `src/pipeline/placement.rs:267` | 把线程设置换算为至少为 1 的工作线程数。 |
-| `EngineState` | `src/pipeline/placement.rs:279` | 放置循环累积的全部状态。 |
-| `place_all` | `src/pipeline/placement.rs:361` | 按顺序尝试每个已规划尺寸，接受放得下的。 |
-| `try_place_one` | `src/pipeline/placement.rs:400` | 在单颗粒尝试预算内尝试放置一个尺寸。 |
-| `accept` | `src/pipeline/placement.rs:558` | 把已接受的候选提交进几何与记录。 |
-| `run_top_up` | `src/pipeline/placement.rs:619` | 仅因裁剪而未达标时补抽新批次。 |
-| `decide_stop` | `src/pipeline/placement.rs:802` | 判定运行以四种停止原因中的哪一种结束。 |
-| `write_outputs` | `src/pipeline/placement.rs:802` | 写出几何、逐颗粒记录与尺寸 CSV。 |
-| `entity_id` | `src/pipeline/placement.rs:947` | 已放置颗粒的稳定标识。 |
-| `particle_record` | `src/pipeline/placement.rs:952` | 把一个已放置颗粒转为其记录条目。 |
-| `size_class_rows` | `src/pipeline/placement.rs:1000` | 构造逐分组的目标与实际对照行。 |
-| `blank_report` | `src/pipeline/placement.rs:1026` | 放置开始之前的报告初始形态。 |
-| `describe_input` | `src/pipeline/placement.rs:1205` | 为报告描述输入文件及其摘要。 |
-| `finish_report` | `src/pipeline/placement.rs:1224` | 填入运行结束后已知的全部内容。 |
-| `summary` (placement.rs) | `src/pipeline/placement.rs:1288` | 构造供人阅读的 stdout 摘要。 |
-| `read_record` | `src/pipeline/placement.rs:1349` | 读回已写出的逐颗粒记录。 |
-| `read_report` | `src/pipeline/placement.rs:1357` | 读回已写出的运行报告。 |
+| `build_void_report` | `src/pipeline/placement.rs:1309` | 为报告描述冻结孔隙，含其体积计算方法。 |
+| `PlacementPipeline` | `src/pipeline/placement.rs:39` | 持有已校验 `ResolvedPlacement` 的流水线结构体。 |
+| `PlacementOutcome` | `src/pipeline/placement.rs:62` | 一次完整运行的产出，供进程内调用方使用。 |
+| `run_placement` | `src/pipeline/placement.rs:77` | 在按配置创建的专用 Rayon 线程池中运行引擎并写出全部输出。 |
+| `with_placement_pool` | `src/pipeline/placement.rs:82` | 为一次操作创建并安装专用 Rayon 线程池，传播创建及执行错误。 |
+| `run_placement_in_pool` | `src/pipeline/placement.rs:91` | 在当前线程池内执行所有 placement 阶段，并记录实际 worker 数。 |
+| `resolve_threads` | `src/pipeline/placement.rs:276` | 把线程设置换算为至少为 1 的工作线程数。 |
+| `EngineState` | `src/pipeline/placement.rs:288` | 放置循环累积的全部状态。 |
+| `place_all` | `src/pipeline/placement.rs:370` | 按顺序尝试每个已规划尺寸，接受放得下的。 |
+| `try_place_one` | `src/pipeline/placement.rs:608` | 在单颗粒尝试预算内尝试放置一个尺寸。 |
+| `Proposal` | `src/pipeline/placement.rs:415` | 一次尝试的随机变量及其后的流位置。 |
+| `Evaluation` | `src/pipeline/placement.rs:434` | 候选的检查结果：拒绝原因，或被接受的候选及其检查结果。 |
+| `draw_proposal` | `src/pipeline/placement.rs:447` | 按固定消费顺序抽取一次尝试的随机变量，并记录流位置。 |
+| `evaluate_proposal` | `src/pipeline/placement.rs:531` | 对未改变的已放置集合运行一个候选的全部检查；只读。 |
+| `SPECULATIVE_BATCH_PER_WORKER` / `SERIAL_ATTEMPTS_BEFORE_BATCHING` | `src/pipeline/placement.rs:407` | 投机批次上限（每 worker 8 个）与开始批处理前的串行尝试数（4），均为实测确定。 |
+| `accept` | `src/pipeline/placement.rs:697` | 把已接受的候选提交进几何与记录。 |
+| `run_top_up` | `src/pipeline/placement.rs:758` | 仅因裁剪而未达标时补抽新批次。 |
+| `decide_stop` | `src/pipeline/placement.rs:825` | 判定运行以四种停止原因中的哪一种结束。 |
+| `write_outputs` | `src/pipeline/placement.rs:941` | 写出几何、逐颗粒记录与尺寸 CSV。 |
+| `entity_id` | `src/pipeline/placement.rs:1086` | 已放置颗粒的稳定标识。 |
+| `particle_record` | `src/pipeline/placement.rs:1091` | 把一个已放置颗粒转为其记录条目。 |
+| `size_class_rows` | `src/pipeline/placement.rs:1139` | 构造逐分组的目标与实际对照行。 |
+| `blank_report` | `src/pipeline/placement.rs:1165` | 放置开始之前的报告初始形态。 |
+| `describe_input` | `src/pipeline/placement.rs:1344` | 为报告描述输入文件及其摘要。 |
+| `finish_report` | `src/pipeline/placement.rs:1363` | 填入运行结束后已知的全部内容。 |
+| `summary` (placement.rs) | `src/pipeline/placement.rs:1427` | 构造供人阅读的 stdout 摘要。 |
+| `read_record` | `src/pipeline/placement.rs:1488` | 读回已写出的逐颗粒记录。 |
+| `read_report` | `src/pipeline/placement.rs:1496` | 读回已写出的运行报告。 |
 | `RejectReason` | `src/pipeline/placement_feasibility.rs:17` | 候选放置未被接受的原因；即报告中的键。 |
 | `RejectReason::as_str` | `src/pipeline/placement_feasibility.rs:44` | 拒绝原因在报告中的稳定键名。 |
 | `PlacedParticle` | `src/pipeline/placement_feasibility.rs:76` | 通过全部检查的颗粒，附带缓存的形状。 |
@@ -137,7 +142,9 @@ run_placement
 ├── blank_report + write_json   报告，先以 `running` 写一次
 ├── place_all
 │   └── try_place_one           逐尺寸：提出候选，然后检查
-│       └── check_placement     全部规则，按固定顺序
+│       ├── draw_proposal       串行、固定消费顺序；记录流位置
+│       └── evaluate_proposal   批内并行；只读
+│           └── check_placement     全部规则，按固定顺序
 ├── run_top_up                  仅当没有任何失败时
 ├── decide_stop                 四个词中的哪一个
 ├── write_outputs               几何、记录、尺寸 CSV、孔隙副本、标签
@@ -155,6 +162,8 @@ run_placement
 
 **昂贵的工作被推迟到廉价拒绝之后。** parry 的 `TriMesh`、精确的域内体积、精确的两两距离，都只有在更
 廉价的检查无法定论时才会执行。把它们写成即时计算，在一次小规模运行上代价是十六倍。
+
+**投机尝试批次从不改变结果。** `try_place_one` 按固定消费顺序串行抽取一批候选，并记录每个候选之后的 ChaCha 流位置；然后对未改变的已放置集合并行评估，再按顺序检查结果：第一个接受之前的拒绝照常计数；一旦接受，就把生成器回退（`set_word_pos`）到该次尝试结束处，丢弃其后的全部抽样。每个颗粒的前 `SERIAL_ATTEMPTS_BEFORE_BATCHING`（4）次尝试逐个进行，之后批次加倍，上限为 worker 数的 `SPECULATIVE_BATCH_PER_WORKER`（8）倍；单 worker 从不批处理。体积分数 0.30 时 4/8 worker 的墙钟时间降至串行的 0.53/0.44 倍；0.10 时差异在噪声内。`a_dense_run_is_identical_on_one_two_and_eight_threads` 在每次放置约 175 次尝试的运行上逐字节比较 1/2/8 worker 的输出，去掉回退即失败。
 
 **并行的颗粒对检查从不改变结果。** 廉价的邻居测试串行执行；随后相交与嵌套检查串行进行到第一个失败的
 存活邻居为止，只有在它之前的颗粒对才需要代价占绝大部分的精确距离。当这样的颗粒对数量达到

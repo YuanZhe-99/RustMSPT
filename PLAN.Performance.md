@@ -1517,3 +1517,23 @@ GPU 全量（`env -u DISPLAY -u WAYLAND_DISPLAY cargo test --release --features 
 修正（`pca_frame`）：保留“求解器符号不稳定必须定号”的目的，改用**最接近单位阵**的规则——非退化第 k 列使其第 k 个分量为正；该分量绝对值低于 `PCA_SIGN_DIAGONAL_TOL = 1e-6`（主轴几乎垂直于自身扫描轴）时才退回绝对值最大分量规则；行列式为负时翻转对角绝对值最小的非退化列（放弃的旋转最少，平局取高序号），全退化时才翻转第 2 列。退化特征空间的规范基不变。
 
 验证：`real_ct_frame_report` 的列点积符号由 [1, −1, −1] 变为 [1, 1, 1]，边界与旧 serial 帧一致到 1e-12；用默认 crop 配置，§63 的旧二进制 `rustmspt-default-raw-reserve`、本批提交 `31cb107` 的二进制和修正版分别输出 `99ba338a8ce7ca13…`、`16410b4eb748ddf5…`、`99ba338a8ce7ca13…`——**修正版与 2026-09-25 之前的基线逐字节一致**。新增 `frame_keeps_the_scan_orientation_of_a_sample_rotated_about_z`（绕 z 50°/140°/−35°、含 1e-9 噪声，要求 z 列为 +z、对角非负、右手；旧规则下 50° 用例即失败）；crop 单元测试全部通过。中英文 algorithms/reference 与 `AGENTS.md` 已改为新规则。§66 记录的“真实 CT 输出绕主轴 180°”自此不再成立。
+
+## 70. PERF-12：placement 投机尝试批次（2026-09-25，本地）
+
+§68 发现高体积分数下 placement 8 线程不快于 1 线程：接受循环串行，而每个颗粒在稠密阶段要试上百次（VF 0.30：27,898 次尝试放 222 个，平均 126 次/颗粒，单次约 190～350 µs），评估占 99% 时间。
+
+**做法（结果与串行逐字节一致）。** 每次尝试的随机消费在配置固定后与结果无关（1 个壳层 + 3 个姿态 + 3/4 个位置），所以 `try_place_one` 拆成 `draw_proposal`（串行按固定顺序抽取，记录 `ChaCha12Rng::get_word_pos`）与 `evaluate_proposal`（对未改变的已放置集合只读求值）。一批候选串行抽取、并行求值，再按顺序扫描：首个接受之前的拒绝照常计数；接受时 `set_word_pos` 回退到该次尝试结束处，其后已抽的变量全部丢弃、留给下一个颗粒重新抽取。于是任意批次大小下随机流、拒绝计数与接受都与逐次扫描相同。批次策略只影响速度：每个颗粒前 `SERIAL_ATTEMPTS_BEFORE_BATCHING = 4` 次逐个尝试，之后批次倍增至 `SPECULATIVE_BATCH_PER_WORKER = 8` 倍 worker 数；单 worker 永不批处理（即原串行路径）。
+
+**参数来自实测（VF 0.30，`data/input/placement_config.yaml` 改目标，交替运行，中位）：** 上限 2×/4×/8× worker 在 4 worker 时 3.82/2.94/2.87 s、8 worker 时 3.12/3.15/2.63 s；原因是每批末尾有屏障且尝试成本长尾（多数死于廉价测试，少数进入精确检查），批越大越能摊薄。立即倍增时 VF 0.10、8 worker 从 0.05 s 变成 0.08 s（小颗粒几次就放下，连 2 个一批也要付唤醒线程池的成本），加入 4 次串行起步后降到噪声内。glibc malloc 参数（`MALLOC_MMAP_THRESHOLD_` 等）无影响，排除分配器假设；8 worker 时约 2.8 s 的 sys 时间来自空闲 worker 自旋。
+
+**结果（串行 = 本批前的二进制，交替 6 次，墙钟中位 / 最小值比值）：**
+
+| VF | 1 worker | 4 worker | 8 worker | 8 worker CPU |
+|---|---|---|---|---|
+| 0.10 | 1.02 | 0.91 | 1.22（最小值 1.01，约 10 ms，噪声级） | 0.08 s 对 0.06 s |
+| 0.25（上一版参数） | 1.04 | 0.88 | 0.86 | — |
+| 0.30 | 0.99 | 0.53 | 0.44（5.40 s → 2.40 s） | 8.77 s 对 5.40 s |
+
+所有配置下 `particles.json`/`particles.stl`/`size_distribution.csv` 与串行逐字节一致。新增 `tests/placement_pipeline_tests.rs::a_dense_run_is_identical_on_one_two_and_eight_threads`（24³ 域、VF 0.30、两种球，15,728 次尝试放 90 个，约 175 次/颗粒），1/2/8 worker 的几何、记录、CSV 与报告（仅去掉 runtime、路径与 `elapsed_s`，保留拒绝计数与 consumed_attempts）全部相同；**去掉 `set_word_pos` 后该测试失败**（`particles.json differs at 2 workers`），证明它能守住契约。
+
+剩余：8 worker 仍远离理想（CPU 8.8 s，墙钟 2.4 s），瓶颈是批末屏障与长尾评估；可能的下一步是不设屏障的有序流水（例如按固定窗口持续派发、按序确认），需要重新论证回退点。

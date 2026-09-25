@@ -37,7 +37,7 @@ selects the original loop instead, which is documented in
 | `VoidIndex::sample_surface_point` | `src/geometry/void_index.rs:288` | Area-weighted point on the void surface with its outward normal. |
 | `VoidIndex::overlap_volume` | `src/geometry/void_index.rs:330` | Volume of a particle inside the void, by domain-anchored voxel count. |
 | `point_inside_mesh_local` | `src/geometry/void_index.rs:375` | Ray-parity point-in-mesh test for a small mesh with no hierarchy. |
-| `PlacementPipeline` | `src/pipeline/placement.rs:38` | Pipeline struct holding a validated `ResolvedPlacement`. |
+| `PlacementPipeline` | `src/pipeline/placement.rs:39` | Pipeline struct holding a validated `ResolvedPlacement`. |
 | `PHASE_MATRIX` | `src/pipeline/placement_labels.rs:13` | Phase code 0 in the written label field. |
 | `VoxelLabelsHeader` | `src/pipeline/placement_labels.rs:22` | What the label stacks are: spacing, origin, layout, phase table. |
 | `PhaseLabel` | `src/pipeline/placement_labels.rs:39` | One phase code and its name. |
@@ -45,29 +45,34 @@ selects the original loop instead, which is documented in
 | `particle_at` | `src/pipeline/placement_labels.rs:306` | Finds which placed particle, if any, contains a point. |
 | `point_in_particle` | `src/pipeline/placement_labels.rs:318` | Ray-parity containment for one particle mesh. |
 | `VoidReport` | `src/pipeline/placement_outputs.rs:278` | What the run did with the frozen void, and how it measured it. |
-| `build_void_report` | `src/pipeline/placement.rs:1170` | Describes the frozen void for the report, including its volume method. |
-| `PlacementPipeline` | `src/pipeline/placement.rs:38` | Pipeline struct holding a validated `ResolvedPlacement`. |
-| `PlacementOutcome` | `src/pipeline/placement.rs:61` | What a completed run produced, for in-process callers. |
-| `run_placement` | `src/pipeline/placement.rs:76` | Runs the engine in a dedicated configured Rayon pool and writes every output file. |
-| `with_placement_pool` | `src/pipeline/placement.rs:81` | Creates and installs a dedicated Rayon pool for one operation, propagating creation/work errors. |
-| `run_placement_in_pool` | `src/pipeline/placement.rs:90` | Runs all placement stages in the active pool and records its actual worker count. |
-| `resolve_threads` | `src/pipeline/placement.rs:267` | Turns a thread setting into a worker count, at least 1. |
-| `EngineState` | `src/pipeline/placement.rs:279` | Everything the placement loop accumulates. |
-| `place_all` | `src/pipeline/placement.rs:361` | Attempts every planned size in order, accepting what fits. |
-| `try_place_one` | `src/pipeline/placement.rs:400` | Tries one size within its per-particle attempt budget. |
-| `accept` | `src/pipeline/placement.rs:558` | Commits an accepted candidate into the geometry and the record. |
-| `run_top_up` | `src/pipeline/placement.rs:619` | Draws further batches when clipping alone left the target short. |
-| `decide_stop` | `src/pipeline/placement.rs:802` | Decides which of the four stop reasons a run ended with. |
-| `write_outputs` | `src/pipeline/placement.rs:802` | Writes the geometry, the per-particle record and the size CSV. |
-| `entity_id` | `src/pipeline/placement.rs:947` | The stable id of a placed particle. |
-| `particle_record` | `src/pipeline/placement.rs:952` | Turns one placed particle into its record entry. |
-| `size_class_rows` | `src/pipeline/placement.rs:1000` | Builds the per-class target-against-actual rows. |
-| `blank_report` | `src/pipeline/placement.rs:1026` | The report as it stands before placement starts. |
-| `describe_input` | `src/pipeline/placement.rs:1205` | Describes an input file with its digest for the report. |
-| `finish_report` | `src/pipeline/placement.rs:1224` | Fills in everything the finished run knows. |
-| `summary` (placement.rs) | `src/pipeline/placement.rs:1288` | Builds the human-readable stdout summary. |
-| `read_record` | `src/pipeline/placement.rs:1349` | Reads a written per-particle record back. |
-| `read_report` | `src/pipeline/placement.rs:1357` | Reads a written run report back. |
+| `build_void_report` | `src/pipeline/placement.rs:1309` | Describes the frozen void for the report, including its volume method. |
+| `PlacementPipeline` | `src/pipeline/placement.rs:39` | Pipeline struct holding a validated `ResolvedPlacement`. |
+| `PlacementOutcome` | `src/pipeline/placement.rs:62` | What a completed run produced, for in-process callers. |
+| `run_placement` | `src/pipeline/placement.rs:77` | Runs the engine in a dedicated configured Rayon pool and writes every output file. |
+| `with_placement_pool` | `src/pipeline/placement.rs:82` | Creates and installs a dedicated Rayon pool for one operation, propagating creation/work errors. |
+| `run_placement_in_pool` | `src/pipeline/placement.rs:91` | Runs all placement stages in the active pool and records its actual worker count. |
+| `resolve_threads` | `src/pipeline/placement.rs:276` | Turns a thread setting into a worker count, at least 1. |
+| `EngineState` | `src/pipeline/placement.rs:288` | Everything the placement loop accumulates. |
+| `place_all` | `src/pipeline/placement.rs:370` | Attempts every planned size in order, accepting what fits. |
+| `try_place_one` | `src/pipeline/placement.rs:608` | Tries one size within its per-particle attempt budget. |
+| `Proposal` | `src/pipeline/placement.rs:415` | One attempt's variates and the stream position after them. |
+| `Evaluation` | `src/pipeline/placement.rs:434` | A proposal's outcome: rejection reason, or the accepted candidate with its check result. |
+| `draw_proposal` | `src/pipeline/placement.rs:447` | Draws one attempt's variates in the fixed schedule and records the stream position. |
+| `evaluate_proposal` | `src/pipeline/placement.rs:531` | Runs every check for one proposal against the unchanged placed set; read-only. |
+| `SPECULATIVE_BATCH_PER_WORKER` / `SERIAL_ATTEMPTS_BEFORE_BATCHING` | `src/pipeline/placement.rs:407` | Speculative batch cap (8 per worker) and serial attempts before batching (4), both measured. |
+| `accept` | `src/pipeline/placement.rs:697` | Commits an accepted candidate into the geometry and the record. |
+| `run_top_up` | `src/pipeline/placement.rs:758` | Draws further batches when clipping alone left the target short. |
+| `decide_stop` | `src/pipeline/placement.rs:825` | Decides which of the four stop reasons a run ended with. |
+| `write_outputs` | `src/pipeline/placement.rs:941` | Writes the geometry, the per-particle record and the size CSV. |
+| `entity_id` | `src/pipeline/placement.rs:1086` | The stable id of a placed particle. |
+| `particle_record` | `src/pipeline/placement.rs:1091` | Turns one placed particle into its record entry. |
+| `size_class_rows` | `src/pipeline/placement.rs:1139` | Builds the per-class target-against-actual rows. |
+| `blank_report` | `src/pipeline/placement.rs:1165` | The report as it stands before placement starts. |
+| `describe_input` | `src/pipeline/placement.rs:1344` | Describes an input file with its digest for the report. |
+| `finish_report` | `src/pipeline/placement.rs:1363` | Fills in everything the finished run knows. |
+| `summary` (placement.rs) | `src/pipeline/placement.rs:1427` | Builds the human-readable stdout summary. |
+| `read_record` | `src/pipeline/placement.rs:1488` | Reads a written per-particle record back. |
+| `read_report` | `src/pipeline/placement.rs:1496` | Reads a written run report back. |
 | `RejectReason` | `src/pipeline/placement_feasibility.rs:17` | Why a proposed placement was not accepted; the report's keys. Ten variants. |
 | `RejectReason::as_str` | `src/pipeline/placement_feasibility.rs:44` | The stable report key for a rejection reason. |
 | `PlacedParticle` | `src/pipeline/placement_feasibility.rs:76` | A particle that cleared every check, with its cached shape. |
@@ -140,7 +145,9 @@ run_placement
 ├── blank_report + write_json   the report, written once as `running`
 ├── place_all
 │   └── try_place_one           per size: propose, then check
-│       └── check_placement     every rule, in one fixed order
+│       ├── draw_proposal       serial, fixed schedule; records the stream position
+│       └── evaluate_proposal   parallel within a batch; read-only
+│           └── check_placement every rule, in one fixed order
 ├── run_top_up                  only if nothing failed
 ├── decide_stop                 which of the four words
 ├── write_outputs               geometry, record, size CSV, void copy, labels
@@ -160,6 +167,8 @@ accumulator rather than re-summing, so it cannot disagree with the decision it d
 **Expensive work is deferred behind cheap rejections.** The `parry` `TriMesh`, the exact in-box
 volume and the exact pair distance are each reached only when the cheaper tests have failed to settle
 the question. Writing them eagerly cost a factor of sixteen on a small run.
+
+**Speculative attempt batches never change the answer.** `try_place_one` draws a batch of proposals serially in the fixed schedule, recording the ChaCha stream position after each, evaluates them in parallel against the unchanged placed set, and walks them in order: rejections before the first acceptance are tallied, and on an acceptance the generator is rewound (`set_word_pos`) to the end of that attempt, discarding every later draw. A particle's first `SERIAL_ATTEMPTS_BEFORE_BATCHING` (4) attempts run one at a time, then the batch doubles up to `SPECULATIVE_BATCH_PER_WORKER` (8) times the worker count; a single worker never batches. At volume fraction 0.30 this took 4 workers to 0.53x and 8 workers to 0.44x of the serial wall time; at 0.10 it is within noise. `a_dense_run_is_identical_on_one_two_and_eight_threads` compares a run with 175 attempts per placement across 1/2/8 workers byte for byte, and fails if the rewind is removed.
 
 **Parallel pair checks never change the answer.** The cheap neighbour tests run serially; overlap and
 enclosure then run serially up to the first failing survivor, and only the pairs before it need the

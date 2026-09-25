@@ -203,6 +203,47 @@ fn the_same_seed_gives_byte_identical_output_on_one_thread_and_on_eight() {
     assert_eq!(ra, rb, "the report differs beyond its runtime and path fields");
 }
 
+// AI-FUNC-SUMMARY: A dense run, where most attempts are rejected and the speculative batches grow to their cap, gives byte-identical geometry, record and size CSV at 1/2/8 workers, and the same report including rejection tallies and consumed attempts; writes temporary files.
+#[test]
+fn a_dense_run_is_identical_on_one_two_and_eight_threads() {
+    let tmp = tempfile::tempdir().unwrap();
+    shape_library(tmp.path(), &[1.0, 1.3]);
+    let mut reports = Vec::new();
+    for threads in [1u32, 2, 8] {
+        let name = format!("dense-{threads}");
+        let p = tmp.path().join(format!("{name}.yaml"));
+        fs::write(
+            &p,
+            roomy(77, &format!("  threads: {threads}"))
+                .replace("max: [40, 40, 40]", "max: [24, 24, 24]")
+                .replace("volume_fraction: 0.05", "volume_fraction: 0.30")
+                .replace("dir: \"out\"", &format!("dir: \"{name}\"")),
+        )
+        .unwrap();
+        let outcome = run_placement(&resolve(&p)).expect("dense run");
+        let mut report: serde_json::Value =
+            serde_json::from_slice(&fs::read(tmp.path().join(&name).join("run_report.json")).unwrap()).unwrap();
+        let consumed = report["budget"]["consumed_attempts"].as_u64().unwrap();
+        assert!(outcome.placed > 20, "{threads}: placed {}", outcome.placed);
+        assert!(consumed > 10 * outcome.placed as u64, "{threads}: {consumed} attempts for {} placed - not dense enough to grow a batch", outcome.placed);
+        let o = report.as_object_mut().unwrap();
+        o.remove("runtime");
+        o.remove("config");
+        o.remove("outputs");
+        o["budget"].as_object_mut().unwrap().remove("elapsed_s");
+        reports.push(report);
+    }
+    for name in ["particles.json", "particles.stl", "size_distribution.csv"] {
+        let one = fs::read(tmp.path().join("dense-1").join(name)).unwrap();
+        for threads in [2, 8] {
+            let other = fs::read(tmp.path().join(format!("dense-{threads}")).join(name)).unwrap();
+            assert_eq!(one, other, "{name} differs at {threads} workers");
+        }
+    }
+    assert_eq!(reports[0], reports[1], "report differs at 2 workers");
+    assert_eq!(reports[0], reports[2], "report differs at 8 workers");
+}
+
 // AI-FUNC-SUMMARY: Execute placement and voxel labeling at 1/2/8 workers, checking the active pool count and byte-identical geometry, records and label outputs; writes temporary files.
 #[test]
 fn voxel_outputs_and_active_pool_match_thread_contract() {

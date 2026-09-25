@@ -303,7 +303,7 @@
 | `save_tiff_or_folder_with_ext` | I/O | `src/io/volume.rs:524` | 将 `Volume3D` 保存为一个多页 TIFF 文件或一个逐切片 TIFF 文件夹，并可配置扩展名。 |
 | `save_tiff_or_folder` | I/O | `src/io/volume.rs:586` | 使用默认的 `.tiff` 扩展名，将 `Volume3D` 保存为 TIFF 文件或切片序列文件夹。 |
 | `Pipeline::run`（trait） | Pipeline — Core | `src/pipeline/mod.rs:17` | 每个流水线结构体实现的 trait 方法，用于端到端执行。 |
-| `PlacementPipeline` | Pipeline — Core | `src/pipeline/placement.rs:38` | 持有已校验 `ResolvedPlacement` 的流水线结构体。 |
+| `PlacementPipeline` | Pipeline — Core | `src/pipeline/placement.rs:39` | 持有已校验 `ResolvedPlacement` 的流水线结构体。 |
 | `seeded_rng` | Pipeline — Core | `src/pipeline/rng.rs:13` | 构建带种子运行所使用的 ChaCha12 随机流。 |
 | `u01` | Pipeline — Core | `src/pipeline/rng.rs:32` | 唯一的均匀分布原语：一次抽取，落在 `[0, 1)`。 |
 | `uniform_range` | Pipeline — Core | `src/pipeline/rng.rs:45` | 在 `[lo, hi)` 上抽取一个均匀值；退化区间返回 `lo`。 |
@@ -401,29 +401,34 @@
 | `particle_at` | Pipeline — Packing | `src/pipeline/placement_labels.rs:233` | 查找包含某点的已放置颗粒。 |
 | `point_in_particle` | Pipeline — Packing | `src/pipeline/placement_labels.rs:245` | 对单个颗粒网格做射线奇偶包含判定。 |
 | `VoidReport` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:278` | 运行如何处理冻结孔隙，以及如何度量它。 |
-| `build_void_report` | Pipeline — Packing | `src/pipeline/placement.rs:1170` | 为报告描述冻结孔隙，含其体积计算方法。 |
-| `PlacementPipeline` | Pipeline — Packing | `src/pipeline/placement.rs:38` | 持有已校验 `ResolvedPlacement` 的流水线结构体。 |
-| `PlacementOutcome` | Pipeline — Packing | `src/pipeline/placement.rs:61` | 一次完整运行的产出，供进程内调用方使用。 |
-| `run_placement` | Pipeline — Packing | `src/pipeline/placement.rs:76` | 在按配置创建的专用 Rayon 线程池中运行引擎并写出全部输出。 |
-| `with_placement_pool` | Pipeline — Packing | `src/pipeline/placement.rs:81` | 为一次操作创建并安装专用 Rayon 线程池，传播创建及执行错误。 |
-| `run_placement_in_pool` | Pipeline — Packing | `src/pipeline/placement.rs:90` | 在当前线程池内执行所有 placement 阶段，并记录实际 worker 数。 |
-| `resolve_threads` | Pipeline — Packing | `src/pipeline/placement.rs:267` | 把线程设置换算为至少为 1 的工作线程数。 |
-| `EngineState` | Pipeline — Packing | `src/pipeline/placement.rs:279` | 放置循环累积的全部状态。 |
-| `place_all` | Pipeline — Packing | `src/pipeline/placement.rs:361` | 按顺序尝试每个已规划尺寸，接受放得下的。 |
-| `try_place_one` | Pipeline — Packing | `src/pipeline/placement.rs:400` | 在单颗粒尝试预算内尝试放置一个尺寸。 |
-| `accept` | Pipeline — Packing | `src/pipeline/placement.rs:558` | 把已接受的候选提交进几何与记录。 |
-| `run_top_up` | Pipeline — Packing | `src/pipeline/placement.rs:619` | 仅因裁剪而未达标时补抽新批次。 |
-| `decide_stop` | Pipeline — Packing | `src/pipeline/placement.rs:802` | 判定运行以四种停止原因中的哪一种结束。 |
-| `write_outputs` | Pipeline — Packing | `src/pipeline/placement.rs:802` | 写出几何、逐颗粒记录与尺寸 CSV。 |
-| `entity_id` | Pipeline — Packing | `src/pipeline/placement.rs:947` | 已放置颗粒的稳定标识。 |
-| `particle_record` | Pipeline — Packing | `src/pipeline/placement.rs:952` | 把一个已放置颗粒转为其记录条目。 |
-| `size_class_rows` | Pipeline — Packing | `src/pipeline/placement.rs:1000` | 构造逐分组的目标与实际对照行。 |
-| `blank_report` | Pipeline — Packing | `src/pipeline/placement.rs:1026` | 放置开始之前的报告初始形态。 |
-| `describe_input` | Pipeline — Packing | `src/pipeline/placement.rs:1205` | 为报告描述输入文件及其摘要。 |
-| `finish_report` | Pipeline — Packing | `src/pipeline/placement.rs:1224` | 填入运行结束后已知的全部内容。 |
-| `summary` (placement.rs) | Pipeline — Packing | `src/pipeline/placement.rs:1288` | 构造供人阅读的 stdout 摘要。 |
-| `read_record` | Pipeline — Packing | `src/pipeline/placement.rs:1349` | 读回已写出的逐颗粒记录。 |
-| `read_report` | Pipeline — Packing | `src/pipeline/placement.rs:1357` | 读回已写出的运行报告。 |
+| `build_void_report` | Pipeline — Packing | `src/pipeline/placement.rs:1309` | 为报告描述冻结孔隙，含其体积计算方法。 |
+| `PlacementPipeline` | Pipeline — Packing | `src/pipeline/placement.rs:39` | 持有已校验 `ResolvedPlacement` 的流水线结构体。 |
+| `PlacementOutcome` | Pipeline — Packing | `src/pipeline/placement.rs:62` | 一次完整运行的产出，供进程内调用方使用。 |
+| `run_placement` | Pipeline — Packing | `src/pipeline/placement.rs:77` | 在按配置创建的专用 Rayon 线程池中运行引擎并写出全部输出。 |
+| `with_placement_pool` | Pipeline — Packing | `src/pipeline/placement.rs:82` | 为一次操作创建并安装专用 Rayon 线程池，传播创建及执行错误。 |
+| `run_placement_in_pool` | Pipeline — Packing | `src/pipeline/placement.rs:91` | 在当前线程池内执行所有 placement 阶段，并记录实际 worker 数。 |
+| `resolve_threads` | Pipeline — Packing | `src/pipeline/placement.rs:276` | 把线程设置换算为至少为 1 的工作线程数。 |
+| `EngineState` | Pipeline — Packing | `src/pipeline/placement.rs:288` | 放置循环累积的全部状态。 |
+| `place_all` | Pipeline — Packing | `src/pipeline/placement.rs:370` | 按顺序尝试每个已规划尺寸，接受放得下的。 |
+| `try_place_one` | Pipeline — Packing | `src/pipeline/placement.rs:608` | 在单颗粒尝试预算内尝试放置一个尺寸。 |
+| `Proposal` | Pipeline — Packing | `src/pipeline/placement.rs:415` | 一次尝试的随机变量及其后的流位置。 |
+| `Evaluation` | Pipeline — Packing | `src/pipeline/placement.rs:434` | 候选的检查结果：拒绝原因，或被接受的候选及其检查结果。 |
+| `draw_proposal` | Pipeline — Packing | `src/pipeline/placement.rs:447` | 按固定消费顺序抽取一次尝试的随机变量，并记录流位置。 |
+| `evaluate_proposal` | Pipeline — Packing | `src/pipeline/placement.rs:531` | 对未改变的已放置集合运行一个候选的全部检查；只读。 |
+| `SPECULATIVE_BATCH_PER_WORKER` / `SERIAL_ATTEMPTS_BEFORE_BATCHING` | Pipeline — Packing | `src/pipeline/placement.rs:407` | 投机批次上限（每 worker 8 个）与开始批处理前的串行尝试数（4），均为实测确定。 |
+| `accept` | Pipeline — Packing | `src/pipeline/placement.rs:697` | 把已接受的候选提交进几何与记录。 |
+| `run_top_up` | Pipeline — Packing | `src/pipeline/placement.rs:758` | 仅因裁剪而未达标时补抽新批次。 |
+| `decide_stop` | Pipeline — Packing | `src/pipeline/placement.rs:825` | 判定运行以四种停止原因中的哪一种结束。 |
+| `write_outputs` | Pipeline — Packing | `src/pipeline/placement.rs:941` | 写出几何、逐颗粒记录与尺寸 CSV。 |
+| `entity_id` | Pipeline — Packing | `src/pipeline/placement.rs:1086` | 已放置颗粒的稳定标识。 |
+| `particle_record` | Pipeline — Packing | `src/pipeline/placement.rs:1091` | 把一个已放置颗粒转为其记录条目。 |
+| `size_class_rows` | Pipeline — Packing | `src/pipeline/placement.rs:1139` | 构造逐分组的目标与实际对照行。 |
+| `blank_report` | Pipeline — Packing | `src/pipeline/placement.rs:1165` | 放置开始之前的报告初始形态。 |
+| `describe_input` | Pipeline — Packing | `src/pipeline/placement.rs:1344` | 为报告描述输入文件及其摘要。 |
+| `finish_report` | Pipeline — Packing | `src/pipeline/placement.rs:1363` | 填入运行结束后已知的全部内容。 |
+| `summary` (placement.rs) | Pipeline — Packing | `src/pipeline/placement.rs:1427` | 构造供人阅读的 stdout 摘要。 |
+| `read_record` | Pipeline — Packing | `src/pipeline/placement.rs:1488` | 读回已写出的逐颗粒记录。 |
+| `read_report` | Pipeline — Packing | `src/pipeline/placement.rs:1496` | 读回已写出的运行报告。 |
 | `RejectReason` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:17` | 候选放置未被接受的原因；即报告中的键。 |
 | `RejectReason::as_str` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:44` | 拒绝原因在报告中的稳定键名。 |
 | `PlacedParticle` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:76` | 通过全部检查的颗粒，附带缓存的形状。 |

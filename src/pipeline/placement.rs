@@ -400,12 +400,211 @@ fn place_all(
     let _ = classes;
 }
 
+/// Largest speculative batch per worker. Each batch ends at a barrier and attempt costs are heavy-tailed
+/// (most die in the cheap tests, a few reach the exact ones), so a batch lasts as long as its slowest
+/// attempt. Measured at volume fraction 0.30 (PLAN.Performance.md §70): caps of 2x/4x/8x the workers
+/// gave 3.82/2.94/2.87 s on 4 workers and 3.12/3.15/2.63 s on 8, against about 5-6 s serial.
+const SPECULATIVE_BATCH_PER_WORKER: usize = 8;
+
+/// Attempts a particle makes one at a time before its batches start to grow. A sparse run places most
+/// particles within a few attempts, and even a batch of two pays a pool wake-up that costs more than
+/// the attempt (PLAN.Performance.md §70).
+const SERIAL_ATTEMPTS_BEFORE_BATCHING: usize = 4;
+
+/// One attempt's variates, drawn in the fixed schedule before any check runs.
+struct Proposal {
+    shell_index: usize,
+    scale: f64,
+    rotation: UnitQuat,
+    centre: Vec3,
+    reach: f64,
+    fits_domain: bool,
+    stream_after: u128,
+}
+
+/// An accepted proposal's candidate and check result, boxed because rejections vastly outnumber it.
+struct AcceptedProposal {
+    candidate: Mesh,
+    bbox: crate::types::BoundingBox,
+    volume_full: f64,
+    accepted: crate::pipeline::placement_feasibility::Accepted,
+}
+
+/// What evaluating one proposal against the current placed set concluded.
+enum Evaluation {
+    Rejected(RejectReason),
+    Accepted(Box<AcceptedProposal>),
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Draw one attempt's variates in the fixed schedule and derive its transform.
+// Inputs: the config, library, void index, generator and size draw.
+// Returns: the proposal, carrying the stream position right after its draws.
+// Side effects: Advances the generator by exactly one attempt's draws.
+// Notes: 1 draw for the shell, 3 for the orientation, 3 or 4 for the position, whatever happens next;
+// the count depends only on the config, never on the particle or the placed set, which is what lets
+// try_place_one rewind to any attempt boundary.
+fn draw_proposal(
+    config: &ResolvedPlacement,
+    library: &ShapeLibrary,
+    void: Option<&VoidIndex>,
+    rng: &mut ChaCha12Rng,
+    draw: &SizeDraw,
+) -> Proposal {
+    // 1 draw: which shell.
+    let shell_index = uniform_index(rng, library.shells.len());
+    let shell = &library.shells[shell_index];
+    let scale = draw.diameter / shell.equivalent_diameter;
+
+    // 3 draws: the orientation.
+    let rotation = match config.orientation {
+        OrientationMode::UniformSo3 => sample_uniform_quaternion(rng),
+        OrientationMode::Fixed => {
+            let _ = (u01(rng), u01(rng), u01(rng));
+            UnitQuat::identity()
+        }
+    };
+
+    // The particle's reach from its own centre. Rotation cannot change it, so
+    // it bounds the particle whatever orientation came up.
+    let reach = shell.bounding_radius * scale;
+    let box_for_centre = match config.boundary.mode {
+        BoundaryMode::Strict => config
+            .domain
+            .expanded(-(reach + config.boundary.min_boundary_dist)),
+        BoundaryMode::Clip | BoundaryMode::Periodic => config.domain,
+    };
+
+    // 3 or 4 draws: the centroid.
+    //
+    // feasible_uniform: uniform in the box above. In strict mode that box is
+    // the domain eroded by the particle's circumscribed-sphere radius, which
+    // does NOT depend on the orientation. Eroding by the *rotated* bounding
+    // box instead would make the proposal box a function of the orientation,
+    // under-weighting orientations with a smaller footprint and correlating
+    // orientation with position near the walls - exactly the kind of artefact
+    // a consumer would notice in the pair statistics.
+    //
+    // void_neighbourhood: an area-weighted point on the void surface, offset
+    // outward by a distance in the declared band. This is a deliberate
+    // construction, not a random one, and the report names it as such.
+    let centre = match config.position.mode {
+        PositionMode::FeasibleUniform => Vec3::new(
+            uniform_range(rng, box_for_centre.min.x, box_for_centre.max.x),
+            uniform_range(rng, box_for_centre.min.y, box_for_centre.max.y),
+            uniform_range(rng, box_for_centre.min.z, box_for_centre.max.z),
+        ),
+        PositionMode::VoidNeighbourhood => {
+            let (lo, hi) = config.position.band.unwrap_or((0.0, 0.0));
+            match void {
+                Some(index) => {
+                    let (surface, normal) = index.sample_surface_point(rng);
+                    let offset = uniform_range(rng, lo, hi);
+                    surface.add(normal.scale(offset))
+                }
+                None => {
+                    // validate() refuses this combination, so it cannot be
+                    // reached; the draws are still consumed so the stream does
+                    // not depend on the branch taken.
+                    let _ = (u01(rng), u01(rng), u01(rng), u01(rng));
+                    Vec3::new(0.0, 0.0, 0.0)
+                }
+            }
+        }
+    };
+    Proposal {
+        shell_index,
+        scale,
+        rotation,
+        centre,
+        reach,
+        fits_domain: box_for_centre.volume() > 0.0,
+        stream_after: rng.get_word_pos(),
+    }
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Run every placement check for one proposal against the current, unchanged placed set.
+// Inputs: the config, library, void index, placed particles, spatial grid, and the proposal.
+// Returns: the first rejection reason, or the accepted candidate with its prepared check result.
+// Side effects: None; reads only immutable state, so proposals of one batch evaluate in parallel.
+fn evaluate_proposal(
+    config: &ResolvedPlacement,
+    library: &ShapeLibrary,
+    void: Option<&VoidIndex>,
+    placed: &[PlacedParticle],
+    grid: &SpatialGrid,
+    proposal: &Proposal,
+) -> Evaluation {
+    if !proposal.fits_domain {
+        // The particle cannot fit the domain at all under this boundary rule.
+        return Evaluation::Rejected(RejectReason::OutsideDomain);
+    }
+    let shell = &library.shells[proposal.shell_index];
+    let scale = proposal.scale;
+    let candidate = transform_shell(&shell.canonical, scale, proposal.rotation, proposal.centre);
+    let Some(cand_bbox) = mesh_bbox(&candidate) else {
+        return Evaluation::Rejected(RejectReason::ZeroInDomainVolume);
+    };
+    let neighbours = grid.query_neighbors_with_margin(cand_bbox, config.gap_particle_particle, usize::MAX);
+    let ctx = FeasibilityContext {
+        domain: config.domain,
+        boundary: &config.boundary,
+        gap_particle_particle: config.gap_particle_particle,
+        placed,
+        neighbours: &neighbours,
+        void,
+        void_crossing: config
+            .void
+            .as_ref()
+            .map(|v| v.crossing)
+            .unwrap_or(VoidCrossing::Forbidden),
+        void_gap: config.void.as_ref().map(|v| v.gap).unwrap_or(0.0),
+        neighbourhood_band: (config.position.mode == PositionMode::VoidNeighbourhood)
+            .then_some(config.position.band)
+            .flatten(),
+        pair_parallel_min: PAIR_PARALLEL_MIN,
+    };
+    // The full volume is exact from the source shell: scaling by s multiplies
+    // volume by s^3. Summing the transformed mesh's tetrahedra on every
+    // attempt would give the same number more slowly and less exactly.
+    let volume_full = shell.volume * scale * scale * scale;
+    let check = check_placement(
+        &ctx,
+        &Candidate {
+            mesh: &candidate,
+            bbox: cand_bbox,
+            centre: proposal.centre,
+            reach: proposal.reach,
+            volume_full,
+        },
+    );
+    match check {
+        Err(reason) => Evaluation::Rejected(reason),
+        Ok(accepted) => Evaluation::Accepted(Box::new(AcceptedProposal {
+            candidate,
+            bbox: cand_bbox,
+            volume_full,
+            accepted,
+        })),
+    }
+}
+
 // AI-FUNC-SUMMARY:
 // Purpose: Try to place one particle of a given size within its per-particle attempt budget.
 // Inputs: the config, library, generator, the size draw, and the mutable state.
 // Returns: true when a placement was accepted.
-// Side effects: Mutates the state.
-// Notes: Every attempt draws its seven variates in the same fixed order regardless of outcome.
+// Side effects: Mutates the state and advances the generator exactly as a one-attempt-at-a-time scan would.
+// Notes: Attempts run in speculative batches. A batch draws its proposals serially in the fixed
+// schedule, evaluates them in parallel against the unchanged placed set, then walks them in order:
+// rejections before the first acceptance are tallied as a serial scan would tally them, and on an
+// acceptance the generator is rewound to the end of that attempt's draws, so everything drawn after
+// it is discarded and redrawn for the next particle. The stream, tallies and acceptances are
+// therefore the same for any batch size. A particle makes its first SERIAL_ATTEMPTS_BEFORE_BATCHING
+// attempts one at a time, then its batch doubles while batches keep rejecting, up to
+// SPECULATIVE_BATCH_PER_WORKER times the worker count; on a single worker it stays at one, which is
+// the plain serial scan. Cheap particles waste nothing, and the dense end of a run, where most
+// attempts are rejected, keeps every worker busy.
 fn try_place_one(
     config: &ResolvedPlacement,
     library: &ShapeLibrary,
@@ -414,143 +613,73 @@ fn try_place_one(
     draw: &SizeDraw,
     state: &mut EngineState,
 ) -> bool {
-    for _ in 0..config.budget.attempts_per_particle {
-        if state.budget_spent(config) {
+    use rayon::prelude::*;
+    let workers = rayon::current_num_threads();
+    let max_batch = if workers <= 1 { 1 } else { SPECULATIVE_BATCH_PER_WORKER * workers };
+    let mut batch = 1usize;
+    let mut serial_attempts = 0usize;
+    let mut remaining = config.budget.attempts_per_particle;
+    while remaining > 0 {
+        let room = remaining.min(config.budget.total_attempts.saturating_sub(state.attempts));
+        if room == 0 {
             return false;
         }
-        state.attempts += 1;
-
-        // 1 draw: which shell.
-        let shell_index = uniform_index(rng, library.shells.len());
-        let shell = &library.shells[shell_index];
-        let scale = draw.diameter / shell.equivalent_diameter;
-
-        // 3 draws: the orientation.
-        let rotation = match config.orientation {
-            OrientationMode::UniformSo3 => sample_uniform_quaternion(rng),
-            OrientationMode::Fixed => {
-                let _ = (u01(rng), u01(rng), u01(rng));
-                UnitQuat::identity()
-            }
+        let size = batch.min(room);
+        let proposals: Vec<Proposal> = (0..size).map(|_| draw_proposal(config, library, void, rng, draw)).collect();
+        let (placed, grid) = (&state.placed, &state.grid);
+        let evaluations: Vec<Evaluation> = if size > 1 {
+            proposals
+                .par_iter()
+                .map(|p| evaluate_proposal(config, library, void, placed, grid, p))
+                .collect()
+        } else {
+            proposals
+                .iter()
+                .map(|p| evaluate_proposal(config, library, void, placed, grid, p))
+                .collect()
         };
-
-        // The particle's reach from its own centre. Rotation cannot change it, so
-        // it bounds the particle whatever orientation came up.
-        let reach = shell.bounding_radius * scale;
-        let box_for_centre = match config.boundary.mode {
-            BoundaryMode::Strict => config
-                .domain
-                .expanded(-(reach + config.boundary.min_boundary_dist)),
-            BoundaryMode::Clip | BoundaryMode::Periodic => config.domain,
-        };
-
-        // 3 or 4 draws: the centroid.
-        //
-        // feasible_uniform: uniform in the box above. In strict mode that box is
-        // the domain eroded by the particle's circumscribed-sphere radius, which
-        // does NOT depend on the orientation. Eroding by the *rotated* bounding
-        // box instead would make the proposal box a function of the orientation,
-        // under-weighting orientations with a smaller footprint and correlating
-        // orientation with position near the walls - exactly the kind of artefact
-        // a consumer would notice in the pair statistics.
-        //
-        // void_neighbourhood: an area-weighted point on the void surface, offset
-        // outward by a distance in the declared band. This is a deliberate
-        // construction, not a random one, and the report names it as such.
-        let centre = match config.position.mode {
-            PositionMode::FeasibleUniform => Vec3::new(
-                uniform_range(rng, box_for_centre.min.x, box_for_centre.max.x),
-                uniform_range(rng, box_for_centre.min.y, box_for_centre.max.y),
-                uniform_range(rng, box_for_centre.min.z, box_for_centre.max.z),
-            ),
-            PositionMode::VoidNeighbourhood => {
-                let (lo, hi) = config.position.band.unwrap_or((0.0, 0.0));
-                match void {
-                    Some(index) => {
-                        let (surface, normal) = index.sample_surface_point(rng);
-                        let offset = uniform_range(rng, lo, hi);
-                        surface.add(normal.scale(offset))
-                    }
-                    None => {
-                        // validate() refuses this combination, so it cannot be
-                        // reached; the draws are still consumed so the stream does
-                        // not depend on the branch taken.
-                        let _ = (u01(rng), u01(rng), u01(rng), u01(rng));
-                        Vec3::new(0.0, 0.0, 0.0)
-                    }
-                }
-            }
-        };
-        if box_for_centre.volume() <= 0.0 {
-            // The particle cannot fit the domain at all under this boundary rule.
-            state.reject(RejectReason::OutsideDomain);
-            continue;
-        }
-
-        let candidate = transform_shell(&shell.canonical, scale, rotation, centre);
-        let Some(cand_bbox) = mesh_bbox(&candidate) else {
-            state.reject(RejectReason::ZeroInDomainVolume);
-            continue;
-        };
-        let neighbours = state.grid.query_neighbors_with_margin(
-            cand_bbox,
-            config.gap_particle_particle,
-            usize::MAX,
-        );
-
-        let ctx = FeasibilityContext {
-            domain: config.domain,
-            boundary: &config.boundary,
-            gap_particle_particle: config.gap_particle_particle,
-            placed: &state.placed,
-            neighbours: &neighbours,
-            void,
-            void_crossing: config
-                .void
-                .as_ref()
-                .map(|v| v.crossing)
-                .unwrap_or(VoidCrossing::Forbidden),
-            void_gap: config.void.as_ref().map(|v| v.gap).unwrap_or(0.0),
-            neighbourhood_band: (config.position.mode == PositionMode::VoidNeighbourhood)
-                .then_some(config.position.band)
-                .flatten(),
-            pair_parallel_min: PAIR_PARALLEL_MIN,
-        };
-        // The full volume is exact from the source shell: scaling by s multiplies
-        // volume by s^3. Summing the transformed mesh's tetrahedra on every
-        // attempt would give the same number more slowly and less exactly.
-        let proposal = Candidate {
-            mesh: &candidate,
-            bbox: cand_bbox,
-            centre,
-            reach,
-            volume_full: shell.volume * scale * scale * scale,
-        };
-        match check_placement(&ctx, &proposal) {
-            Err(reason) => {
-                state.reject(reason);
-            }
-            Ok(accepted) => {
-                let volume_full = proposal.volume_full;
-                // Only measured when crossing is allowed. With crossing forbidden
-                // the particle keeps a gap from the void, so the overlap is zero
-                // by construction and paying for a voxel sweep would be waste.
-                let overlap = match (void, config.void.as_ref()) {
-                    (Some(index), Some(v)) if v.crossing == VoidCrossing::Allowed => index
-                        .overlap_volume(
+        for (proposal, evaluation) in proposals.iter().zip(evaluations) {
+            state.attempts += 1;
+            match evaluation {
+                Evaluation::Rejected(reason) => state.reject(reason),
+                Evaluation::Accepted(hit) => {
+                    let AcceptedProposal { candidate, bbox, volume_full, accepted } = *hit;
+                    rng.set_word_pos(proposal.stream_after);
+                    // Only measured when crossing is allowed. With crossing forbidden
+                    // the particle keeps a gap from the void, so the overlap is zero
+                    // by construction and paying for a voxel sweep would be waste.
+                    let overlap = match (void, config.void.as_ref()) {
+                        (Some(index), Some(v)) if v.crossing == VoidCrossing::Allowed => index.overlap_volume(
                             &candidate,
-                            cand_bbox,
+                            bbox,
                             config.domain,
                             v.overlap_voxel_size.unwrap_or(0.0),
                         ),
-                    _ => 0.0,
-                };
-                accept(
-                    state, shell_index, library, draw, scale, rotation, centre, reach, volume_full,
-                    cand_bbox, overlap, candidate, accepted,
-                );
-                return true;
+                        _ => 0.0,
+                    };
+                    accept(
+                        state,
+                        proposal.shell_index,
+                        library,
+                        draw,
+                        proposal.scale,
+                        proposal.rotation,
+                        proposal.centre,
+                        proposal.reach,
+                        volume_full,
+                        bbox,
+                        overlap,
+                        candidate,
+                        accepted,
+                    );
+                    return true;
+                }
             }
+        }
+        remaining -= size;
+        serial_attempts += size;
+        if serial_attempts > SERIAL_ATTEMPTS_BEFORE_BATCHING {
+            batch = (batch * 2).min(max_batch.max(1));
         }
     }
     false
