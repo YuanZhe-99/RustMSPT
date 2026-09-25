@@ -1324,8 +1324,8 @@ pub(crate) fn try_calculate_s2_gpu_exact_limited(mesh: &Mesh, bbox: BoundingBox,
     result[0] = vf;
 
     let elapsed = t0.elapsed().as_secs_f64();
-    println!("[Info] GPU exact S2: {:.3}s, {}x{}x{} grid, {} offsets, {} radii, batch_partials={}, estimated_peak_bytes={}",
-        elapsed, nx, ny, nz, offset_count, r_max + 1, memory.batch_partials, memory.peak_bytes);
+    println!("[Info] GPU exact S2: {:.3}s, {}x{}x{} grid, {} offsets, {} radii, batch_partials={}, estimated_peak_bytes={}, voxel {}",
+        elapsed, nx, ny, nz, offset_count, r_max + 1, memory.batch_partials, memory.peak_bytes, vox_pipeline.certification_stats().describe());
     Ok(result)
 }
 

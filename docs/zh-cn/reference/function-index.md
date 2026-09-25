@@ -229,17 +229,33 @@
 | `GpuS2Pipeline::ensure_output_capacity` | GPU | `src/gpu/s2.rs:302` | 若调用次数超过当前容量，则扩容输出缓冲区。 |
 | `GpuS2Pipeline::calculate_s2_gpu` | GPU | `src/gpu/s2.rs:351` | 为所有半径分派蒙特卡洛 S2 内核并回读结果。 |
 | `OffsetEntry` | GPU | `src/gpu/s2_shell.rs:6` | 与 WGSL 布局相匹配的打包 `(radius_idx, dx, dy, dz)` 球壳偏移记录。 |
-| `point_inside` (s2_monte_carlo.wgsl) | GPU | `src/gpu/shaders/s2_monte_carlo.wgsl:85` | 计算射线奇偶性并完整恢复溢出命中。 |
-| `point_inside_overflow` (s2_monte_carlo.wgsl) | GPU | `src/gpu/shaders/s2_monte_carlo.wgsl:62` | 计算射线奇偶性并完整恢复溢出命中。 |
-| `point_inside` (voxelize.wgsl) | GPU | `src/gpu/shaders/voxelize.wgsl:63` | 计算射线奇偶性并完整恢复溢出命中。 |
-| `point_inside_overflow` (voxelize.wgsl) | GPU | `src/gpu/shaders/voxelize.wgsl:40` | 计算射线奇偶性并完整恢复溢出命中。 |
+| `point_inside` (s2_monte_carlo.wgsl) | GPU | `src/gpu/shaders/s2_monte_carlo.wgsl` | 认证奇偶性，返回 0/1/不确定（精确 bbox 排除、证明互异命中）。 |
+| `point_inside_overflow` (s2_monte_carlo.wgsl) | GPU | `src/gpu/shaders/s2_monte_carlo.wgsl` | 认证的超 64 命中恢复，证明每个间隔超过 CPU 去重带。 |
+| `point_inside` (voxelize.wgsl) | GPU | `src/gpu/shaders/voxelize.wgsl` | 认证奇偶性，返回 0/1/不确定（精确 bbox 排除、证明互异命中）。 |
+| `point_inside_overflow` (voxelize.wgsl) | GPU | `src/gpu/shaders/voxelize.wgsl` | 认证的超 64 命中恢复，证明每个间隔超过 CPU 去重带。 |
+| `cert_ray_triangle` / `cert_triangle` / `cert_ge` / `cert_ratio_err` / `max3`（MC 与体素着色器） | GPU | `src/gpu/shaders/*.wgsl` | 带前向误差界的 Moller-Trumbore，将每个 CPU 阈值判为真/假/未知。 |
+| `record_uncertain` (s2_monte_carlo.wgsl) | GPU | `src/gpu/shaders/s2_monte_carlo.wgsl` | 将（逻辑 id、精确 p、精确 q）追加到不确定列表。 |
+| `GpuCertificationStats`（含 `recompute_ratio`、`describe`、`accumulate`） | GPU | `src/gpu/certify.rs` | 累计认证计数与 CPU 重算比例。 |
+| `CertReference`（含 `new`、`params_tail`、`classify`） | GPU | `src/gpu/certify.rs` | 原点平移的 f64 CPU 参考与精确 f32 提前排除界。 |
+| `f32_at_least` / `f32_at_most` | GPU | `src/gpu/certify.rs` | 定向 f64→f32 舍入。 |
+| `GpuS2Pipeline::certification_stats` | GPU | `src/gpu/s2.rs` | MC 累计认证计数。 |
+| `GpuS2Pipeline::dispatch_batch` | GPU | `src/gpu/s2.rs` | dispatch 一个半径批次并读取不确定计数器。 |
+| `GpuS2Pipeline::resolve_uncertain` | GPU | `src/gpu/s2.rs` | 在精确 GPU 点上 CPU 重算不确定样本。 |
+| `uncertain_buffers` (s2.rs) | GPU | `src/gpu/s2.rs` | 分配 MC 不确定列表及 staging。 |
+| `GpuVoxelPipeline::certification_stats` | GPU | `src/gpu/voxel.rs` | 体素累计认证计数。 |
+| `GpuVoxelPipeline::dispatch_voxels` | GPU | `src/gpu/voxel.rs` | dispatch 体素化（及归约）并读取不确定计数器。 |
+| `GpuVoxelPipeline::new_with_shader` | GPU | `src/gpu/voxel.rs` | 由给定 WGSL 构造。 |
+| `voxel_center` / `voxel_uncertain_buffers` / `occupancy_usage` | GPU | `src/gpu/voxel.rs` | 精确 f32 单元中心、体素列表分配、可修补占据场用途。 |
+| `mc_uncertain_bytes` | Compute | `src/compute/mc_memory.rs` | MC 不确定列表字节数。 |
+| `voxel_uncertain_entries` / `exact_cert_bytes` | Compute | `src/compute/exact_memory.rs` | 规划体素不确定列表容量及逻辑字节。 |
+| `OptimizeS2::gpu_certification_summary` | Pipeline | `src/pipeline/optimize_execution.rs` | 描述共享 GPU MC 认证计数。 |
 | `GpuShellS2Pipeline` | GPU | `src/gpu/s2_shell.rs:13` | 用于精确球壳配对 S2 计算的 GPU 流水线状态。 |
 | `build_offset_buffer` | GPU | `src/gpu/s2_shell.rs:30` | 将 `(radius_idx, [dx,dy,dz])` 元组转换为 `OffsetEntry` 记录。 |
 | `GpuShellS2Pipeline::new` | GPU | `src/gpu/s2_shell.rs:48` | 初始化 wgpu 设备和球壳 S2 计算流水线。 |
 | `GpuShellS2Pipeline::compute_s2_shell` | GPU | `src/gpu/s2_shell.rs:181` | 在一个占用网格上分派精确的球壳配对计数并回读 S2(r)。 |
 | `GpuVoxelPipeline` | GPU | `src/gpu/voxel.rs:5` | 用于网格体素化的 GPU 流水线状态。 |
 | `build_triangle_buffer`（voxel.rs） | GPU | `src/gpu/voxel.rs:17` | 为体素化流水线构建归一化的 `f32` 三角形位置缓冲区（与 `s2.rs` 中的是独立副本）。 |
-| `pack_params`（voxel.rs） | GPU | `src/gpu/voxel.rs:32` | 序列化 48 字节 voxel 参数，射线从字节 32 开始。 |
+| `pack_params`（voxel.rs） | GPU | `src/gpu/voxel.rs` | 序列化 80 字节 voxel 参数：射线从字节 32 开始，认证尾部从字节 48 开始。 |
 | `GpuVoxelPipeline::new` | GPU | `src/gpu/voxel.rs:57` | 初始化 wgpu 设备和体素化计算流水线。 |
 | `GpuVoxelPipeline::voxelize` | GPU | `src/gpu/voxel.rs:168` | 分派光线投射体素化并回读占用网格。 |
 | `GpuVolumeTransformPipeline` | GPU | `src/gpu/volume_transform.rs:5` | 用于体数据旋转裁剪的 GPU 流水线状态。 |

@@ -173,7 +173,7 @@ impl MeasurePipeline {
                 crate::compute::exact_memory::ExactMemoryPlan::new(mesh.faces.len(), voxel_count, params.acceleration.gpu_memory_limit_mb).ok().map(|plan| plan.peak_bytes)
             } else {
                 crate::compute::mc_memory::mc_evaluation_peak(
-                    4, 4, 0, mesh.faces.len(), params.r_max, samples,
+                    4, 4, 0, 0, mesh.faces.len(), params.r_max, samples,
                 ).ok()
             };
             let supports_gpu =
@@ -202,7 +202,11 @@ impl MeasurePipeline {
                     )
                 } else {
                     crate::gpu::GpuS2Pipeline::new(&mesh, bbox)
-                        .and_then(|mut gpu| gpu.calculate_s2_gpu(bbox, params.r_max, samples))
+                        .and_then(|mut gpu| {
+                            let s2 = gpu.calculate_s2_gpu(bbox, params.r_max, samples)?;
+                            println!("[Info] measure {method} GPU {}", gpu.certification_stats().describe());
+                            Ok(s2)
+                        })
                         .map(|mut s2| {
                             s2[0] = vf;
                             s2

@@ -38,17 +38,30 @@ This module implements wgpu compute pipelines plus offscreen STL rasterization, 
 | `GpuS2Pipeline::ensure_output_capacity` | `src/gpu/s2.rs:302` | Grows the output buffers if the invocation count exceeds current capacity. |
 | `GpuS2Pipeline::calculate_s2_gpu` | `src/gpu/s2.rs` | Dispatches the Monte Carlo S2 kernel in radius batches of at most 128 and reads back results. |
 | `OffsetEntry` | `src/gpu/s2_shell.rs:6` | Packed `(radius_idx, dx, dy, dz)` shell-offset record matching the WGSL layout. |
-| `point_inside` (s2_monte_carlo.wgsl) | `src/gpu/shaders/s2_monte_carlo.wgsl:85` | Classify ray parity with overflow recovery. |
-| `point_inside_overflow` (s2_monte_carlo.wgsl) | `src/gpu/shaders/s2_monte_carlo.wgsl:62` | Classify ray parity with overflow recovery. |
-| `point_inside` (voxelize.wgsl) | `src/gpu/shaders/voxelize.wgsl:63` | Classify ray parity with overflow recovery. |
-| `point_inside_overflow` (voxelize.wgsl) | `src/gpu/shaders/voxelize.wgsl:40` | Classify ray parity with overflow recovery. |
+| `point_inside` (s2_monte_carlo.wgsl) | `src/gpu/shaders/s2_monte_carlo.wgsl` | Certified parity: exact bbox early-out, certified hits, proven-distinct 64-hit path; returns 0/1/uncertain. |
+| `point_inside_overflow` (s2_monte_carlo.wgsl) | `src/gpu/shaders/s2_monte_carlo.wgsl` | Certified >64-hit recovery proving every consecutive gap exceeds the CPU dedup band. |
+| `point_inside` (voxelize.wgsl) | `src/gpu/shaders/voxelize.wgsl` | Certified parity: exact bbox early-out, certified hits, proven-distinct 64-hit path; returns 0/1/uncertain. |
+| `point_inside_overflow` (voxelize.wgsl) | `src/gpu/shaders/voxelize.wgsl` | Certified >64-hit recovery proving every consecutive gap exceeds the CPU dedup band. |
+| `cert_ray_triangle` / `cert_triangle` / `cert_ge` / `cert_ratio_err` / `max3` (both shaders) | `src/gpu/shaders/*.wgsl` | Moller-Trumbore with forward error bounds deciding each CPU threshold as true/false/unknown. |
+| `record_uncertain` (s2_monte_carlo.wgsl) | `src/gpu/shaders/s2_monte_carlo.wgsl` | Append (logical id, exact p, exact q) to the uncertain list. |
+| `GpuCertificationStats` (+ `recompute_ratio`, `describe`, `accumulate`) | `src/gpu/certify.rs` | Cumulative certification counters and CPU recompute ratio. |
+| `CertReference` (+ `new`, `params_tail`, `classify`, test-only `mesh`) | `src/gpu/certify.rs` | Origin-shifted f64 CPU reference and exact f32 early-out bounds. |
+| `f32_at_least` / `f32_at_most` | `src/gpu/certify.rs` | Directed f64-to-f32 rounding making f32 comparisons equal f64 ones. |
+| `GpuS2Pipeline::certification_stats` | `src/gpu/s2.rs` | Cumulative MC certification counters. |
+| `GpuS2Pipeline::dispatch_batch` | `src/gpu/s2.rs` | Clear the uncertain counter, dispatch one radius batch, copy results and list, read the counter. |
+| `GpuS2Pipeline::resolve_uncertain` | `src/gpu/s2.rs` | Re-evaluate uncertain samples at their exact GPU points with the CPU predicate. |
+| `uncertain_buffers` (s2.rs) | `src/gpu/s2.rs` | Allocate the MC uncertain list and staging. |
+| `GpuVoxelPipeline::certification_stats` | `src/gpu/voxel.rs` | Cumulative voxel certification counters. |
+| `GpuVoxelPipeline::dispatch_voxels` | `src/gpu/voxel.rs` | Clear the counter, dispatch voxelization (and reducer), copy result and list, read the counter. |
+| `GpuVoxelPipeline::new_with_shader` | `src/gpu/voxel.rs` | Construct from supplied WGSL (tests pass the frozen uncertified baseline). |
+| `voxel_center` / `voxel_uncertain_buffers` / `occupancy_usage` | `src/gpu/voxel.rs` | Exact f32 cell center, uncertain list allocation, patchable occupancy usage. |
 | `GpuShellS2Pipeline` | `src/gpu/s2_shell.rs:13` | GPU pipeline state for exact shell-pair S2 computation. |
 | `build_offset_buffer` | `src/gpu/s2_shell.rs:30` | Converts `(radius_idx, [dx,dy,dz])` tuples into `OffsetEntry` records. |
 | `GpuShellS2Pipeline::new` | `src/gpu/s2_shell.rs:48` | Initializes the wgpu device and shell S2 compute pipeline. |
 | `GpuShellS2Pipeline::compute_s2_shell` | `src/gpu/s2_shell.rs:181` | Dispatches exact shell-pair counting over an occupancy grid and reads back S2(r). |
 | `GpuVoxelPipeline` | `src/gpu/voxel.rs:5` | GPU pipeline state for mesh voxelization. |
 | `build_triangle_buffer` (voxel.rs) | `src/gpu/voxel.rs:17` | Builds a normalized `f32` triangle position buffer for the voxelization pipeline (separate copy from `s2.rs`). |
-| `pack_params` (voxel.rs) | `src/gpu/voxel.rs:32` | Serializes the 48-byte voxel parameter layout with ray direction at byte 32. |
+| `pack_params` (voxel.rs) | `src/gpu/voxel.rs` | Serializes the 80-byte voxel parameter layout: ray direction at byte 32, certification tail (mesh_lo, flags, mesh_hi) from byte 48. |
 | `GpuVoxelPipeline::new` | `src/gpu/voxel.rs:57` | Initializes the wgpu device and voxelization compute pipeline. |
 | `GpuVoxelPipeline::voxelize` | `src/gpu/voxel.rs:168` | Dispatches ray-casting voxelization and reads back the occupancy grid. |
 | `GpuVolumeTransformPipeline` | `src/gpu/volume_transform.rs:5` | GPU pipeline state for volume rotate-and-crop. |
@@ -250,10 +263,11 @@ MC bbox extents must be positive and finite after f32 conversion. These checks c
 
 Both `s2_monte_carlo.wgsl` and `voxelize.wgsl` implement the following private helpers:
 
-- `point_inside(point: vec3<f32>) -> bool`: retains a sorted 64-hit fast path. On the **65th positive triangle hit**, it calls `point_inside_overflow` for the original ray. The capacity counts raw triangle hits, including duplicates.
-- `point_inside_overflow(point: vec3<f32>, dir: vec3<f32>) -> bool`: repeatedly scans every triangle to find the smallest positive hit more than `1e-6` beyond the last retained hit (the first scan accepts any positive hit). Counts these retained distances and returns odd parity. Uses constant auxiliary storage, no writes or CPU readback, and at most one scan per triangle; normally terminates when no further distinct hit exists.
+- `point_inside(point: vec3<f32>) -> u32`: returns 0 (outside), 1 (inside) or `CERT_UNKNOWN` (2). Exact f32 mesh-bbox early-out, then certified per-triangle hits (`cert_triangle`); any uncertain triangle makes the query uncertain. Retains a sorted 64-hit fast path and requires every consecutive sorted gap to exceed `1e-8 + 2 max(err_t) + u t`. On the **65th certain triangle hit**, it calls `point_inside_overflow`. The capacity counts raw triangle hits, including duplicates.
+- `point_inside_overflow(point, dir, pm) -> u32`: one pass computes the largest hit-distance bound; each further step selects the nearest hit beyond the last one and counts hits within the dedup band of it; more than one means uncertain. Constant auxiliary storage, O(T x U) work.
+- `cert_ray_triangle(o, d, a, b, c, pm) -> CertHit {t, err, state}`: Moller-Trumbore with the CPU thresholds and forward error bounds; a division-free numerator test first rejects near-parallel far triangles. See the algorithm doc section "f32 certification of GPU ray parity" for the bound derivation.
 
-This matches the GPU fast path's sorted, **anchored** deduplication: compare with the last retained distance, not the previous raw distance. CPU's `1e-8` tolerance and f64 predicates remain different. No sample is discarded or redrawn. The MC bbox prefilter remains in place. Recovery costs O(T × U), for T triangles and U distinct forward hits, up to O(T²); dense overlapping scenes may be much slower. This is a correctness recovery, not a general GPU speedup or a solution to device/map failures.
+Superseded tolerance note: the former GPU-only `1e-6` anchored tolerance is gone; the certified path proves the CPU's anchored `1e-8` result instead. No sample is discarded or redrawn. The MC bbox prefilter remains in place. Recovery costs O(T × U), for T triangles and U distinct forward hits, up to O(T²); dense overlapping scenes may be much slower. This is a correctness recovery, not a general GPU speedup or a solution to device/map failures.
 
 Sources: MC helpers at `src/gpu/shaders/s2_monte_carlo.wgsl:62` and `:85`; voxel helpers at `src/gpu/shaders/voxelize.wgsl:40` and `:63`.
 
@@ -402,7 +416,7 @@ Module-level constant: `WORKGROUP_SIZE: u32 = 64`.
 #### pack_params (voxel.rs)
 
 - **Signature:** `fn pack_params(num_triangles: u32, nx: u32, ny: u32, nz: u32, pitch: f32) -> Vec<u8>`
-- **Purpose:** Serialize the 48-byte WGSL storage-buffer layout: triangle count at byte 0, dimensions at 4/8/12, pitch at 16, zero padding at 20/24/28, ray direction at 32/36/40, and final padding at 44.
+- **Purpose:** Serialize the 48-byte WGSL storage-buffer layout: triangle count at byte 0, dimensions at 4/8/12, pitch at 16, zero padding at 20/24/28, ray direction at 32/36/40, padding at 44, then the 32-byte certification tail: `mesh_lo` at 48/52/56, `flags` at 60, `mesh_hi` at 64/68/72, padding at 76 (80 bytes total).
 - **Returns / side effects:** Parameter bytes; no side effects. The direction is `RAY_DIR_GPU`, with all three components preserved at WGSL's 16-byte-aligned `vec3` offset.
 
 #### GpuVoxelPipeline::new
@@ -414,7 +428,7 @@ Module-level constant: `WORKGROUP_SIZE: u32 = 64`.
 - **Purpose:** Initialize wgpu, compile the `voxelize.wgsl` compute pipeline, and upload normalized triangle data for the given mesh.
 - **Parameters:** `mesh: &Mesh`, `bbox: BoundingBox` — mesh to voxelize and its bounding box (for normalization).
 - **Returns:** `Ok(GpuVoxelPipeline)` or `Err(String)` on adapter/device failure.
-- **Side effects:** Blocking wgpu adapter/device request (honoring `RUSTMSPT_GPU_DEVICE`), shader compilation, bind group/pipeline layout creation, triangle buffer allocation + upload, params buffer allocation (48 bytes), and a minimal 4-byte placeholder occupancy buffer (grown on first `voxelize` call).
+- **Side effects:** Blocking wgpu adapter/device request (honoring `RUSTMSPT_GPU_DEVICE`), shader compilation, bind group/pipeline layout creation, triangle buffer allocation + upload, params buffer allocation (80 bytes), the initial 1024-entry uncertain-cell list and its staging, the origin-shifted f64 `CertReference`, and a minimal 4-byte placeholder occupancy buffer (grown on first `voxelize` call).
 - **Notes:** Like `GpuShellS2Pipeline::new`, this constructor does not honor `RUSTMSPT_GPU_DEVICE`.
 
 #### GpuVoxelPipeline::voxelize
@@ -589,7 +603,7 @@ The checked planner counts visible triangles at 120 bytes each, enabled segments
 
 ### Optimize MC memory budget
 
-The optimizer starts its shared GPU MC pipeline with empty geometry; each stage uploads the mesh it actually evaluates. `mc_evaluation_peak` bounds the triangle buffer, four output/readback buffers, 576-byte parameter storage, pending queue uploads and the next mesh/parameter uploads. Growth conservatively counts old plus new allocations. Startup uses the input face count and maximum configured stage sample count; every actual evaluation rechecks current retained capacities under the same GPU mutex before upload. A larger reference mesh or retained high-water capacity can therefore trigger the existing same-method fallback (or a stage-labelled strict error). Pending upload bytes reset only after successful readback. Driver internals and CPU mesh/readback vectors are outside this logical GPU budget. Batch splitting/automatic high-water trimming remain separate work; `release_output_capacity` provides explicit release.
+The optimizer starts its shared GPU MC pipeline with empty geometry; each stage uploads the mesh it actually evaluates. `mc_evaluation_peak` bounds the triangle buffer, four output/readback buffers, 608-byte parameter storage, the uncertain-sample list and its staging (retained size or the initial 1024 records), pending queue uploads and the next mesh/parameter uploads. Growth conservatively counts old plus new allocations. Startup uses the input face count and maximum configured stage sample count; every actual evaluation rechecks current retained capacities under the same GPU mutex before upload. A larger reference mesh or retained high-water capacity can therefore trigger the existing same-method fallback (or a stage-labelled strict error). Pending upload bytes reset only after successful readback. Driver internals and CPU mesh/readback vectors are outside this logical GPU budget. Batch splitting/automatic high-water trimming remain separate work; `release_output_capacity` provides explicit release.
 
 | `mc_evaluation_peak` | `src/compute/mc_memory.rs:4` | Check logical MC peak including retained capacity and pending uploads. |
 
@@ -660,7 +674,7 @@ GPU exact now lazily generates one shell-radius Vec at a time and passes its off
 
 GPU exact now uses `shell_offset_iter`, retaining only nested range cursors even within one radius. It preserves the original x/y/z order, origin special case and half-open squared-distance test; the public Vec API remains unchanged for random-access consumers. Support is detected with a peekable iterator and every generated offset is counted as consumed. Safe ordinary integer norms match the Vec implementation; larger norms use u128 to avoid signed multiplication overflow. Enumeration still scans the enclosing cube, so this reduces allocation without changing its O(radius³) search complexity.
 
-Fresh resident GPU exact evaluations use `ExactMemoryPlan` for both backend selection and execution. With triangle storage T=max(36*faces,4), occupancy M=4*cells, and B partial slots, the conservative logical peak is 2T+M+128+80B. This includes pending triangle/offset uploads and simultaneous old/new batch buffers; the 128-byte allowance covers fixed parameter/count/placeholder resources. B is reduced from 200,000 to fit an optional MiB budget, with a minimum of one. If even that does not fit, execution rejects before GPU initialization and the caller applies its fallback policy. The model excludes driver/compiler internals and CPU memory, applies to a fresh production direct-shell evaluation, and does not claim to budget experimental tiled/reduced or arbitrary retained pipelines. Existing hard exact-grid limits remain independent.
+Fresh resident GPU exact evaluations use `ExactMemoryPlan` for both backend selection and execution. With triangle storage T=max(36*faces,4), occupancy M=4*cells, and B partial slots, the conservative logical peak is 2T+M+128+C+80B, with C = `exact_cert_bytes(cells)` for the voxel certification list, its staging and parameter tail. This includes pending triangle/offset uploads and simultaneous old/new batch buffers; the 128-byte allowance covers fixed parameter/count/placeholder resources. B is reduced from 200,000 to fit an optional MiB budget, with a minimum of one. If even that does not fit, execution rejects before GPU initialization and the caller applies its fallback policy. The model excludes driver/compiler internals and CPU memory, applies to a fresh production direct-shell evaluation, and does not claim to budget experimental tiled/reduced or arbitrary retained pipelines. Existing hard exact-grid limits remain independent.
 
 
 ### Shared device and pipeline cache (PERF-03)
@@ -672,6 +686,32 @@ wgpu 24 lets an `Adapter` create only one logical device, so the cache sits abov
 `GpuVoxelPipeline::shared_device()` and `GpuShellS2Pipeline::with_device(Arc<SharedGpuDevice>)` replace the former `device_queue()`/`with_device(device, queue)` pair for the exact path. `release_shared_gpu_devices()` drains the cache; the CLI calls it after the subcommand returns so logical devices are still destroyed before process exit, as they were when each pipeline owned its device.
 
 Tests: `context::tests::pipeline_cache_reuses_success_and_never_caches_failure` (same object on reuse, invalid WGSL fails twice and leaves no entry) and the single-test integration binary `tests/gpu_device_cache_tests.rs` (every constructor family built four times plus eight concurrent threads: 1 device, 6 compilations; invalid selector errors twice without creating a device; `destroy` evicts, recreates exactly one device and recompiles each family once).
+
+### f32 ray-parity certification (PERF-05)
+
+Design and bound derivation: `algorithms/s2-two-point-correlation.md`, section "f32 certification of GPU ray parity". Function contracts:
+
+| Function | Source | Contract |
+|---|---|---|
+| `GpuCertificationStats { queries, uncertain, list_regrowths, cpu_recompute_seconds }` | `src/gpu/certify.rs` | Cumulative per-pipeline counters. MC queries = valid samples; voxel queries = cells. `recompute_ratio()` = uncertain/queries (0 when none), `describe()` = one log line, `accumulate(&other)` adds counters. Re-exported as `rustmspt::gpu::GpuCertificationStats`. |
+| `f32_at_least(x: f64) -> f32` / `f32_at_most(x: f64) -> f32` | `src/gpu/certify.rs` | Smallest f32 >= x / largest f32 <= x. For f32 p, `p < f32_at_least(L)` iff `p < L`, and `p > f32_at_most(H)` iff `p > H`. |
+| `CertReference::new(mesh, origin)` | `src/gpu/certify.rs` | Shift every vertex by `origin` in f64; `mesh_lo`/`mesh_hi` are the CPU `bb.min - 1e-9`/`bb.max + 1e-9` rounded outward to f32 (+inf/-inf for an empty mesh). |
+| `CertReference::params_tail(flags) -> Vec<u8>` | `src/gpu/certify.rs` | 32-byte WGSL tail: `mesh_lo`, `flags` (bit 0 = record every valid MC sample, tests only), `mesh_hi`, pad. |
+| `CertReference::classify(points) -> Vec<bool>` | `src/gpu/certify.rs` | CPU f64 predicate at exact f32 points in the shifted frame, serial; `point_inside_mesh` below 16 points, a prepared BVH query above. |
+| `GpuS2Pipeline::certification_stats()` | `src/gpu/s2.rs` | Copy of the MC counters. |
+| `GpuS2Pipeline::dispatch_batch(dispatch, readback) -> Result<u32, String>` | `src/gpu/s2.rs` | Zero the list counter, dispatch one radius batch, copy hit/valid partials and the whole list to staging, return the reported uncertain count (may exceed capacity). |
+| `GpuS2Pipeline::resolve_uncertain(entries, spr, radii, out)` | `src/gpu/s2.rs` | Decode 7-word records, classify p and q, add a hit to radius `id / spr` when both are inside; errors if a record lies outside the batch. Updates counters. |
+| `uncertain_buffers(device, entries)` | `src/gpu/s2.rs` | Allocate list (STORAGE/COPY_SRC/COPY_DST) and map-read staging of `4 + 28*entries` bytes. |
+| `GpuVoxelPipeline::certification_stats()` | `src/gpu/voxel.rs` | Copy of the voxel counters. |
+| `GpuVoxelPipeline::dispatch_voxels(dispatch, bytes, count_only) -> Result<u32, String>` | `src/gpu/voxel.rs` | Zero the counter, dispatch voxelization and (count mode) the reducer, copy result and list, return the reported uncertain count. |
+| `GpuVoxelPipeline::voxelize_impl` (changed) | `src/gpu/voxel.rs` | Pre-sizes the list to `voxel_uncertain_entries(cells)`, regrows and re-dispatches on overflow, classifies uncertain centers, adds them to the full result or count and writes `1` into the resident occupancy for inside cells. |
+| `GpuVoxelPipeline::new_with_shader(mesh, bbox, source)` | `src/gpu/voxel.rs` | Shared constructor; `new` passes the certified shader. |
+| `voxel_center(i, pitch) -> f32` | `src/gpu/voxel.rs` | `(i as f32 + 0.5) * pitch`, bit-identical to the shader. |
+| `voxel_uncertain_buffers(device, entries)` / `occupancy_usage()` | `src/gpu/voxel.rs` | Voxel list/staging of `4 + 4*entries` bytes; occupancy usage now includes `COPY_DST` for patching. |
+| `mc_uncertain_bytes(entries)` / `MC_UNCERTAIN_INITIAL` / `MC_PARAMS_BYTES` | `src/compute/mc_memory.rs` | MC list bytes (1024 initial records), 608-byte params. `mc_evaluation_peak` gained an `uncertain_capacity` argument. |
+| `voxel_uncertain_entries(cells)` / `exact_cert_bytes(cells)` | `src/compute/exact_memory.rs` | Planned voxel list `max(1024, cells/64)` and its logical bytes (list + staging + 2x32-byte params tail). |
+
+`release_output_capacity` (MC) and `release_grid_capacity` (voxel) also shrink the uncertain list back to its initial size. Tests: `gpu::s2::certification_tests` (MC counts equal a CPU evaluation of the identical GPU points on adversarial fixtures at the origin and at 1e9, two seeds, batched radii; forced list overflow) and `gpu::voxel::certification_tests` (occupancy, count and resident field equal the CPU reference cell for cell; forced overflow in both modes); both assert the frozen uncertified shaders (`tests/fixtures/*_uncertified.wgsl`) disagree on a 3e-7 slab. Ignored release benchmarks `certification_overhead_benchmark` in both modules compare certified and uncertified runs.
 
 ### MC radius batching (PERF-05/08)
 

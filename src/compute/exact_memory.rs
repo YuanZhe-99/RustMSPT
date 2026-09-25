@@ -1,6 +1,18 @@
 //! Conservative logical working-set planning for one fresh resident GPU exact evaluation.
 
 pub(crate) const EXACT_MAX_PARTIALS: usize = 200_000;
+pub(crate) const VOXEL_UNCERTAIN_INITIAL: usize = 1024;
+pub(crate) const VOXEL_UNCERTAIN_PER_CELLS: usize = 64;
+
+// AI-FUNC-SUMMARY: Planned uncertain-cell list capacity for a voxel grid: at least 1024 entries or one per 64 cells, so ordinary recompute ratios (measured up to ~1.3%) avoid a regrow re-dispatch; returns entries; side effects: None.
+pub(crate) fn voxel_uncertain_entries(cells: usize) -> usize {
+    VOXEL_UNCERTAIN_INITIAL.max(cells / VOXEL_UNCERTAIN_PER_CELLS)
+}
+
+// AI-FUNC-SUMMARY: Logical bytes of the voxel certification resources: the planned uncertain list plus its staging (4-byte counter + 4 bytes per entry each) and the 32-byte parameter tail counted twice for its upload; returns u64; side effects: None.
+pub(crate) fn exact_cert_bytes(cells: usize) -> u64 {
+    2 * 4 * (voxel_uncertain_entries(cells) as u64 + 1) + 64
+}
 
 pub(crate) struct ExactMemoryPlan {
     pub batch_partials: usize,
@@ -24,11 +36,13 @@ impl ExactMemoryPlan {
             .and_then(|n| n.checked_mul(4))
             .ok_or_else(overflow)?;
         // 2T includes storage and pending triangle upload. 128 bounds voxel/shell
-        // parameters and their uploads, count/readback and initial occupancy handles.
+        // parameters and their uploads, count/readback and initial occupancy handles;
+        // exact_cert_bytes adds the planned uncertain-cell list, its staging and the
+        // 32-byte certification parameter tail (twice, for the upload).
         let base = triangles
             .checked_mul(2)
             .and_then(|n| n.checked_add(occupancy))
-            .and_then(|n| n.checked_add(128))
+            .and_then(|n| n.checked_add(128 + exact_cert_bytes(cells)))
             .ok_or_else(overflow)?;
         // Per partial: offsets 16 + outputs/staging 16, old capacity <=32,
         // and pending offset upload <=16. Direct exact has no tile reducer.
@@ -71,7 +85,9 @@ mod tests {
     // AI-FUNC-SUMMARY: Check known resource components, batch shrinking, minimum infeasibility and overflow without allocating GPU resources.
     #[test]
     fn exact_budget_selects_bounded_batches() {
-        let base = 12 * 36 * 2 + 1000 * 4 + 128;
+        let base = 12 * 36 * 2 + 1000 * 4 + 128 + 2 * 4 * 1025 + 64;
+        assert_eq!(exact_cert_bytes(1000), 2 * 4 * 1025 + 64);
+        assert_eq!(exact_cert_bytes(640_000), 2 * 4 * 10_001 + 64);
         let full = ExactMemoryPlan::new(12, 1000, None).unwrap();
         assert_eq!(full.peak_bytes, base + 200_000 * 80);
         let small = ExactMemoryPlan::new(12, 1000, Some(1)).unwrap();

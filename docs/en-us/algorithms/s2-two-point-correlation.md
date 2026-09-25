@@ -243,7 +243,7 @@ planning, or runtime error fallback; see `PLAN.Performance.md` §12.
 Both MC and voxel shaders now recover rays with more than 64 raw positive triangle
 hits instead of silently truncating them. The ordinary sorted-array path remains;
 on overflow, successive full scans find the nearest remaining distinct distance
-and count parity using the same anchored `1e-6` GPU tolerance. No Monte Carlo trial
+and count parity using the same anchored `1e-6` GPU tolerance. (Superseded by the f32 certification below: both paths now use the CPU `1e-8` band and prove every gap.) No Monte Carlo trial
 is dropped or resampled. Recovery requires constant extra storage but can cost
 O(triangles × distinct hits), so this correctness fix may be slow on dense scenes.
 CPU/GPU numerical equivalence and runtime device/readback errors remain unresolved.
@@ -287,7 +287,44 @@ GPU exact now lazily generates one shell-radius Vec at a time and passes its off
 
 GPU exact now uses `shell_offset_iter`, retaining only nested range cursors even within one radius. It preserves the original x/y/z order, origin special case and half-open squared-distance test; the public Vec API remains unchanged for random-access consumers. Support is detected with a peekable iterator and every generated offset is counted as consumed. Safe ordinary integer norms match the Vec implementation; larger norms use u128 to avoid signed multiplication overflow. Enumeration still scans the enclosing cube, so this reduces allocation without changing its O(radius³) search complexity.
 
-Fresh resident GPU exact evaluations use `ExactMemoryPlan` for both backend selection and execution. With triangle storage T=max(36*faces,4), occupancy M=4*cells, and B partial slots, the conservative logical peak is 2T+M+128+80B. This includes pending triangle/offset uploads and simultaneous old/new batch buffers; the 128-byte allowance covers fixed parameter/count/placeholder resources. B is reduced from 200,000 to fit an optional MiB budget, with a minimum of one. If even that does not fit, execution rejects before GPU initialization and the caller applies its fallback policy. The model excludes driver/compiler internals and CPU memory, applies to a fresh production direct-shell evaluation, and does not claim to budget experimental tiled/reduced or arbitrary retained pipelines. Existing hard exact-grid limits remain independent.
+Fresh resident GPU exact evaluations use `ExactMemoryPlan` for both backend selection and execution. With triangle storage T=max(36*faces,4), occupancy M=4*cells, and B partial slots, the conservative logical peak is 2T+M+128+C+80B, where C = `exact_cert_bytes(cells)` covers the voxel certification list, its staging and parameter tail. This includes pending triangle/offset uploads and simultaneous old/new batch buffers; the 128-byte allowance covers fixed parameter/count/placeholder resources. B is reduced from 200,000 to fit an optional MiB budget, with a minimum of one. If even that does not fit, execution rejects before GPU initialization and the caller applies its fallback policy. The model excludes driver/compiler internals and CPU memory, applies to a fresh production direct-shell evaluation, and does not claim to budget experimental tiled/reduced or arbitrary retained pipelines. Existing hard exact-grid limits remain independent.
+
+### f32 certification of GPU ray parity (PERF-05)
+
+The MC shader (`s2_monte_carlo.wgsl`) and the voxelizer (`voxelize.wgsl`) no longer take a raw f32 parity decision. Each query is classified as **certainly outside**, **certainly inside** or **uncertain**, and every uncertain query is re-evaluated on the host by the unchanged CPU f64 predicate (`point_inside_mesh` / `PreparedMeshQuery::contains_point`) at the *same* point. The certified GPU result therefore equals the CPU reference exactly, query for query.
+
+**Reference.** The reference is the CPU predicate applied to the mesh shifted by the GPU origin (`bbox.min`) in f64 (`CertReference`), at the exact f32 query point the GPU used, promoted to f64. MC points are the shader's own `p`/`q` (their bits are returned for every uncertain sample); voxel centers are `(f32(i) + 0.5) * pitch`, two correctly rounded operations that `voxel_center` reproduces bit for bit on the host. The shader mirrors the CPU thresholds exactly: `|det| > 1e-10`, `u in [-1e-10, 1+1e-10]`, `v >= -1e-10`, `u+v <= 1+1e-10`, `t > 1e-10`, anchored `1e-8` hit deduplication, and the `mesh bbox +/- 1e-9` early-out. The former GPU-only `1e-6` tolerances are gone.
+
+**Exact early-out.** The host rounds the f64 thresholds `bb.min - 1e-9` up and `bb.max + 1e-9` down to f32 (`f32_at_least`/`f32_at_most`). For any f32 `p`, `p < ceil32(L)` iff `p < L` and `p > floor32(H)` iff `p > H`, so the bbox test is exact, not bounded.
+
+**Error bound (per triangle, per query).** Let `u = 2^-24`. Inputs: the f32 vertices differ from the f64 reference vertices by at most `u|x|`; the direction by at most `u`; the query point is exact. With `m = max|coordinate of a,b,c| (1+u)` and safe magnitudes `X = |x^|inf + eps_x` (bounding both the computed and the exact vector), first-order forward analysis gives
+
+| quantity | bound |
+|---|---|
+| `e1 = b-a`, `e2 = c-a` | `eps_e = 4 u m` (two input roundings + one subtraction) |
+| `s = o - a` | `eps_s = u (|o|inf + 2m)` |
+| `h = d x e2` | `eps_h = 6 u E + 2 eps_e` (cross: `gamma_2 * 2XY` rounding plus input perturbation `2(eps_x Y + X eps_y)`) |
+| `q = s x e1` | `eps_q = 4 u S E + 2 (eps_s E + S eps_e)` |
+| `det = e1.h` | `9 u E H + 3 (eps_e H + E eps_h)` (dot: `gamma_3 * 3XY` plus `3(eps_x Y + X eps_y)`) |
+| `U = s.h`, `V = d.q`, `T = e2.q` | same dot rule with their operands |
+
+and each numerator bound is multiplied by `SAFETY = 2` and gets `+1e-36` (flush-to-zero allowance). For a ratio `r = N/det` computed as `N * (1/det)` (WGSL division is 2.5 ULP = 5u relative, the product u), the bound is
+
+`err_r = (eps_N + 1.01 |r| eps_det) / (|det| - eps_det) + SAFETY * 7u |r|`, valid when `|det| > eps_det` (otherwise uncertain).
+
+`u+v` adds `u|u+v|`. Every comparison `x >= thr` is decided by `cert_ge`: certainly true if `x - err - slack >= thr`, certainly false if `x + err + slack < thr`, where `slack = u(|thr| + |x| + err) + 1e-36` absorbs the f32 representation of the threshold (`1 + 1e-10` is `1.0` in f32) and the rounding of the test itself. NaN or infinite bounds are uncertain. `SAFETY = 2` covers the neglected second-order terms, the `1/(1-ku)` factors of `gamma_k`, FMA contraction (which only removes roundings) and the CPU's own f64 evaluation error, which has the same form with `2^-53` and is therefore below `2^-29` of the f32 bound.
+
+Near-parallel triangles make `|det|` comparable to its bound, so ratios cannot be bounded there. Before dividing, a division-free test proves a miss from the numerators: if `|U^| - eps_U > (|det^| + eps_det)(1 + 16u)` then every admissible CPU determinant gives `|u| > 1 + 1e-10`, and the same for `V` gives `|v| > 1 + 2e-10`; either contradicts a hit (or the CPU rejects `det` outright). Without this test every edge-on triangle made its query uncertain (100 % of `particles.stl` queries); with it the ratio fell to 0.2 %.
+
+A triangle is a certain miss if **any** CPU condition is certainly false (the CPU result is their conjunction), a certain hit only if **all** are certainly true, and uncertain otherwise. A query is uncertain as soon as one triangle is. Hits are certain *distinct* only if, after sorting, every consecutive gap exceeds `1e-8 + 2 max(err_t) + u t`; the CPU then keeps every hit and parity is the hit count. Any closer pair (a ray through a shared edge or vertex, coincident duplicate triangles, a slab thinner than the bound) is uncertain. The >64-hit overflow path performs the same proof with constant storage: one pass for the bound, then per distinct hit one nearest-selection pass and one pass counting hits within the band.
+
+**Host re-evaluation.** Uncertain queries are appended to an atomic list: MC records `(logical sample id, p, q)` as 7 words and contributes `valid = 1, hit = 0` to its workgroup partial; the host decodes the radius as `id / samples_per_radius` and adds a hit when the CPU finds both points inside. Voxels store 0 provisionally and record the flat cell index; the host classifies the center, writes `1` back into the resident occupancy (coalesced `write_buffer` runs, so the resident shell stage sees the certified field) and adds it to the count or to the full readback. The counter always advances, so an overflowed list is detected; the list is regrown to the exact count and the batch re-dispatched (the logical sample ids and cell centers are deterministic). MC lists start at 1024 records; voxel lists are pre-sized to `max(1024, cells/64)` entries (`voxel_uncertain_entries`), which covers the measured ordinary ratios without a re-dispatch. Re-evaluation is serial because the optimizer calls it under its GPU mutex inside a Rayon worker.
+
+**Statistics.** `GpuS2Pipeline::certification_stats` / `GpuVoxelPipeline::certification_stats` return `GpuCertificationStats { queries, uncertain, list_regrowths, cpu_recompute_seconds }` (MC queries are valid samples; voxel queries are cells). `measure` prints the MC ratio after each GPU MC evaluation, GPU exact prints the voxel ratio in its `[Info] GPU exact S2` line, and `optimize` prints the shared instance's cumulative ratio before `Optimization completed.`
+
+**What it does not claim.** The certificate is against the CPU predicate at the GPU's f32 query point in the origin-shifted f64 frame; it is not a statement about the unshifted world-frame CPU path (whose own rounding at `1e9` offsets differs) and not a change of MC sample positions. Growth of an uncertain list beyond its planned capacity is bounded by device limits, not by the logical memory budget (`mc_evaluation_peak` and `ExactMemoryPlan` count the planned list and its staging, and the MC planner counts a retained regrown list on the next evaluation).
+
+**Measured (llvmpipe, release, 1 warmup + 5 alternating samples, shared 4-core host).** Recompute ratios: MC 1.6e-3 (level-3 icosphere, 1280 faces) and 2.2e-3 (`particles.stl`, 5600 faces); voxel 1.4e-3 (icosphere, 64³) and 1.3e-2 (`particles.stl`, 62×59×64). Host recompute is under 2 % of the certified run. The certified shaders cost about twice the ALU per triangle: median MC 0.174 s vs 0.137 s uncertified (icosphere) and 3.98 s vs 1.65 s (particles); voxel 0.450 s vs 0.585 s (icosphere, the certified path was faster in this run) and 4.66 s vs 2.22 s (particles). These are software-rasterizer timings on a loaded host and say nothing about hardware GPUs. On adversarial fixtures the uncertified shader is wrong where the certified one is exact: a 3e-7-thick slab gives 743 wrong voxels of 4096 and MC hit counts of 267/101/29/8 instead of 0.
 
 ## CPU exact planner calibration (PERF-07)
 

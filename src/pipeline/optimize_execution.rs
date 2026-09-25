@@ -95,7 +95,7 @@ fn select_s2_backend(
             "optimizer GPU supports only backend=wgpu, gpu_precision=f32 and gpu_prefer_power=false".into()
         ));
     } else if let Err(error) =
-        crate::compute::mc_memory::mc_evaluation_peak(4, 4, 0, faces, params.r_max, max_samples)
+        crate::compute::mc_memory::mc_evaluation_peak(4, 4, 0, 0, faces, params.r_max, max_samples)
             .and_then(|peak| {
                 crate::compute::mc_memory::check_mc_budget(peak, accel.gpu_memory_limit_mb)
             })
@@ -223,6 +223,18 @@ impl OptimizeS2 {
             #[cfg(test)]
             observations: Mutex::new(Vec::new()),
         })
+    }
+
+    // AI-FUNC-SUMMARY: Describe the shared GPU MC instance's cumulative f32 certification counters (CPU recompute ratio) while it is still active; returns None on CPU or after a fallback removed it; side effects: briefly locks the GPU mutex.
+    pub(super) fn gpu_certification_summary(&self) -> Option<String> {
+        #[cfg(feature = "gpu")]
+        if let Some(gpu) = &self.gpu {
+            return gpu
+                .lock()
+                .ok()
+                .and_then(|state| state.as_ref().map(|gpu| gpu.certification_stats().describe()));
+        }
+        None
     }
 
     // AI-FUNC-SUMMARY: Evaluate one stage using the fixed method and active Rayon budget; serializes GPU buffer use and releases its lock before parallel VF work; returns S2 or a policy-forbidden GPU error and records test-only execution observations.
