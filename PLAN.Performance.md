@@ -1583,3 +1583,7 @@ GPU 全量（`env -u DISPLAY -u WAYLAND_DISPLAY cargo test --release --features 
 结果（大输入、`--workers 1,8`、5 次暖中位；对照为 §72 的二进制）：载入阶段 split-filter 0.134/0.125 → 0.063/0.062 s，forge 0.126/0.127 → 0.067/0.058 s，scale 0.127/0.130 → 0.057/0.058 s；scale 总时间 0.157 → 0.081 s（0.52×），split-filter 0.276/0.251 → 0.211/0.207 s。scale、forge 输出 STL 与 split-filter 的 1,755 个文件在新旧二进制之间逐字节一致。placement 的 `load_stl_hashed` 走同一解析路径。
 
 仍开放：forge 的两次 VF 各约 0.06 s；二进制 STL 并行解码（剩余载入约 0.06 s，其中读盘与 f32 解析是否主导需再测）。
+
+## 74. PERF-16：forge 的 VF 按分量并行（2026-09-25，本地）
+
+forge 把整个网格作为一个元素传给 `volume_fraction_of_meshes_in_bbox`，外层 `par_iter` 只有 1 项，内部 1,755 个分量的裁剪与体积在单 worker 上串行，所以 §72 中 forge 的两次 VF（各约 0.06 s）不随 worker 变化。改为：单个网格分量数 ≥ `VF_PARALLEL_MIN_PARTS = 32` 时各分量体积并行算入按序索引的缓冲，再按分量顺序串行求和——与原串行求和逐位相同。大输入 forge（5 次暖中位，对照 §73 的二进制）：`vf_before` 8 worker 0.071 → 0.047 s，`vf_after` 0.061 → 0.042 s，总时间 0.216 → 0.166 s；1 worker 不变。受剩余串行的 `split_mesh_into_granules` 限制，增益有限。新旧二进制在 1/8 线程下的 `forged_mesh.stl` 与含 VF 数值的报告逐字节一致。optimize/measure 使用同一函数，结果同样逐位不变。

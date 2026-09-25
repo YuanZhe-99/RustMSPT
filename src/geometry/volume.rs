@@ -430,6 +430,9 @@ pub fn particle_volume_in_bbox(mesh: &Mesh, bbox: BoundingBox) -> f64 {
     mesh_volume(&clipped)
 }
 
+/// Granules in one mesh from which their in-box volumes are measured in parallel.
+const VF_PARALLEL_MIN_PARTS: usize = 32;
+
 // AI-FUNC-SUMMARY: Compute the volume fraction of a single mesh within a bounding box; returns f64 in [0,1]; side effects: None.
 pub fn volume_fraction_in_bbox(mesh: &Mesh, bbox: BoundingBox) -> f64 {
     volume_fraction_of_meshes_in_bbox(std::slice::from_ref(mesh), bbox)
@@ -440,7 +443,10 @@ pub fn volume_fraction_in_bbox(mesh: &Mesh, bbox: BoundingBox) -> f64 {
 // Inputs: slice of meshes and bounding box.
 // Returns: Volume fraction in [0,1] clamped.
 // Side effects: None.
-// Notes: Splits each mesh into granules before clipping for correct volume computation.
+// Notes: Splits each mesh into granules before clipping for correct volume computation. A mesh with at least
+// VF_PARALLEL_MIN_PARTS granules measures them in parallel into an indexed buffer and sums it in granule
+// order, so its volume is bit-identical to the serial sum; forge passes one merged mesh, so without this
+// its whole VF ran on one worker.
 pub fn volume_fraction_of_meshes_in_bbox(meshes: &[Mesh], bbox: BoundingBox) -> f64 {
     let box_volume = bbox.volume().max(1e-12);
 
@@ -450,6 +456,9 @@ pub fn volume_fraction_of_meshes_in_bbox(meshes: &[Mesh], bbox: BoundingBox) -> 
             let parts = split_mesh_into_granules(mesh);
             if parts.is_empty() {
                 particle_volume_in_bbox(mesh, bbox)
+            } else if parts.len() >= VF_PARALLEL_MIN_PARTS {
+                let volumes: Vec<f64> = parts.par_iter().map(|p| particle_volume_in_bbox(p, bbox)).collect();
+                volumes.iter().sum::<f64>()
             } else {
                 parts.iter().map(|p| particle_volume_in_bbox(p, bbox)).sum::<f64>()
             }
