@@ -290,7 +290,9 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `GpuVolumeTransformPipeline::rotate_and_crop` | GPU | `src/gpu/volume_transform.rs:123` | Dispatches the rotate/crop/resample kernel and reads back the transformed volume. |
 | `parse_ascii_vertex` | I/O | `src/io/stl.rs:9` | Parses one ASCII STL `vertex x y z` line into a `Vec3`. |
 | `quantize_key` | I/O | `src/io/stl.rs:21` | Quantizes a vertex to a fixed-precision integer key for tolerant deduplication. |
-| `dedup_vertex` | I/O | `src/io/stl.rs:31` | Deduplicates a vertex against an existing list via quantized key lookup. |
+| `WeldMap` | I/O | `src/io/stl.rs:10` | Vertex-weld map type (quantized key to first index) with a fast non-SipHash hasher; never iterated. |
+| `WeldHasher` | I/O | `src/io/stl.rs:15` | Multiply-xor hasher with 64-bit finalizer for quantized vertex keys. |
+| `dedup_vertex` | I/O | `src/io/stl.rs:65` | Deduplicates a vertex against an existing list via quantized key lookup. |
 | `parse_f32_le` | I/O | `src/io/stl.rs:93` | Parses little-endian `f32` bytes and upcasts to `f64`. |
 | `parse_binary_stl` | I/O | `src/io/stl.rs:104` | Parses binary STL bytes into a `Mesh` with deduplicated vertices. |
 | `looks_ascii_stl` | I/O | `src/io/stl.rs:151` | Heuristically detects whether bytes represent ASCII STL. |

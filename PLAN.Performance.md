@@ -1573,3 +1573,13 @@ GPU 全量（`env -u DISPLAY -u WAYLAND_DISPLAY cargo test --release --features 
 **PERF-04/05：证书列表扩容纳入预算（§67 第 5 项前半，已实施）。** MC：`GpuS2Pipeline::set_memory_limit_mb`（optimize 与 measure 在调用 `check_evaluation_budget` 的地方设置同一上限）；列表溢出需要扩容时，先用 `mc_regrowth_peak(retained, entries)` = 保留峰值（已含旧列表及其 staging）+ 新列表及 staging，与上限比较，超出则返回含 `certification list regrowth` 的错误，由调用方既有策略处理（auto 回退、禁止回退则报错）。体素：`GpuVoxelPipeline::set_regrowth_headroom`，exact 路径设为“预算 − 计划峰值”；扩容超出计划列表（每 64 单元 1 条、至少 1,024 条）时，额外字节（当前列表对 + 新列表对 − 计划列表对）不得超过余量。未设上限时行为与此前相同（只受设备限制）。测试：`mc_uncertain_list_regrowth_respects_the_budget`、`uncertain_list_regrowth_respects_the_budget_headroom`——零预算时拒绝并报名，宽裕预算时结果与 CPU 参考/原计数完全一致。逐三角形误差界预计算（§67 第 5 项后半）未做。
 
 仍开放：STL 载入（34 MB 约 0.13 s）是 split-filter/forge/scale 的最大单项，§67 第 9 项的“二进制 STL 并行解码”现在有了依据（载入占 scale 的 81%）；forge 的两次 VF 各约 0.06 s；placement 4→8 worker 几乎无增益（批末屏障，见 §70）；measure 的 RSS 随 worker 翻倍。
+
+## 73. PERF-18：二进制 STL 载入的焊接哈希（2026-09-25，本地）
+
+§72 的大输入矩阵显示，34 MB 二进制 STL（约 68 万三角形、1,755 个颗粒）的载入阶段约 0.127 s，占 scale 的 81%，也是 split-filter/forge 的最大单项。约 260 MB/s 对纯解析偏慢；逐项看，每个三角形 3 次顶点焊接查找，全部走默认 SipHash 的 `HashMap<(i64,i64,i64), usize>`。
+
+改动（`src/io/stl.rs`）：`WeldMap = HashMap<(i64,i64,i64), usize, BuildHasherDefault<WeldHasher>>`，`WeldHasher` 为乘法-异或（FxHash 式）加 64 位终结混合（让哈希表按低位取桶时每个输入位都起作用）；二进制读取按文件头三角形数预分配顶点（count/2）、面与哈希表，上限 2^24 防止损坏的文件头过量预留。焊接表只做查找与插入、从不迭代，顶点索引由首次插入顺序决定，所以**哈希函数不可能改变输出**；它不抗构造碰撞，对本地网格文件而言最坏只影响载入时间。ASCII 路径共享同一 `dedup_vertex`，一并受益。
+
+结果（大输入、`--workers 1,8`、5 次暖中位；对照为 §72 的二进制）：载入阶段 split-filter 0.134/0.125 → 0.063/0.062 s，forge 0.126/0.127 → 0.067/0.058 s，scale 0.127/0.130 → 0.057/0.058 s；scale 总时间 0.157 → 0.081 s（0.52×），split-filter 0.276/0.251 → 0.211/0.207 s。scale、forge 输出 STL 与 split-filter 的 1,755 个文件在新旧二进制之间逐字节一致。placement 的 `load_stl_hashed` 走同一解析路径。
+
+仍开放：forge 的两次 VF 各约 0.06 s；二进制 STL 并行解码（剩余载入约 0.06 s，其中读盘与 f32 解析是否主导需再测）。

@@ -281,7 +281,9 @@
 | `hex_digest` | I/O | `src/io/hash.rs:42` | 将摘要渲染为小写十六进制。 |
 | `parse_ascii_vertex` | I/O | `src/io/stl.rs:9` | 将一行 ASCII STL 的 `vertex x y z` 解析为一个 `Vec3`。 |
 | `quantize_key` | I/O | `src/io/stl.rs:21` | 将一个顶点量化为固定精度的整数键，用于容差去重。 |
-| `dedup_vertex` | I/O | `src/io/stl.rs:31` | 通过量化键查找，对某个顶点与已有列表进行去重比对。 |
+| `WeldMap` | I/O | `src/io/stl.rs:10` | 顶点焊接表类型（量化键到首个索引），使用非 SipHash 的快速哈希；从不迭代。 |
+| `WeldHasher` | I/O | `src/io/stl.rs:15` | 用于量化顶点键的乘法-异或哈希，带 64 位终结混合。 |
+| `dedup_vertex` | I/O | `src/io/stl.rs:65` | 通过量化键查找，对某个顶点与已有列表进行去重比对。 |
 | `parse_f32_le` | I/O | `src/io/stl.rs:93` | 解析小端序的 `f32` 字节并向上转换为 `f64`。 |
 | `parse_binary_stl` | I/O | `src/io/stl.rs:104` | 将二进制 STL 字节解析为一个顶点已去重的 `Mesh`。 |
 | `looks_ascii_stl` | I/O | `src/io/stl.rs:151` | 启发式地检测字节内容是否为 ASCII STL。 |

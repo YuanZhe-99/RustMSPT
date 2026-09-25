@@ -1,6 +1,40 @@
 use crate::error::{Result, RustMsptError};
 use crate::types::{Mesh, Triangle, Vec3};
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
+
+/// Vertex-weld map: quantized coordinates to the vertex index first assigned to them.
+///
+/// Only looked up and inserted, never iterated, so the hasher cannot affect which index a vertex gets;
+/// SipHash cost more than the rest of a binary load (PLAN.Performance.md section 73).
+type WeldMap = HashMap<(i64, i64, i64), usize, BuildHasherDefault<WeldHasher>>;
+
+// AI-FUNC-SUMMARY: Multiply-xor hasher for quantized vertex keys with a 64-bit finalizer so the low bits the table indexes by depend on every input bit; returns the hash; side effects: none.
+// Notes: Not collision-resistant against crafted input, which for a local mesh file costs only load time.
+#[derive(Default)]
+struct WeldHasher(u64);
+
+impl Hasher for WeldHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(u64::from(b));
+        }
+    }
+    fn write_u64(&mut self, value: u64) {
+        self.0 = (self.0.rotate_left(5) ^ value).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+    }
+    fn write_i64(&mut self, value: i64) {
+        self.write_u64(value as u64);
+    }
+    fn finish(&self) -> u64 {
+        let mut h = self.0;
+        h ^= h >> 33;
+        h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
+        h ^= h >> 33;
+        h = h.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
+        h ^ (h >> 33)
+    }
+}
 use std::fs;
 use std::io::{BufRead, BufReader, BufWriter, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
@@ -30,7 +64,7 @@ fn quantize_key(v: Vec3) -> (i64, i64, i64) {
 // AI-FUNC-SUMMARY: Deduplicate a vertex against existing list using quantized key matching; returns index of existing or newly inserted vertex; side effects: Mutates vertices vec and map.
 fn dedup_vertex(
     vertices: &mut Vec<Vec3>,
-    map: &mut HashMap<(i64, i64, i64), usize>,
+    map: &mut WeldMap,
     v: Vec3,
 ) -> usize {
     let key = quantize_key(v);
@@ -48,7 +82,7 @@ struct AsciiStlBuilder {
     vertices: Vec<Vec3>,
     faces: Vec<Triangle>,
     pending: Vec<Vec3>,
-    map: HashMap<(i64, i64, i64), usize>,
+    map: WeldMap,
 }
 
 impl AsciiStlBuilder {
@@ -124,9 +158,12 @@ fn parse_binary_reader(mut reader: impl Read, path: &Path) -> Result<Mesh> {
     let mut header = [0u8; 84];
     read_stl_record(&mut reader, &mut header, path)?;
     let count = u32::from_le_bytes(header[80..84].try_into().unwrap());
-    let mut vertices = Vec::new();
-    let mut faces = Vec::new();
-    let mut map = HashMap::new();
+    // A closed triangle mesh has about half as many vertices as faces; the header's count is only a
+    // hint for sizing, capped so a corrupt header cannot reserve memory the file does not back.
+    let hint = (count as usize).min(1 << 24);
+    let mut vertices = Vec::with_capacity(hint / 2 + 3);
+    let mut faces = Vec::with_capacity(hint);
+    let mut map = WeldMap::with_capacity_and_hasher(hint / 2 + 3, Default::default());
     let mut record = [0u8; 50];
     for _ in 0..count {
         read_stl_record(&mut reader, &mut record, path)?;

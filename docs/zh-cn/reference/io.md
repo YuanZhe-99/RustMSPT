@@ -13,7 +13,9 @@
 | `hex_digest` | `src/io/hash.rs:42` | 将摘要渲染为小写十六进制。 |
 | `parse_ascii_vertex` | `src/io/stl.rs:9` | 将一行 ASCII STL 的 `vertex x y z` 记录解析为 `Vec3`。 |
 | `quantize_key` | `src/io/stl.rs:21` | 将顶点量化为固定精度的整数键，用于容差去重。 |
-| `dedup_vertex` | `src/io/stl.rs:31` | 通过量化键查找，对照现有列表对顶点去重。 |
+| `WeldMap` | `src/io/stl.rs:10` | 顶点焊接表类型（量化键到首个索引），使用非 SipHash 的快速哈希；从不迭代。 |
+| `WeldHasher` | `src/io/stl.rs:15` | 用于量化顶点键的乘法-异或哈希，带 64 位终结混合。 |
+| `dedup_vertex` | `src/io/stl.rs:65` | 通过量化键查找，对照现有列表对顶点去重。 |
 | `AsciiStlBuilder` | `src/io/stl.rs:47` | ASCII STL 增量状态：顶点、面、待组面顶点、去重表。 |
 | `AsciiStlBuilder::push_line` | `src/io/stl.rs:56` | 按原 lossy/trim/vertex 规则处理一行原始字节。 |
 | `parse_ascii_stream_or_binary` | `src/io/stl.rs:78` | 逐行流式解析 ASCII STL，未得到三角形时对保留字节回退 binary。 |
@@ -42,7 +44,7 @@
 | `save_tiff_or_folder` | `src/io/volume.rs:586` | 使用默认的 `.tiff` 扩展名，将 `Volume3D` 保存为 TIFF 文件或切片文件序列。 |
 | `load_stl_from_reader` | `src/io/stl.rs:192` | Forward-reader STL: streamed ASCII lines and bounded binary records. |
 | `load_stl_hashed` | `src/io/stl.rs:193` | Single-pass STL parsing and raw digest. |
-| `parse_binary_reader` | `src/io/stl.rs:109` | Read binary triangle records with incremental deduplication. |
+| `parse_binary_reader` | `src/io/stl.rs:157` | Read binary triangle records with incremental deduplication. |
 | `read_stl_record` | `src/io/stl.rs:140` | Read complete record or report truncation. |
 | `HashingReader` | `src/io/hash.rs:50` | Incremental digest over delivered bytes. |
 | `HashingReader::new` | `src/io/hash.rs:58` | Wrap forward reader for hashing. |
@@ -165,8 +167,8 @@
 
 #### dedup_vertex
 
-- **签名：** `fn dedup_vertex(vertices: &mut Vec<Vec3>, map: &mut HashMap<(i64, i64, i64), usize>, v: Vec3) -> usize`
-- **源码位置：** `src/io/stl.rs:31`
+- **签名：** `fn dedup_vertex(vertices: &mut Vec<Vec3>, map: &mut WeldMap, v: Vec3) -> usize`
+- **源码位置：** `src/io/stl.rs:65`
 - **用途：** 返回与 `v` 的量化键匹配的现有顶点的索引；若无匹配，则将 `v` 作为新顶点追加并返回其新索引。
 - **参数：**
   - `vertices` — 运行中的顶点列表，在缓存未命中时被追加。
@@ -174,6 +176,7 @@
   - `v` — 待查找或插入的顶点。
 - **返回值：** `v` 在 `vertices` 中的索引（已存在或新插入）。
 - **副作用：** 原地修改 `vertices` 和 `map`。
+- **说明：** `map` 为 `WeldMap`：使用本地 `WeldHasher`（乘法-异或加 64 位终结混合）替代 SipHash 的 `HashMap`。该表只做查找与插入、从不迭代，因此哈希函数不会改变顶点获得的索引；在 34 MB 二进制 STL 上载入阶段由 0.127 s 降至约 0.06 s，下游输出逐字节一致（PLAN.Performance.md §73）。二进制读取还按文件头的三角形数预分配顶点、面与哈希表（上限 2^24，避免损坏的文件头过量预留）。
 
 #### AsciiStlBuilder / push_line
 

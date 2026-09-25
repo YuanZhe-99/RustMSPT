@@ -12,7 +12,9 @@ This page documents `src/io/mod.rs`, content hashing in `hash.rs`, PNG output in
 | `save_image` | `src/io/image.rs:11` | Validates and writes a top-row-first RGBA8 PNG. |
 | `parse_ascii_vertex` | `src/io/stl.rs:9` | Parses one ASCII STL `vertex x y z` line into a `Vec3`. |
 | `quantize_key` | `src/io/stl.rs:21` | Quantizes a vertex to a fixed-precision integer key for tolerant deduplication. |
-| `dedup_vertex` | `src/io/stl.rs:31` | Deduplicates a vertex against an existing list via quantized key lookup. |
+| `WeldMap` | `src/io/stl.rs:10` | Vertex-weld map type (quantized key to first index) with a fast non-SipHash hasher; never iterated. |
+| `WeldHasher` | `src/io/stl.rs:15` | Multiply-xor hasher with 64-bit finalizer for quantized vertex keys. |
+| `dedup_vertex` | `src/io/stl.rs:65` | Deduplicates a vertex against an existing list via quantized key lookup. |
 | `AsciiStlBuilder` | `src/io/stl.rs:47` | Incremental ASCII STL state: vertices, faces, pending vertices, dedup map. |
 | `AsciiStlBuilder::push_line` | `src/io/stl.rs:56` | Consume one raw line with the legacy lossy/trim/vertex rules. |
 | `parse_ascii_stream_or_binary` | `src/io/stl.rs:78` | Line-streamed ASCII STL with binary fallback on the retained bytes. |
@@ -41,7 +43,7 @@ This page documents `src/io/mod.rs`, content hashing in `hash.rs`, PNG output in
 | `save_tiff_or_folder` | `src/io/volume.rs:586` | Saves a `Volume3D` to TIFF file or folder sequence with the default `.tiff` extension. |
 | `load_stl_from_reader` | `src/io/stl.rs:192` | Forward-reader STL: streamed ASCII lines and bounded binary records. |
 | `load_stl_hashed` | `src/io/stl.rs:193` | Single-pass STL parsing and raw digest. |
-| `parse_binary_reader` | `src/io/stl.rs:109` | Read binary triangle records with incremental deduplication. |
+| `parse_binary_reader` | `src/io/stl.rs:157` | Read binary triangle records with incremental deduplication. |
 | `read_stl_record` | `src/io/stl.rs:140` | Read complete record or report truncation. |
 | `HashingReader` | `src/io/hash.rs:50` | Incremental digest over delivered bytes. |
 | `HashingReader::new` | `src/io/hash.rs:58` | Wrap forward reader for hashing. |
@@ -172,8 +174,8 @@ This file implements STL (stereolithography) mesh I/O with automatic ASCII/binar
 
 #### dedup_vertex
 
-- **Signature:** `fn dedup_vertex(vertices: &mut Vec<Vec3>, map: &mut HashMap<(i64, i64, i64), usize>, v: Vec3) -> usize`
-- **Source:** `src/io/stl.rs:31`
+- **Signature:** `fn dedup_vertex(vertices: &mut Vec<Vec3>, map: &mut WeldMap, v: Vec3) -> usize`
+- **Source:** `src/io/stl.rs:65`
 - **Purpose:** Returns the index of an existing vertex matching `v`'s quantized key, or appends `v` as a new vertex and returns its new index.
 - **Parameters:**
   - `vertices` — running vertex list, appended to on cache miss.
@@ -181,6 +183,7 @@ This file implements STL (stereolithography) mesh I/O with automatic ASCII/binar
   - `v` — the vertex to look up or insert.
 - **Returns:** The index of `v` in `vertices` (pre-existing or freshly inserted).
 - **Side effects:** Mutates `vertices` and `map` in place.
+- **Notes:** `map` is a `WeldMap`: a `HashMap` with the local `WeldHasher` (multiply-xor plus a 64-bit finalizer) instead of SipHash. The map is only looked up and inserted, never iterated, so the hasher cannot change which index a vertex receives; on a 34 MB binary STL the load stage fell from 0.127 s to about 0.06 s with byte-identical downstream outputs (PLAN.Performance.md §73). The binary reader also pre-sizes vertices, faces and the map from the header's triangle count (capped at 2^24 so a corrupt header cannot over-reserve).
 
 #### AsciiStlBuilder / push_line
 
