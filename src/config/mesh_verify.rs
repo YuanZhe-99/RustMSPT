@@ -93,6 +93,10 @@ pub struct MeshVerifyParams {
     /// `MeshGenInput::resolved_priority` uses.
     #[serde(default)]
     pub surfaces: Vec<MeshVerifySurface>,
+    /// Verify the input **as the deliverable** (contracts §4.4): `[V3]` tests the domain box
+    /// strictly regardless of `StageIndex`. Set it on the file handed over, never on a snapshot.
+    #[serde(default)]
+    pub delivered: bool,
 }
 
 // AI-FUNC-SUMMARY: Top-level YAML wrapper for the `mesh_verify:` config block; side effects: none.

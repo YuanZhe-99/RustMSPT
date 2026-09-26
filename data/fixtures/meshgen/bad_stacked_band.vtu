@@ -9,7 +9,7 @@
       <DataArray type="Int64" Name="FaceTagOffsets" NumberOfTuples="1" format="ascii">1</DataArray>
       <DataArray type="Int32" Name="FaceTagComponents" NumberOfTuples="1" format="ascii">1</DataArray>
       <DataArray type="UInt8" Name="FaceTagKind" NumberOfTuples="1" format="ascii">0</DataArray>
-      <DataArray type="Int32" Name="FaceTagSideElems" NumberOfComponents="2" NumberOfTuples="6" format="ascii">0 -1 0 -1 0 -1 0 -1 0 -1 0 -1</DataArray>
+      <DataArray type="Int32" Name="FaceTagSideElems" NumberOfComponents="2" NumberOfTuples="6" format="ascii">0 -1 5 -1 0 -1 1 -1 3 -1 4 -1</DataArray>
       <DataArray type="Int32" Name="ComponentX" NumberOfTuples="1" format="ascii">1</DataArray>
       <DataArray type="UInt32" Name="ComponentY" NumberOfTuples="1" format="ascii">1</DataArray>
       <DataArray type="UInt8" Name="ComponentKind" NumberOfTuples="1" format="ascii">0</DataArray>
@@ -17,6 +17,7 @@
       <DataArray type="UInt8" Name="CurveKind" NumberOfTuples="1" format="ascii">3</DataArray>
       <DataArray type="Int64" Name="CurveCompOffsets" NumberOfTuples="1" format="ascii">1</DataArray>
       <DataArray type="Int32" Name="CurveCompComponents" NumberOfTuples="1" format="ascii">1</DataArray>
+      <DataArray type="Int32" Name="CurveRadialPatches" NumberOfTuples="1" format="ascii">0</DataArray>
       <DataArray type="Int32" Name="SchemaVersion" NumberOfTuples="1" format="ascii">1</DataArray>
       <DataArray type="Int32" Name="StageIndex" NumberOfTuples="1" format="ascii">9</DataArray>
       <DataArray type="Int32" Name="GeneratorVersion" NumberOfTuples="3" format="ascii">0 1 0</DataArray>

@@ -1,6 +1,7 @@
 pub mod arrange;
 pub mod cdt;
 pub mod classify;
+pub mod contract;
 pub mod cut;
 pub mod facecache;
 pub mod features;

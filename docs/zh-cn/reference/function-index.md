@@ -566,13 +566,16 @@
 | `Severity` | 网格工具 | `src/meshgen/verify.rs:21` | 验证发现项严重级别（Info < Warn < Fail）。 |
 | `CheckStatus` | 网格工具 | `src/meshgen/verify.rs:40` | 单节结论 PASS/WARN/FAIL/SKIPPED。 |
 | `VerifyItem` | 网格工具 | `src/meshgen/verify.rs:63` | 单条发现：稳定代码、消息、点/单元编号与坐标。 |
-| `VerifySection` | 网格工具 | `src/meshgen/verify.rs:88` | 单个目录条目：状态、指标、限长条目列表。 |
-| `VerifyGates` | 网格工具 | `src/meshgen/verify.rs:145` | 目录的可配置、与尺度无关的门限。 |
-| `VerifyReport` | 网格工具 | `src/meshgen/verify.rs:199` | 完整验证结果；passed、exit_code、fired_codes、section。 |
-| `verify` | 网格工具 | `src/meshgen/verify.rs:738` | 对契约 VTU 或外部 VTU 运行检查目录。 |
-| `report_to_json` | 网格工具 | `src/meshgen/verify.rs:2358` | 序列化冻结的 JSON 报告（手写，无 JSON 依赖）。 |
-| `report_to_log` | 网格工具 | `src/meshgen/verify.rs:2467` | 分节人读报告，每项检查一行状态。 |
-| `annotate` | 网格工具 | `src/meshgen/verify.rs:2529` | 附带质量数组与 verify_flags 位掩码的网格副本。 |
+| `VerifySection` | 网格工具 | `src/meshgen/verify.rs:88` | 单个目录条目：状态、指标、不受上限影响的严重级别计数与已触发代码、限长条目列表。 |
+| `strict_domain_box` | 网格工具 | `src/meshgen/verify.rs:1343` | [V3]：每个被使用的节点都在区域盒内，且四面体填满区域盒（契约 §4.4）。 |
+| `ContractStrength` / `contract_strength` | 网格工具 | `src/meshgen/contract.rs:13/74` | 仅由元数据选定的 §4.2 校验强度。 |
+| `validate_contract` | 网格工具 | `src/meshgen/contract.rs:169` | 按强度校验文档；每条被违反的规则成为一条 `V12.contract` FAIL。 |
+| `VerifyGates` | 网格工具 | `src/meshgen/verify.rs:200` | 目录的可配置、与尺度无关的门限。 |
+| `VerifyReport` | 网格工具 | `src/meshgen/verify.rs:254` | 完整验证结果；passed、exit_code、fired_codes、section。 |
+| `verify` | 网格工具 | `src/meshgen/verify.rs:798` | 对契约 VTU 或外部 VTU 运行检查目录。 |
+| `report_to_json` | 网格工具 | `src/meshgen/verify.rs:2603` | 序列化冻结的 JSON 报告（手写，无 JSON 依赖）。 |
+| `report_to_log` | 网格工具 | `src/meshgen/verify.rs:2712` | 分节人读报告，每项检查一行状态。 |
+| `annotate` | 网格工具 | `src/meshgen/verify.rs:2774` | 附带质量数组与 verify_flags 位掩码的网格副本。 |
 | `VerifyGateParams` | 网格工具 | `src/config/mesh_verify.rs:8` | 验证目录的 YAML 门限覆盖。 |
 | `MeshVerifyParams` | 网格工具 | `src/config/mesh_verify.rs:78` | mesh_verify: YAML 块（输入、report/json/annotate、门限）。 |
 | `MeshVerifySurface` | 网格工具 | `src/config/mesh_verify.rs:46` | 单个 [V5] 输入曲面：裸路径，或在网格以显式优先级生成时使用 `{stl, priority}`。 |
@@ -669,12 +672,12 @@
 | `stamp_metadata` | 网格工具 | `src/meshgen/snapshot.rs:232` | 将完整 §2.4 元数据块打标到快照文档。 |
 | `emit_snapshot` | 网格工具 | `src/meshgen/snapshot.rs:295` | 打标元数据，然后写出 R4 定义的一对文件：以普通名交付的仅四面体体网格，以及紧邻其旁的混合单元契约文档。返回交付文件的路径。 |
 | `warn_if_large` | 网格工具 | `src/meshgen/snapshot.rs:348` | 尺寸 WARN：snapshots=all + 估计 >5 M 四面体。 |
-| `VerifyOptions` | 网格工具 | `src/meshgen/verify.rs:714` | 文档之外的验证器输入（expected_stage 用于 [V12] 交叉校验）。 |
-| `verify_with_options` | 网格工具 | `src/meshgen/verify.rs:749` | 带阶段上下文的验证；s00-s03 跳过仅体网格 [V7]/[V8]/[V13]。 |
-| `BoundaryFace` | 网格工具 | `src/meshgen/verify.rs:3903` | [V13] 眼中的一个材料边界面：面积、局部边长、距离与带符号偏移。 |
-| `FidelityAcc` | 网格工具 | `src/meshgen/verify.rs:3935` | [V13] 按面积加权的逐分量累加器。 |
-| `absorb` | 网格工具 | `src/meshgen/verify.rs:3952` | 将一个边界面折叠进 [V13] 累加器。 |
-| `check_v13` | 网格工具 | `src/meshgen/verify.rs:4006` | [V13] 界面保真度：从体网格读出材料边界并与输入曲面比对（计划中的 P3）。 |
+| `VerifyOptions` | 网格工具 | `src/meshgen/verify.rs:769` | 文档之外的验证器输入：expected_stage、delivered（严格区域盒）、surfaces。 |
+| `verify_with_options` | 网格工具 | `src/meshgen/verify.rs:809` | 带阶段上下文的验证；s00-s03 跳过仅体网格 [V7]/[V8]/[V13]。 |
+| `BoundaryFace` | 网格工具 | `src/meshgen/verify.rs:4135` | [V13] 眼中的一个材料边界面：面积、局部边长、距离与带符号偏移。 |
+| `FidelityAcc` | 网格工具 | `src/meshgen/verify.rs:4167` | [V13] 按面积加权的逐分量累加器。 |
+| `absorb` | 网格工具 | `src/meshgen/verify.rs:4184` | 将一个边界面折叠进 [V13] 累加器。 |
+| `check_v13` | 网格工具 | `src/meshgen/verify.rs:4238` | [V13] 界面保真度：从体网格读出材料边界并与输入曲面比对（计划中的 P3）。 |
 | `GpuClipPlane` | 网格工具 | `src/gpu/scene_render.rs:53` | GPU 场景预览的可选半空间裁剪（平滑切割）。 |
 | `GpuSceneOptions` | 网格工具 | `src/gpu/scene_render.rs:60` | GPU 专用开关：裁剪平面、叠加线段、标记。 |
 | `GpuScenePipeline` | 网格工具 | `src/gpu/scene_render.rs:85` | 离屏 GPU 场景预览：带颜色的 TriangleList + LineList 叠加，均支持裁剪平面丢弃。 |

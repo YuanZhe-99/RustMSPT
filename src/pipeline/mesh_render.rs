@@ -305,9 +305,15 @@ impl MeshRenderPipeline {
         timer.restart();
         let scene = build_scene(&doc, &spec)?;
         timer.stage("scene");
-        let bbox = scene.bbox.ok_or_else(|| {
-            RustMsptError::InvalidMesh("mesh-render: the VTU contains no points".to_string())
-        })?;
+        let bbox = match &p.frame_box {
+            Some(frame) => BoundingBox {
+                min: to_vec3("frame_box.min", &frame.min)?,
+                max: to_vec3("frame_box.max", &frame.max)?,
+            },
+            None => scene.bbox.ok_or_else(|| {
+                RustMsptError::InvalidMesh("mesh-render: the VTU contains no points".to_string())
+            })?,
+        };
         println!(
             "[mesh-render] {}: {} cells -> {} triangles, {} segments, {} markers",
             p.input,

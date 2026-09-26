@@ -31,6 +31,13 @@ pub enum FilterSpec {
     ClipPlane { origin: Vec<f64>, normal: Vec<f64> },
 }
 
+// AI-FUNC-SUMMARY: An explicit camera-framing box for mesh-render (`frame_box: {min, max}`); side effects: none.
+#[derive(Debug, Clone, Deserialize)]
+pub struct FrameBox {
+    pub min: Vec<f64>,
+    pub max: Vec<f64>,
+}
+
 // AI-FUNC-SUMMARY:
 // Purpose: YAML parameters for the mesh-render subcommand (input VTU, views, image, coloring, opacities, filters, overlays).
 // Notes: `color_by` = "uniform", a cell-array name, or a point-array name (`separation_t`, `sizing_h`); integer arrays render categorically, float arrays through the scalar colormap, and a point array colors each cell by the mean of its non-sentinel point values. `background` accepts RGB or RGBA (alpha 0 = transparent PNG background). `opacity_overrides` keys are region_key integers (as YAML strings).
@@ -91,6 +98,12 @@ pub struct MeshRenderParams {
     pub camera_distance: Option<f64>,
     #[serde(default = "default_fit_padding")]
     pub fit_padding: f64,
+    /// Frame the camera on this box instead of the whole document (`{min, max}`). The default
+    /// frames every view and filter of one input identically; a focus view (plan M-1.9: a few
+    /// elements around an intersection curve or a sharp edge) needs its own window, or it is a
+    /// speck in a frame sized for the whole domain.
+    #[serde(default)]
+    pub frame_box: Option<FrameBox>,
 }
 
 // AI-FUNC-SUMMARY: Top-level YAML document for mesh-render (`mesh_render:` block); side effects: none.

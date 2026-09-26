@@ -223,6 +223,17 @@ mesh_verify:
   annotate: out/lattice_annotated.vtu
 ```
 
+A lattice snapshot may overhang the domain box - that is the pre-trim lattice, and `[V3]`
+says so with an INFO `V3.pre_trim_overhang`. The file you hand over may not: verify it with
+`delivered: true`, which holds it to the box whatever its `StageIndex` (every used node inside,
+every free face on a box plane, the tets filling the box):
+
+```yaml
+mesh_verify:
+  input: out/mesh.vtu
+  delivered: true
+```
+
 ```yaml
 mesh_render:
   input: out/lattice_annotated.vtu

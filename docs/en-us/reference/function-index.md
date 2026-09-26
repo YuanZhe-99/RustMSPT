@@ -642,13 +642,16 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `Severity` | Mesh Tooling | `src/meshgen/verify.rs:21` | Verifier finding severity (Info < Warn < Fail). |
 | `CheckStatus` | Mesh Tooling | `src/meshgen/verify.rs:40` | Per-section outcome PASS/WARN/FAIL/SKIPPED. |
 | `VerifyItem` | Mesh Tooling | `src/meshgen/verify.rs:63` | One finding with stable code, message, point/cell ids and coordinates. |
-| `VerifySection` | Mesh Tooling | `src/meshgen/verify.rs:88` | One catalog entry: status, metrics, capped item list. |
-| `VerifyGates` | Mesh Tooling | `src/meshgen/verify.rs:145` | Configurable, scale-invariant thresholds for the catalog. |
-| `VerifyReport` | Mesh Tooling | `src/meshgen/verify.rs:199` | Full verification result; passed, exit_code, fired_codes, section. |
-| `verify` | Mesh Tooling | `src/meshgen/verify.rs:738` | Run the check catalog over a contract or external VTU. |
-| `report_to_json` | Mesh Tooling | `src/meshgen/verify.rs:2358` | Serialize the frozen JSON report (hand-rolled, no JSON dependency). |
-| `report_to_log` | Mesh Tooling | `src/meshgen/verify.rs:2467` | Sectioned human-readable report with a per-check status line. |
-| `annotate` | Mesh Tooling | `src/meshgen/verify.rs:2529` | Copy of the mesh carrying quality arrays and the verify_flags bitmask. |
+| `VerifySection` | Mesh Tooling | `src/meshgen/verify.rs:88` | One catalog entry: status, metrics, uncapped severity counts and fired codes, capped item list. |
+| `strict_domain_box` | Mesh Tooling | `src/meshgen/verify.rs:1343` | [V3]: every used node inside the domain box, and the tets filling it (contracts §4.4). |
+| `ContractStrength` / `contract_strength` | Mesh Tooling | `src/meshgen/contract.rs:13/74` | §4.2 validation strength chosen from the metadata alone. |
+| `validate_contract` | Mesh Tooling | `src/meshgen/contract.rs:169` | Validate a document at its strength; every violated rule becomes a `V12.contract` FAIL. |
+| `VerifyGates` | Mesh Tooling | `src/meshgen/verify.rs:200` | Configurable, scale-invariant thresholds for the catalog. |
+| `VerifyReport` | Mesh Tooling | `src/meshgen/verify.rs:254` | Full verification result; passed, exit_code, fired_codes, section. |
+| `verify` | Mesh Tooling | `src/meshgen/verify.rs:798` | Run the check catalog over a contract or external VTU. |
+| `report_to_json` | Mesh Tooling | `src/meshgen/verify.rs:2603` | Serialize the frozen JSON report (hand-rolled, no JSON dependency). |
+| `report_to_log` | Mesh Tooling | `src/meshgen/verify.rs:2712` | Sectioned human-readable report with a per-check status line. |
+| `annotate` | Mesh Tooling | `src/meshgen/verify.rs:2774` | Copy of the mesh carrying quality arrays and the verify_flags bitmask. |
 | `VerifyGateParams` | Mesh Tooling | `src/config/mesh_verify.rs:8` | YAML gate overrides for the verification catalog. |
 | `MeshVerifyParams` | Mesh Tooling | `src/config/mesh_verify.rs:78` | mesh_verify: YAML block (input, report/json/annotate, gates). |
 | `MeshVerifySurface` | Mesh Tooling | `src/config/mesh_verify.rs:46` | One [V5] input surface: a bare path, or `{stl, priority}` when the mesh was built with an explicit rank. |
@@ -744,12 +747,12 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `stamp_metadata` | Mesh Tooling | `src/meshgen/snapshot.rs:232` | Stamp the full §2.4 metadata block onto a snapshot document. |
 | `emit_snapshot` | Mesh Tooling | `src/meshgen/snapshot.rs:295` | Stamp metadata, then write the pair R4 defines: the delivered tets-only volume under the plain name and the mixed-cell contract document beside it. Returns the delivered path. |
 | `warn_if_large` | Mesh Tooling | `src/meshgen/snapshot.rs:348` | Size WARN: snapshots=all + >5 M tets estimate. |
-| `VerifyOptions` | Mesh Tooling | `src/meshgen/verify.rs:714` | Out-of-document verifier inputs (expected_stage for the [V12] cross-check). |
-| `verify_with_options` | Mesh Tooling | `src/meshgen/verify.rs:749` | Verify with stage context; s00-s03 skip volume-only [V7]/[V8]/[V13]. |
-| `BoundaryFace` | Mesh Tooling | `src/meshgen/verify.rs:3903` | One material-boundary face as [V13] measures it: area, local edge length, mean/max distance and signed offset. |
-| `FidelityAcc` | Mesh Tooling | `src/meshgen/verify.rs:3935` | [V13]'s area-weighted per-component accumulator. |
-| `absorb` | Mesh Tooling | `src/meshgen/verify.rs:3952` | Fold one boundary face into a [V13] accumulator. |
-| `check_v13` | Mesh Tooling | `src/meshgen/verify.rs:4006` | [V13] interface fidelity: the material boundary read off the volume, measured against the input surface (the plan's P3). |
+| `VerifyOptions` | Mesh Tooling | `src/meshgen/verify.rs:769` | Out-of-document verifier inputs: expected_stage, delivered (strict domain box), surfaces. |
+| `verify_with_options` | Mesh Tooling | `src/meshgen/verify.rs:809` | Verify with stage context; s00-s03 skip volume-only [V7]/[V8]/[V13]. |
+| `BoundaryFace` | Mesh Tooling | `src/meshgen/verify.rs:4135` | One material-boundary face as [V13] measures it: area, local edge length, mean/max distance and signed offset. |
+| `FidelityAcc` | Mesh Tooling | `src/meshgen/verify.rs:4167` | [V13]'s area-weighted per-component accumulator. |
+| `absorb` | Mesh Tooling | `src/meshgen/verify.rs:4184` | Fold one boundary face into a [V13] accumulator. |
+| `check_v13` | Mesh Tooling | `src/meshgen/verify.rs:4238` | [V13] interface fidelity: the material boundary read off the volume, measured against the input surface (the plan's P3). |
 | `GpuClipPlane` | Mesh Tooling | `src/gpu/scene_render.rs:53` | Optional half-space clip for the GPU scene preview (smooth cut). |
 | `GpuSceneOptions` | Mesh Tooling | `src/gpu/scene_render.rs:60` | GPU-only toggles: clip plane, overlay segments, markers. |
 | `GpuScenePipeline` | Mesh Tooling | `src/gpu/scene_render.rs:85` | Offscreen GPU scene preview: coloured TriangleList + LineList overlay with clip-plane discard. |

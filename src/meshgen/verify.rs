@@ -11,7 +11,7 @@
 //! never silently omits a check.
 
 use crate::io::vtu::{VtuDoc, VTK_POLY_LINE, VTK_TETRA, VTK_TRIANGLE};
-use crate::meshgen::predicates::{node_key, tet_quality, TetQuality};
+use crate::meshgen::predicates::{node_key, orient3d, tet_quality, TetQuality};
 use crate::types::Vec3;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
@@ -93,6 +93,10 @@ pub struct VerifySection {
     pub metrics: Vec<(String, f64)>,
     pub items: Vec<VerifyItem>,
     pub items_truncated: bool,
+    pub fail_count: usize,
+    pub warn_count: usize,
+    pub info_count: usize,
+    pub fired: BTreeSet<String>,
 }
 
 impl VerifySection {
@@ -106,6 +110,10 @@ impl VerifySection {
             metrics: Vec::new(),
             items: Vec::new(),
             items_truncated: false,
+            fail_count: 0,
+            warn_count: 0,
+            info_count: 0,
+            fired: BTreeSet::new(),
         }
     }
 
@@ -122,19 +130,66 @@ impl VerifySection {
         self.metrics.push((name.to_string(), value));
     }
 
-    // AI-FUNC-SUMMARY: Append an item, capping the stored list and raising the section status; side effects: mutates self.
+    // AI-FUNC-SUMMARY:
+    // Purpose: Record one finding: raise the section status and count it, then store it only if it is among the `cap` most severe (contracts §4.3).
+    // Inputs: the finding; `cap` = max_items_per_section.
+    // Returns: None.
+    // Side effects: mutates status, the three counts, `fired`, and the bounded item store.
+    // Notes: Counts and status cover every finding whatever the cap. Retention is by
+    //   `retention_key`, so which items survive the cap never depends on push order;
+    //   `finish` then sorts them into the contract's output order.
     fn push(&mut self, item: VerifyItem, cap: usize) {
         self.status = match (self.status, item.severity) {
             (CheckStatus::Fail, _) | (_, Severity::Fail) => CheckStatus::Fail,
             (CheckStatus::Warn, _) | (_, Severity::Warn) => CheckStatus::Warn,
             (s, _) => s,
         };
+        match item.severity {
+            Severity::Fail => self.fail_count += 1,
+            Severity::Warn => self.warn_count += 1,
+            Severity::Info => self.info_count += 1,
+        }
+        if item.severity >= Severity::Warn && !self.fired.contains(&item.code) {
+            self.fired.insert(item.code.clone());
+        }
         if self.items.len() < cap {
             self.items.push(item);
-        } else {
-            self.items_truncated = true;
+            return;
+        }
+        self.items_truncated = true;
+        let worst = self
+            .items
+            .iter()
+            .enumerate()
+            .max_by(|a, b| retention_key(a.1).cmp(&retention_key(b.1)))
+            .map(|(i, _)| i);
+        if let Some(i) = worst {
+            if retention_key(&item) < retention_key(&self.items[i]) {
+                self.items[i] = item;
+            }
         }
     }
+
+    // AI-FUNC-SUMMARY: Sort the stored items into the contract's order, ascending (code, first point id, first cell id, message); side effects: mutates self.items.
+    fn finish(&mut self) {
+        self.items.sort_by(|a, b| output_key(a).cmp(&output_key(b)));
+    }
+}
+
+// AI-FUNC-SUMMARY: Which items survive the item cap: most severe first, then the contract's output order; returns a comparable key; side effects: none.
+fn retention_key(i: &VerifyItem) -> (std::cmp::Reverse<Severity>, &str, Option<i64>, Option<i64>, &str) {
+    let (code, p, c, m) = output_key(i);
+    (std::cmp::Reverse(i.severity), code, p, c, m)
+}
+
+// AI-FUNC-SUMMARY: The contract's item order (contracts §4.1): code, first point id, first cell id, then message as the tie-break; returns a comparable key; side effects: none.
+fn output_key(i: &VerifyItem) -> (&str, Option<i64>, Option<i64>, &str) {
+    (
+        i.code.as_str(),
+        i.point_ids.first().copied(),
+        i.cell_ids.first().copied(),
+        i.message.as_str(),
+    )
 }
 
 // AI-FUNC-SUMMARY:
@@ -215,7 +270,9 @@ pub struct VerifyReport {
 impl VerifyReport {
     // AI-FUNC-SUMMARY: True when nothing failed (and no gated-fatal warning fired); returns bool; side effects: none.
     pub fn passed(&self) -> bool {
-        self.fail == 0 && !(self.warn_is_fatal && self.warn > 0)
+        let failed = self.sections.iter().any(|s| s.status == CheckStatus::Fail);
+        let warned = self.sections.iter().any(|s| s.status == CheckStatus::Warn);
+        !failed && self.fail == 0 && !(self.warn_is_fatal && (warned || self.warn > 0))
     }
 
     // AI-FUNC-SUMMARY: Process exit status for the subcommand (0 pass, 1 otherwise); returns i32; side effects: none.
@@ -232,9 +289,7 @@ impl VerifyReport {
         let mut v: Vec<String> = self
             .sections
             .iter()
-            .flat_map(|s| s.items.iter())
-            .filter(|i| i.severity >= Severity::Warn)
-            .map(|i| i.code.clone())
+            .flat_map(|s| s.fired.iter().cloned())
             .collect();
         v.sort();
         v.dedup();
@@ -713,6 +768,10 @@ pub(crate) fn point_triangle_dist2(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> f64 {
 #[derive(Debug, Clone, Default)]
 pub struct VerifyOptions {
     pub expected_stage: Option<u8>,
+    /// The document is being verified **as the deliverable** (contracts §4.4): `[V3]` then
+    /// tests the domain box strictly whatever `StageIndex` says - every used node inside it,
+    /// every free face on it, and the tets filling it. Stated by the caller, never inferred.
+    pub delivered: bool,
     /// The input surfaces, per component, in the mesh's own coordinates. Empty makes
     /// [V5] report SKIPPED with the reason, exactly as before it was implementable.
     pub surfaces: Vec<SurfaceComponent>,
@@ -723,6 +782,7 @@ impl VerifyOptions {
     pub fn from_path(path: &std::path::Path) -> Self {
         VerifyOptions {
             expected_stage: crate::meshgen::snapshot::Stage::from_path(path).map(|s| s.index()),
+            delivered: false,
             surfaces: Vec::new(),
         }
     }
@@ -755,6 +815,18 @@ pub fn verify_with_options(
     let cap = gates.max_items_per_section;
     let stage_index = field_i64(doc, "StageIndex").first().copied();
     let surface_stage = matches!(stage_index, Some(0..=3));
+    // The delivered file (contracts §1, D-18) is the tets-only volume: it carries the
+    // contract's tables but none of the tagged faces or curve cells they index, so the
+    // checks that read those cells - [V6]'s declaration rules, [V7], [V9] - have nothing to
+    // measure there and would report the missing cells as defects. They run on the
+    // `_contract.vtu` beside it; here they skip with that reason.
+    let primary_volume = matches!(
+        crate::meshgen::contract::contract_strength(doc),
+        crate::meshgen::contract::ContractStrength::PrimaryVolume
+    ) && view.faces.is_empty()
+        && view.curves.is_empty();
+    const ON_CONTRACT: &str = "the delivered tets-only volume carries no tagged faces or curve \
+        cells; this check reads them and runs on the `_contract.vtu` beside it (contracts D-18)";
 
     let quality: Vec<TetQuality> = view
         .tets
@@ -763,12 +835,15 @@ pub fn verify_with_options(
         .collect();
 
     let mut sections = vec![check_v1(&view, &quality, cap), check_v2(&view, gates, cap)];
-    let (v3, face_owners) = check_v3(&view, gates, cap, stage_index);
+    let (v3, face_owners) = check_v3(&view, gates, cap, stage_index, options.delivered);
     sections.push(v3);
     sections.push(check_v4(&view, &quality, gates, cap));
     sections.push(check_v5(&view, &options.surfaces, gates, cap));
-    sections.push(check_v6(&view, &face_owners, surface_stage, cap));
-    if surface_stage {
+    sections.push(check_v6(&view, &face_owners, surface_stage, stage_index, primary_volume, cap));
+    if primary_volume {
+        sections.push(VerifySection::skipped("V7", "Sheets & thin", ON_CONTRACT));
+        sections.push(check_v8(&view, &face_owners, gates, cap));
+    } else if surface_stage {
         sections.push(VerifySection::skipped(
             "V7",
             "Sheets & thin",
@@ -783,7 +858,9 @@ pub fn verify_with_options(
         sections.push(check_v7(&view, &face_owners, cap));
         sections.push(check_v8(&view, &face_owners, gates, cap));
     }
-    if surface_stage {
+    if primary_volume {
+        sections.push(VerifySection::skipped("V9", "Junctions", ON_CONTRACT));
+    } else if surface_stage {
         sections.push(VerifySection::skipped(
             "V9",
             "Junctions",
@@ -816,19 +893,16 @@ pub fn verify_with_options(
 
     let (mut fail, mut warn, mut info) = (0, 0, 0);
     let (mut run, mut skipped) = (0, 0);
-    for s in &sections {
+    for s in &mut sections {
+        s.finish();
         if s.status == CheckStatus::Skipped {
             skipped += 1;
         } else {
             run += 1;
         }
-        for i in &s.items {
-            match i.severity {
-                Severity::Fail => fail += 1,
-                Severity::Warn => warn += 1,
-                Severity::Info => info += 1,
-            }
-        }
+        fail += s.fail_count;
+        warn += s.warn_count;
+        info += s.info_count;
     }
 
     let gv = field_i64(doc, "GeneratorVersion");
@@ -988,6 +1062,7 @@ fn check_v3(
     gates: &VerifyGates,
     cap: usize,
     stage_index: Option<i64>,
+    delivered: bool,
 ) -> (VerifySection, HashMap<[i64; 3], Vec<usize>>) {
     // Before the cut (S8) the mesh is the background lattice, whose boundary is the
     // octree hull rather than the domain box: the lattice covers a cube around the
@@ -1018,12 +1093,15 @@ fn check_v3(
         .collect();
 
     let plane_tol = gates.plane_tol_frac * view.diag;
-    // The background lattice is a cube around the domain and overhangs it by up to
-    // one coarse cell per axis, so on such a mesh the *outer boundary* is the octree
-    // hull, not the domain box, and a single-sided face out in the overhang is the
-    // mesh's own outside rather than a leak. Detected from the mesh instead of
-    // assumed from the stage, so a mesh that does not overhang - a final, clipped one
-    // - keeps the strict test and nothing genuine is masked.
+    // The background lattice is a cube around the domain and overhangs it by up to one coarse
+    // cell per axis, so on such a mesh the outer boundary is the octree hull and a single-sided
+    // face out in the overhang is the mesh's own outside rather than a leak. That is admitted
+    // **only while the overhang is legitimate** - `StageIndex` 5-8, before the trim - and never
+    // on a document verified as delivered (contracts §4.4, plan MG-03). At `891badc` the hull
+    // was built whenever the mesh's own extent exceeded the declared domain, at every stage, so
+    // a final mesh twice the size of its box passed: a mesh past the box is a leak, not a
+    // bigger box.
+    let relaxable = !delivered && matches!(stage_index, Some(5..=8));
     let hull = view.domain.and_then(|(lo, hi)| {
         let mut min = view.doc.points.first().copied()?;
         let mut max = min;
@@ -1039,6 +1117,29 @@ fn check_v3(
             || max.z > hi.z + plane_tol;
         overhangs.then_some((min, max))
     });
+    let hull = match hull {
+        Some(h) if relaxable => {
+            s.push(
+                VerifyItem::bare(
+                    Severity::Info,
+                    "V3.pre_trim_overhang",
+                    format!(
+                        "the mesh overhangs the domain box; single-sided faces on its own hull are \
+                         accepted because StageIndex {} precedes the trim (contracts §4.4)",
+                        stage_index.unwrap_or(-1)
+                    ),
+                ),
+                cap,
+            );
+            s.metric("hull_relaxation_stage", stage_index.unwrap_or(-1) as f64);
+            Some(h)
+        }
+        _ => None,
+    };
+    let strict_box = !relaxable && view.domain.is_some();
+    if strict_box {
+        strict_domain_box(view, plane_tol, cap, &mut s);
+    }
     let (mut multi, mut leaks, mut boundary) = (0usize, 0usize, 0usize);
     let mut interface_cracks = 0usize;
     let mut keys: Vec<&[i64; 3]> = owners.keys().collect();
@@ -1110,10 +1211,49 @@ fn check_v3(
         }
     }
 
+    // Folded faces (plan M-1.0, found by the MG-08 validator's side-element rule): two tets
+    // sharing a face must lie on OPPOSITE sides of it. Each can be positively oriented and the
+    // face can have exactly two owners while both apexes sit on the same side - the two
+    // elements then overlap, and neither `[V1]` (one tet at a time) nor the face-count rules
+    // above (combinatorics only) can see it. A-3 at `0a8eb1c` carries 466 such faces, every
+    // one between two junction pieces, and its tets sum to 1 + 3.4e-6 of the unit box.
+    let mut folded = 0usize;
+    let mut fold_keys: Vec<&[i64; 3]> = owners.keys().filter(|k| owners[*k].len() == 2).collect();
+    fold_keys.sort_unstable();
+    for k in fold_keys {
+        let cells = &owners[k];
+        let p = |n: i64| view.doc.points[n as usize];
+        let side = |c: usize| {
+            let t = view.doc.cell(c);
+            let apex = t.iter().copied().find(|n| !k.contains(n)).unwrap_or(k[0]);
+            orient3d(p(k[0]), p(k[1]), p(k[2]), p(apex))
+        };
+        let (a, b) = (side(cells[0]), side(cells[1]));
+        if a == 0.0 || b == 0.0 || (a > 0.0) != (b > 0.0) {
+            continue;
+        }
+        folded += 1;
+        let mut item = VerifyItem::bare(
+            Severity::Fail,
+            "V3.folded_face",
+            format!(
+                "tets {} and {} share face ({}, {}, {}) but lie on the same side of it - the two \
+                 elements overlap",
+                cells[0], cells[1], k[0], k[1], k[2]
+            ),
+        );
+        item.point_ids.extend_from_slice(k);
+        item.cell_ids.push(cells[0] as i64);
+        item.cell_ids.push(cells[1] as i64);
+        item.coordinates.push(face_centroid(view, k));
+        s.push(item, cap);
+    }
+    s.metric("folded_faces", folded as f64);
+
     // hanging nodes: a node lying on a face triangle it is not a vertex of
     let tol = gates.hanging_tol_frac * view.diag;
     let hanging = hanging_nodes(view, &owners, tol);
-    for (node, face) in hanging.iter().take(cap) {
+    for (node, face) in hanging.iter() {
         let mut item = VerifyItem::bare(
             Severity::Fail,
             "V3.hanging_node",
@@ -1125,9 +1265,6 @@ fn check_v3(
         item.point_ids.push(*node);
         item.coordinates.push(view.doc.points[*node as usize]);
         s.push(item, cap);
-    }
-    if hanging.len() > cap {
-        s.items_truncated = true;
     }
 
     // non-manifold edges: around an interior edge the incident face count must equal
@@ -1211,6 +1348,78 @@ fn face_centroid(view: &MeshView, k: &[i64; 3]) -> Vec3 {
         .add(view.doc.points[k[1] as usize])
         .add(view.doc.points[k[2] as usize])
         .scale(1.0 / 3.0)
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Contracts §4.4's two box conditions a free-face test cannot see: every node some tet uses lies inside [DomainMin, DomainMax], and the tets' total volume equals the box's.
+// Inputs: the view (with a declared domain), the plane tolerance, the item cap, the [V3] section.
+// Returns: None.
+// Side effects: pushes `V3.outside_domain` (one per node) and `V3.box_volume`; records `nodes_outside_domain` and `box_volume_error`.
+// Notes: Run only where the hull relaxation is not admitted. The volume test uses `[V6]`'s 1 %
+//   relative tolerance, as §4.4 states; an interior cavity is also a boundary leak.
+fn strict_domain_box(view: &MeshView, tol: f64, cap: usize, s: &mut VerifySection) {
+    let Some((lo, hi)) = view.domain else {
+        return;
+    };
+    let mut used = vec![false; view.doc.points.len()];
+    let mut volume = 0.0f64;
+    for &c in &view.tets {
+        let n = view.doc.cell(c);
+        for &i in n {
+            used[i as usize] = true;
+        }
+        let p = view.tet_points(c);
+        volume += p[1].sub(p[0]).cross(p[2].sub(p[0])).dot(p[3].sub(p[0])).abs() / 6.0;
+    }
+    let mut outside = 0usize;
+    for (i, p) in view.doc.points.iter().enumerate() {
+        if !used[i] {
+            continue;
+        }
+        let inside = p.x >= lo.x - tol
+            && p.y >= lo.y - tol
+            && p.z >= lo.z - tol
+            && p.x <= hi.x + tol
+            && p.y <= hi.y + tol
+            && p.z <= hi.z + tol;
+        if inside {
+            continue;
+        }
+        outside += 1;
+        let mut item = VerifyItem::bare(
+            Severity::Fail,
+            "V3.outside_domain",
+            format!("node {i} lies outside the domain box, and this stage has no overhang to excuse it"),
+        );
+        item.point_ids.push(i as i64);
+        item.coordinates.push(*p);
+        s.push(item, cap);
+    }
+    s.metric("nodes_outside_domain", outside as f64);
+    if view.tets.is_empty() {
+        return;
+    }
+    let d = hi.sub(lo);
+    let box_volume = d.x * d.y * d.z;
+    if box_volume <= 0.0 {
+        return;
+    }
+    let error = (volume - box_volume).abs() / box_volume;
+    s.metric("box_volume_error", error);
+    if error > 0.01 {
+        s.push(
+            VerifyItem::bare(
+                Severity::Fail,
+                "V3.box_volume",
+                format!(
+                    "the tets fill {volume:.6e} against the domain box's {box_volume:.6e} ({:.3}% \
+                     off); the delivered mesh must fill its box exactly",
+                    error * 100.0
+                ),
+            ),
+            cap,
+        );
+    }
 }
 
 // AI-FUNC-SUMMARY: True when all three face nodes lie on one domain-box plane within tol, or on one plane of the octree hull when the mesh overhangs the box; returns bool; side effects: none.
@@ -1477,6 +1686,8 @@ fn check_v6(
     view: &MeshView,
     owners: &HashMap<[i64; 3], Vec<usize>>,
     surface_stage: bool,
+    stage_index: Option<i64>,
+    primary_volume: bool,
     cap: usize,
 ) -> VerifySection {
     let mut s = VerifySection::new("V6", "ID semantics");
@@ -1602,10 +1813,29 @@ fn check_v6(
         .map(|(key, set)| (*key, set.len()))
         .collect();
 
+    let mut face_order: Vec<&[i64; 3]> = owners.keys().collect();
+    face_order.sort_unstable();
     let mut bad_adjacent = 0usize;
     let mut skipped_mixed_priority = 0usize;
-    if !surface_stage {
-        for (fk, cells) in owners.iter() {
+    // Both rules below judge a step against the tags on the face crossed, and the delivered
+    // volume carries no tag at all (contracts D-18): there every contact face would read as
+    // an illegal two-component step and every material boundary as undeclared. They run on
+    // the contract document; region-key legality and priorities above still run here.
+    if primary_volume {
+        s.push(
+            VerifyItem::bare(
+                Severity::Info,
+                "V6.deferred",
+                "region adjacency and undeclared-boundary rules read the interface tags, which the \
+                 delivered tets-only volume does not carry; they run on the `_contract.vtu`"
+                    .to_string(),
+            ),
+            cap,
+        );
+    }
+    if !surface_stage && !primary_volume {
+        for fk in face_order.iter().copied() {
+            let cells = &owners[fk];
             if cells.len() != 2 {
                 continue;
             }
@@ -1671,18 +1901,25 @@ fn check_v6(
     // entered or left is a boundary of that component, and every material boundary must be a
     // declared interface.
     //
-    // Reported as a metric, not a finding. It is a young measurement - A-2 renders correctly
-    // carrying a handful, A-7a carries thousands with no visible artefact - so it earns the right
-    // to gate anything only after it has been shown to track something that matters. Mixed
-    // priorities are excluded on the same grounds as above: there the inside-set difference is
-    // not the material boundary, because a higher-priority label replaces the one beneath it.
+    // A FAIL finding since contracts rev 1.3 (plan M-1.0): every material boundary must be a
+    // declared interface (plan §9's invariant). The record's caution still applies to using it
+    // as a *steering* metric - it measures declaration, not placement - but as a gate it asks
+    // exactly its own question. Mixed priorities are excluded on the same grounds as above:
+    // there the inside-set difference is not the material boundary, because a higher-priority
+    // label replaces the one beneath it. Faces are visited in key order so the area sum and the
+    // stored items are the same on every run (numerics D-17).
+    // Interfaces are declared by the cut (S8). Before it - `s05`-`s07`, the classified
+    // staircase - no face carries a tag by construction, so the count is reported and the
+    // FAIL is deferred, exactly as `[V3]` defers its boundary-leak rule there.
+    let pre_cut = matches!(stage_index, Some(5..=7)) || primary_volume;
     let parent_cell = cell_i64(view.doc, "parent_cell");
     let mut undeclared_faces = 0usize;
     let mut undeclared_area = 0.0f64;
     let mut undeclared_same_cell = 0usize;
     let mut undeclared_mixed_priority = 0usize;
-    if !surface_stage {
-        for (fk, cells) in owners.iter() {
+    if !surface_stage && !primary_volume {
+        for fk in face_order.iter().copied() {
+            let cells = &owners[fk];
             if cells.len() != 2 {
                 continue;
             }
@@ -1712,6 +1949,22 @@ fn check_v6(
             }
             undeclared_faces += 1;
             undeclared_area += face_area(&view.doc.points, fk);
+            if pre_cut {
+                continue;
+            }
+            let mut item = VerifyItem::bare(
+                Severity::Fail,
+                "V6.undeclared_boundary",
+                format!(
+                    "face ({}, {}, {}) between tets {left} and {right} enters or leaves                      component(s) {missing:?} (region keys {a:?} and {b:?}) without carrying an                      interface tag for them; every material boundary must be a declared interface",
+                    fk[0], fk[1], fk[2]
+                ),
+            );
+            item.point_ids.extend_from_slice(fk);
+            item.cell_ids.push(left as i64);
+            item.cell_ids.push(right as i64);
+            item.coordinates.push(face_centroid(view, fk));
+            s.push(item, cap);
             // Both sides coming from one lattice cell is the §7.6 signature: the split handed
             // back a piece spanning the boundary and the fan turned that boundary into a
             // staircase of interior faces. Only available under `RUSTMSPT_CUT_DIAG`.
@@ -2237,6 +2490,32 @@ fn check_v12(view: &MeshView, cap: usize, options: &VerifyOptions) -> VerifySect
             } else {
                 view.tets.len() as f64 / cells.len() as f64
             },
+        );
+    }
+
+    // Contract validation (contracts §4.2, plan MG-08): the strength comes from the metadata,
+    // and every violated rule is a FAIL of its own. At `891badc` removing an array made its
+    // check SKIP, so a broken producer's output verified clean.
+    let stage = field_i64(view.doc, "StageIndex").first().copied();
+    let (strength, violations) = crate::meshgen::contract::validate_contract(view.doc, stage);
+    s.metric("contract_strength", strength.code());
+    s.push(
+        VerifyItem::bare(
+            Severity::Info,
+            "V12.contract_strength",
+            format!("validated as a {} document (contracts §4.2)", strength.as_str()),
+        ),
+        cap,
+    );
+    s.metric("contract_violations", violations.len() as f64);
+    for v in violations {
+        s.push(
+            VerifyItem::bare(
+                Severity::Fail,
+                "V12.contract",
+                format!("[{}] {}", v.rule, v.message),
+            ),
+            cap,
         );
     }
 
@@ -3183,7 +3462,7 @@ fn check_v5(
         if self_intersecting {
             s.push(
                 VerifyItem::bare(
-                    Severity::Warn,
+                    Severity::Info,
                     "V5.self_intersecting_input",
                     format!(
                         "component {x}: the input's divergence-theorem volume {stl:.6e} disagrees \
@@ -3553,7 +3832,6 @@ fn check_v5(
 
     // Gates, all from the contract: max relative distance, the >10% share, and the
     // >60-degree normal share. `surface_distance_frac` overrides the max-distance gate.
-    let mut fired = false;
     // **Reported, not just measured.** The metric has been computed since G7-3 and never
     // surfaced as a finding, which is exactly why the suite is blind to this failure mode:
     // the nodes are right, the mesh is watertight and conforming, `[V1]`/`[V2]`/`[V3]` all
@@ -3561,12 +3839,10 @@ fn check_v5(
     // background label. The aggregate volume error can stay under its gate while the
     // silhouette is visibly notched, because the deficit is a thin shell over a large area.
     //
-    // It has to sit *here*, among the gates, because `check_v5` ends with
-    // `if !fired { s.status = Pass }` - an unconditional reset that silently discards any
-    // finding pushed earlier in the function. Reporting it above the gates emitted the WARN
-    // lines into the log while the section header still read PASS.
+    // (`check_v5` used to end with `if !fired { s.status = Pass }`, an unconditional reset
+    // that discarded any finding pushed above the gates while the summary still counted it.
+    // Removed at plan M-1.0: the status is whatever the findings say, contracts §4.3.)
     if overattributed > 0 {
-        fired = true;
         s.push(
             VerifyItem::bare(
                 Severity::Warn,
@@ -3582,7 +3858,7 @@ fn check_v5(
         );
         worst_overattributed
             .sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-        for (volume, centroid, x) in worst_overattributed.iter().take(cap.min(8)) {
+        for (volume, centroid, x) in worst_overattributed.iter().take(8) {
             let mut item = VerifyItem::bare(
                 Severity::Warn,
                 "V5.overattributed_material",
@@ -3596,7 +3872,6 @@ fn check_v5(
         }
     }
     if misattributed > 0 {
-        fired = true;
         s.push(
             VerifyItem::bare(
                 Severity::Warn,
@@ -3611,7 +3886,7 @@ fn check_v5(
         );
         worst_misattributed
             .sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-        for (volume, centroid, x) in worst_misattributed.iter().take(cap.min(8)) {
+        for (volume, centroid, x) in worst_misattributed.iter().take(8) {
             let mut item = VerifyItem::bare(
                 Severity::Warn,
                 "V5.misattributed_material",
@@ -3625,9 +3900,8 @@ fn check_v5(
         }
     }
     if rel_max > gates.surface_distance_frac {
-        fired = true;
         worst.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-        for (rel, p) in worst.iter().take(cap) {
+        for (rel, p) in worst.iter() {
             let mut item = VerifyItem::bare(
                 Severity::Warn,
                 "V5.interface_off_surface",
@@ -3641,7 +3915,6 @@ fn check_v5(
         }
     }
     if over_10_share > 0.05 {
-        fired = true;
         s.push(
             VerifyItem::bare(
                 Severity::Warn,
@@ -3655,7 +3928,6 @@ fn check_v5(
         );
     }
     if dev60 as f64 / interface.len() as f64 > 0.05 {
-        fired = true;
         s.push(
             VerifyItem::bare(
                 Severity::Warn,
@@ -3667,12 +3939,6 @@ fn check_v5(
             ),
             cap,
         );
-    }
-    if volume_losses > 0 {
-        fired = true;
-    }
-    if !fired {
-        s.status = CheckStatus::Pass;
     }
     s
 }
@@ -4961,7 +5227,7 @@ fn check_v13(
         });
         s.push(
             VerifyItem::bare(
-                Severity::Warn,
+                Severity::Fail,
                 "V13.off_surface",
                 format!(
                     "{:.2}% of the material-boundary area is not anchored to the input surface \
@@ -4978,9 +5244,9 @@ fn check_v13(
             ),
             cap,
         );
-        for f in worst.iter().take(cap.min(16)) {
+        for f in worst.iter() {
             let mut item = VerifyItem::bare(
-                Severity::Warn,
+                Severity::Fail,
                 "V13.off_surface",
                 format!(
                     "a material-boundary face of area {:.3e} has a corner {:.3e} ({:.1}% of its \
@@ -5022,6 +5288,57 @@ fn check_v13(
 mod tests {
     use super::*;
     use crate::io::vtu::{ArrayData, DataArray};
+
+    fn item(severity: Severity, code: &str, point: i64) -> VerifyItem {
+        let mut i = VerifyItem::bare(severity, code, format!("{code} at {point}"));
+        i.point_ids.push(point);
+        i
+    }
+
+    /// MG-01's second shape: a section whose INFO items fill the cap before a FAIL arrives.
+    /// The status, the count and the stored list must all carry the FAIL - retention is by
+    /// severity first, so the cap never hides the finding that decides the exit status.
+    #[test]
+    fn an_info_filled_cap_does_not_hide_a_later_fail() {
+        let mut s = VerifySection::new("VX", "test");
+        for p in 0..5 {
+            s.push(item(Severity::Info, "VX.note", p), 5);
+        }
+        s.push(item(Severity::Fail, "VX.defect", 99), 5);
+        s.finish();
+        assert_eq!(s.status, CheckStatus::Fail);
+        assert_eq!((s.fail_count, s.warn_count, s.info_count), (1, 0, 5));
+        assert_eq!(s.items.len(), 5);
+        assert!(s.items_truncated);
+        assert!(s.items.iter().any(|i| i.code == "VX.defect"));
+        assert!(s.fired.contains("VX.defect"));
+    }
+
+    /// Contracts §4.1 / numerics D-17: which items survive the cap, and their order, is a
+    /// function of the findings alone - never of the order they were pushed in. At `891badc`
+    /// `[V6]` pushed in HashMap order and truncated, so two runs listed different items.
+    #[test]
+    fn stored_items_do_not_depend_on_push_order_when_the_cap_is_exceeded() {
+        let findings: Vec<VerifyItem> = (0..40)
+            .map(|p| item(if p % 7 == 0 { Severity::Fail } else { Severity::Warn }, "VX.defect", (p * 13) % 40))
+            .collect();
+        let stored = |order: &mut dyn Iterator<Item = &VerifyItem>| {
+            let mut s = VerifySection::new("VX", "test");
+            for f in order {
+                s.push(f.clone(), 10);
+            }
+            s.finish();
+            s.items
+                .iter()
+                .map(|i| (i.severity, i.point_ids[0]))
+                .collect::<Vec<_>>()
+        };
+        let forward = stored(&mut findings.iter());
+        let backward = stored(&mut findings.iter().rev());
+        assert_eq!(forward, backward);
+        assert_eq!(forward.len(), 10);
+        assert_eq!(forward.iter().filter(|(s, _)| *s == Severity::Fail).count(), 6);
+    }
 
     // ---------------------------------------------------------------- [V13] fixtures
     //
@@ -5124,6 +5441,7 @@ mod tests {
     fn fidelity(doc: &VtuDoc) -> VerifySection {
         let options = VerifyOptions {
             expected_stage: None,
+            delivered: false,
             surfaces: vec![slab(0.12)],
         };
         verify_with_options(doc, &VerifyGates::default(), options)
@@ -5220,6 +5538,7 @@ mod tests {
         let doc = fidelity_block(|_, layer| layer == 0);
         let options = VerifyOptions {
             expected_stage: None,
+            delivered: false,
             surfaces: vec![slab(0.10)],
         };
         let s = verify_with_options(&doc, &VerifyGates::default(), options)
@@ -5269,6 +5588,7 @@ mod tests {
         let doc = fidelity_block(|_, layer| layer == 0);
         let options = VerifyOptions {
             expected_stage: None,
+            delivered: false,
             surfaces: vec![tented_box(0.10, 0.01)],
         };
         let s = verify_with_options(&doc, &VerifyGates::default(), options)
@@ -5297,7 +5617,7 @@ mod tests {
         let report = verify_with_options(
             &doc,
             &VerifyGates::default(),
-            VerifyOptions { expected_stage: None, surfaces: vec![slab(0.12)] },
+            VerifyOptions { expected_stage: None, delivered: false, surfaces: vec![slab(0.12)] },
         );
         assert_eq!(
             report.section("V5").unwrap().status,
@@ -5305,7 +5625,7 @@ mod tests {
             "with no tagged faces [V5] has nothing to measure - and still the mesh's material \
              boundary is 0.02 off the surface"
         );
-        assert_eq!(report.section("V13").unwrap().status, CheckStatus::Warn);
+        assert_eq!(report.section("V13").unwrap().status, CheckStatus::Fail);
     }
 
     // The predicate's semantics, stated case by case. It is per component, not per count:

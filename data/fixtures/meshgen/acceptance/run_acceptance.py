@@ -162,7 +162,9 @@ def check_delivered(path, env):
     js = os.path.splitext(path)[0] + "_delivered.json"
     cfg = os.path.splitext(path)[0] + "_delivered.yaml"
     with open(cfg, "w") as f:
-        f.write(f"mesh_verify:\n  input: {path}\n  json: {js}\n")
+        # `delivered: true` holds the file to the domain box whatever its StageIndex says
+        # (contracts §4.4, plan M-1.0/MG-03): without it [V3] would accept a mesh past its box.
+        f.write(f"mesh_verify:\n  input: {path}\n  json: {js}\n  delivered: true\n")
     subprocess.run([BIN, "mesh-verify", "--config", cfg], capture_output=True, text=True, env=env)
     if not os.path.exists(js):
         return out

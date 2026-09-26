@@ -31,7 +31,8 @@ subcommand (`src/pipeline/mesh_render.rs`, `src/config/mesh_render.rs`).
 | `render_scene_cpu` | `src/geometry/scene_render.rs:116` | CPU reference renderer: all-hits QBVH traversal per pixel ray, front-to-back alpha compositing, coincident-hit dedup (Face > Volume), depth-tested line overlay, markers. |
 | `named_view` | `src/geometry/scene_render.rs:343` | Resolve front/back/left/right/top/bottom/iso_ne/iso_nw/iso_se/iso_sw to (view_direction, up). |
 | `ViewSpec`/`FilterSpec` | `src/config/mesh_render.rs:7` | YAML forms of views (named preset or custom camera block) and kind-tagged filters. |
-| `MeshRenderParams`/`MeshRenderConfig` | `src/config/mesh_render.rs:38` | `mesh_render:` YAML block (input VTU, output_dir, views, image, coloring, opacities, filters, overlays, camera). |
+| `MeshRenderParams`/`MeshRenderConfig` | `src/config/mesh_render.rs:45` | `mesh_render:` YAML block (input VTU, output_dir, views, image, coloring, opacities, filters, overlays, camera). Optional `frame_box: {min, max}` frames the camera on that box instead of the whole document — what a focus view (plan M-1.9's `render_focus.py`) needs; without it every view frames the full document identically. |
+| `FrameBox` | `src/config/mesh_render.rs:36` | The `frame_box` value: explicit camera-framing box. |
 | `GpuClipPlane` | `src/gpu/scene_render.rs:53` | Optional half-space clip for the GPU preview (smooth cut, independent of the crinkle-clip filter). |
 | `GpuSceneOptions` | `src/gpu/scene_render.rs:60` | GPU-only toggles: clip plane, overlay segments, markers, and `strip_rows` (rows per horizontal strip; `None` renders in one pass). |
 | `GpuScenePipeline` | `src/gpu/scene_render.rs:85` | Offscreen GPU preview: TriangleList with per-vertex colour + LineList overlay, both with clip-plane discard. |

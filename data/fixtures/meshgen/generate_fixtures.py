@@ -227,6 +227,7 @@ def build_good(path, **over):
     mutate = over.get("mutate")
     if mutate:
         mutate(points, cells, cd, pd, field)
+    recompute_side_elems(cells, cd, field)
     # Counts must describe the mesh as emitted, so a fixture's only reported defect
     # is the one it was built to carry (and never a stale-metadata artifact).
     counts = next(a for a in field if a["name"] == "Counts")
@@ -235,6 +236,35 @@ def build_good(path, **over):
                         sum(1 for t, _ in cells if t == TRI),
                         sum(1 for t, _ in cells if t == POLYLINE)]
     return write_vtu(path, points, cells, field, pd, cd)
+
+
+def recompute_side_elems(cells, cd, field):
+    """FaceTagSideElems restated for the cells as emitted (contracts §2.3): per face cell, the
+    tet inside the tag's component first and the other owner second, -1 for a missing side.
+    A mutation that adds, removes or splits cells would otherwise leave the table naming tets
+    that no longer carry the face, and the fixture would report a stale-table artifact
+    (`V12.contract`) beside the one defect it was built to carry."""
+    region = cd_get(cd, "region_key")
+    tag_key = cd_get(cd, "face_tag_key")
+    rs_off = next(a for a in field if a["name"] == "RegionSetOffsets")["values"]
+    rs_comp = next(a for a in field if a["name"] == "RegionSetComponents")["values"]
+    ft_off = next(a for a in field if a["name"] == "FaceTagOffsets")["values"]
+    ft_comp = next(a for a in field if a["name"] == "FaceTagComponents")["values"]
+    def members(off, comp, k):
+        start = off[k - 1] if k > 0 else 0
+        return set(comp[start:off[k]])
+    pairs = []
+    for i, (t, n) in enumerate(cells):
+        if t != TRI:
+            continue
+        owners = [j for j, (u, m) in enumerate(cells) if u == TETRA and set(n) <= set(m)]
+        tag = members(ft_off, ft_comp, tag_key[i]) if 0 <= tag_key[i] < len(ft_off) else set()
+        inside = [j for j in owners
+                  if 0 <= region[j] < len(rs_off) and members(rs_off, rs_comp, region[j]) & tag]
+        first = inside[0] if inside else (owners[0] if owners else -1)
+        rest = [j for j in owners if j != first]
+        pairs += [first, rest[0] if rest else -1]
+    next(a for a in field if a["name"] == "FaceTagSideElems")["values"] = pairs
 
 
 def cd_get(cd, name):
@@ -370,11 +400,13 @@ def build_stacked_band(path):
                                     for e in (0, -1)], components=2)])
     field += [arr("ComponentX", "Int32", [1]), arr("ComponentY", "UInt32", [1]),
               arr("ComponentKind", "UInt8", [0]), arr("ComponentClosed", "UInt8", [1])]
-    field += [arr("CurveKind", "UInt8", [3])] + sets_table("CurveComp", [[1]])
+    field += ([arr("CurveKind", "UInt8", [3])] + sets_table("CurveComp", [[1]])
+              + [arr("CurveRadialPatches", "Int32", [0])])
     field += metadata(9, [len(points), n_tet, sum(1 for t, _ in cells if t == TRI), 0],
                       dmin=dmin, dmax=dmax)
     counts = next(a for a in field if a["name"] == "Counts")
     counts["values"] = [len(points), n_tet, sum(1 for t, _ in cells if t == TRI), 0]
+    recompute_side_elems(cells, cd, field)
     return write_vtu(path, points, cells, field, pd, cd)
 
 
@@ -427,6 +459,16 @@ def m_radial_patches(points, cells, cd, pd, field):
             a["values"] = [1, 3, 6]
         elif a["name"] == "NIdSetComponents":
             a["values"] = [0, 0, 1, 0, 1, 2]
+        # ...and component 2 is entered in the component table, so the sets name a body the
+        # document declares (contracts §4.2) and the fixture still carries one defect
+        elif a["name"] == "ComponentX":
+            a["values"] = [1, 2]
+        elif a["name"] == "ComponentY":
+            a["values"] = [1, 1]
+        elif a["name"] in ("ComponentKind",):
+            a["values"] = [0, 0]
+        elif a["name"] == "ComponentClosed":
+            a["values"] = [1, 1]
     n_id = next(a for a in pd if a["name"] == "n_id_key")
     for v in (0, 2, 6):
         n_id["values"][v] = 2

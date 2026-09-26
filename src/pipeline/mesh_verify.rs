@@ -57,10 +57,12 @@ pub fn verify_file(
     json_path: Option<&Path>,
     annotate_path: Option<&Path>,
     surfaces: &[crate::config::mesh_verify::MeshVerifySurface],
+    delivered: bool,
 ) -> Result<VerifyReport> {
     let doc = load_vtu(input)?;
     doc.validate()?;
     let mut options = VerifyOptions::from_path(input);
+    options.delivered = delivered;
     // [V5]'s input side. Loaded here rather than in `verify.rs` so the check stays a
     // pure function of geometry it is handed - it never reads a file itself, which is
     // what lets the same check run inside the mesh pipeline at S11.
@@ -142,6 +144,7 @@ impl Pipeline for MeshVerifyPipeline {
             p.json.as_deref().map(Path::new),
             p.annotate.as_deref().map(Path::new),
             &p.surfaces,
+            p.delivered,
         )?;
         if !report.passed() {
             return Err(RustMsptError::InvalidMesh(format!(

@@ -7335,9 +7335,13 @@ pub fn cut_to_doc(mesh: &CutMesh, components: &[ArrangeComponent]) -> VtuDoc {
     region_key.resize(cells, -1i32);
     doc.cell_data
         .push(DataArray::scalar("region_key", ArrayData::I32(region_key)));
+    // Tets carry partition 0 until plan M-6.1 builds the flood fill (contracts D-14); every
+    // other cell carries the `-1` sentinel, which `[V12]`'s contract validation requires.
+    let mut partition_id = vec![0i32; tets];
+    partition_id.resize(cells, -1);
     doc.cell_data.push(DataArray::scalar(
         "partition_id",
-        ArrayData::I32(vec![0; cells]),
+        ArrayData::I32(partition_id),
     ));
     // P-4's instrument, on the points rather than the cells: 0 is a lattice node S5 placed and
     // S7 may have snapped, 1 is a node the cut interned. `provenance` answers "was this element

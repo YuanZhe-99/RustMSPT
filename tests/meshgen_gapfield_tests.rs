@@ -467,6 +467,7 @@ fn s03_snapshot_validates_verifies_and_carries_separation_t() {
         &VerifyGates::default(),
         VerifyOptions {
             expected_stage: Some(Stage::Gapfield.index()),
+            delivered: false,
             surfaces: Vec::new(),
         },
     );

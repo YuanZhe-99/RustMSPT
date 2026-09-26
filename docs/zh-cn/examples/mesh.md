@@ -162,6 +162,14 @@ mesh_verify:
   annotate: out/lattice_annotated.vtu
 ```
 
+晶格快照可以超出区域盒——那是修剪前的晶格，`[V3]` 会以 INFO `V3.pre_trim_overhang` 说明。交付的文件则不可以：用 `delivered: true` 验证它，无论 `StageIndex` 为何都按区域盒严格检查（每个被使用的节点都在盒内、每个自由面都在盒面上、四面体填满区域盒）：
+
+```yaml
+mesh_verify:
+  input: out/mesh.vtu
+  delivered: true
+```
+
 ```yaml
 mesh_render:
   input: out/lattice_annotated.vtu

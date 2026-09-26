@@ -23,22 +23,25 @@ shape are frozen: tests assert on them.
 | `Severity` | `src/meshgen/verify.rs:21` | `Info < Warn < Fail`, with the contract spellings used in the log and JSON. |
 | `CheckStatus` | `src/meshgen/verify.rs:40` | Per-section outcome: `PASS`/`WARN`/`FAIL`/`SKIPPED`; a skip always carries a reason. |
 | `VerifyItem` | `src/meshgen/verify.rs:63` | One finding: severity, stable `code`, message, point/cell ids and coordinates (consumed by `mesh-render --highlight-from`). |
-| `VerifySection` | `src/meshgen/verify.rs:88` | One catalog entry with status, named metrics, and a capped item list (`items_truncated`). |
-| `VerifyGates` | `src/meshgen/verify.rs:145` | Configurable thresholds; all length tolerances are fractions of the bbox diagonal, so gates are scale-invariant. |
-| `VerifyReport` | `src/meshgen/verify.rs:199` | Full result plus metadata echo; `passed`, `exit_code`, `fired_codes`, `section` accessors. |
-| `VerifyOptions` | `src/meshgen/verify.rs:714` | Out-of-document verifier inputs; carries `expected_stage` (parsed from a snapshot filename) for the [V12] cross-check. |
-| `verify` | `src/meshgen/verify.rs:738` | Run the catalog over a contract or external VTU; returns one section per entry in contract order. |
-| `verify_with_options` | `src/meshgen/verify.rs:749` | `verify` with out-of-document options; surface stages s00-s03 skip volume-only [V7]/[V8]/[V13]. |
-| `BoundaryFace` | `src/meshgen/verify.rs:3903` | One material-boundary face as [V13] measures it: area, local edge length, mean/max \|distance\| and **signed** offset to the component's surface. |
-| `FidelityAcc` | `src/meshgen/verify.rs:3935` | [V13]'s per-component accumulator; every sum is area-weighted so a coarse face cannot outvote a fine one by being counted once. |
-| `absorb` | `src/meshgen/verify.rs:3952` | Fold one `BoundaryFace` into a `FidelityAcc`. |
-| `check_v13` | `src/meshgen/verify.rs:4006` | [V13] interface fidelity: the material boundary read off the volume (region set vs region set, tags never consulted) and measured against the input surface. |
-| `report_to_json` | `src/meshgen/verify.rs:2358` | Serialize the frozen JSON report (hand-rolled; the project carries no JSON dependency). |
-| `report_to_log` | `src/meshgen/verify.rs:2467` | Sectioned human log with a `[PASS]/[WARN]/[FAIL]/[SKIP]` line per check and a summary. |
-| `annotate` | `src/meshgen/verify.rs:2529` | Copy of the document carrying the quality arrays plus the `verify_flags` bitmask (bit *k* = `[V(k+1)]`). |
+| `VerifySection` | `src/meshgen/verify.rs:88` | One catalog entry: status, named metrics, the **uncapped** `fail_count`/`warn_count`/`info_count` and `fired` code set, and a capped item list (`items_truncated`). `push` counts every finding and keeps only the `cap` most severe (contracts §4.3); `finish` sorts them into the contract order. |
+| `VerifyGates` | `src/meshgen/verify.rs:200` | Configurable thresholds; all length tolerances are fractions of the bbox diagonal, so gates are scale-invariant. |
+| `VerifyReport` | `src/meshgen/verify.rs:254` | Full result plus metadata echo; `passed`, `exit_code`, `fired_codes`, `section` accessors. |
+| `VerifyOptions` | `src/meshgen/verify.rs:769` | Out-of-document verifier inputs: `expected_stage` (parsed from a snapshot filename) for the [V12] cross-check, `delivered` (hold the file to the domain box whatever its `StageIndex`, contracts §4.4), and the [V5]/[V13] `surfaces`. |
+| `verify` | `src/meshgen/verify.rs:798` | Run the catalog over a contract or external VTU; returns one section per entry in contract order. |
+| `verify_with_options` | `src/meshgen/verify.rs:809` | `verify` with out-of-document options; surface stages s00-s03 skip volume-only [V7]/[V8]/[V13]. |
+| `BoundaryFace` | `src/meshgen/verify.rs:4135` | One material-boundary face as [V13] measures it: area, local edge length, mean/max \|distance\| and **signed** offset to the component's surface. |
+| `FidelityAcc` | `src/meshgen/verify.rs:4167` | [V13]'s per-component accumulator; every sum is area-weighted so a coarse face cannot outvote a fine one by being counted once. |
+| `absorb` | `src/meshgen/verify.rs:4184` | Fold one `BoundaryFace` into a `FidelityAcc`. |
+| `check_v13` | `src/meshgen/verify.rs:4238` | [V13] interface fidelity: the material boundary read off the volume (region set vs region set, tags never consulted) and measured against the input surface. |
+| `strict_domain_box` | `src/meshgen/verify.rs:1343` | [V3]'s two box conditions a free-face test cannot see: every used node inside `[DomainMin, DomainMax]` (`V3.outside_domain`) and the tets' volume equal to the box's (`V3.box_volume`). Runs wherever the pre-trim hull relaxation is not admitted. |
+| `ContractStrength` / `contract_strength` | `src/meshgen/contract.rs:13/74` | §4.2's validation strength, chosen from the metadata alone: geometry-only (no `SchemaVersion`), primary volume (tets only with `region_key`), mixed contract (everything else that declares `SchemaVersion = 1`). |
+| `validate_contract` | `src/meshgen/contract.rs:169` | Validate a document at that strength; returns every violated rule (`presence`, `type`, `counts`, `sentinel`, `key_range`, `set_offsets`, `table_length`, `component`, `sheet_volume`, `orientation_length`, `side_elems`, `cell_kind`, `cell_type`). [V12] reports each as a `V12.contract` FAIL. |
+| `report_to_json` | `src/meshgen/verify.rs:2603` | Serialize the frozen JSON report (hand-rolled; the project carries no JSON dependency). |
+| `report_to_log` | `src/meshgen/verify.rs:2712` | Sectioned human log with a `[PASS]/[WARN]/[FAIL]/[SKIP]` line per check and a summary. |
+| `annotate` | `src/meshgen/verify.rs:2774` | Copy of the document carrying the quality arrays plus the `verify_flags` bitmask (bit *k* = `[V(k+1)]`). |
 | `VerifyGateParams`/`MeshVerifyParams`/`MeshVerifyConfig` | `src/config/mesh_verify.rs:8` | The `mesh_verify:` YAML block: input, report/json/annotate destinations, gate overrides. |
 | `gates_from_config` | `src/pipeline/mesh_verify.rs:21` | Overlay YAML overrides onto the contract defaults. |
-| `verify_file` | `src/pipeline/mesh_verify.rs:53` | Load → validate → verify → write log/JSON/annotated VTU; returns the report. |
+| `verify_file` | `src/pipeline/mesh_verify.rs:53` | Load → validate → verify → write log/JSON/annotated VTU; returns the report. `delivered` (from the YAML `delivered: true`) sets `VerifyOptions::delivered`. |
 | `MeshVerifyPipeline` | `src/pipeline/mesh_verify.rs:12` | The `mesh-verify` subcommand; returns an error (nonzero exit) when a gate fails. |
 
 ## What runs today
@@ -51,17 +54,17 @@ or the producing stage — a report never silently omits a check.
 |---|---|---|
 | [V1] Cells | **full** | non-positive volume (exact predicate), repeated node in a cell, duplicate cells, non-finite coordinates |
 | [V2] Nodes | **full** | coincident duplicates by quantized key (FAIL), unreferenced nodes (WARN) |
-| [V3] Conformity | **full** | face shared by ≠2 tets, boundary leak (untagged face off every domain plane), hanging nodes (spatial-hash assisted), non-manifold edges (WARN). **The boundary-leak rule is deferred on a pre-cut snapshot** (`StageIndex` 5–7): the background lattice's boundary is the octree hull, which overhangs the domain box by up to one coarse cell per axis until S8 trims it. The count is still reported as a metric and explained by an INFO `V3.deferred` item; face sharing, hanging nodes and manifoldness — the real content of Theorem T1 — stay FAIL at every stage. |
+| [V3] Conformity | **full** | face shared by ≠2 tets, boundary leak (untagged face off every domain plane), hanging nodes (spatial-hash assisted), non-manifold edges (WARN), and **folded faces** (`V3.folded_face`: two tets sharing a face but lying on the same side of it — they overlap, which neither [V1] nor the face counts can see; A-3 carried 466 at `0a8eb1c`). **The domain box (contracts §4.4):** only at `StageIndex` 5–8, and never on a document verified with `delivered: true`, may a mesh that overhangs its box treat its own hull as the outside (INFO `V3.pre_trim_overhang` names the stage). Everywhere else every used node must lie inside the box (`V3.outside_domain`) and the tets must fill it (`V3.box_volume`, 1 %). The boundary-leak rule is still deferred at 5–7 (INFO `V3.deferred`); face sharing, hanging nodes, folds and manifoldness stay FAIL at every stage. |
 | [V4] Quality | **full** | AR, radius ratio, dihedral extremes, scaled Jacobian, min altitude; distributions, worst-10, three gates |
 | [V5] Geometric conformance | **full when `surfaces:` is set** | two-sided surface fit (mesh interface to input, and input back to interface) plus per-component volume. SKIPPED with a reason when no input surfaces are given, since there is nothing to conform *to*. Two denominators here were wrong once each and are worth knowing: the fit tolerance is a fraction of the **local interface edge length**, not the bbox diagonal; and `volume_expected` is the **priority-resolved** volume — the part of a component no higher-priority body covers — not its raw input volume. |
-| [V6] ID semantics | **partial** | region-key legality and one-priority-per-key run now; per-component volume error and the sampled audit need the input surfaces |
+| [V6] ID semantics | **partial** | region-key legality, one priority per key, region adjacency, and **undeclared material boundary** (`V6.undeclared_boundary`, FAIL since plan M-1.0: a face across which a component is entered or left must carry a tag for it). The undeclared FAIL is deferred on the pre-cut stages 5–7, where no interface exists yet; the count is still reported. Faces are visited in key order, so the items kept and `undeclared_boundary_area` are identical on every run. Per-component volume error and the sampled audit need the input surfaces |
 | [V7] Sheets & thin | **partial** | sheet-face weldedness runs on volume stages; s00-s03 report SKIPPED because they contain no tets; one-layer band, mid-surface and rim conformance land with G7-1 |
 | [V8] Partitions | **full on volume stages** | sheet-blocked flood fill recomputed and compared with `partition_id` (up to renumbering), pinhole-leak heuristic, `expected_partitions` gate; s00-s03 report SKIPPED |
 | [V9] Junctions | skipped | lands with G6-4 |
 | [V10] Export completeness | skipped | lands with G9-2 |
 | [V11] Compare mode | skipped | lands with GK-3 |
-| [V12] Provenance & stats | **full** | counts, metadata echo, `Counts`-vs-mesh agreement, `SchemaVersion` check, `StageIndex` range + filename cross-check (T-C6), and the **element-count attribution** the plan's P2 is steered on: per-`provenance` tet counts, and — when `parent_cell` is present under `RUSTMSPT_CUT_DIAG` — the S5 cells behind them and the emission rate per cell. The S5 cell is a lattice **tet**, so an untouched one emits exactly 1 and `tets_per_cell_*` reads directly as what that path costs over leaving the cell alone. |
-| [V13] Interface fidelity | **full when `surfaces:` is set** | the plan's P3, measured. See below — it is not a variant of [V5]. |
+| [V12] Provenance & stats | **full** | **contract validation** (contracts §4.2, plan MG-08) at the strength the metadata selects — every violated rule a `V12.contract` FAIL, the strength reported as INFO `V12.contract_strength` and metric `contract_strength` (0 geometry-only, 1 primary volume, 2 mixed contract); counts, metadata echo, `Counts`-vs-mesh agreement, `SchemaVersion` check, `StageIndex` range + filename cross-check (T-C6), and the **element-count attribution** the plan's P2 is steered on: per-`provenance` tet counts, and — when `parent_cell` is present under `RUSTMSPT_CUT_DIAG` — the S5 cells behind them and the emission rate per cell. The S5 cell is a lattice **tet**, so an untouched one emits exactly 1 and `tets_per_cell_*` reads directly as what that path costs over leaving the cell alone. |
+| [V13] Interface fidelity | **full when `surfaces:` is set** | the plan's P3, measured. `V13.off_surface` is a **FAIL** whenever any material-boundary area is off the surface (contracts rev 1.3; plan M-1.0), one finding per offending face. See below — it is not a variant of [V5]. |
 
 **[V13] is what [V5] cannot be.** [V5] measures the *declared* interface: the tagged
 `VTK_TRIANGLE` cells, whose nodes S7 snapped onto the input surface. Those nodes are on
@@ -92,6 +95,16 @@ plate 2.6× thinner than the input — and nothing in the suite noticed. Both ar
 violations; the pair is for diagnosis, never for grading one as acceptable.
 
 Design points worth knowing:
+
+- **The item cap bounds what is stored, never what is counted** (contracts §4.3). Every
+  finding raises its section's status and its severity count; only the `max_items_per_section`
+  most severe are kept, and which ones survive does not depend on the order they were found.
+  `passed()` reads the section statuses. Until plan M-1.0 the summary counted only the stored
+  items, so `max_items_per_section: 0` on a failing mesh exited 0. Producers therefore push
+  every finding rather than sampling with `.take(cap)` first.
+- **A self-declared contract document is validated, not trusted** (contracts §4.2). Removing an
+  array used to make its check SKIP, so a broken producer verified clean; now the metadata picks
+  the strength and a missing or malformed array is a `V12.contract` FAIL.
 
 - **[V5]'s surface priorities must mirror the mesher's.** `volume_expected` is the
   *priority-resolved* volume — the part of a component no higher-priority body covers

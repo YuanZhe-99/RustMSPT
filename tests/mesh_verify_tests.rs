@@ -81,6 +81,8 @@ const MANIFEST: &[(&str, Option<&str>, &[&str])] = &[
         Some("V3.multi_shared_face"),
         &[
             "V3.boundary_leak",
+            // the glued tet adds volume the box does not have (contracts §4.4, plan M-1.0)
+            "V3.box_volume",
             "V3.multi_shared_face",
             "V3.non_manifold_edge",
         ],
@@ -88,7 +90,8 @@ const MANIFEST: &[(&str, Option<&str>, &[&str])] = &[
     (
         "bad_boundary_leak",
         Some("V3.boundary_leak"),
-        &["V3.boundary_leak"],
+        // the deleted tet's volume is missing from the box (contracts §4.4, plan M-1.0)
+        &["V3.boundary_leak", "V3.box_volume"],
     ),
     (
         "bad_unwelded_sheet",
@@ -96,6 +99,9 @@ const MANIFEST: &[(&str, Option<&str>, &[&str])] = &[
         &[
             "V2.duplicate_node",
             "V3.hanging_node",
+            // the tag now names a face no tet has, so the material boundary it declared is
+            // undeclared - the same single defect, seen by [V6] since M-1.0 gates it
+            "V6.undeclared_boundary",
             "V7.unwelded_sheet_face",
             "V8.pinhole_sheet",
         ],
@@ -109,6 +115,8 @@ const MANIFEST: &[(&str, Option<&str>, &[&str])] = &[
             // The hand-built band fixture does not extend past its own sample, so its
             // outermost tagged faces have one adjacent tet. Real pipeline output reports
             // zero of these on all seven acceptance cases.
+            // ...and for the same reason it does not fill its declared domain box
+            "V3.box_volume",
             "V3.interface_crack",
             "V4.low_dihedral_share",
             "V4.min_dihedral",
@@ -118,17 +126,20 @@ const MANIFEST: &[(&str, Option<&str>, &[&str])] = &[
     (
         "bad_partition_id",
         Some("V8.partition_mismatch"),
-        &["V3.boundary_leak", "V8.partition_mismatch"],
+        // the second component sits outside the domain box: MG-03's "extra block outside"
+        &["V3.boundary_leak", "V3.box_volume", "V3.outside_domain", "V8.partition_mismatch"],
     ),
     (
         "bad_region_key",
         Some("V6.illegal_region_key"),
-        &["V6.illegal_region_key"],
+        // the contract validator (§4.2) sees the same out-of-table key before any check runs
+        &["V12.contract", "V6.illegal_region_key"],
     ),
     (
         "bad_pinhole_sheet",
         Some("V8.pinhole_sheet"),
-        &["V8.pinhole_sheet"],
+        // the removed triangle was a declared material boundary; the hole leaves it undeclared
+        &["V6.undeclared_boundary", "V8.pinhole_sheet"],
     ),
     (
         "bad_curve_node_id",
@@ -145,7 +156,7 @@ const MANIFEST: &[(&str, Option<&str>, &[&str])] = &[
         // alone carried single-sided - the same justified cascade `bad_partition_id` has.
         "bad_open_junction_fan",
         Some("V9.junction_fan"),
-        &["V3.boundary_leak", "V9.junction_fan"],
+        &["V3.boundary_leak", "V3.box_volume", "V9.junction_fan"],
     ),
 ];
 
@@ -592,4 +603,242 @@ fn undeclared_boundary_metric_is_zero_when_no_material_boundary_exists() {
         0.0,
         "a uniformly labelled mesh has no material boundary to declare"
     );
+}
+
+/// MG-01 (contracts §4.3): the item cap bounds what a section stores and prints, never what
+/// it counts. The same defect verified at cap 0, 1 and 50 must give one status, one set of
+/// counts, one set of fired codes and one exit code - at `891badc` cap 0 on this fixture
+/// reported `V1 = FAIL` beside `summary.fail = 0` and exit 0.
+#[test]
+fn the_item_cap_changes_what_is_stored_never_what_is_counted() {
+    let doc = load_vtu(&fixture("bad_inverted_tet")).unwrap();
+    let at = |cap: usize| {
+        verify(
+            &doc,
+            &VerifyGates {
+                max_items_per_section: cap,
+                ..VerifyGates::default()
+            },
+        )
+    };
+    let reference = at(50);
+    assert!(reference.fail > 0, "the fixture must fail at the default cap");
+    for cap in [0usize, 1, 50] {
+        let r = at(cap);
+        assert_eq!(r.exit_code(), 1, "cap {cap}: a FAIL must give a nonzero exit");
+        assert!(!r.passed(), "cap {cap}");
+        assert_eq!((r.fail, r.warn, r.info), (reference.fail, reference.warn, reference.info), "cap {cap}");
+        assert_eq!(r.fired_codes(), reference.fired_codes(), "cap {cap}");
+        for (a, b) in r.sections.iter().zip(reference.sections.iter()) {
+            assert_eq!(a.status, b.status, "cap {cap}, section {}", a.id);
+            assert!(a.items.len() <= cap, "cap {cap}, section {} stored {}", a.id, a.items.len());
+        }
+        let v1 = r.section("V1").unwrap();
+        assert_eq!(v1.status, CheckStatus::Fail);
+        assert_eq!(v1.items_truncated, cap < v1.fail_count + v1.warn_count + v1.info_count);
+    }
+}
+
+fn with_stage(mut doc: VtuDoc, stage: i32) -> VtuDoc {
+    let a = doc
+        .field_data
+        .iter_mut()
+        .find(|a| a.name == "StageIndex")
+        .expect("fixture declares StageIndex");
+    a.data = ArrayData::I32(vec![stage]);
+    doc
+}
+
+fn moved(doc: &VtuDoc, f: impl Fn(Vec3) -> Vec3) -> VtuDoc {
+    let mut out = doc.clone();
+    for p in out.points.iter_mut() {
+        *p = f(*p);
+    }
+    out
+}
+
+fn v3_codes(report: &rustmspt::meshgen::verify::VerifyReport) -> Vec<String> {
+    report
+        .fired_codes()
+        .into_iter()
+        .filter(|c| c.starts_with("V3."))
+        .collect()
+}
+
+fn verify_as(doc: &VtuDoc, delivered: bool) -> rustmspt::meshgen::verify::VerifyReport {
+    rustmspt::meshgen::verify::verify_with_options(
+        doc,
+        &VerifyGates::default(),
+        rustmspt::meshgen::verify::VerifyOptions {
+            delivered,
+            ..Default::default()
+        },
+    )
+}
+
+/// MG-03 (contracts §4.4): at the final stage a mesh past its box is a leak, not a bigger box.
+/// At `891badc` `good_cube.vtu` with every x doubled, `DomainMax = [1, 1, 1]` and
+/// `StageIndex = 11` verified `[V3]` PASS with `boundary_leaks = 0` and exit 0.
+#[test]
+fn a_final_mesh_past_its_domain_box_fails_v3() {
+    let cube = load_vtu(&fixture("good_cube")).unwrap();
+    let doubled = moved(&cube, |p| Vec3::new(2.0 * p.x, p.y, p.z));
+    let r = verify_as(&doubled, false);
+    assert_eq!(r.section("V3").unwrap().status, CheckStatus::Fail);
+    assert_eq!(r.exit_code(), 1);
+    let codes = v3_codes(&r);
+    for code in ["V3.boundary_leak", "V3.box_volume", "V3.outside_domain"] {
+        assert!(codes.iter().any(|c| c == code), "doubled cube must fire {code}; fired {codes:?}");
+    }
+
+    let translated = moved(&cube, |p| Vec3::new(p.x + 0.5, p.y, p.z));
+    let codes = v3_codes(&verify_as(&translated, false));
+    assert!(codes.iter().any(|c| c == "V3.outside_domain"), "translated: {codes:?}");
+    assert!(codes.iter().any(|c| c == "V3.boundary_leak"), "translated: {codes:?}");
+}
+
+/// The relaxation contracts §4.4 does admit: before the trim (`StageIndex` 5-8) the lattice
+/// legitimately overhangs the box, its hull is the outside, and the report names the stage.
+/// The same document verified as the deliverable is held to the box.
+#[test]
+fn the_pre_trim_overhang_is_allowed_only_before_the_trim_and_never_when_delivered() {
+    let cube = load_vtu(&fixture("good_cube")).unwrap();
+    let overhang = with_stage(moved(&cube, |p| Vec3::new(2.0 * p.x, p.y, p.z)), 8);
+    let r = verify_as(&overhang, false);
+    let v3 = r.section("V3").unwrap();
+    assert_eq!(v3.status, CheckStatus::Pass, "stage 8 overhang is reported, not failed: {:?}", v3.items);
+    assert!(v3.items.iter().any(|i| i.code == "V3.pre_trim_overhang"));
+    assert_eq!(metric(&r, "V3", "hull_relaxation_stage"), 8.0);
+
+    let delivered = verify_as(&overhang, true);
+    assert_eq!(delivered.section("V3").unwrap().status, CheckStatus::Fail);
+    assert_eq!(metric(&delivered, "V3", "hull_relaxation_stage"), -1.0);
+
+    for stage in [9, 10, 11] {
+        let r = verify_as(&with_stage(overhang.clone(), stage), false);
+        assert_eq!(r.section("V3").unwrap().status, CheckStatus::Fail, "stage {stage}");
+    }
+}
+
+fn v12_rules(report: &rustmspt::meshgen::verify::VerifyReport) -> Vec<String> {
+    report
+        .section("V12")
+        .unwrap()
+        .items
+        .iter()
+        .filter(|i| i.code == "V12.contract")
+        .map(|i| i.message.clone())
+        .collect()
+}
+
+fn set_field(doc: &mut VtuDoc, name: &str, data: ArrayData) {
+    doc.field_data.iter_mut().find(|a| a.name == name).expect(name).data = data;
+}
+
+/// MG-08 (contracts §4.2): a document that declares itself a final contract document is held to
+/// the contract, whichever arrays it happens to carry. At `891badc` each of these three
+/// injections into `good_cube.vtu` verified with `fail = warn = 0` and exit 0.
+#[test]
+fn a_self_declared_contract_document_is_validated_not_trusted() {
+    let cube = load_vtu(&fixture("good_cube")).unwrap();
+    let r = verify(&cube, &VerifyGates::default());
+    assert!(v12_rules(&r).is_empty(), "the reference fixture is a valid contract document");
+    assert_eq!(metric(&r, "V12", "contract_strength"), 2.0);
+
+    // (1) constraint_kind / constraint_ref removed
+    let mut missing = cube.clone();
+    missing.point_data.retain(|a| a.name != "constraint_kind" && a.name != "constraint_ref");
+    let r = verify(&missing, &VerifyGates::default());
+    assert_eq!(r.exit_code(), 1);
+    let rules = v12_rules(&r);
+    assert!(rules.iter().any(|m| m.contains("[presence]") && m.contains("constraint_kind")), "{rules:?}");
+    assert!(rules.iter().any(|m| m.contains("[presence]") && m.contains("constraint_ref")), "{rules:?}");
+
+    // (2) FaceTagSideElems pointing at tets that do not exist
+    let mut sides = cube.clone();
+    let n = sides.field_array("FaceTagSideElems").unwrap().data.len();
+    set_field(
+        &mut sides,
+        "FaceTagSideElems",
+        ArrayData::I32((0..n).map(|i| if i % 2 == 0 { 999_999 } else { 999_998 }).collect()),
+    );
+    let rules = v12_rules(&verify(&sides, &VerifyGates::default()));
+    assert!(rules.iter().any(|m| m.contains("[side_elems]")), "{rules:?}");
+
+    // (3) a Sheet component that owns tets
+    let mut sheet = cube.clone();
+    set_field(&mut sheet, "ComponentKind", ArrayData::U8(vec![1]));
+    let rules = v12_rules(&verify(&sheet, &VerifyGates::default()));
+    assert!(rules.iter().any(|m| m.contains("[sheet_volume]")), "{rules:?}");
+
+    // MG-07: one orientation per tag *member*, not per face
+    let mut orient = cube.clone();
+    set_field(&mut orient, "FaceTagOffsets", ArrayData::I64(vec![2]));
+    set_field(&mut orient, "FaceTagComponents", ArrayData::I32(vec![1, 1]));
+    orient.field_data.push(DataArray::scalar("FaceTagOrientation", ArrayData::I32(vec![1])));
+    let rules = v12_rules(&verify(&orient, &VerifyGates::default()));
+    assert!(rules.iter().any(|m| m.contains("[orientation_length]")), "{rules:?}");
+
+    // the same document with no SchemaVersion is an external mesh, verified geometry-only
+    let mut external = missing.clone();
+    external.field_data.retain(|a| a.name != "SchemaVersion");
+    let r = verify(&external, &VerifyGates::default());
+    assert_eq!(metric(&r, "V12", "contract_strength"), 0.0);
+    assert!(v12_rules(&r).is_empty());
+}
+
+/// Two tets can each be positively oriented and share a face with exactly two owners while
+/// lying on the same side of it: they overlap, and neither `[V1]` (one tet at a time) nor the
+/// face-count rules see it. A-3 at `0a8eb1c` carries 466 such faces.
+#[test]
+fn two_tets_on_the_same_side_of_their_shared_face_fail_v3() {
+    let mut doc = load_vtu(&fixture("good_cube")).unwrap();
+    // K0 = (0, 1, 3, 7) and K1 = (0, 1, 7, 5) share face (0, 1, 7). Give K0 a new apex on
+    // K1's side of that face and restore K0's positive orientation by swapping two nodes.
+    doc.points.push(Vec3::new(0.8, 0.2, 0.6));
+    let q = (doc.points.len() - 1) as i64;
+    for a in doc.point_data.iter_mut() {
+        let v = a.data.get_i64(0);
+        match &mut a.data {
+            ArrayData::I32(x) => x.push(v as i32),
+            ArrayData::U8(x) => x.push(v as u8),
+            ArrayData::I64(x) => x.push(v),
+            _ => panic!("unexpected point array type"),
+        }
+    }
+    let k0 = &mut doc.connectivity[0..4];
+    assert_eq!(k0, &[0, 1, 3, 7]);
+    k0.copy_from_slice(&[1, 0, q, 7]);
+    doc.validate().unwrap();
+    let r = verify(&doc, &VerifyGates::default());
+    assert!(
+        !r.fired_codes().iter().any(|c| c == "V1.negative_volume"),
+        "the construction must keep both tets positive: {:?}",
+        r.fired_codes()
+    );
+    assert!(r.fired_codes().iter().any(|c| c == "V3.folded_face"), "{:?}", r.fired_codes());
+    assert_eq!(metric(&r, "V3", "folded_faces"), 1.0);
+}
+
+/// Contracts D-18: the delivered file is the tets-only volume. It keeps the contract's tables but
+/// none of the face or curve cells they index, so [V7]/[V9] and [V6]'s declaration rules have
+/// nothing to read there and must skip with that reason rather than report the absence as a
+/// defect - while everything that can be judged from the volume still runs.
+#[test]
+fn the_delivered_volume_skips_only_the_checks_that_read_tagged_cells() {
+    let cube = load_vtu(&fixture("good_cube")).unwrap();
+    let delivered = rustmspt::io::vtu::volume_only(&cube);
+    let r = verify_as(&delivered, true);
+    assert!(r.passed(), "fired {:?}", r.fired_codes());
+    assert_eq!(metric(&r, "V12", "contract_strength"), 1.0);
+    for id in ["V7", "V9"] {
+        let s = r.section(id).unwrap();
+        assert_eq!(s.status, CheckStatus::Skipped, "{id}");
+        assert!(s.skipped_reason.as_deref().unwrap().contains("_contract.vtu"), "{id}");
+    }
+    let v6 = r.section("V6").unwrap();
+    assert!(v6.items.iter().any(|i| i.code == "V6.deferred"));
+    for id in ["V1", "V2", "V3", "V4"] {
+        assert_ne!(r.section(id).unwrap().status, CheckStatus::Skipped, "{id} must run");
+    }
 }

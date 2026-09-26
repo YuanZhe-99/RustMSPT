@@ -1,6 +1,6 @@
 # SPEC — Mesh generation: data contracts freeze (subtask G0-3)
 
-**Status:** frozen (rev 1.3, schema v1, 2026-09-23 — audited against the code at `891badc`: §4's severities and gates are stated as normative with every as-built departure recorded; §4.2 (contract validation), §4.3 (the item cap and the exit status) and §4.4 (the domain at the final stage) are new; §5's P3 row is re-stated as containment with the corner test as its necessary half; §2.5 lists the non-contract diagnostic arrays; §6 brings the fixture table to the fourteen committed files; §8 gains the audit record; §9 gains D-8..D-17. `SchemaVersion` stays 1 — no array name, type, sentinel or encoding changed. rev 1.2, schema v1; additive G2 diagnostic orientation field recorded 2026-07-28; **rev 1.2 2026-08-15: §4 gains `[V13]` and §5 the P3 rows (plan P-1.1); §1 changes which file is the deliverable (plan P-2.1 / R4)** — the contract document's schema is untouched by both, so `SchemaVersion` stays 1). Normative for `src/io/vtu.rs`,
+**Status:** frozen (rev 1.3.1, schema v1, 2026-09-26 — plan M-1.0 builds the verifier half of §4.2–§4.4 and §4.1's determinism clause, and adds four `[V3]` codes, `V6.undeclared_boundary`, `V12.contract`, and the delivered-file skips D-18 asked for; D-8..D-11, D-17 and D-18 are closed and D-22..D-25 record what the build found. rev 1.3, schema v1, 2026-09-23 — audited against the code at `891badc`: §4's severities and gates are stated as normative with every as-built departure recorded; §4.2 (contract validation), §4.3 (the item cap and the exit status) and §4.4 (the domain at the final stage) are new; §5's P3 row is re-stated as containment with the corner test as its necessary half; §2.5 lists the non-contract diagnostic arrays; §6 brings the fixture table to the fourteen committed files; §8 gains the audit record; §9 gains D-8..D-17. `SchemaVersion` stays 1 — no array name, type, sentinel or encoding changed. rev 1.2, schema v1; additive G2 diagnostic orientation field recorded 2026-07-28; **rev 1.2 2026-08-15: §4 gains `[V13]` and §5 the P3 rows (plan P-1.1); §1 changes which file is the deliverable (plan P-2.1 / R4)** — the contract document's schema is untouched by both, so `SchemaVersion` stays 1). Normative for `src/io/vtu.rs`,
 `src/meshgen/verify.rs`, `src/meshgen/render_scene.rs`, and every producer of a
 contract VTU.
 **Date:** 2026-07-28 (rev 1.3: 2026-09-23)
@@ -315,7 +315,7 @@ defaults below.
 |---|---|---|---|
 | **[V1]** Cells | negative or zero tet volume; repeated node within a cell; duplicate cells; NaN/inf coordinates | FAIL | — |
 | **[V2]** Nodes | duplicate coincident nodes (`NodeKey` equality); unreferenced nodes | FAIL / WARN | — |
-| **[V3]** Conformity | interior face with ≠2 adjacent tets (≥3 = FAIL); hanging nodes (node interior to a neighbour's face/edge within tol, spatial-grid assisted); boundary face off every domain plane and untagged (**boundary leak**); mismatched shared faces at region boundaries; unexpected non-manifold edge not within tol of a declared curve | FAIL (non-manifold: WARN) | — |
+| **[V3]** Conformity | interior face with ≠2 adjacent tets (≥3 = FAIL); hanging nodes (node interior to a neighbour's face/edge within tol, spatial-grid assisted); boundary face off every domain plane and untagged (**boundary leak**); mismatched shared faces at region boundaries; unexpected non-manifold edge not within tol of a declared curve; *rev 1.3.1:* two tets sharing a face on the same side of it (`V3.folded_face`, D-22); a used node outside the domain box (`V3.outside_domain`) and tet volume ≠ box volume (`V3.box_volume`) wherever §4.4 admits no hull relaxation | FAIL (non-manifold: WARN) | box volume within 1 % |
 | **[V4]** Quality | `AR = R/(3·r_in)`; radius ratio; min/max dihedral; scaled Jacobian; min altitude; distributions + worst-10 | WARN | `AR > 20` counted; global min dihedral > 5°; share below 10° < 0.01% |
 | **[V5]** Geometric conformance | interface-node surface distance; face-normal deviation; feature-curve conformance; sharp-corner error; sampled two-sided Hausdorff | WARN | §5's accuracy table |
 | **[V6]** ID semantics *(contract arrays required)* | per-component volume error vs input solid; region labels ∈ legal key table; same-priority-overlap keys share one Y; priority-resolution audit (sampled `robust_inside`); ownership completeness; **region adjacency** (rev 1.3): a face whose two tets' region sets differ by two or more components is a step no single interface can produce and is a FAIL unless the face is tagged for the components in the difference (an exact contact both bodies declared) or the keys differ in priority (a legitimate two-member change under R-A4, reported not failed); **undeclared material boundary** (rev 1.3): every face whose two owners resolve to different keys MUST carry a tag for each component in the difference — plan §9's invariant — and `undeclared_boundary_faces > 0` is a FAIL | FAIL (semantic) / WARN (sampled) | volume ≤ 1% rel; arbitration rate < 0.5% |
@@ -339,7 +339,7 @@ becomes FAIL at rev 1.4 once plan M-2 makes the kernel carry every curve (plan S
 here because R6 forbids gating on an unmeasured state.
 | **[V10]** Export completeness | INP↔VTU cross-check: element/node counts, per-set sums, unmapped-region audit. *As built:* emitted `SKIPPED` unconditionally — no INP writer exists (plan M-6.2); once the split export lands the cross-check reads the node map of §2.3 (plan M-6.6), never count equality alone | FAIL | — |
 | **[V11]** Compare mode | strict: canonical-order arrays byte-equal, coordinates bit-identical. topology: identical connectivity/labels/tables, coordinates within `1e-6·diag`, quality within 1%. *As built:* emitted `SKIPPED` unconditionally — `--compare` does not exist (plan M-6.3); R-P2 is measured by `sha256sum` of the two files | FAIL | selected by `DeterminismMode` |
-| **[V12]** Provenance & stats | counts, `[OWN-STATS]`, repair-log echo, config-hash match, stage/filename agreement, memory summary; **per-`provenance` element counts and per-S5-cell emission rates** (`tets_provenance_*`, `cells_provenance_*`, `tets_per_cell_*`, `lattice_cells`) | INFO (mismatch: WARN) | — |
+| **[V12]** Provenance & stats | counts, `[OWN-STATS]`, repair-log echo, config-hash match, stage/filename agreement, memory summary; **per-`provenance` element counts and per-S5-cell emission rates** (`tets_provenance_*`, `cells_provenance_*`, `tets_per_cell_*`, `lattice_cells`); *rev 1.3.1:* §4.2's contract validation (`V12.contract`, one FAIL per violated rule; strength as INFO) | INFO (mismatch: WARN; `V12.contract`: FAIL) | — |
 | **[V13]** Interface fidelity *(added 2026-08-15; needs the input surfaces)* | the **material boundary** — a face whose two tets carry different region sets, or a single-owner face inside a body off the domain box — measured against the input surface at its **corners**: on-surface area share, area-weighted mean and max \|distance\|, area-weighted **signed** offset, `displacement_share`; the interior sag is reported apart as `chord_*`. Rev 1.3: the corner test is P3's *necessary* half (§5); a boundary missing entirely is a FAIL, never SKIPPED | **FAIL** at `on_surface_area_frac < 1.0` (normative, rev 1.3; *as built* WARN — D-8) | §5's P3 rows |
 
 `[V13]` **added 2026-08-15** under the record's P-1.1 (plan Appendix A), and it is not a
@@ -402,12 +402,18 @@ item per violated rule) and the report says which strength was applied. A self-d
 document that omits an **A** array is a broken producer, not a geometry-only file, and MUST NOT be
 verified as one.
 
-> **As built (D-11).** None of the mixed-contract rules is checked at `891badc`: `VtuDoc::validate`
-> checks structure and array lengths only, and every semantic check degrades to SKIPPED when its
-> array is absent. Three documents derived from `good_cube.vtu` — `constraint_kind`/`constraint_ref`
-> removed; `FaceTagSideElems = [999999, 999998, 999999, 999998]`; `ComponentKind[0] = 1` while the
-> component owns three tets — each verify with `fail = warn = 0` and exit 0 (§8, 2026-09-23). Plan
-> M-1.0 builds the validator and commits the three as fixtures.
+> **Built (rev 1.3.1, plan M-1.0; was D-11).** `meshgen::contract::validate_contract` applies the
+> table above; `[V12]` reports the strength (INFO `V12.contract_strength`, metric
+> `contract_strength` 0/1/2) and each violated rule as a `V12.contract` FAIL naming the rule
+> (`presence`, `type`, `counts`, `sentinel`, `key_range`, `set_offsets`, `table_length`,
+> `component`, `sheet_volume`, `orientation_length`, `side_elems`, `cell_kind`, `cell_type`).
+> The external strength is selected by the absence of `SchemaVersion` — a document with no
+> `SchemaVersion` has declared nothing, so there is no self-declaration to hold it to.
+> `CurveRadialPatches` is required from `StageIndex` 8, where its producer emits it (D-21). The
+> three injections above are asserted in `tests/mesh_verify_tests.rs`
+> (`a_self_declared_contract_document_is_validated_not_trusted`), as derived documents rather than
+> committed files. On pipeline output the validator immediately found D-22 and still reports D-13
+> (`orientation_length`) wherever a face carries two tags.
 
 ### 4.3 The item cap and the exit status — normative (rev 1.3, plan MG-01)
 
@@ -419,12 +425,14 @@ and counts of all its findings. `passed()` is a function of the section statuses
 stored items. Every producer that samples or truncates its findings before reporting them MUST
 count before truncating.
 
-> **As built (D-9).** `VerifySection::push` sets the section status before applying the cap, but
-> `verify_with_options` derives `summary.fail`/`summary.warn` from the stored items and `passed()`
-> reads those counts. `max_items_per_section: 0` on `bad_inverted_tet.vtu` reports `V1 = FAIL`,
-> `summary.fail = 0`, exit **0**; a section whose INFO items fill the cap hides a later FAIL the
-> same way (§8, 2026-09-23). Plan M-1.0 fixes it and commits the fixtures (cap 0/1/50 give one
-> answer; an INFO-then-FAIL section).
+> **Built (rev 1.3.1, plan M-1.0; was D-9).** Each section counts every finding it is handed
+> (`fail_count`/`warn_count`/`info_count`, and the set of WARN/FAIL codes `fired_codes` reads)
+> and stores only the `cap` most severe, chosen by (severity, then §4.1's order) so that which
+> items survive never depends on the order they were found. `passed()` reads the section
+> statuses. Producers that sampled with `.take(cap)` before pushing (`[V3]`'s hanging nodes,
+> `[V5]`'s off-surface nodes, the worst-offender lists) now push every finding or a fixed number
+> of examples. Pinned by `the_item_cap_changes_what_is_stored_never_what_is_counted` (cap 0/1/50)
+> and `an_info_filled_cap_does_not_hide_a_later_fail`.
 
 ### 4.4 The domain at the final stage — normative (rev 1.3, plan MG-03)
 
@@ -437,14 +445,17 @@ volume tolerance. A hull built from the mesh's own points is never the reference
 a mesh that extends past the box is a leak, not a bigger box. When the relaxation is applied at
 5–8 the report names the stage that justified it.
 
-> **As built (D-10).** `check_v3` builds the hull whenever any point exceeds the declared domain
-> and accepts single-sided faces on it at **every** stage, 11 included, so the mesh's own extent
-> relaxes the box requirement: `good_cube.vtu` with every `x` doubled, `DomainMax = [1, 1, 1]` and
-> `StageIndex = 11` reports `[V3]` PASS with `boundary_leaks = 0`, `fail = warn = 0`, exit 0.
-> `run_acceptance.py`'s `check_delivered` reads the same `[V3]` codes and is therefore not an
-> independent box test (§8, 2026-09-23). Plan M-1.0 fixes it and commits the fixtures (the doubled
-> cube, a translated mesh, an extra block outside, an interior cavity, an allowed pre-trim overhang);
-> plan M-6.2 makes the box an S8 constraint so the relaxation ends at S8.
+> **Built (rev 1.3.1, plan M-1.0; was D-10).** The hull relaxation is admitted only at
+> `StageIndex` 5–8 and never when the caller verifies the document as delivered
+> (`mesh_verify: delivered: true`, `VerifyOptions::delivered` — stated by the caller, never
+> inferred); when it is applied `[V3]` says so with INFO `V3.pre_trim_overhang` and the metric
+> `hull_relaxation_stage`. Everywhere else `V3.outside_domain` (a used node outside the box) and
+> `V3.box_volume` (tet volume against box volume, 1 %) are FAIL. `check_delivered` passes
+> `delivered: true`. Pinned by `a_final_mesh_past_its_domain_box_fails_v3` (the doubled cube, a
+> translated mesh) and `the_pre_trim_overhang_is_allowed_only_before_the_trim_and_never_when_delivered`;
+> an extra block outside is `bad_partition_id.vtu`, which now fires both codes, and a missing
+> piece of volume is `bad_boundary_leak.vtu`. Plan M-6.2 still makes the box an S8 constraint so
+> the relaxation can end at S8.
 
 ### 4.1 JSON report schema (frozen)
 
@@ -493,6 +504,9 @@ items were capped; under §4.3 its counts and status are still those of every fi
 > `undeclared_boundary_area` metric is a float sum in that order (`0.1971761865274474` against
 > `0.19717618652744737`, measured 2026-09-23). The clause above is the contract; plan M-1.0 sorts
 > the keys and sums in index order, and the fixture that pins it must exceed the cap.
+> **Built (rev 1.3.1):** `[V6]` visits faces in key order, and every section's stored items are
+> the cap-most-severe then sorted by §4.1's key (`stored_items_do_not_depend_on_push_order_when_the_cap_is_exceeded`,
+> 40 findings against a cap of 10).
 
 
 ---
@@ -552,16 +566,16 @@ band and cannot be produced by perturbing the cube.
 | `bad_inverted_tet.vtu` | tet K0's nodes 1 and 2 swapped | `V1.negative_volume` | `V1.negative_volume` |
 | `bad_duplicate_node.vtu` | v7 duplicated; K4 rewired to the copy | `V2.duplicate_node` | + `V3.boundary_leak`, `V3.hanging_node`, `V3.interface_crack`, `V3.non_manifold_edge`, `V8.partition_mismatch` |
 | `bad_hanging_node.vtu` | K0 split at the midpoint of edge v0–v7; neighbours keep the unsplit edge | `V3.hanging_node` | + `V3.boundary_leak`, `V3.non_manifold_edge`, `V8.partition_mismatch` |
-| `bad_triple_face.vtu` | a third tet glued to interior face (v0,v1,v7) | `V3.multi_shared_face` | + `V3.boundary_leak`, `V3.non_manifold_edge` |
-| `bad_boundary_leak.vtu` | tet K5 deleted; the exposed faces are interior to the box and untagged | `V3.boundary_leak` | `V3.boundary_leak` |
-| `bad_unwelded_sheet.vtu` | one node of a sheet-tagged face duplicated, so the face is not welded to either side | `V7.unwelded_sheet_face` | + `V2.duplicate_node`, `V3.hanging_node`, `V8.pinhole_sheet` |
-| `bad_stacked_band.vtu` | a band meshed with **two** element layers across one gap | `V7.band_layers` | + `V3.interface_crack` (the hand-built band does not extend past its own sample, so its outermost tagged faces have one adjacent tet), `V4.min_dihedral`, `V4.low_dihedral_share` |
-| `bad_partition_id.vtu` | a disconnected second component labelled `partition_id = 0` | `V8.partition_mismatch` | + `V3.boundary_leak` |
-| `bad_region_key.vtu` | one tet's `region_key = 7` with a 2-entry table | `V6.illegal_region_key` | `V6.illegal_region_key` |
-| `bad_pinhole_sheet.vtu` | one triangle removed from a sheet, leaving an interior hole | `V8.pinhole_sheet` | `V8.pinhole_sheet` |
+| `bad_triple_face.vtu` | a third tet glued to interior face (v0,v1,v7) | `V3.multi_shared_face` | + `V3.boundary_leak`, `V3.box_volume` (since plan M-1.0: the glued tet adds volume the box does not have), `V3.non_manifold_edge` |
+| `bad_boundary_leak.vtu` | tet K5 deleted; the exposed faces are interior to the box and untagged | `V3.boundary_leak` | `V3.boundary_leak`, `V3.box_volume` (since plan M-1.0: the deleted tet's volume is missing from the box) |
+| `bad_unwelded_sheet.vtu` | one node of a sheet-tagged face duplicated, so the face is not welded to either side | `V7.unwelded_sheet_face` | + `V2.duplicate_node`, `V3.hanging_node`, `V6.undeclared_boundary` (since plan M-1.0 gates it: the tag names a face no tet has, so the boundary it declared is undeclared), `V8.pinhole_sheet` |
+| `bad_stacked_band.vtu` | a band meshed with **two** element layers across one gap | `V7.band_layers` | + `V3.interface_crack` (the hand-built band does not extend past its own sample, so its outermost tagged faces have one adjacent tet), `V3.box_volume` (since plan M-1.0, for the same reason: it does not fill its declared box), `V4.min_dihedral`, `V4.low_dihedral_share` |
+| `bad_partition_id.vtu` | a disconnected second component labelled `partition_id = 0` | `V8.partition_mismatch` | + `V3.boundary_leak`, `V3.box_volume`, `V3.outside_domain` (since plan M-1.0: the second component lies outside the domain box — §4.4's "extra block outside") |
+| `bad_region_key.vtu` | one tet's `region_key = 7` with a 2-entry table | `V6.illegal_region_key` | `V6.illegal_region_key`, `V12.contract` (since plan M-1.0: §4.2's key-range rule sees the same key first) |
+| `bad_pinhole_sheet.vtu` | one triangle removed from a sheet, leaving an interior hole | `V8.pinhole_sheet` | `V8.pinhole_sheet`, `V6.undeclared_boundary` (since plan M-1.0 gates it: the removed triangle was a declared material boundary) |
 | `bad_curve_node_id.vtu` *(2026-08-13)* | a curve node whose `N_ID` omits one of the components meeting along its curve | `V9.curve_node_id` | `V9.curve_node_id` |
 | `bad_radial_patches.vtu` *(2026-08-13)* | a curve whose `CurveRadialPatches` disagrees with the patches around it | `V9.radial_patches` | `V9.radial_patches` |
-| `bad_open_junction_fan.vtu` *(2026-08-13)* | the cube's main diagonal 0–7 declared a curve and one of its six tets removed | `V9.junction_fan` | + `V3.boundary_leak` (removing a tet leaves its two faces single-sided — the same justified cascade as `bad_partition_id`) |
+| `bad_open_junction_fan.vtu` *(2026-08-13)* | the cube's main diagonal 0–7 declared a curve and one of its six tets removed | `V9.junction_fan` | + `V3.boundary_leak` (removing a tet leaves its two faces single-sided — the same justified cascade as `bad_partition_id`), `V3.box_volume` (since plan M-1.0: the removed tet's volume is missing) |
 | *pending (plan M-1.0, M-1.5, M-4.8)* | the review's counterexamples of §4.2–§4.4 and §5 — the item-cap document, the doubled-domain cube, the three schema injections, the per-face orientation table, the interior-interface cube against a cube STL | `V12.contract`, `V3.boundary_leak`, `V13.containment` | to be asserted when they are committed; each is a fixture whose *absence* is what let the defect ship (R8) |
 
 > **Rule C2 (fixture manifest).** A fixture's contract is the **full set** of check
@@ -687,19 +701,23 @@ byte-identical between `0a8eb1c` and `891badc`):
 | D-5 | The background region key carries `RegionSetPriority = 0xFFFFFFFF` | `{0}` has no priority; a real value (e.g. `0`) would make it win every resolution comparison in a consumer that does not special-case it |
 | D-6 | `verify_flags` is `UInt32` with bit *k* = check `[V(k+1)]` | The plan named the array but not the bit assignment; the renderer filters on it, so it needs a fixed mapping |
 | D-7 | JSON report items carry an explicit `code` (`V3.hanging_node`) and a deterministic ordering | Tests assert on verifier JSON (plan Appendix B.8); without a stable code and order those assertions would be brittle |
-| D-8 | **`[V13]` is a FAIL gate at `on_surface_area_frac = 1.0`** (§4), as §5 has always stated P3; the code emits WARN | Plan §6.2 item 3: the contract gated P3 as absolute while the verifier exited zero on a mesh that failed it. The severity is normative from rev 1.3; the code follows at plan M-1.0 |
-| D-9 | **Severity counts and the exit status are computed over every finding, not over the stored items** (§4.3); as built the cap changes the exit status | Plan MG-01; the mechanism (`push` before the cap, `summary` from stored items) is recorded so the fix is not a `cap ≥ 1` band-aid |
-| D-10 | **The octree-hull relaxation of `[V3]`'s box test ends at `StageIndex` 8** (§4.4); as built it applies at 11 | Plan MG-03; `check_delivered` is not an independent box test until this lands |
-| D-11 | **Contract validation by metadata-selected strength** (§4.2); as built only structural validation exists and absent arrays degrade every semantic check to SKIPPED | Plan MG-08; a self-declared final document is not an external geometry-only file |
+| D-8 | **`[V13]` is a FAIL gate at `on_surface_area_frac = 1.0`** (§4), as §5 has always stated P3; the code emits WARN. *Closed at rev 1.3.1 (plan M-1.0): `V13.off_surface` is FAIL, one finding per offending face* | Plan §6.2 item 3: the contract gated P3 as absolute while the verifier exited zero on a mesh that failed it. The severity is normative from rev 1.3; the code follows at plan M-1.0 |
+| D-9 | **Severity counts and the exit status are computed over every finding, not over the stored items** (§4.3); as built the cap changes the exit status. *Closed at rev 1.3.1 (plan M-1.0)* | Plan MG-01; the mechanism (`push` before the cap, `summary` from stored items) is recorded so the fix is not a `cap ≥ 1` band-aid |
+| D-10 | **The octree-hull relaxation of `[V3]`'s box test ends at `StageIndex` 8** (§4.4); as built it applies at 11. *Closed at rev 1.3.1 (plan M-1.0)* | Plan MG-03; `check_delivered` is not an independent box test until this lands |
+| D-11 | **Contract validation by metadata-selected strength** (§4.2); as built only structural validation exists and absent arrays degrade every semantic check to SKIPPED. *Closed at rev 1.3.1 (plan M-1.0)* | Plan MG-08; a self-declared final document is not an external geometry-only file |
 | D-12 | **P3 is containment; the corner test is its necessary half** (§5); as built only the corner test exists | Plan MG-02; `[V13]`'s own landing note said corners were read to separate chord sag from the staircase, which is right, and never claimed sufficiency — the gate did |
 | D-13 | **`FaceTagOrientation` is one `±1` per flattened member** (§2.3, unchanged); as built `cut_to_doc` writes one `+1` per face cell, so the array is shorter than `FaceTagComponents` wherever a face carries several tags (two cubes in contact at `x = 0.4`: 280 members, 270 entries), and `FaceTagSideElems` takes the first tag's `(inside, outside)` | Plan MG-07; the writer accepts the inconsistent lengths, which §4.2's validator must refuse. Plan M-4.8 |
-| D-14 | **`partition_id` is written as `0` on every cell** by `cut_to_doc`, including non-tets where §2.1 requires `−1`; the flood fill of `[V8]` has never been produced by the mesher | Plan MG-13; plan M-6.1 builds it (v3 said "moves" it). `[V8]` on every acceptance case has passed a stored array of zeros against a recomputed fill of one partition, which is vacuous agreement on a single-partition domain |
+| D-14 | **`partition_id` is written as `0` on every cell** by `cut_to_doc`, including non-tets where §2.1 requires `−1`; the flood fill of `[V8]` has never been produced by the mesher. *The sentinel half is fixed at rev 1.3.1 (plan M-1.0): non-tets carry `−1`, which §4.2's validator requires; tets still carry `0` until M-6.1* | Plan MG-13; plan M-6.1 builds it (v3 said "moves" it). `[V8]` on every acceptance case has passed a stored array of zeros against a recomputed fill of one partition, which is vacuous agreement on a single-partition domain |
 | D-15 | **S10 has no snapshot index of its own**; the stage enumeration (`9` thin, `10` quality, `11` final) is unchanged and plan M-6.1's `s10_regions` is withdrawn | The review's erratum: one index cannot carry two names |
 | D-16 | **The four diagnostic cell/point arrays `plc_path`, `parent_cell`, `escalation_reason`, `node_origin` are non-contract** (§2.5) | Plan S-9, corrected at rev 1.3: `plc_path`, `parent_cell` and `escalation_reason` are emitted only under `RUSTMSPT_CUT_DIAG`; `node_origin` is written on every `s08` (S-9 said all four were gated). They are read by the plan's censuses, and no check depends on them |
-| D-17 | **Report determinism is a contract clause the verifier breaks on a large mesh** (§4.1 as-built note): `[V6]` items in hash order, one float metric summed in hash order | Measured on A-3, two identical runs; invisible to the fixture suite because no fixture exceeds the cap. Plan M-1.0 (e) |
-| D-18 | **The delivered file carries the contract's field tables verbatim and gives `[V6]`/`[V7]`/`[V9]` different answers from the contract file** (§1): `[V7]` false-FAILs and `[V9]` sees no curve on it | Measured on A-3, 2026-09-23. §1's "run on the delivered file unchanged" was written for `[V1]`–`[V4]`/`[V12]` and over-claimed the rest; `mesh-verify` should skip `[V7]`/`[V9]` with a named reason when `Counts` reports no tagged face (plan M-1.0), and `volume_only` may drop the face/curve tables (plan M-6.2) |
+| D-17 | **Report determinism is a contract clause the verifier breaks on a large mesh** (§4.1 as-built note): `[V6]` items in hash order, one float metric summed in hash order. *Closed at rev 1.3.1 (plan M-1.0)* | Measured on A-3, two identical runs; invisible to the fixture suite because no fixture exceeds the cap. Plan M-1.0 (e) |
+| D-18 | **The delivered file carries the contract's field tables verbatim and gives `[V6]`/`[V7]`/`[V9]` different answers from the contract file** (§1): `[V7]` false-FAILs and `[V9]` sees no curve on it | Measured on A-3, 2026-09-23. §1's "run on the delivered file unchanged" was written for `[V1]`–`[V4]`/`[V12]` and over-claimed the rest; `mesh-verify` should skip `[V7]`/`[V9]` with a named reason when `Counts` reports no tagged face (plan M-1.0), and `volume_only` may drop the face/curve tables (plan M-6.2). *Verifier half closed at rev 1.3.1 (plan M-1.0): on a primary volume with no face or curve cell `[V7]`/`[V9]` skip naming the `_contract.vtu`, and `[V6]`'s adjacency and undeclared rules report INFO `V6.deferred`* |
 | D-19 | **The `mesh` pipeline writes every snapshot in ascii** (`pipeline/meshgen.rs` passes `VtuEncoding::Ascii`), so the frozen appended-raw default never applies to its output and the `.ascii.vtu` suffix rule is inert there | The audit's own array census had to parse ascii, which is how it was found. Plan M-6.2 decides the delivered encoding; the writer and reader are unchanged |
 | D-20 | **Small departures from §2's rows:** `provenance` is padded with `0` on non-tet cells where the u8 sentinel is `255`; `ThinRegionSkip` has a sixth code (`6` undersampled) the table lacked; `ThinRegionSeparation` is in the normalized frame while `separation_t` is in output units; `verify_flags` sets a bit for WARN items as well as FAIL; `constraint_ref` is `−1` for corner and box-face constraints and for the alternating polyline pass | Each row is corrected to the as-built value where the value is defensible (the sixth code, WARN bits, the `−1` refs) and recorded as a defect where it is not (the `0` padding, the frame mismatch — plan M-6.1) |
+| D-22 | **Two tets sharing a face may lie on the same side of it; `[V3]` now fails that as `V3.folded_face`** (rev 1.3.1) | Found by §4.2's `side_elems` rule on the first pipeline output it read: A-3 at `0a8eb1c` carries **466** interior faces whose two owners' apexes are on one side (relative heights 0.1–2 edge lengths, so not rounding), every one between two junction (`provenance = 3`) pieces, and its tets sum to `1 + 3.4e-6` of the unit box — overlapping elements. `[V1]` judges one tet at a time and `[V3]`'s face counts are combinatorial, so neither could see it; A-2 carries none. Owner: plan M-2 (the junction path) |
+| D-23 | **`V5.self_intersecting_input` is INFO, not WARN** (rev 1.3.1) | It describes the *input*, and its consequence — the volume basis switches to the sampled estimate — is carried by the metrics. As WARN it contradicted `[V5]`'s status, which `check_v5` reset to PASS with an unconditional `if !fired` at the end; the reset is removed and the section status is whatever its findings say |
+| D-24 | **`V6.undeclared_boundary` is deferred on `StageIndex` 5–7 and on the delivered volume** (rev 1.3.1) | Interfaces are declared by the cut (S8), so the classified staircase of `s06`/`s07` has no tag by construction; the delivered tets-only volume carries none by definition (D-18). The count is still reported where it means something; the FAIL applies from S8 on the contract document |
+| D-25 | **The fixture generator restates `FaceTagSideElems` after every mutation**, and `bad_radial_patches` enters component 2 in the component table (rev 1.3.1) | §4.2's validator found stale side-element tables on six fixtures and an undeclared component on one — artifacts of the generator, not the defects the fixtures carry. `recompute_side_elems` rebuilds the table from the cells as emitted. Seven fixture files changed; `good_cube.vtu` is byte-identical |
 | D-21 | **`CurveRadialPatches` is `0` for every curve the pipeline writes** — the box clip drops S2's radial order and the column is emitted on `s08` only — so `[V9]`'s radial-patch clause is exercised by the `bad_radial_patches` fixture and by no pipeline output (§2.3) | A check whose producer never fills its input: the plan's own recorded anti-pattern. Carry `radial_patches` through `clip_arranged_to_box`'s polyline split and emit the column on `s02`/`s03` (plan M-4.0); until then the clause is stated as not exercised |
 
 Open items:

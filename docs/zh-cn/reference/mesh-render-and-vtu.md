@@ -30,7 +30,8 @@ VTU 读写器（`src/io/vtu.rs`）、场景抽取层（`src/meshgen/render_scene
 | `render_scene_cpu` | `src/geometry/scene_render.rs:116` | CPU 参考渲染器：每条像素射线做全命中 QBVH 遍历、前到后 alpha 合成、重合命中去重（Face 优先于 Volume）、带深度测试的线叠加、标记点。 |
 | `named_view` | `src/geometry/scene_render.rs:343` | 将 front/back/left/right/top/bottom/iso_ne/iso_nw/iso_se/iso_sw 解析为 (view_direction, up)。 |
 | `ViewSpec`/`FilterSpec` | `src/config/mesh_render.rs:7` | 视角（命名预设或自定义相机块）与按类型标记的过滤器的 YAML 形式。 |
-| `MeshRenderParams`/`MeshRenderConfig` | `src/config/mesh_render.rs:38` | `mesh_render:` YAML 配置块（输入 VTU、output_dir、views、图像、着色、不透明度、过滤器、叠加、相机）。 |
+| `MeshRenderParams`/`MeshRenderConfig` | `src/config/mesh_render.rs:45` | `mesh_render:` YAML 配置块（输入 VTU、output_dir、views、图像、着色、不透明度、过滤器、叠加、相机）。可选的 `frame_box: {min, max}` 让相机按该盒取景而非整个文档——聚焦视图（计划 M-1.9 的 `render_focus.py`）需要它；不设置时所有视图都按整个文档一致取景。 |
+| `FrameBox` | `src/config/mesh_render.rs:36` | `frame_box` 的取值：显式的相机取景盒。 |
 | `MeshRenderPipeline` | `src/pipeline/mesh_render.rs:20` | `mesh-render` 子命令：加载 VTU → 构建场景 → 每个视角输出一张 PNG（`<stem>_<view>.png`）。 |
 
 ## GPU 预览路径（GA-3c）

@@ -9,7 +9,7 @@
       <DataArray type="Int64" Name="FaceTagOffsets" NumberOfTuples="1" format="ascii">1</DataArray>
       <DataArray type="Int32" Name="FaceTagComponents" NumberOfTuples="1" format="ascii">1</DataArray>
       <DataArray type="UInt8" Name="FaceTagKind" NumberOfTuples="1" format="ascii">0</DataArray>
-      <DataArray type="Int32" Name="FaceTagSideElems" NumberOfComponents="2" NumberOfTuples="2" format="ascii">3 2 4 1</DataArray>
+      <DataArray type="Int32" Name="FaceTagSideElems" NumberOfComponents="2" NumberOfTuples="2" format="ascii">4 3 5 2</DataArray>
       <DataArray type="Int32" Name="ComponentX" NumberOfTuples="1" format="ascii">1</DataArray>
       <DataArray type="UInt32" Name="ComponentY" NumberOfTuples="1" format="ascii">1</DataArray>
       <DataArray type="UInt8" Name="ComponentKind" NumberOfTuples="1" format="ascii">0</DataArray>

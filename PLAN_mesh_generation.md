@@ -1,4 +1,4 @@
-# PLAN v3 (rev 3.2) — mesh generation (`mesh` pipeline)
+# PLAN v3 (rev 3.4) — mesh generation (`mesh` pipeline)
 
 **Status: plan of record from 2026-09-01, and the only plan document.** **Committed once, on the
 owner's instruction of 2026-09-24, and to be destroyed when every subtask in §11 is done** (M-8.3):
@@ -31,6 +31,37 @@ is empty), so every measurement in §2 stands at both commits. Two owner decisio
 three sub-decisions open; nothing else in this revision waits on the owner. **Rev 3.2
 (2026-09-24)** adds §12.1, M-6.7 and S-52 only.
 
+**Revision 3.3, 2026-09-25 — the owner's requirements of that day**, now **R-E4**, **R-E5**,
+**R-E6** and **R-B3** in §4. (1) Resolution is stated as a **background lattice** and a **maximum
+refinement level** below it (the reference tool's `*NUM_ELEMENT` and SAMR level), and either may be
+given or derived from the geometry: both given, one given and the other derived, or both derived.
+(2) The background's hexahedron-to-tetrahedron split shows the **X pattern** — on every axis plane
+the diagonals of each 2×2 block of faces meet at its centre — instead of one diagonal direction
+everywhere. (3) The two policies derived resolution needs and the geometry cannot supply — how a
+thin region is handled, material and gap separately, and whether the far field is capped — are
+**user options**, the recommended answers their defaults, every option implemented and tested.
+(4) Thin regions are tested **tilted** to the lattice, **irregular** (curved, with an irregular
+outline) and **non-uniform** in thickness, for material and for gaps: every thin fixture today is
+an axis-aligned box of uniform thickness. They become **M-1.8** (the ladder, given), **M-4.6**
+(rewritten: the ladder derived, with the options), **M-1.7** (the X-pattern lattice) and **M-4.9**
+(the thin family, fixtures A-17..A-20), and owner decisions **D-9** and **D-10** (§12) were taken
+the same day — the reference tool's own 5-tet parity checkerboard, and user options. Checking
+the first requirement against the reference dataset found that §2.3's "matched resolution" was not
+matched (§2.3's correction note, §6.2 item 18): `run_reference.py` reads the reference log's face
+diagonal as its cell edge and the first of several per-section levels, and this mesher's
+power-of-two ladder moves the result again — the third case ran at 1.41× the reference's
+background and one refinement level where the reference used two. S-53 and S-54 record the two
+spec gaps the requirements expose. **Appendix D** holds the two scripts behind every new number.
+
+**Revision 3.4, 2026-09-26 — implementation starts, and it is looked at.** The owner's instruction
+on starting M-1: every change is checked **visually as well as by the verifier**, with the
+analysis concentrated where the geometry is hard — **intersection curves, sharp edges and
+corners**, thin regions and lattice transitions. That is **R9** (§3) and its tool **M-1.9**, a
+focus-region render harness that finds those places from the *input* and renders each one
+zoomed and in cross-section, before and after, on a fixed camera. M-1.9 lands with M-1.1, before
+the first subtask that changes a mesh (M-1.8), so every later change has a "before" to be set
+against.
+
 **Rules of this document.**
 
 - **R-N1** applies to every line: the external reference project is cited by role only.
@@ -53,6 +84,9 @@ three sub-decisions open; nothing else in this revision waits on the owner. **Re
 - **Owner decisions D-6 and D-7 are open** (§12); they gate the *definition* of P3/P4, not any
   subtask's start. **D-8 is directed** (2026-09-24): a sub-`t_sheet` gap is delivered as a
   cohesive layer on both walls (§12.1, M-6.7), with D-8a..D-8c open inside it.
+- **Owner decisions D-9 and D-10 were taken on 2026-09-25** (§12): D-9 the 5-tet parity
+  checkerboard (M-1.7); D-10 user options for both of derived resolution's policies, the
+  recommended answers as defaults, every option built and tested (M-4.6).
 
 ---
 
@@ -81,10 +115,11 @@ the displacement is the violation.
 ### 1.2 What "done" means — the acceptance gate, stated once
 
 The module is complete when, on every case of the acceptance suite — record §17.4's A-1..A-9
-including the never-built A-3-ranked, A-4b, A-5 and A-9, plus the six this plan adds (A-10 forging
+including the never-built A-3-ranked, A-4b, A-5 and A-9, plus the ones this plan adds (A-10 forging
 contact, A-11 open sheet crossing the box, A-12 non-cubic domain, A-13 defective input, A-14 mixed
-single file, A-15 borrowed closure; M-4.0, M-4.4, M-4.7) — **and** on the three reference cases at
-matched resolution, the **exported** mesh (S11,
+single file, A-15 borrowed closure, A-16 fully merged component, and rev 3.3's thin family A-17..A-20
+— tilted, irregular, non-uniform; M-4.0, M-4.4, M-4.7, M-4.9) — **and** on the three reference cases
+at matched resolution (M-1.8), the **exported** mesh (S11,
 not a debug snapshot) satisfies all of:
 
 0. **The mesh is one continuous conforming complex (R7):** `[V3]` reports 0 hanging nodes, 0
@@ -310,6 +345,35 @@ every cell §7.2/§7.4 took; `tets/cell` is over the whole lattice.
   cases' counts down, and it changes the input, not the cut. Nothing in this plan tunes the mesher
   toward a chording count.
 
+> **Correction (rev 3.3, 2026-09-25): the resolution in this table is not the reference's.**
+> `run_reference.py` sets `h_max` to the log's `Base Mesh Element size` and halves it once per the
+> first `SAMR levels:` line. Read against the reference tool's own inputs (`*RVE_CORNERS`,
+> `*NUM_ELEMENT`, each section's `*SAMR_LEVEL`), neither is what the reference used. (i) The logged
+> size is the background cell's **face diagonal**, `√2 ×` its edge, on all three cases to the
+> printed digit (37.4351 = √2·450/17; 0.0235702 = √2·0.4/24; 0.0868504 = √2·1.35107/22). (ii) The
+> third case's first `SAMR levels:` line reads `0` while eight of its nine sections are at level 2
+> (the script's own comment, that raising 0 to 1 "biases the comparison against this mesher", is
+> backwards there). (iii) This mesher's octree rounds both bounds down onto a power-of-two ladder
+> anchored at the longest axis (S-54), which cannot express a 17-, 24-, 30-, 22- or 45-cell
+> background at all. What the rows above actually ran at (`reference_resolution.py`, Appendix D.2):
+>
+> | case | reference background, levels | realised here | background edge vs reference | finest edge vs reference |
+> |---|---|---|---|---|
+> | TestCaseIntersect1 | 17³ cells of 26.4706, level 2 | 16³, 2 levels | 1.0625× | 1.0625× |
+> | TestCaseIntersect2 | 24×24×30 of 0.0166667, level 2 | 26×26×32, 2 levels | 0.9375× | 0.9375× |
+> | TestCaseIntersect3 | 22×45×45 of 0.0614125, level 2 on eight sections, 0 on one | 16×32×32, 1 level | **1.4062×** | **2.8125×** |
+>
+> So the ratio column compares meshes of different resolution: in uniform regions the realised
+> lattice has 0.83× and 1.21× the matched cell count on the first two cases (the edge ratio cubed),
+> and the third case's mesh is one refinement level and 1.41× background coarser than the
+> reference's. The on-surface and displacement columns are properties of this mesher's own mesh
+> and stand; the element ratios, A-10's reading and §2.5's P2 verdict do not, until **M-1.8**
+> re-runs the three cases at the reference's own background and per-section levels — which needs
+> arbitrary background counts and per-input levels, i.e. the owner's resolution requirement
+> (R-E4). The rows above are kept as measured and labelled; they are not a baseline. Record §2.0's
+> 0.40×/0.47×/0.41×, the correction this plan inherited as P2's standing number, used the same
+> mapping.
+
 ### 2.4 Where the remaining defects are, charged to the arm that made them
 
 `RUSTMSPT_PLC_PASS=1 RUSTMSPT_CUT_DIAG=1 RUSTMSPT_PLC_DIAG=1`, the `[PLC]` census lines and the
@@ -357,7 +421,7 @@ Three statements this table makes, each the premise of a phase:
 | property | verdict | evidence |
 |---|---|---|
 | **P1** any input | **untested beyond the fixtures** | nine synthetic cases and three reference cases run; A-3-ranked, A-4b, A-5, A-9 were never built; the real datasets under `workspace/data` have never been fed to the mesher; the thin fixtures do not exercise the thin path (§2.2) |
-| **P2** minimum elements | **provisional** | 0.40×–0.47× the reference at matched resolution on the shipped path (record §2.0); on the gated path the same three cases read **1.13× / 0.89× / 0.67×** at 98.6–99.4 % on-surface (§2.3), and the difference is the input's own tessellation carried exactly. Not a result until P3 and P4 hold |
+| **P2** minimum elements | **provisional** | 0.40×–0.47× the reference at matched resolution on the shipped path (record §2.0); on the gated path the same three cases read **1.13× / 0.89× / 0.67×** at 98.6–99.4 % on-surface (§2.3), and the difference is the input's own tessellation carried exactly. **Neither comparison was at the reference's resolution** (§2.3's rev 3.3 correction); M-1.8 re-measures. Not a result until P3 and P4 hold |
 | **P3** exact surfaces | **fails on 8 of 9 on both paths; the gated path is within 0.02–2.8 % on eight and exact on a2** — and every one of these numbers is a *necessary* condition only: the corner test passes a boundary that runs through the body (MG-02) | §2.2; the residue is one arm (§2.4); M-1.5 re-measures under the containment criterion |
 | **P4** no bad elements | **fails on 9 of 9 on both paths** | `[V4]` WARN everywhere; 83–100 % of bad tets are two-dimensional in origin (§2.4) |
 | **deliverable** | **not delivered** | `mesh` exits non-zero after S8; no INP; no domain trim; `[V10]`/`[V11]` skipped (§2.1); the verifier that reports every row above is itself untrusted on three counts (MG-01, MG-03, MG-08 — §2.1) |
@@ -384,10 +448,10 @@ no number says or a number contradicts; every gap has an owner.
 
 | # | goal | requirement ids | built | verified today | gap | owner |
 |---|---|---|---|---|---|---|
-| G1 | **Automatic SAMR** — resolution from the geometry, no hanging nodes | R-E1, R-E2; record §10.6–§10.7, §4 ("SAMR replaced by balanced octree + conforming templates") | S4 sizing field from five criteria (curvature/chord, feature, local feature size, gap `t/gap_cells`, curve `curve_cells`), Lipschitz-graded; S5 strongly 2:1-balanced Morton octree, Freudenthal 6-tet + centroid-fan transitions, conforming by construction (SPEC geometry §2–§3, theorem T1); K1 refine-retry loop (≤ 3 passes); the reference-verbatim hanging-node SAMR fallback (assumption G-5) never needed | `[V3]` 0 hanging nodes on all nine cases, both paths (§2.2); the S5 lattice `[V3]`-clean at 1.65 M tets (record §0.1); S3↔S4 coupling converges (a7a: 2 iterations) | **Not automatic at the bounds.** `h_max`/`h_min` are user fractions and three of nine cases need per-case values to mesh their own geometry: A-4 `h_max` 0.0125 (at 0.05 the cube is 2.7 cells across and reads 25.5 % short; 0.025 → 5.79 %; 0.0125 → 0.82 %), A-6 0.04/0.004 to put the limb in its regime, A-8 `h_min` 0.006 (0.012 → 82.4 % on-surface; 0.006 → 92.0 %; 0.003 breaks `[V1]`/`[V3]`) — `run_acceptance.py` carries them. Refinement requests past the floor pass through (a8: 2,269 open after 3 passes, record §6.16) and are exhausted for sub-cell bodies (X-2). Gate G4-3's post-snap transition quality was never measured | M-4.6, M-5.1 |
+| G1 | **Automatic SAMR** — resolution from the geometry, no hanging nodes | R-E1, R-E2; record §10.6–§10.7, §4 ("SAMR replaced by balanced octree + conforming templates") | S4 sizing field from five criteria (curvature/chord, feature, local feature size, gap `t/gap_cells`, curve `curve_cells`), Lipschitz-graded; S5 strongly 2:1-balanced Morton octree, Freudenthal 6-tet + centroid-fan transitions, conforming by construction (SPEC geometry §2–§3, theorem T1); K1 refine-retry loop (≤ 3 passes); the reference-verbatim hanging-node SAMR fallback (assumption G-5) never needed | `[V3]` 0 hanging nodes on all nine cases, both paths (§2.2); the S5 lattice `[V3]`-clean at 1.65 M tets (record §0.1); S3↔S4 coupling converges (a7a: 2 iterations) | **Not automatic at the bounds.** `h_max`/`h_min` are user fractions and three of nine cases need per-case values to mesh their own geometry: A-4 `h_max` 0.0125 (at 0.05 the cube is 2.7 cells across and reads 25.5 % short; 0.025 → 5.79 %; 0.0125 → 0.82 %), A-6 0.04/0.004 to put the limb in its regime, A-8 `h_min` 0.006 (0.012 → 82.4 % on-surface; 0.006 → 92.0 %; 0.003 breaks `[V1]`/`[V3]`) — `run_acceptance.py` carries them. Refinement requests past the floor pass through (a8: 2,269 open after 3 passes, record §6.16) and are exhausted for sub-cell bodies (X-2). Gate G4-3's post-snap transition quality was never measured. **The owner's requirements of 2026-09-25 sharpen both halves**: the bounds are stated as a background and a maximum level, each given or derived (R-E4) — today the background can only be a power-of-two count along the longest axis (`sizing.rs:1417–1430`), so a reference-style 17-cell or 24×24×30 background cannot be stated at all (S-54); and the split shows the X pattern instead of one diagonal direction everywhere (R-E5) | M-1.7, M-1.8, M-4.6, M-5.1 |
 | G2 | **Automatic sharp-edge detection and preservation** | R-A5; record §10.2, §10.9 | S1 dihedral detection at `feature_angle_deg` (45°, algebraic `cos²`), rims and non-manifold edges always features, chained into polylines with corners at junctions and high-turn vertices; S7 corner and feature-curve capture; curves in the arrangement table; on the gated path the trace carries the curve through every traced cell | a2 (cube): 12 curves declared, **12 carried**, 100 % on-surface, `[V13]` PASS; a3: curves carried 40 → **96** of 114 (default → gated); a8: 170 → **393** of 972; `[V9]` radial-patch and fan-closure clauses 0 on all nine, both paths | Carriage is INFO, not a gate (S-8). Contracts §5's feature-curve conformance (≤ 10 % `h`) and sharp-corner error (≤ 1 % `h`) clauses are **not implemented** in `[V5]` (S-12). Record §10.2's "explicit point-list overrides accepted" is **not in the code** (S-13). a4's serrated lip at the cube edges (record §6.49) is reduced, not gone: 0.905 % off-surface on the gated path, 60 % of it near a curve | M-0.1 (S-12, S-13), M-0.2 (S-8), M-2 |
 | G3 | **Automatic intersection curves, mesh conforming to them** | R-A5, R-C3; record §10.3–§10.4, topic D | S2 corefinement with the exact intersection registry (C1/C2/C3 staged precision, DD escalation), coplanar overlay, coincidence policy, radial patch order per curve, S2b topology rebuild with GWN fallback; the curve table (`CurveComp`, `CurveRadialPatches`); `[V9]`'s three clauses | Every case and all three reference cases arrange (3, 2 and 9 surfaces) with no residual; `[V9]` radial mismatches **0** and open fans **0** everywhere; a3's intersection curve carried 96 of 114 on the gated path | 18 a3 nodes on the curve have only one body around them (§2.4 — the refused junction cells, M-2); carriage is not a gate; the ranked-priority form of a3 (R-A4: the lens to the winner) has never been run | M-2, M-0.2, M-4.4 |
-| G4 | **Forging: opposing surfaces that approach or touch** — a small gap kept as one thin element layer; full contact as a marked interface layer embedded in the mesh | R-B1, R-B2; record §10.5, §10.11, §10.13, topics E/F/G | S3 gap field (two-sided rays, closest-pair sweep, densification, five-check pairing battery, confidence 0.9), hysteresis regimes locked one way; S8b band templates `k = 0..3` with the FEM-aware five-outcome ladder; welded-sheet collapse with rim curves (G7-2); exact contact declared for both bodies (`declare_contact_components`, a6a: 713 faces); `FaceTagSideElems` (elem⁺, elem⁻) reserved on every tagged face for cohesive/split-node treatment | **The machinery detects and then declines.** a7a: S3 finds 19 regions (1 sheet, 18 skipped — 17 `Undersampled`, 1 `MidSurfaceInvalid`), the ladder answers `RefineLocally: 1`, S8b declines all **312** bands (`FaceShape`); a6a: ~800 `FaceShape` + 156 `UncutFaces`. **0 sheet faces and 0 band elements on all four thin fixtures, both paths**; a3, with no thin feature, carries 514 band elements at the lens tip. a6a's contact plane is declared for both bodies where the kernel meshes it and excused as chamfered contact on 163 faces (§2.2) | No case has ever produced a band layer or a collapsed sheet; the forging shape — curved opposing surfaces whose gap closes to contact, spanning volumetric → band → sheet → contact in one part — has no fixture; `collapse_sheets` defaults to `false` and is a correctness knob (R3); whether a contact is exported welded or as a crack is the **user's** choice per run (D-4, `output.interface`); a sub-`t_sheet` gap delivered as a cohesive layer on both walls (§12.1) has no fixture and no export | M-4.3, M-4.7, M-6.6, M-6.7 |
+| G4 | **Forging: opposing surfaces that approach or touch** — a small gap kept as one thin element layer; full contact as a marked interface layer embedded in the mesh | R-B1, R-B2; record §10.5, §10.11, §10.13, topics E/F/G | S3 gap field (two-sided rays, closest-pair sweep, densification, five-check pairing battery, confidence 0.9), hysteresis regimes locked one way; S8b band templates `k = 0..3` with the FEM-aware five-outcome ladder; welded-sheet collapse with rim curves (G7-2); exact contact declared for both bodies (`declare_contact_components`, a6a: 713 faces); `FaceTagSideElems` (elem⁺, elem⁻) reserved on every tagged face for cohesive/split-node treatment | **The machinery detects and then declines.** a7a: S3 finds 19 regions (1 sheet, 18 skipped — 17 `Undersampled`, 1 `MidSurfaceInvalid`), the ladder answers `RefineLocally: 1`, S8b declines all **312** bands (`FaceShape`); a6a: ~800 `FaceShape` + 156 `UncutFaces`. **0 sheet faces and 0 band elements on all four thin fixtures, both paths**; a3, with no thin feature, carries 514 band elements at the lens tip. a6a's contact plane is declared for both bodies where the kernel meshes it and excused as chamfered contact on 163 faces (§2.2) | No case has ever produced a band layer or a collapsed sheet; the forging shape — curved opposing surfaces whose gap closes to contact, spanning volumetric → band → sheet → contact in one part — has no fixture; `collapse_sheets` defaults to `false` and is a correctness knob (R3); whether a contact is exported welded or as a crack is the **user's** choice per run (D-4, `output.interface`); a sub-`t_sheet` gap delivered as a cohesive layer on both walls (§12.1) has no fixture and no export; **every thin fixture is an axis-aligned box of uniform thickness** (`generate_acceptance_cases.py:96–104`) — S3's unit tests measure an oblique and a curved gap (`tests/meshgen_gapfield_tests.rs:248`, `:287`), but nothing tilted, curved or tapered has ever been carried through S8b to a mesh, so a thin path that worked only on lattice-aligned slabs would pass the whole suite (R-B3, owner 2026-09-25) | M-4.3, M-4.7, M-4.9, M-6.6, M-6.7 |
 | G5 | **Everything else in the original register** | | | | | |
 | G5a | multi-ID semantics `{X, Y}` | R-A1–R-A4 | `resolve()`, region keys, `N_ID`, priority tables (SPEC geometry §9) | `[V6]` PASS on 8 of 9 (a3 FAIL, M-2); same-priority overlap keys on a3/a4 | **every input in every case has priority 0**, so R-A4 (higher replaces lower) is untested — A-3-ranked and A-4b were never built | M-4.4 |
 | G5b | open thin sheets, sheet–sheet intersections | R-C1–R-C3 | sheet role, welded sheet cuts, rims (G6-5, G7-2), `[V7]`/`[V8]` clauses | **nothing** — every acceptance case is closed solids (`[G2-4] … 0 sheet` on all), so the sheet path has never run on an acceptance case | no open-sheet fixture exists | M-4.4 (A-11) |
@@ -401,7 +465,8 @@ Two observations across the table. **The mechanisms exist and the fixtures do no
 built feature and a working feature came to be confused. M-4.4 and M-4.7 exist to end that.
 And **automation stops at the bounds**: the sizing criteria are automatic, the bounds they work
 inside are not, and three fixtures needed a human to set them — G1 is not met until they are
-derived from the geometry (M-4.6).
+stated as the owner states them, a background and a maximum level (M-1.8), and derived from the
+geometry whenever the user leaves either one open (M-4.6).
 
 ---
 
@@ -493,6 +558,36 @@ correctness** — a frozen clause an audit shows to be insufficient is amended w
 row, not defended by the freeze, and "the implementation matches the frozen text" closes no
 finding that says the text is wrong.
 
+### R9 — Every change to the mesh is looked at where the geometry is hard (owner, 2026-09-26)
+
+Aggregates average away exactly the populations this project keeps finding: the limb's serration
+was seen by eye before any metric could name it, a pixel diff on a fixed camera caught in one pass
+what three verifier metrics missed (X-3, record §9837), and a user looking at a picture separated
+a3's chamfered cube edge from a1's benign chord error. So:
+
+1. **A subtask that changes what S5–S11 emit is accepted only with M-1.9's focus-region render
+   set, before and after, looked at and described in its report** — region by region, whether the
+   material boundary follows the curve or edge (an element edge lying along it), and any chamfer,
+   serration, notch, sliver, stray colour or gap seen. A subtask that should not change the mesh
+   shows the set unchanged (changed-pixel share 0). This overrides the **Multimodal: no** flag of
+   every mesh-changing subtask in §7 and §11.
+2. **The focus regions come from the input, never from the mesh** — a mesh declares only the
+   curves it kept (the record's 24 of 1,404 on a8), so regions read off the output hide what was
+   lost. They are: (a) **intersection curves** between components (`CurveKind = 2` in the s02
+   arranged snapshot: a3's cube–sphere curve, a6a/a6b's limb-root rim, a8's strut junctions, the
+   reference cases' particle contacts); (b) **sharp edges and corners** of each input
+   (`CurveKind = 0`: every cube edge and corner, the limb's edges, a8's strut creases); (c) **thin
+   regions** (S3's regions: a6's limb, a7's gaps, A-17..A-20); (d) **lattice transitions** (level
+   jumps in s05), for M-1.7 and M-1.8.
+3. **Each region is shown two ways**: a zoomed window a few elements wide around a sample point,
+   and a cross-section clip perpendicular to the curve through it, wireframe on, coloured by
+   `region_key`, interface faces off, the input curve overlaid — plus the case overview. Fixed
+   cameras and fixed sample points (deterministic, from arc length), so two runs compare pixel for
+   pixel.
+4. **Metrics and pictures must agree, and a disagreement is itself a finding.** A render that shows
+   a defect the verifier passes is a verifier gap (R8); a metric that moves with no visible change
+   in any focus region says which region set is missing.
+
 ## 4. Requirements register (carried forward, still normative)
 
 | ID | Requirement |
@@ -504,14 +599,18 @@ finding that says the text is wrong.
 | R-A5 | STL–STL intersections and per-surface sharp features represented explicitly and conformingly |
 | R-B1 | Near-contact: preserve the gap with one layer of thin volume elements while resolvable, else collapse to an embedded sheet |
 | R-B2 | The band/sheet decision is robust and locally adaptive, tied to the local size field and FEM usability |
+| R-B3 | **(owner, 2026-09-25)** Thin regions are tested **tilted** to the lattice (at generic angles, not only lattice-aligned), **irregular** (a curved mid-surface, an irregular non-convex outline) and **non-uniform** in thickness (tapered and rippled, crossing regime boundaries inside one body), for thin material and for thin gaps, through S8b to the delivered mesh — M-4.9, fixtures A-17..A-20 |
 | R-C1 | Open thin sheet: no volume elements inside it; surrounding volume conforms to it including its rim |
 | R-C2 | Sheet nodes get IDs consistent with volumetric-component logic |
 | R-C3 | Sheets may intersect sheets/closed surfaces; intersection curves explicit; curve nodes may carry multiple IDs |
 | R-D1 | Mesh only inside the prescribed domain box — **the box becomes an S8 constraint and S11 deletes whole outside cells (M-6.2, MG-13); not yet built** |
 | R-D2 | Open sheets crossing the box may partition it; disconnected regions identified and assigned IDs consistently |
-| R-E1 | Resolution automatic from geometry — subject to R2: only refinement the cut can represent |
+| R-E1 | Resolution automatic from geometry — subject to R2: only refinement the cut can represent; stated through R-E4's ladder (rev 3.3) |
 | R-E2 | Output is a conforming FEM mesh: no hanging nodes, no nonconforming interfaces, no duplicate coincident nodes, no invalid connectivity, no cracks |
 | R-E3 | Directly exportable to conventional FEM solvers, no downstream repair stage |
+| R-E4 | **(owner, 2026-09-25)** Resolution is stated as a **background lattice** (cells per axis, or a cell size) and a **maximum refinement level** below it. Each may be given or derived from the geometry — both given, the background given and the level derived, the level given and the background derived, or both derived. A given value is honoured exactly and never silently changed; a derived one is reported with the source that set it. An input may carry its own, shallower level (the reference tool's per-section level) — M-1.8, M-4.6 |
+| R-E5 | **(owner, 2026-09-25)** The background's hexahedron-to-tetrahedron split has no preferred direction: on every axis plane the face diagonals form the **X pattern** — the diagonals of each 2×2 block of faces meet at its centre — never one diagonal direction everywhere — M-1.7 |
+| R-E6 | **(owner, 2026-09-25)** The policies derived resolution needs and the geometry cannot supply are **user options**, every option implemented and tested, the recommended answer the default: `sizing.thin_material: resolve \| template` (default `resolve`), `sizing.thin_gap: template \| resolve` (default `template`), `sizing.far_field: capped \| uncapped` (default `capped`) — D-10, M-4.6 |
 | R-F1 | One general framework, more robust and extensible, GPU-accelerated |
 | R-T1 | VTU is the primary, fully specified output — subject to R4 |
 | R-T2 | A reference-grade verification system, also a standalone subcommand able to validate external VTUs |
@@ -533,7 +632,8 @@ reserved), Tet10/high-order, periodic BC pairing, MPI, out-of-core meshing.
 
 Each subtask carries a **Multimodal** flag: `yes` = must inspect visual inputs (renders, ParaView
 screenshots, cutaways); `no` = completable from text, docs, logs and source alone. Where `yes`, the
-subtask names the visual inputs.
+subtask names the visual inputs. **Since rev 3.4, R9 makes every subtask that changes the mesh
+`yes`, whatever its row says: M-1.9's focus-region set, before and after.**
 
 **Three standing instructions for every implementer, whatever the tier.** (1) Run the biggest case
 (a8, then the reference cases) before believing a result from the small ones — every conformity
@@ -624,6 +724,15 @@ and how, before writing it (record §6.49).
     per-face node substitution that cannot be right at a node used by other same-side tets
     (MG-14), and the GPU certificate G1 omits the input conversion term (MG-09). **M-6.2, M-6.6,
     M-7**, each rewritten.
+18. **§2.3's matched resolution was not matched** (found 2026-09-25 while specifying R-E4).
+    `run_reference.py` took the reference log's `Base Mesh Element size` — the background cell's
+    face diagonal, `√2 ×` its edge — for the edge, and the first `SAMR levels:` line where the
+    reference sets one level per section; the octree's longest-axis power-of-two ladder then moved
+    both again. Cases 1 and 2 ran at 1.0625× and 0.9375× the reference's cell edge, case 3 at
+    1.41× its background edge and 2.81× its finest. A measured row with a runnable source can
+    still measure the wrong thing when the source's *parameters* were never checked against the
+    thing compared — the fifth such row in the record (record §2.0 was the fourth, and it carried
+    this flaw forward). **M-1.8.**
 
 ### 6.3 Gaps in the specification freezes
 
@@ -685,6 +794,8 @@ contradicts. **M-0** closes them in one revision each, with §14/§15 records.
 | S-51 | reference docs | `docs/en-us/reference/meshgen.md`'s G6-6 post-cut row is stale against the test at `891badc` (the review's erratum, re-measured) | **M-8.1** |
 | S-52 | geometry §8.1, contracts §2.2/§2.3 | G7-2's collapse is per vertex pair and discards the two wall crossings it averaged; nothing in the contract records a sheet's thickness or the wall points, so no export can put a sub-`t_sheet` gap back on its walls (§12.1) | **M-6.7** specifies `SheetPairOffset` and `SheetThickness`; contracts rev 1.4 (**M-0.2**) freezes them |
 | S-35 | numerics §0 / §2 | Named constants outside §1.2's ladder (twenty-odd, several decision-bearing, two absolute); two float side decisions in S8 (the audit) | rev 1.3 §1.3, D-15, D-16; **M-3.3** names or retires each |
+| S-53 | geometry §2.3 | The stated reason the primary lattice is Freudenthal rather than the 5-tet scheme — the XOR-parity checkerboard's "bookkeeping does not survive contact with octree level transitions" — does not hold under §3's own machinery: a parity rule stated per face, at the face's own level, is a pure function of the face (Invariant C), so T1's proof carries over verbatim. Appendix D.1 finds zero unpaired faces and zero hanging nodes on seven strongly balanced configurations (edge-only, vertex-only and three-level included) for the uniform table, the parity-reflected table and the 5-tet checkerboard alike, and all three fail the unbalanced negative control (rev 3.3) | **M-1.7** — geometry rev 1.7 corrects the rationale together with the rule it changes |
+| S-54 | geometry §3.1 as-built (D-38) / `sizing.rs` | The octree root is one cube on the domain's longest axis (`sizing.rs:1417–1418`) and the background is that root halved until it is `≤ h_max` (`forest_level`, 1425–1430), so the only expressible backgrounds are power-of-two counts along the longest axis; `SIZING_MAX_LEVEL = 12` counts from that root, not from the background; `L = 0` (a uniform lattice) is rejected by `h_min < h_max` (rev 3.3) | **M-1.8** |
 
 **Status 2026-09-23.** Every S-row above marked "M-0.1 records" is recorded in the revised freezes
 (geometry rev 1.6, numerics rev 1.3, contracts rev 1.3); the rows that need code (S-2, S-8, S-11,
@@ -775,8 +886,10 @@ is acyclic (MG-12 found v3's was not: M-3.1 waited for M-4.1 while M-4 waited fo
 text) is done for what is built and reopens after M-2 and M-5. **M-1 lands first and now holds
 everything a later gate reads**: the verifier's own defects (M-1.0), the P3 criterion (M-1.5), the
 harness, byte-identity, budgets and the P2 baseline, and the identity rule for the one-ULP pairs
-(M-1.6, moved from M-4). M-2 is the only phase that changes what a cell becomes, and starts with J1
-made a hard error (M-2.0). M-3 deletes the flag once M-2 has made the gated path not-worse on every
+(M-1.6, moved from M-4) — and, rev 3.3, the two owner requirements that change what every later
+baseline is measured on: the resolution ladder (M-1.8) and the X-pattern lattice (M-1.7). M-1.7
+changes which tets the lattice hands S8 and nothing about how S8 cuts them; M-2 is the only phase
+that changes what a cut cell becomes, and starts with J1 made a hard error (M-2.0). M-3 deletes the flag once M-2 has made the gated path not-worse on every
 FAIL gate under the trusted verifier. M-4 and M-5 are independent of each other and run in parallel
 after M-3; M-4 opens with the component-identity fixes (M-4.0) the P1 campaign's new fixtures need.
 M-6 turns the snapshot into a deliverable, with the trim moved ahead of quality (M-6.2). M-7 waits
@@ -813,16 +926,26 @@ Two steps, because a freeze must not describe something unmeasured (R6).
   `mesh-verify` on the nine contract documents at `891badc` reports exactly the statuses §2.2
   records with `[V13]` moved from WARN to FAIL on eight cases, and every other movement charged to
   the verifier defect that hid it. *Tier T3 (geometry) / T2 (contracts). Multimodal: no.*
-- **M-0.2. Post-M-2/M-5 revision.** Geometry rev 1.7: §7.4's Steiner rule amended as M-2.1
-  measures it (S-2); §7.6 rewritten so the facet-split fan is the fallback and the whole-cell fan
-  does not exist; the input-quantisation rule from M-4.1 (S-11) in numerics §1.2. Contracts rev
-  1.4: `[V9]`'s curve-carriage clause becomes FAIL (S-8). *Tier T3. Multimodal: no.*
+- **M-0.2. Post-M-2/M-5 revision.** Geometry rev 1.8 (rev 1.7 is M-1.7's and M-1.8's, §8): §7.4's
+  Steiner rule amended as M-2.1 measures it (S-2); §7.6 rewritten so the facet-split fan is the
+  fallback and the whole-cell fan does not exist; the input-quantisation rule from M-4.1 (S-11) in
+  numerics §1.2. Contracts rev 1.4: `[V9]`'s curve-carriage clause becomes FAIL (S-8). *Tier T3.
+  Multimodal: no.*
 
 ### M-1 — Measure and hold
 
 Nothing below can be judged without a harness that runs both S8 paths on all twelve cases, keeps
 every report, and charges every defect to an arm. Today the runner discards the mesher's stdout,
 overwrites the previous path's reports, and does not time anything.
+
+**Order inside M-1 (rev 3.3; M-1.9 added rev 3.4).** M-1.0, M-1.5 and M-1.1 first — the trusted
+verifier, the P3 criterion, and a harness that reproduces §2.2–§2.4 at `0a8eb1c` — with M-1.9's
+focus renders landing beside M-1.1, so that the first mesh-changing subtask has a "before". Then M-1.8 and M-1.7, which
+change the resolution the reference cases run at and the lattice every case runs on, M-1.8 first
+so that each change is charged to its own row. Then M-1.2, M-1.3, M-1.4 and M-1.6, whose
+baselines would otherwise be taken at resolutions and on a lattice about to be replaced — M-1.6
+in particular, because which lattice diagonal planes an input plane can nearly coincide with is
+exactly what M-1.7 changes.
 
 - **M-1.0. Verifier trust.** Three defects of `mesh-verify` at `891badc`, each with its negative
   fixture first (R8), plus the code half of M-0.1. (a) **MG-01** — `VerifySection::push` sets the
@@ -862,6 +985,32 @@ overwrites the previous path's reports, and does not time anything.
   at stage 11; the §2.2 statuses re-measured under the trusted verifier, with every row that moved
   named — the spec change moves `[V13]` to FAIL on eight cases, and anything else that moves is a
   defect the old verifier hid. *Tier T2. Multimodal: no.*
+  **Status 2026-09-26 — landed, uncommitted.** (a)–(e) built, plus contracts D-18's verifier
+  half (on the delivered tets-only volume `[V7]`/`[V9]` skip and `[V6]`'s declaration rules
+  report `V6.deferred`) and the `partition_id` sentinel (D-14's `−1` on non-tets). Contracts
+  rev 1.3.1 records it (D-8..D-11, D-17 closed; D-22..D-25 new). 656 tests green; new tests pin
+  the cap (0/1/50), INFO-then-FAIL, push-order independence, the doubled and translated cube, the
+  pre-trim overhang and `delivered`, the three MG-08 injections and MG-07, and a fold. The
+  fixture generator now restates `FaceTagSideElems` after mutating (seven fixtures rewritten,
+  `good_cube.vtu` byte-identical). **Re-measured on both paths at the current tree**
+  (`data/output/m10/{default,gated}.json`; tets and on % reproduce §2.2 to the digit): `[V13]`
+  WARN → FAIL on eight cases as expected; `[V12]` FAIL on seven of nine per path from
+  `side_elems` and, on a3/a6a/a6b, D-13's `orientation_length`. **And one defect the old
+  verifier hid — MG-15, below.**
+
+  **MG-15 (2026-09-26): overlapping elements — two tets sharing a face on the same side of it.**
+  Found by §4.2's `side_elems` rule and now `[V3]`'s `V3.folded_face`. Default path: a3 466,
+  a4 1,080, a6a 1,208, a6b 2,062, a7a 1,440, a7b 1,156, a8 8,928 (a1, a2 zero); gated: a1 952,
+  a3 1,382, a4 616, a6a 132, a6b 36, a7a 158, a8 1,766 (a2, a7b zero). Charged to the arm with
+  `plc_path`: **every one** is inside a single parent cell between two fan tets — `plc_path 3`
+  (§7.6's pieces) on the default path, `plc_path 4` (the facet-split fan) on the gated path;
+  §7.4's own output (`plc_path 1`) carries none. Relative apex heights are 0.1–2 edge lengths
+  and a3's tets sum to `1 + 3.4e-6` of the box, so this is overlap, not rounding. Mechanism,
+  stated as a hypothesis to be measured first: a piece that is not star-shaped from its
+  centroid fans into inverted tets, and `orient_positively` (`cut.rs:978`) swaps two nodes and
+  emits them positive and overlapping. Seen in M-1.9's renders at a3's fold location as
+  overlapping sliver sheets. Owner: **M-2** — no fan may emit a tet the fan's precondition does
+  not support, and M-3 cannot read "not worse" on `[V3]` until both paths are at zero.
 - **M-1.1. The matrix harness.** `run_acceptance.py` gains: a path selector that exists only until
   M-3 deletes it (the env var is passed through, never defaulted), retention of the mesher log and
   the verify JSON per case per path under `data/output/acceptance/<path>/`, wall time per stage
@@ -931,6 +1080,221 @@ overwrites the previous path's reports, and does not time anything.
   to motion within the vertex's own facet plane. Not a knob. *Acceptance:* `[V2]` PASS on all twelve
   on the one path; `[V3]` and `[V13]` unchanged beyond `1e-5` relative; a2's element count unchanged
   (alignment preserved); every moved or merged point in the run report. *Tier T3. Multimodal: no.*
+- **M-1.7. The X-pattern lattice: the 5-tet parity checkerboard (R-E5, the owner's requirement of
+  2026-09-25; D-9, decided the same day; S-53).** Every plain leaf instantiates geometry §2.2's
+  table with the same `v0–v7` main diagonal (`lattice.rs:54–61`, applied with no reference to the
+  leaf's position at `lattice.rs:706–716`), and every unsplit face takes Rule D, minimum corner to
+  maximum corner (`case_plain`, `lattice.rs:409–433`). So every face diagonal of a plane family is
+  parallel and every body diagonal is `(1,1,1)`: on a uniform 6³ block, 252 face diagonals per
+  plane family all in one orientation and 216 body diagonals all in one direction (Appendix D.1).
+  The owner's requirement is the pattern the reference tool's background shows — on every axis
+  plane, the diagonals of each 2×2 block of faces meet at its centre — and D-9 chose the reference
+  tool's own construction for it. **Design:**
+  (a) *Plain leaves.* A leaf of side `s` with origin `(a, b, c)·s` in the doubled index space is
+  split into five tets: a central tet on the four corners whose own-level index sum is even, and
+  one corner tet at each of the other four corners. For `a + b + c` even the rows are Appendix
+  D.1's `FIVE` — central `(v0, v3, v5, v6)`, corners `(v1; v0, v3, v5)`, `(v2; v0, v6, v3)`,
+  `(v4; v0, v5, v6)`, `(v7; v3, v6, v5)`; for `a + b + c` odd the same rows relabelled
+  `v_i → v_(i ⊕ 1)` — each under the canonical orientation fix (§1.1). The central tet is regular,
+  edge `√2·s`, volume `s³/3`; each corner tet is a right-corner tet of volume `s³/6`; the five close
+  the cube exactly. A plain leaf has no body diagonal and no interior node.
+  (b) *Rule T5 replaces Rule D* in §3.3's case P, and therefore in case Q at level `L+1`: on an
+  unsplit axis-aligned face of side `s`, the diagonal joins the two corners whose own-level index
+  sum — normal coordinate included — is even. It is a pure function of the face's four corners and
+  its own side, exact in integers and independent of the calling cell and its winding (Invariant
+  C); no `NodeKey` order and no node index is consulted. A plain leaf's faces obey it by
+  construction (each face holds exactly two of the leaf's even-sum corners, diagonally opposite),
+  so T1's proof (§3.6) holds verbatim with Rule T5 in place of Rule D in its cases (i) and (ii).
+  Because the normal coordinate enters the parity, the X on one axis plane sits one cell over from
+  the X on the next parallel plane — the reference tool's own pattern.
+  (c) *What follows, machine-checked (Appendix D.1).* On a uniform block the face diagonals split
+  evenly between the two orientations of each plane family (126/126) and there is no body
+  diagonal. Plain leaves emit **five tets instead of six** (1,080 against 1,296 on the 6³ block,
+  −16.7 %), and interior vertex valence is 18 at even-sum points and 6 at odd-sum points (mean 12,
+  from 14). Quality: the plain-leaf row goes from `45.000° / 90.000° / AR 1.3938` to
+  `54.736° / 90.000° / 1.3660` (the corner tets; the central tet is regular). Coarse faces lie on
+  even planes at level `L+1`, so case Q's quadrant diagonals all run through the coarse face's
+  centre and every fan tet over a Q triangle is a Kuhn simplex: `35.264° / 125.264° / 1.6052` →
+  `45.000° / 90.000° / 1.3938`. The P and E fans are unchanged, so the lattice-wide worst becomes
+  `45.000°` minimum and `120.000°` maximum dihedral at `AR 1.5607` (the P-face fan). Conformity:
+  zero unpaired faces, zero hanging nodes and exact volume on seven strongly balanced
+  configurations — uniform, one refined cell, face-, edge- and vertex-only neighbours, a refined
+  centre, three levels — while the unbalanced negative control (a level-2 leaf touching level 0)
+  fails, as it must.
+  (d) *Scope in the code.* The plain-cell loop emits the checkerboard rows by the leaf's index-sum
+  parity instead of `FREUDENTHAL`; `case_plain` takes the face's side and applies Rule T5; the
+  pre-emission budget `6·N_Freudenthal + 48·N_fan` (§3.5, `LATTICE_MAX_TETS`) becomes
+  `5·N_plain + 48·N_fan`; `CellTemplate::Freudenthal` is renamed for what it now holds. No other
+  production code reads the lattice's diagonal: `verify.rs`'s `KUHN` table (`verify.rs:5049`)
+  builds a `[V13]` test fixture, and Rule SNK in `cut.rs`/`thin.rs` orders cut quads, a different
+  rule.
+  (e) *Spec.* Geometry rev 1.7: §2.2 gains the checkerboard table (both parities, positively
+  oriented, with volumes) as the plain-leaf template, the Freudenthal table kept as history; §2.3
+  Rule T5 with its rationale corrected (S-53); §3.3's cases P and Q; §3.4's Bound P1 becomes
+  `h³/48 ≤ V ≤ h³/3` (the central tet); §3.5's plain row (6 P faces, 5 tets, `h³/6 … h³/3`) and
+  its budget; §3.6's proof text; §3.7 re-measured with the plain row, the Q row and a lattice-wide
+  worst line; §13 the renamed tests; §14 two independent confirmations (R6) — Appendix D.1's
+  enumeration and the shipped `[V4]` on a real graded lattice agreeing to every printed digit, the
+  way rev 1.2's Q-row correction was confirmed; §15 the deviation row.
+  (f) *Tests.* `the_frozen_freudenthal_table_is_positive_and_tiles_the_cube` (`lattice.rs:972–983`)
+  becomes the checkerboard's: both parities positive, volumes `s³/3 + 4·s³/6`, exact tiling;
+  `rule_d_reproduces_the_frozen_face_table` and `rule_d_is_invariant_under_rotation_of_the_quad`
+  (`lattice.rs:985–1056`) become their Rule T5 equivalents, the invariance now under rotation
+  **and reversal** of the quad (two cells walk a shared face in opposite directions — the face
+  cache's lesson), plus a test that both parities' face traces obey Rule T5;
+  `a_uniform_lattice_is_all_freudenthal_and_tiles_the_domain_exactly` and
+  `a_graded_lattice_uses_fan_cells_and_stays_within_the_template_inventory`
+  (`tests/meshgen_lattice_tests.rs:203–264`) move to five tets per plain leaf and the
+  `[h³/48, h³/3]` volume range; `the_templates_match_the_corrected_quality_table` (281–314) moves
+  to `45.000°` / `1.5607`; `FAN_BASELINE_DEG` (`tests/meshgen_quality_gate_tests.rs:28`) moves to
+  `45.0` and the gate's plain-cell reference from `45.000°` to `54.736°`, both comments re-derived
+  from Rule T5; a uniform-block test asserts the edge-direction histogram is symmetric under the
+  three reflections and that no body diagonal exists. T1's randomized, edge-only and non-cubic
+  conformity tests pass **unedited** — they are the conformity proof.
+  (g) *The matrix, after M-1.8.* Every mesh changes, and not by a relabelling: the tets S7 snaps
+  into and S8 cuts change **shape** wherever the lattice is plain — a regular central tet of twice
+  the corner tets' volume, no body diagonal, one lattice tet in six fewer. So the nine cases and the
+  three reference cases are re-run on both S8 paths and recorded as new §2.2/§2.3 rows beside
+  M-1.8's, each moved number charged to this change, element counts included. The lattice's
+  diagonal facet planes change too: Rule D's lie on `x_i − x_j ∈ ℤ·s`, while the checkerboard
+  carries none of that family — its interior facets lie on `±x ± y ± z ∈ 2ℤ·s` (Appendix D.1,
+  enumerated on the uniform block) — which moves record §6.64's coincidence class (a3's cube edge
+  on the Rule-D plane `x − y = 0.5`): M-1.6 counts that population after this subtask, not before.
+  *Acceptance:* the X pattern on every axis plane of every case, shown by a front-view wireframe of
+  each case's box face — the view of the owner's screenshot of 2026-09-25 — beside the reference
+  tool's own `*_final.vtu` rendered the same way, plus a cutaway through a transition region;
+  `[V1]`/`[V3]` clean on the matrix, both paths; the pre-cut lattice's `[V4]` minimum dihedral
+  `45.000°` on a graded lattice and `54.736°` on a uniform one; T1's tests green unedited; R-P2
+  byte-identity on a1 and a8; no FAIL gate worse than the M-1.8 row; every row whose element count
+  or on-surface share moves by more than 2 % explained before landing (a reporting threshold, not
+  a gate), with the element-count change charged separately to the plain-leaf template; reference
+  docs, en-us and zh-cn, updated in the same change. The declined alternative — the
+  parity-reflected Freudenthal lattice (Rule X: six tets per leaf, mirrored by index parity) —
+  keeps its rows in Appendix D.1 for the record. *Tier T2 (the lattice) / T3 (geometry rev 1.7 and
+  its verification). Multimodal: yes — the box-face wireframes set against the reference tool's
+  own mesh, and the transition cutaways; the requirement is a visual one.*
+- **M-1.8. Resolution as a background and a maximum level — the ladder, given (R-E4, the owner's
+  requirement of 2026-09-25; S-54; §6.2 item 18).** Today the bounds are two fractions of the
+  domain diagonal, `sizing.h_max_frac` and `sizing.h_min_frac` (`src/config/meshgen.rs:106–122`),
+  and the octree realises them on a ladder anchored at the domain's **longest axis**: one root cube
+  of that side (`sizing.rs:1417–1418`), the background at the first halving `≤ h_max`
+  (`forest_level`, 1425–1430), the finest at the first halving `≤ h_min` (1419–1424), at most
+  `SIZING_MAX_LEVEL = 12` levels below the root. So the background is a power-of-two count along
+  the longest axis — 16 or 32, never 17, 24 or 45 — the number of levels is the by-product of two
+  roundings, and a uniform lattice is rejected (`h_min < h_max`). **The keys:**
+
+  ```yaml
+  meshgen:
+    sizing:
+      background: {cells: [24, 24, 30]}   # | {cells: 20} | {size: 0.0167} | {size_frac: 0.029} | auto (M-4.6)
+      max_level: 2                        # | 0 | 1 | ... | auto (M-4.6)
+    inputs:
+      - stl: particle.stl
+        max_level: 2                      # optional: this input's own sources refine at most this deep
+  ```
+
+  `auto` is the derived half and lands with M-4.6; until then it is a parse-time reject that says
+  derived resolution is not implemented yet, and a config that gives only one of the two keys is
+  rejected the same way.
+
+  (a) *The ladder.* Background cell edge `h_bg`; finest edge `h_min = h_bg / 2^L`. The octree root
+  becomes `h_bg · 2^m`, anchored at the domain's minimum corner, with `n_i = ⌈E_i / h_bg⌉` the
+  realised background counts over the extents `E_i` and `m = ⌈log₂ max_i n_i⌉`; the background is
+  octree level `m` (the `forest_level`) and the finest level `m + L`, both exact because only
+  powers of two scale `h_bg`. D-38's whole-subtree trimming at levels `≤ forest_level` then cuts
+  the root down to exactly `n_x × n_y × n_z` background cells — the mechanism a non-cubic domain
+  already relies on, so T1 and L1 hold by the argument that covers the trimmed boundary today. The
+  lattice overhangs the box only where an extent is not a multiple of `h_bg`, by less than one
+  background cell, as today. Counts and the outside test are taken with the weld quantum as
+  tolerance (`0.6 / 0.05` is 12, not 13). The drop predicate (`sizing.rs:1451–1457`) already
+  counts a cell that only touches a box face as outside (`min ≥ domain_max`), but on raw floats:
+  with the root on the longest axis it has never met an exact fit on a shorter one, and
+  `12 · size` one ulp below `domain_max` would keep a thirteenth layer. `SIZING_MAX_LEVEL` is restated as a cap on `L` plus the index-width condition
+  `m + L + 1 ≤ 31` (the doubled index space is `u32`); D-38's "levels below 2 are never split by
+  balance" is restated relative to the background level, or shown to hold when `m < 2`;
+  `SIZING_MAX_LEAVES` and `LATTICE_MAX_TETS` are unchanged and are checked **pre-flight** from the
+  ladder, with the predicted counts reported.
+  (b) *Background forms.* Cells are cubic — T1's quality table, the isotropic sizing field and
+  every `h`-relative threshold assume it; anisotropic backgrounds are out of scope. `cells: n` is
+  `n` cells along the longest axis. `cells: [nx, ny, nz]` sets `h_bg = max_i E_i / n_i` and is
+  accepted iff `⌈E_i / h_bg⌉ = n_i` on every axis — the one choice that honours every count exactly
+  whenever a cubic size can (all three reference backgrounds qualify, cubic to `3e-12`); otherwise
+  a parse-time reject names the consistent triples on either side and their `size`. `size` is in
+  model units, `size_frac` a fraction of the domain diagonal (the unit of today's fractions).
+  Nothing is re-interpreted silently: realised counts, `h_bg` and the overhang per axis are printed.
+  (c) *Level.* `L ≥ 0`, and `L = 0` — a uniform lattice, the reference's level 0 — is legal: the
+  `h_min < h_max` reject is replaced by the level cap. `L` is validated against the envelope rule
+  on the realised finest edge (`eps_frac < 0.5 · t_sheet_factor · h_min / diag`, today's `eps_cap`
+  at `src/config/meshgen.rs:357–364`) and against the cap. `inputs[].max_level ≤ L` caps the
+  refinement that input's own sources may request; a source owned by several inputs — an
+  intersection curve, a gap between two of them — takes the finest of its owners' levels. That is
+  what the reference's per-section level means, and TestCaseIntersect3 needs it (level 2 on eight
+  sections, 0 on the ninth). Per-input *backgrounds* are not in scope.
+  (d) *What the bounds feed.* Every consumer of `h_max`/`h_min` is enumerated from the code —
+  `clamp_h`; the curve target `h_max / curve_cells`; `lfs_floor = max(ε, gap_cells · h_min)`; the
+  S3↔S4 start `h⁽⁰⁾ = h_max` (S-33) and floor; K1's clamp; `eps_cap`; whatever else the survey
+  finds — and each reads `h_bg` or `h_bg / 2^L` under the new keys; the list goes into the
+  reference doc.
+  (e) *A given value is a cost cap, never a licence.* It is honoured exactly. Where it is below
+  what a feature needs, the mesh is still built at it, the report names the feature, and the gates
+  report the consequence — P1 as restated in §1.3: a named, reported condition, never a silent
+  degradation. R3 is not engaged: the ladder chooses between meshes of different resolution, every
+  stage still decides per cell inside it, and no mechanism is switched off.
+  (f) *The fractions.* `background`/`max_level` and `h_max_frac`/`h_min_frac` are mutually
+  exclusive, a parse-time reject naming both. With the new keys absent the pipeline is unchanged
+  to the byte; M-4.6 retires the fractions once it has migrated the acceptance configs.
+  (g) *Report.* One `[S4/RES]` line: each quantity given or derived, `h_bg` in model units and as a
+  fraction, realised counts and overhang, `L`, `h_min`, octree levels `m` and `m + L`, per-input
+  levels, predicted leaves and tets against their budgets. The same values are stamped in the
+  snapshot's FieldData, listed as non-contract until contracts rev 1.4 freezes them (§8).
+  (h) *The reference cases at their own resolution.* `run_reference.py` reads `*RVE_CORNERS`,
+  `*NUM_ELEMENT` and every section's `*SAMR_LEVEL` from the reference inputs and writes
+  `background: {cells: [...]}`, `max_level:` the largest section level and `inputs[].max_level:`
+  per section, in place of `h_max = Base Mesh Element size` and the first `SAMR levels:` line.
+  §2.3 is re-measured on both paths and recorded beside the old rows, and A-10 and §2.5's P2
+  verdict are re-read from the new ones.
+  *Acceptance:* the nine cases unchanged to the byte with the new keys absent; for each case, the
+  keys stating today's realised ladder (`h_bg = E_max / 2^forest_level`, `L = max_level −
+  forest_level`) build the identical octree, and any mesh difference is charged to a named consumer
+  in (d); the three reference cases realise the reference's background counts exactly and its
+  per-section finest edges (`reference_resolution.py`, Appendix D.2, prints both); on a
+  `[0,1]×[0,1]×[0,0.6]` box `cells: [20, 20, 12]` leaves no overhang, `[V1]`/`[V3]` clean and the
+  tet volume equal to the box's, while `cells: [20, 20, 10]` is rejected naming `[20, 20, 12]` and
+  `[17, 17, 10]`; a 17³ background at `L = 2` and a uniform `L = 0` lattice mesh with `[V3]` clean;
+  one negative config fixture per reject (both forms given, an inconsistent triple, the level cap,
+  the envelope rule, an input level above the global one); reference docs, en-us and zh-cn,
+  updated in the same change. *Tier T2. Multimodal: yes (R9) — M-1.9's set on the nine cases,
+  unchanged with the keys absent; on the reference cases, the particle-contact curves before and
+  after the ladder moves.*
+- **M-1.9. The focus-region render harness (R9, the owner's instruction of 2026-09-26).**
+  `data/fixtures/meshgen/acceptance/render_focus.py`, run on a case's output directory: reads the
+  s02 arranged snapshot's curve cells (`CurveKind` 0 sharp, 2 intersection; box curves skipped),
+  S3's thin regions from s03, and level jumps from s05; picks sample points deterministically —
+  every point where three or more curves meet (corners, triple points), then points at fixed
+  arc-length fractions, capped per class so a8's 1,404 curves give a bounded set; writes one
+  `mesh-render` config per view (a `bbox` window of a few local `h` around the point, and a
+  `clip_plane` through it with the curve tangent as its normal, `wireframe: true`, `color_by:
+  region_key`, `show_faces: false`, curve cells on, 2048 px, orthographic, the camera fixed by the
+  point and the tangent); renders on the CPU path (the transparency reference); assembles one
+  labelled contact sheet per case and a manifest (view name → point, tangent, curve id, kind); and
+  with `--before DIR` writes per-view changed-pixel shares and a diff image. The acceptance runner
+  calls it after each case.
+  *Acceptance:* sheets for all nine cases at the current mesher, taken as the "before" of every
+  later subtask; the harness finds the defects already known to be there — a6a's limb-edge
+  serration, a3's chamfer where the sphere crosses the cube — or it is showing the wrong places
+  (R8 applied to a picture); two runs give byte-identical PNGs; a view count per case printed and
+  bounded. *Tier T2. Multimodal: yes — the sheets themselves, and the two known defects.*
+  **Status 2026-09-26 — first half landed, uncommitted.** `render_focus.py` reads s02's curves,
+  samples per (kind, component set) plus corners ranked by how many bodies meet there plus up to
+  two located FAIL findings per code from the case's own verify JSON, and renders surf+/surf-/cut
+  views through `mesh-render`'s new `frame_box` (the filter is twice the frame so the centroid
+  filter's sawtooth border stays out of the picture — the first version showed it and it read as
+  serration). a3: 17 samples, 51 views, 37 s. What it shows on a3's default path: spikes along
+  every sharp cube edge and a jagged, rounded corner profile in cross-section; a staircase where
+  the sphere's intersection curve crosses the cube face; overlapping slivers at the MG-15 fold.
+  Still to land: thin regions (needs `s03`, i.e. `snapshots: all`), lattice transitions from
+  `s05` (before M-1.7), a colour legend per region key, the runner calling it, and the
+  byte-identity check.
 
 ### M-2 — Kernel completeness: the surface is a union of element faces everywhere
 
@@ -1127,16 +1491,84 @@ cell's boundary without being a trace point of that face, where no Steiner point
   mesh exhibits, the element ratio and on-surface share are re-measured and recorded beside §2.3;
   `[V1]`–`[V3]` PASS; feature curves of the decimated input are the original's within the tolerance.
   *Tier T2. Multimodal: no.*
-- **M-4.6. Automatic resolution bounds (G1).** Derive `h_max` and `h_min` from the geometry when
-  the user does not set them: `h_max` from the smallest body's extent and the local feature size so
-  that every body is at least four cells across (the same floor `gap_cells` already asserts for
-  gaps, record §6.10), `h_min` from the smallest detected feature size the cut can represent, both
-  reported in the log. Re-measure `curve_cells` under the one path — it was set when the fan could
-  not represent curves and R2 says refinement toward what the cut cannot represent is pure cost;
-  now the cut can.
-  *Acceptance:* the nine cases run with **no per-case sizing overrides** and reproduce their
-  §2.2 gated rows within the equal-fidelity budget (A-4, A-6, A-8 no longer need hand-set values);
-  the user's explicit values still win when given. *Tier T3. Multimodal: no.*
+- **M-4.6. Resolution derived from the geometry — the three `auto` combinations and their options
+  (G1, R-E1, R-E4, R-E6; rewritten rev 3.3).** M-1.8 states the ladder; this subtask derives
+  whichever half the user leaves as `auto`, makes `background: auto, max_level: auto` the default,
+  and builds every value of D-10's options (e), the recommended answers as defaults. It follows M-3
+  (R-E1: refinement only toward what the one path can represent) and M-4.3 (the thin regimes must
+  fire before a policy about them can be measured), and M-4.9's fixtures are its thin test bed.
+  (a) *The requested field.* The unclamped graded field `h*(x) = min_s (h_s + β·|x − s|)` — G4-1's
+  formula without the clamp — over the **admitted** requests, each input's own level (M-1.8)
+  applied to its sources first. Curvature/chord, feature and corner requests are intrinsic to the
+  geometry already. The curve request is `h_max / curve_cells` (`sizing.rs:699–770`) — defined by
+  the background it would help choose — so it is redefined intrinsically, or removed, by
+  re-measuring `curve_cells` under the one path: it was set when the fan could not represent
+  curves, and R2 makes refinement toward what the cut cannot represent pure cost. Gap and LFS
+  requests are admitted per the thin options in (e). K1's requests and the band ladder's `RefineLocally` are
+  admitted only where M-2.5 measures that they still bind with the fan gone — X-2 closed
+  refinement toward the sub-cell body on the old kernel. v3's rule "every body at least four cells
+  across" becomes a **local** request at that body, never a global bound (A-4's cube read 25.5 %
+  short at 2.7 cells on the fan path); whether it is still needed once M-2's kernel cuts small
+  bodies exactly is measured, not assumed.
+  (b) *The finest need.* `h_need = min_x h*(x)`, floored at the smallest finest edge the envelope
+  rule admits; a request below the floor is clamped and named in the report.
+  (c) *The combinations.* **Background given, level derived:** `L = max(0, ⌈log₂(h_bg / h_need)⌉)`, lowered
+  only when the pre-flight count exceeds a budget, and then with every request left clamped named.
+  **Level given, background derived:** `h_bg` is the largest domain-fitting edge
+  `≤ min(h_need · 2^L, h_far)`, so the finest level lands at or below the finest need; if the
+  pre-flight count exceeds a budget the run is refused, naming the level that would fit — a given
+  level is never silently coarsened. **Both derived:** `h_bg` is the largest domain-fitting edge
+  `≤ h_far`, and `L` as in the first. **Both given:** M-1.8, with this subtask's analysis printed
+  beside it in report-only form — what the geometry asked for, and which requests the given ladder
+  clamps.
+  (d) *Domain fit.* The largest edge `≤` the target at which every extent is an integer multiple
+  (within the weld quantum); if none exists at or above half the target, the longest axis fits
+  exactly and the others overhang by less than one cell, reported.
+  (e) *The options (R-E6; owner decision D-10).* Three keys, each a policy the geometry cannot
+  supply, every value built and tested, the recommended answer the default.
+  `sizing.thin_material: resolve | template` (default `resolve`): under `resolve` a thin material
+  region (`intra(X)`) drives the derived level until it is out of the sheet regime, after which
+  the band ladder decides band or volumetric (its `RefineLocally` may deepen the level further),
+  and it never collapses; under `template` it does not drive the level, takes the regime the
+  shape-driven field gives it, and below `t_sheet` collapses to a sheet whose thickness is kept
+  (`SheetThickness`, M-6.7) — a shell-like idealisation the user chose, its departure from the
+  two walls reported by `[V7]` as D-6 recommends. `sizing.thin_gap: template | resolve` (default
+  `template`): under `template` a thin gap (`inter`) does not drive the level below the
+  shape-driven field and the band/sheet path takes it, exported per `output.interface`; under
+  `resolve` it drives the level until it is `gap_cells` across, bounded by the envelope floor and
+  the budget, and whatever those stop is handed to the thin path and named.
+  `sizing.far_field: capped | uncapped` (default `capped`) sets `h_far`, the far-field edge — the
+  one scale no geometric source supplies, because nothing in the far field needs resolving:
+  `capped` is `0.05` of the domain diagonal (a named constant, today's `h_max_frac` default),
+  `uncapped` is unbounded, so the domain fit alone bounds the background and the graded field
+  shapes the far field. A given level cannot be deepened, so under a given level the thin options
+  only report — a region the option would resolve and the level cannot is named with the level
+  that would (M-1.8 (e)); `far_field` beside a given background is a parse-time reject, the
+  background being the cap. R3 is answered by D-10 as D-4 answered it for the interface export:
+  each value is a modelling or cost policy, and the one that departs from the input on purpose —
+  `thin_material: template` — says so in the report and in `[V7]`, never silently.
+  (f) *Preconditions restated.* Every rule written against `h_max`, `h_min` or absolute octree
+  levels is restated against the ladder, each with a test: D-38's balance clause when the
+  background is one or two levels deep; the S3↔S4 start `h⁽⁰⁾ = h_max`; S3's bootstrap and speck
+  scale; `lfs_floor`; K1's clamp.
+  *Acceptance:* the nine cases and the three reference cases run with both keys `auto` and **no
+  per-case overrides**, each reproducing or beating its M-1 row at equal fidelity (M-1.4's rule) —
+  A-4, A-6 and A-8 no longer carry hand-set values, except a fixture whose purpose is a regime
+  the default options do not choose, which sets the option or keeps explicit keys and says why;
+  on a3 and a8 each
+  one-sided combination satisfies (c)'s relation (the derived level is the smallest that meets the
+  need under the given background; the derived background puts the finest level at or below the
+  need); a budget refusal and an envelope clamp each have a negative fixture; every run's
+  `[S4/RES]` line names the request that set `L`; every option value is exercised on the fixtures
+  it concerns, with its documented outcome — `thin_material` on A-6a, A-6b and A-17m..A-20m
+  (`resolve`: no material sheet face and the body's volume within contracts §5; `template`: a
+  sheet exactly where the analytic thickness is below `t_sheet`, within one cell, with
+  `SheetThickness` populated), `thin_gap` on A-7a, A-7b, A-10 and A-17g..A-20g (`template`: band
+  and sheet where the gap field says; `resolve`: volumetric down to the floor, the element cost
+  reported), `far_field` on a1 and A-12 (the far-field edge at `h_far`, or at the domain fit);
+  one negative fixture per reject (an unknown value, `far_field` beside a given background); the
+  fractions are removed from the acceptance configs and then from the parser (a reject naming
+  `background`/`max_level`); A-16 closed with its numbers. *Tier T3. Multimodal: no.*
 - **M-4.7. The forging fixture and the G4 gate.** **A-10**: two flattened solids (ellipsoids, or
   two `a1` spheres pushed through the repository's own `forge` pipeline) whose opposing faces close
   from a wide gap to contact at the centre, so one part spans **volumetric → band → sheet →
@@ -1160,6 +1592,55 @@ cell's boundary without being a trace point of that face, where no Steiner point
   solids in contact carry opposite orientations; input order and node rotation leave the geometric
   side unchanged; M-1.0's validator rejects the pre-fix document. Prerequisite of M-4.7 and M-6.6.
   *Tier T2. Multimodal: no.*
+- **M-4.9. The thin family: tilted, irregular and non-uniform thin regions (R-B3, the owner's
+  requirement of 2026-09-25).** Every thin fixture today is an axis-aligned box of uniform
+  thickness — A-6a/A-6b's limbs and A-7a/A-7b's plates (`generate_acceptance_cases.py:96–104`) — so
+  the thin path has only been asked about slabs whose walls are lattice planes, whose outline is a
+  rectangle and whose thickness is one number. S3's unit tests measure an oblique and a curved gap
+  (`tests/meshgen_gapfield_tests.rs:248`, `:287`), but neither reaches S8b; a thin path that worked
+  only on lattice-aligned slabs would pass the whole suite. **Fixtures** — each a committed
+  analytic generator that writes the STL and its config from one parameter set, thicknesses stated
+  as multiples of the fixture's own finest edge so no regime drifts out of its window when a
+  default moves (the "`t_sheet` and `t_layer` are fractions of the converged `h`" lesson, which
+  cost A-6a/A-7a two re-tunings); variant `m` is one thin plate of material in a matrix box, or
+  rooted on a block, and variant `g` is two thick bodies whose facing walls are the same plate's
+  two faces, the gap between them empty:
+  - **A-17m / A-17g — tilted.** A flat plate of uniform thickness at five orientations: lattice-
+    aligned (the control); 17° about one axis; 45° about one axis; a generic rotation (17°, 29°,
+    41°); and walls lying on a lattice facet plane (`x + y + z = const`, the checkerboard's own
+    facets after M-1.7 — the coincidence case, like a2's walls on axis planes). One thickness in
+    each regime window — sheet, band, volumetric — at the fixture's given ladder.
+  - **A-18m / A-18g — irregular.** A curved mid-surface (a saddle `z = κ(x² − y²)`, and a
+    cylindrical patch) with a non-convex outline — a lobed polygon with a re-entrant corner and a
+    hole — at uniform thickness.
+  - **A-19m / A-19g — non-uniform.** Thickness varying inside one body: a linear taper from above
+    `t_layer` to below `t_sheet` with a sinusoidal ripple on it, so each regime boundary is crossed
+    more than once; the gap variant is a wedge between two flat blocks closing to contact along one
+    edge, and a rippled gap. A-10 is the curved, forged version of the gap wedge; A-19g is its
+    flat control, measurable against a closed-form thickness map.
+  - **A-20m / A-20g — all three at once.** A tilted, curved, irregular, tapered flake — the shape
+    real powder and WAAM porosity produce — as material, and as a gap of the same shape between
+    two bodies.
+
+  **Runs.** Each fixture at its given ladder, so the regime windows are known, and under derived
+  resolution with each value of the `thin_material` / `thin_gap` option it concerns (R-E6, M-4.6).
+  The generators may land as early as M-1 and join the matrix as soon as they exist — a fixture
+  that fails is still a measurement — but the gate below is read after M-4.3 makes the thin path
+  fire at all.
+  *Acceptance:* `[V1]`/`[V3]` clean on every run, across every rim and every regime transition;
+  **orientation invariance** — A-17's four tilted orientations agree with the lattice-aligned
+  control on each regime's area share, the plate's volume error and elements per unit area,
+  within the tolerance one cell of rim explains, stated in the expected-outcome record, and the
+  facet-plane orientation meshes without a coincidence defect (`[V2]` clean — record §6.64's class
+  on purpose); A-19's regime boundaries land where the analytic thickness crosses `t_sheet` and
+  `t_layer`, within one cell (A-10's rule); A-18's rims follow the re-entrant corner and the hole
+  with the rim curve declared, and S3's mid-surface validates or its refusal is named; `[V7]`
+  non-vacuous wherever a band or a sheet is expected, `[V13]`/`[V5]` against the analytic
+  geometry; each option value shows its documented outcome (M-4.6's acceptance). A failure is
+  charged to its arm and owned by M-4.3 (S8b), S3 or M-4.6 — this subtask builds and measures, it
+  does not tune. *Tier T2 (generators and runs) / T3 (diagnosing an orientation dependence).
+  Multimodal: yes — a cross-section through each plate and gap, and A-17's five orientations side
+  by side; an orientation dependence is visible before it is countable.*
 
 ### M-5 — Quality (P4)
 
@@ -1171,7 +1652,9 @@ interior.
 
 - **M-5.1. The quality census.** `[V4]` charged to `plc_path` and to "inherits a needle face" vs
   "true sliver" on all twelve cases (M-1.1's census extended), plus the never-measured G4-3 post-snap
-  transition-cell quality (SPEC geometry §3.7 predicts `35.264°`/`AR 1.6052` pre-snap). D-5 (yes):
+  transition-cell quality (SPEC geometry §3.7 predicts `35.264°`/`AR 1.6052` pre-snap under Rule D,
+  and `45.000°`/`AR 1.5607` lattice-wide once M-1.7's checkerboard lands, its plain leaves at
+  `54.736°`/`AR 1.3660` — Appendix D.1). D-5 (yes):
   the reference-verbatim SAMR fallback stays in the design, and this measurement is what finally
   gives it a trigger — G4-3 fails only if the transition cells, not the cut, are what breaks `[V4]`.
   *Acceptance:* the table; the top three producers of below-10° tets named per case; G4-3's verdict
@@ -1379,9 +1862,10 @@ certificate). Multimodal: no.*
 | geometry rev 1.6 | M-0.1 — **landed 2026-09-23** | §7.7 as-built; §15 rows for the fan (to be removed), `cut.rs:14–23`, FaceTriCache (status and the counted-not-raised mismatch, MG-06), X-per-file (MG-04), borrowed closure (MG-05); §15 G6-0 item closed; `[R1]` text in §0; the plan cross-reference map |
 | numerics rev 1.3 | M-0.1 — **landed 2026-09-23** | §1.5 the four roles (identity key, ordering key, coordinate, error metric — MG-11); the as-built named constants; G1's conversion gap recorded (MG-09, D-13); §11 open items updated (the junction CDT exists) |
 | contracts rev 1.3 | M-0.1 — **landed 2026-09-23** | `[V13]` FAIL at 1.0 as normative with the as-built WARN recorded; the containment criterion stated as P3's definition with the corner test as its necessary half (MG-02); the item-cap rule, the stage-11 domain rule and contract validation as normative with the as-built defects recorded (MG-01, MG-03, MG-08); `[V6]` undeclared-boundary clause + mixed-priority exemption; the code-only tolerances frozen; `[V5]` interface-node set restated; diagnostic arrays listed as non-contract; per-member orientation and `partition_id` as-built deviations (MG-07, MG-13); the fixture table brought to fourteen files |
-| geometry rev 1.7 | M-0.2, after M-2 and M-5.2 | §7.4 Steiner-on-facet rule (M-2.1 as measured); the trace-point rule for facet vertices on a face (M-2.2); §7.6 = the facet-split fan, whole-cell fan absent; face-cache quality refinement (M-5.2) as a J1-legal pure function |
+| geometry rev 1.7 | M-1.7 and M-1.8 (rev 3.3), after M-1.1 and before M-1.2 | §2.2 gains the 5-tet parity checkerboard (both parities, volumes `h³/3` and `h³/6`) as the plain-leaf template (D-9), the Freudenthal table kept as history; §2.3 Rule T5 with the corrected rationale (S-53); §3.3 cases P and Q; §3.4 Bound P1's upper bound `h³/3`; §3.5's plain row and the budget `5·N_plain + 48·N_fan`; §3.6's proof text; §3.7 re-measured (plain row `54.736° / 90.000° / 1.3660`, Q row `45.000° / 90.000° / 1.3938`, lattice-wide worst `45.000° / 120.000° / 1.5607`); §3.1's as-built root and forest rule for arbitrary background counts and per-input levels (S-54). M-4.6's derivation (§3.1, §11's `h⁽⁰⁾`) joins the first geometry revision after it lands |
+| geometry rev 1.8 (was 1.7 before rev 3.3) | M-0.2, after M-2 and M-5.2 | §7.4 Steiner-on-facet rule (M-2.1 as measured); the trace-point rule for facet vertices on a face (M-2.2); §7.6 = the facet-split fan, whole-cell fan absent; face-cache quality refinement (M-5.2) as a J1-legal pure function |
 | numerics rev 1.4 | M-0.2, after M-1.6 and before GK-1 | the identity rule M-1.6 measured (never "quantise to `q`" as v3 wrote it — MG-11); certificate G1 with the conversion term, or the superset-only rule (MG-09) |
-| contracts rev 1.4 | M-0.2 | `[V9]` curve carriage FAIL; `[V10]`/`[V11]` as implemented; the split-export map (M-6.6) |
+| contracts rev 1.4 | M-0.2 | `[V9]` curve carriage FAIL; `[V10]`/`[V11]` as implemented; the split-export map (M-6.6); the resolution stamp M-1.8 writes as non-contract FieldData until then (given/derived per quantity, `h_bg`, realised counts, `L`, per-input levels) |
 
 Every revision: bump the rev line, add the §15 row, add the §14 record with its script, and pin
 the value with a test (R6).
@@ -1389,8 +1873,11 @@ the value with a test (R6).
 ## 9. What is kept, and the invariants
 
 Kept, and not to be re-derived: the exact-predicate foundation; S0–S2; S3; the frozen tables (§4
-SNK, §4.3, §5.2, §6, §8.2); the §7.2–§7.4 kernel and the J1 face cache; `[V1]`–`[V13]` and the
-corrupted-fixture manifest; the measurement record.
+SNK, §4.3, §5.2, §6, §8.2; §2.2's six-tet table gives way to the 5-tet parity checkerboard for
+plain leaves once M-1.7 lands, D-9); the §7.2–§7.4 kernel and the J1 face cache;
+`[V1]`–`[V13]` and the corrupted-fixture manifest; the measurement record. **T1** survives M-1.7
+unchanged in its proof: the rule it is proved with becomes Rule T5, which is a pure function of
+the face at the face's own level exactly as Rule D was.
 
 Invariants that survive any rewrite: **J1** (a shared face is triangulated identically by both
 owners, from the face alone); **J2** (the generic face triangulator reproduces §5.2 where §5.2
@@ -1417,25 +1904,30 @@ without the stated fallback.
 | A-8 | S9 smoothing can hold P3 exactly | **[U]** a node on the interface that moves off it is a P3 violation | free nodes only; constraint arrays made truthful for cut nodes first |
 | A-9 | The domain trim is a no-op for cubic domains and required for others | **[P]** every current domain is `[0,1]³` | M-4.4's non-cubic fixture |
 | A-17 | The octree-plus-templates lattice passes G4-3 post-snap, so the reference-verbatim SAMR fallback (kept, D-5) is never triggered | **[P]** `[V3]` clean everywhere says conformity holds; quality post-snap has never been measured | M-5.1 measures; the fallback is the named alternative if it fails |
-| A-10 | The reference-dataset ratio holds on the one path at matched resolution | **refuted today**: 1.13× / 0.89× / 0.67× on the gated path against 0.42× / 0.45× / 0.39× shipped (§2.3); the count is bounded below by the input's tessellation under P3 | M-1.4 compares at equal fidelity; owner decision D-1 |
+| A-10 | The reference-dataset ratio holds on the one path at matched resolution | **refuted today**: 1.13× / 0.89× / 0.67× on the gated path against 0.42× / 0.45× / 0.39× shipped (§2.3); the count is bounded below by the input's tessellation under P3 — **and neither column was at the reference's resolution** (§2.3's rev 3.3 correction: 1.0625× / 0.9375× / 1.41× the reference's background edge, one level short on the third case) | M-1.8 re-runs at the reference's own background and per-section levels; M-1.4 compares at equal fidelity; owner decision D-1 |
 | A-11 | The real datasets are within P1 | **[U]** never run; may be non-manifold or self-intersecting | S0 repair levels; the S6 winding-number path; M-4.4 records what fails and why |
 | A-12 | The thin fixtures can be made to exercise S8b at their committed settings | **[P]** the generator's regime arithmetic says they should | M-4.3; if the volumetric result is correct at those thicknesses, the fixtures move, not the mesher |
 | A-13 | The `[V9]` regression the gated path shows (§2.2) is the wedge M-2 closes, not a new class | **[V]** every failing node is interned, on the curve, in junction cells (record §6.66) | M-2.1's acceptance names `[V9]` explicitly |
 | A-14 | One forging fixture can span all four regimes so the G4 gate is a single mesh | **[P]** the gap field is continuous and the regimes are thresholds on it; a gap closing to contact crosses both | M-4.7; if the ladder still declines (as on a7a), the refusal is charged to `FaceShape`/`UncutFaces` and M-4.3 owns it first |
 | A-15 | Decimation within a stated chord tolerance keeps P3 exact against the conditioned input and moves the original by no more than the tolerance | **[V]** by construction if feature curves and corners are pinned; **[P]** that the reference tool's own chord error is the right tolerance to compare at | M-4.5 reports both distances |
-| A-16 | `h_max`/`h_min` derivable from the geometry reproduce the hand-set per-case values | **[P]** A-4's 0.0125 and A-8's 0.006 were found by sweeps that the local-feature-size criterion should predict | M-4.6; the user's explicit values always win |
+| A-16 | `h_max`/`h_min` derivable from the geometry reproduce the hand-set per-case values | **[P]** A-4's 0.0125 and A-8's 0.006 were found by sweeps that the local-feature-size criterion should predict | M-4.6, written as a derived background and level (R-E4) under D-10's options at their defaults (R-E6); a given value is always honoured exactly (M-1.8) |
 | A-18 | The corner test's PASS on a2/a7b and the near-100 % rows in §2.2 survive M-1.5's containment criterion | **[P]** the sphere's facets are the input's own and the cut caps lie in them; a2's faces lie on lattice planes | M-1.5 re-measures every row; the old values are not a baseline |
 | A-19 | The three verifier defects (MG-01/03/08) hid no §2.2 FAIL | **[U]** MG-01 hides a FAIL only when a section's items exceed the cap; MG-03 fires only on points outside the box (every current domain is `[0,1]³` and the lattice overhangs it, so it *is* active on every case) | M-1.0 re-runs the matrix under the trusted verifier and names every row that moves |
 | A-20 | Cutting the box planes as S8 constraints produces no sliver the §4.4 ladder cannot clear | **[P]** a box plane is axis-aligned; G2-5 already caps the surface on it | M-6.2's A-12 sweep; the alternative (trim, then re-run S9/S10) is specified beside it |
 | A-21 | One copy per connected sector of a node's cut star is the complete rule for `split` | **[P]** it reduces to two copies on a plain contact and gives the right count at a T-junction by construction; crack fronts and multi-material junctions need the stated rules | M-6.6's four fixtures |
 | A-22 | The G1 certificate can be repaired by an interval term on the converted coordinates without losing its `3.3e-6` uncertain rate | **[P]** the conversion error is `u₃₂·\|x\|` per coordinate and enters the permanent linearly; **[U]** the measured rate was taken without it | numerics rev 1.4 re-measures before GK-1 |
+| A-23 | The checkerboard lattice moves no FAIL gate for the worse on the matrix | **[P]** its plain tets are better shaped than today's (54.736° against 45°, Appendix D.1) and its fans are no worse anywhere and better over Q faces; **[U]** the plain tets S7 snaps into and S8 cuts change shape — a regular central tet of twice the corner tets' volume, no body diagonal — and what S7/S8 do with them is unmeasured | M-1.7 re-runs the matrix after M-1.8 and charges every moved row, element counts included, to the change before it lands |
+| A-24 | An `h_bg · 2^m` root trimmed by D-38's whole-subtree rule gives arbitrary background counts with T1 intact | **[P]** it is the mechanism the non-cubic domain already uses (`a_non_cubic_domain_stays_conforming`), applied to more subtrees | M-1.8's 17³, `[20, 20, 12]` and `L = 0` fixtures, `[V3]` on each |
+| A-25 | Per-input levels reproduce the reference's per-section refinement closely enough for R2's matched comparison | **[P]** a per-input cap on the sizing requests is what a per-section level means; **[U]** the grading still refines near a level-0 input that sits beside a level-2 one, where the reference's per-section refinement does not | M-1.8 prints the realised finest edge per section beside the reference's; the residual difference is reported with the ratio, never folded into it |
+| A-26 | The thin path's regime decisions do not depend on how a thin region sits against the lattice | **[U]** every thin fixture is lattice-aligned (M-4.9); S3's rays and sweep are direction-free by construction, but S8b finds band cells with the doubly-cut face rule on lattice cells (geometry §8.3), and a tilted wall crosses them obliquely | M-4.9's A-17 measures it against a lattice-aligned control; a dependence is S8b's to remove (M-4.3), never the fixture's to avoid |
+| A-27 | Each value of the thin and far-field options (R-E6) produces a valid mesh on every case, not only the defaults | **[P]** `thin_gap: resolve` and `far_field: uncapped` only move the ladder the rest of the pipeline already handles; **[U]** `thin_material: template` collapses material, which no acceptance case has ever done, so it rests on M-4.3 and M-6.7 | M-4.6 runs every value on the fixtures it concerns; a value that cannot yet run is refused at parse time with the subtask that will enable it named, never left to fail inside the mesher |
 
 ## 11. Subtask rollup
 
 | ID | Subtask | Tier | Assignable models | Multimodal |
 |---|---|---|---|---|
 | M-0.1 | As-built spec revision (geometry 1.6, numerics 1.3, contracts 1.3) — text half landed 2026-09-23 | T3 / T2 | Kimi K3 Max / GPT 5.6 Sol Xhigh; GLM 5.2 Max / GPT 5.6 Sol Medium | no |
-| M-0.2 | Post-M-2/M-5 revision (geometry 1.7, numerics 1.3, contracts 1.4) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no |
+| M-0.2 | Post-M-2/M-5 revision (geometry 1.8, numerics 1.4, contracts 1.4) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no |
 | M-1.0 | Verifier trust: MG-01 cap, MG-03 domain at stage 11, MG-08 contract validator, `[V13]` FAIL | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no |
 | M-1.1 | Matrix harness: both paths, logs kept, timing, census extended | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no |
 | M-1.2 | Byte-identity on the matrix | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no |
@@ -1443,6 +1935,9 @@ without the stated fallback.
 | M-1.4 | P2 baseline at equal fidelity | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no |
 | M-1.5 | The P3 criterion: containment in the effective surface's facets (MG-02) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no |
 | M-1.6 | Conditioning and identity: the one-ULP pairs under MG-11's constraints (was M-4.1) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no |
+| M-1.7 | The X-pattern lattice: the 5-tet parity checkerboard, Rule T5, geometry rev 1.7 (R-E5, D-9 decided, S-53) | T2 / T3 | GLM 5.2 Max / GPT 5.6 Sol Medium; Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — box-face wireframes beside the reference tool's own mesh, transition cutaways |
+| M-1.8 | Resolution as background × maximum level, given; per-input levels; the reference cases at their own resolution (R-E4, S-54, §6.2 item 18) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** (R9) — M-1.9's set, nine cases unchanged; reference-case contacts before/after |
+| M-1.9 | Focus-region render harness: intersection curves, sharp edges/corners, thin regions, transitions, from the input; before/after diffs (R9) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — the contact sheets, and the two known defects they must show |
 | M-2.0 | J1 fingerprint mismatch is a hard error; fingerprint = constraint entity ids (MG-06) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no |
 | M-2.1 | Facet recovery by Steiner points on the constraint — gate | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — cutaway renders at a3's cube edges and an a8 strut junction, before/after |
 | M-2.2 | Boundary consistency: facet vertices on the cell boundary are trace points | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no |
@@ -1458,9 +1953,10 @@ without the stated fallback.
 | M-4.3 | Thin fixtures exercise S8b; `[V7]` non-vacuous | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — limb and gap cross-sections |
 | M-4.4 | P1 campaign: A-3-ranked, A-4b, A-5, A-9, A-11 open sheet, A-12 non-cubic domain, A-13 defective input, real datasets, placement sweep | T2 (T1 runs) | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — one render per new fixture |
 | M-4.5 | Input decimation as S0 conditioning (D-1) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no |
-| M-4.6 | Automatic resolution bounds; `curve_cells` re-measured (G1) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no |
+| M-4.6 | Resolution derived: the three `auto` combinations; D-10's options `thin_material`, `thin_gap`, `far_field`, every value; `curve_cells` re-measured; the fractions retired (G1, R-E4, R-E6) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no |
 | M-4.7 | A-10 forging fixture and the G4 gate: band, sheet and marked contact in one mesh | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — cross-section through the contact centre |
 | M-4.8 | `FaceTagOrientation` per member; one geometric side per contact face (MG-07) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no |
+| M-4.9 | The thin family A-17..A-20: tilted, irregular and non-uniform thin plates and gaps, orientation invariance (R-B3) | T2 / T3 | GLM 5.2 Max / GPT 5.6 Sol Medium; Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — cross-sections of every fixture, A-17's five orientations side by side |
 | M-5.1 | Quality census by arm and dimension; G4-3 post-snap | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no |
 | M-5.2 | Quality face triangulation in the J1 cache — gate | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no |
 | M-5.3 | Near-edge trace points, constrained to exact surface points (MG-11) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no |
@@ -1477,12 +1973,13 @@ without the stated fallback.
 | M-8.2 | Chinese mirror | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no |
 | M-8.3 | This document's upkeep; the review file retired | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no |
 
-Multimodal capability is required only for M-2.1, M-2.5, M-4.3, M-4.4, M-4.7, M-6.4 and M-6.6;
-every other subtask is completable from text, documentation, logs and source. T3 subtasks (M-0,
-M-1.5, M-1.6, M-2.1, M-2.2, M-4.0a, M-4.3, M-4.6, M-4.7, M-5.2–M-5.4, M-6.2's box cut, M-6.6's
-sectoring, M-7's certificate) are the semantic critical path and should stay with as few distinct
-implementers as possible; M-1.0, M-4.4, M-4.5, M-6.x's export halves and M-8.x are parallelisable
-against the frozen specs.
+Multimodal capability is required only for M-1.7, M-2.1, M-2.5, M-4.3, M-4.4, M-4.7, M-4.9,
+M-6.4, M-6.6 and M-6.7; every other subtask is completable from text, documentation, logs and
+source. T3 subtasks (M-0, M-1.5, M-1.6, M-1.7's spec revision, M-2.1, M-2.2, M-4.0a, M-4.3, M-4.6,
+M-4.7, M-4.9's invariance diagnosis, M-5.2–M-5.4, M-6.2's box cut, M-6.6's sectoring, M-7's
+certificate) are the semantic critical path
+and should stay with as few distinct implementers as possible; M-1.0, M-1.8, M-4.4, M-4.5, M-6.x's
+export halves and M-8.x are parallelisable against the frozen specs.
 
 ## 12. Decisions the owner must make
 
@@ -1490,6 +1987,10 @@ Questions this plan cannot settle by measurement, each with the consequence of e
 D-1..D-5 were decided on 2026-09-01 and the plan above reflects them; D-6..D-8 were opened on
 2026-09-23 by the review's MG-10 (§1.3) and are **open**. They gate the *definition* three gates
 are read against, not any subtask's start; the recommended answer is what the plan is written to.
+D-9 and D-10 were opened on 2026-09-25 with the owner's requirements of that day (R-E4, R-E5)
+and answered the same day: D-9 — which lattice M-1.7 builds — the 5-tet parity checkerboard; D-10
+— what M-4.6's derived resolution chases — neither answer alone: both policies become user
+options, the recommended answers their defaults, every option built and tested (R-E6).
 
 | # | decision | if yes | if no | decided |
 |---|---|---|---|---|
@@ -1497,10 +1998,12 @@ are read against, not any subtask's start; the recommended answer is what the pl
 | D-2 | **Is the record committed?** The 10,490-line record was git-excluded and lived on one disk | it is committed as `RECORD_mesh_generation.md` | it is not committed | **no**, then **deleted** on the owner's instruction (2026-09-01); Appendix A carries every finding this plan cites, Appendix B every design it needs |
 | D-3 | **May the lattice be aligned with the input?** a2 meshes exactly and cheaply *because* its faces coincide with lattice planes; the same coincidence is what produces the one-ULP `[V2]` pairs on a3 and a8 | M-4.1 uses input quantisation only and keeps alignment; a2's count stands | M-4.1's lattice offset makes a2 an ordinary cut case (+elements, still exact) and removes the coincidence class everywhere | **yes** → M-4.1 rule (a) only |
 | D-4 | **Does "a marked interface layer, similar to a crack/interface layer embedded in the mesh" (G4) require split nodes?** The record's taxonomy makes a marked interface *welded* — C0, one node set, `(elem⁺, elem⁻)` per face so a solver inserts the cohesive or contact treatment — and reserves split-node meshing as out of scope for iteration 1 | M-6.6 exports the split at S11 (duplicated node sets along the tagged interface, INP only; the VTU stays welded) | the welded interface with side-element pairs is the deliverable | **neither — the user chooses per run**: `output.interface: welded \| split`, default `welded`, validated and documented → M-6.6; R7 exempts exactly the pairs `split` creates |
-| D-5 | **Is the reference-verbatim SAMR fallback (assumption G-5: 5-tet checkerboard + 7/12-child SAMR + hanging closure) still wanted?** It was retained for gate G4-3, which never failed, and has never been needed | it stays in the design and M-5.1 measures G4-3 at last, so the fallback has a trigger | it is struck from the record's design (M-0.1) and the octree-plus-templates lattice is the only lattice | **yes** → stays; M-5.1 measures G4-3 |
+| D-5 | **Is the reference-verbatim SAMR fallback (assumption G-5: 5-tet checkerboard + 7/12-child SAMR + hanging closure) still wanted?** It was retained for gate G4-3, which never failed, and has never been needed | it stays in the design and M-5.1 measures G4-3 at last, so the fallback has a trigger | it is struck from the record's design (M-0.1) and the octree-plus-templates lattice is the only lattice | **yes** → stays; M-5.1 measures G4-3. (Rev 3.3: D-9 makes the 5-tet checkerboard the primary lattice (M-1.7), which also lifts the fans' pre-snap worst from 35.264° to 45°; the fallback keeps only its 7/12-child refinement and hanging-node closure) |
 | D-6 | **Which surface does P3 hold against** — the original input, the effective surface (after S0 repair/decimation and S2's `ε`-merge), or the collapsed model (after S8b)? §1.3 | *recommended:* the **effective** surface for the gate; the original-vs-effective displacement reported per run (M-4.5 already says so for decimation; repair and `ε`-merge join it); the collapsed model's departure from the effective surface reported as its own `[V7]` metric, never folded into `[V13]` | P3 against the original: decimation (D-1) and `ε`-merging become P3 violations and M-4.5 is withdrawn | **open** (2026-09-23) |
 | D-7 | **Input-forced low quality** — a wedge whose material angle is below `[V4]`'s dihedral gate cannot meet the gate (§1.3). Per-element exception with report, a per-element gate from the local input angle, or a declared failure naming the wedge? | *recommended:* the exception — `[V4]` counts input-forced elements separately, each with the forcing angle, and PASSes the gate on the rest; a solver-facing report lists them | a declared failure: any input with a sharp material angle is unmeshable by definition, which contradicts P1 | **open** |
 | D-8 | **Welded-sheet semantics under P3** — is the collapsed sheet the accepted representation of a sub-`t_sheet` gap, must such a gap be kept two-sided (contact with `split`, D-4), or is it delivered as a **cohesive layer** whose two faces sit on the two original walls (§12.1)? | *directed (2026-09-24):* the cohesive layer — the collapse stays as the meshing device, S8b retains the wall points, `output.interface: cohesive` un-collapses them at export (M-6.7); P3 then holds on both walls against the effective surface (D-6) and "the bodies never weld" (B.9, A-7a) holds literally on `cohesive` and `split`, "never weld *silently*" on `welded` | collapsed-only or two-sided-only: either the gap's geometry or R-B1's sheet regime is given up | **directed** → M-6.7; sub-decisions D-8a..D-8c open (§12.1) |
+| D-9 | **Is R-E5's X pattern delivered by the parity-reflected Freudenthal lattice?** The alternative is the reference tool's own 5-tet parity checkerboard. Both show the X on every axis plane, both conform under §3's transition machinery on every balanced configuration Appendix D.1 builds, and both raise the transition fans' worst dihedral from 35.264° to 45° | *recommended:* **yes** — the smallest change that delivers the pattern: every tet congruent to today's, the same element count, the same plain-cell quality every S7/S8 measurement in §2 was taken on; one corner relabelling and one face rule in `lattice.rs` (M-1.7 as written) | the **5-tet checkerboard**: plain leaves emit five tets instead of six (1,080 against 1,296 on a uniform 6³ block), at a better plain-cell worst (54.736°, AR 1.3660); every plain-cell cut population changes shape (a regular central tet of twice the corner tets' volume, no body diagonal), so M-1.7 adds an equal-fidelity comparison before it lands; D-5's fallback keeps only its refinement and closure | **no — the 5-tet checkerboard** (owner, 2026-09-25) → M-1.7 |
+| D-10 | **What does derived resolution chase (M-4.6)?** (a) *Thin regions:* a region thinner than the shape-driven field resolves can be refined until it is volumetric, or handed to the band/sheet path at that field. (b) *The far field:* where no request binds, the background edge is the one scale the geometry cannot supply | *recommended:* (a) **by kind** — a thin *material* region (`intra(X)`) is refined at least until it leaves the sheet regime and never collapses under `auto`, because a collapsed limb puts its boundary on neither wall and D-8b (the material wedge) is not adopted; a thin *void* gap (`inter`) below the shape field's resolution goes to the band/sheet path, which D-8's cohesive export delivers on both walls. That is the cheapest representation `auto` can choose that stays exact under D-6 and D-8. (b) **today's far field**, `0.05` of the domain diagonal fitted to the domain, because every number in §2 was measured with it and a solver's far field should not change unasked; a user who wants another states the background | (a) *chase everything*: every thin region refined to `gap_cells` across down to the envelope floor — a forging contact drives the level to that floor and the thin path never fires under `auto`; or *template everything*: A-6's and A-8's thin material collapses under `auto`. (b) *pure P2*: the coarsest background the domain admits, the graded field alone shaping the far field (at `grading = 2` the requested edge grows by one unit per unit of distance) | **both, as user options** (owner, 2026-09-25): `sizing.thin_material: resolve \| template` (default `resolve`), `sizing.thin_gap: template \| resolve` (default `template`), `sizing.far_field: capped \| uncapped` (default `capped`); every value built and tested → M-4.6 (e), R-E6. If D-8b later adopts the material wedge, `thin_material: template` exports a collapsed limb on both walls as well |
 
 ### 12.1 Study — a cohesive layer for gaps below `t_sheet` (D-8, 2026-09-24)
 
@@ -1587,6 +2090,8 @@ delivered meaning at every export and stops being a knob (M-4.3).
 | §2.1 env-var census, 2026-09-23 | `grep -rhoE 'RUSTMSPT_[A-Z0-9_]+' src \| sort \| uniq -c` and the read site of each | the class table in §2.1 |
 | geometry §10 as-built (D-40..D-43) | `cargo test --offline --release --test meshgen_arrange_tests` (48 passed); `rustmspt mesh` with `data/fixtures/meshgen/acceptance/a2_cube.stl` listed twice at priority 0 under `coincidence: warn` (read the `[G2-4]` and `[S6/G5-1]` lines); the five patch-level probes ran in an uncommitted scratch crate against the library | the probes become fixtures A-15/A-16 (M-4.0) |
 | contracts §1/§2 as-built (D-18..D-21) | A-6a and A-3 `s08` runs from `run_acceptance.py`'s config template (`snapshots: all` / `key`), arrays read with an ascii regex parser; `mesh-verify` on A-3's delivered and contract files | — |
+| §2.3 correction, §6.2 item 18 (rev 3.3) | `python3 reference_resolution.py "$RUSTMSPT_REFERENCE_DATASET"` (Appendix D.2) | reads each reference case's `*RVE_CORNERS`, `*NUM_ELEMENT`, per-section `*SAMR_LEVEL` and log; prints the reference's background and levels beside the ladder `run_reference.py`'s mapping realises here; stdlib only |
+| M-1.7's lattice rows, S-53 (rev 3.3) | `python3 lattice_pattern.py` (Appendix D.1) | stdlib only, exact integer and rational arithmetic, ~2 s; reproduces geometry §3.7's frozen Rule-D rows to every printed digit as its own check, then Rule X and Rule T5; conformity on seven balanced configurations plus the negative control; the uniform-block direction and valence counts |
 | numerics §6/§7/§9 as-built (D-23..D-26) | `grep -rn 'meshgen\|gwn\|winding\|orient' src/gpu/`; `grep -rn gwn_margin_band src tests`; `grep -rn 'two_sum\|two_prod' src tests`; `cargo test --offline --release --lib meshgen::topo` (4 passed) | — |
 
 ---
@@ -1648,7 +2153,7 @@ record is deleted (D-2); this table resolves every such citation. A citation of 
 
 | cited as | content | lives now in |
 |---|---|---|
-| plan §2 (topic A, tooling-first) | the design review's conclusions: Freudenthal over the 5-tet checkerboard; verifier before mesher | A-§2.0/§2.2 rows; geometry §2.3's stated reason; contracts §6 |
+| plan §2 (topic A, tooling-first) | the design review's conclusions: Freudenthal over the 5-tet checkerboard — **reversed by D-9 on 2026-09-25** (its stated reason does not hold, S-53); verifier before mesher | A-§2.0/§2.2 rows; geometry §2.3's stated reason; contracts §6 |
 | plan §5.3–§5.5 | ID semantics: `N_ID`, partitions, worked examples | **B.1** |
 | plan §7.2 / §7.3 | the VTU schema sketch and the writer precedent | contracts spec §1–§2 (the sketch is superseded by the freeze); the hand-rolled writer precedent is `src/io/vtu.rs` |
 | plan §10.1 / §10.2 | S0 conditioning; S1 features | A-§10.1–§10.7 row; geometry §5.1 (on-cut vertices), numerics §2 rows S0/S1 |
@@ -1799,7 +2304,8 @@ silent single-component assignment, ever. Reference-compat mapping (B.1) for cro
   closed STL; three surfaces meeting along one line; four regions meeting in one cell; sheet–sheet–
   solid junction; sheet terminating inside the domain; sheet coincident with a domain face;
   long-skinny input triangles (AR ~10³); highly nonuniform triangle sizes; curved thin gap
-  (concentric spheres); oblique thin gap (angled plates); same-priority overlap without a material
+  (concentric spheres); oblique thin gap (angled plates) — the thin ones now
+  also end to end, through S8b, as A-17..A-20 (M-4.9); same-priority overlap without a material
   mapping (INP export must fail with the key list); scale invariance — one geometry at m/mm/µm must
   yield identical topology and labels.
 - **Reference cross-validation:** the three intersection cases and the yarn case under the compat
@@ -1816,9 +2322,11 @@ silent single-component assignment, ever. Reference-compat mapping (B.1) for cro
 ## B.9 The acceptance suite (record §17.4, extended) — for M-4.4, M-4.7, M-6.4
 
 Each case ships as a committed generator (analytic STL, so volume and area are exact), a config,
-and an expected-outcome record; the four thin/lattice cases and A-10 also ship a cross-section
-render. Configs: `h_max_frac = 0.05`, `h_min_frac = 0.012`, with the recorded per-case exceptions
-(A-4 0.0125, A-6 0.04/0.004, A-8 `h_min` 0.006) until M-4.6 removes the need for them.
+and an expected-outcome record; the four thin/lattice cases, A-10 and the thin family A-17..A-20
+also ship a cross-section render. Configs: `h_max_frac = 0.05`, `h_min_frac = 0.012`, with the recorded per-case exceptions
+(A-4 0.0125, A-6 0.04/0.004, A-8 `h_min` 0.006) until M-4.6 replaces them with a derived
+background and level (R-E4); a fixture that exists to exercise a regime the default options do
+not choose (R-E6) sets the option, or keeps explicit `background`/`max_level`, and says why.
 
 | # | case | geometry | validates |
 |---|---|---|---|
@@ -1838,6 +2346,10 @@ render. Configs: `h_max_frac = 0.05`, `h_min_frac = 0.012`, with the recorded pe
 | **A-14a / A-14b** | mixed single file *(new, MG-04)* | one STL holding two disjoint closed cubes; one STL holding a closed cube and a disjoint open quad | R-A2: two X from one file; solid + sheet in one file keeps the solid's volume; the source map file → shells → X |
 | **A-15** | borrowed closure *(new, MG-05)* | a five-face cube declared `solid` and an independent sheet exactly over the missing face | S2b: the solid stays defective (GWN path, WARN); the sheet's identity is its own; shared geometry changes neither record |
 | **A-16** | fully merged component *(new, D-42)* | two identical closed cubes at equal priority (`a2_cube.stl` listed twice) | S2b classifies both as solids; S6 gives the whole cube region key `{1, 2}` (R-A3). Today: one solid plus one sheet, and the second cube's material is lost |
+| **A-17m / A-17g** | tilted thin plate / gap *(new, R-B3)* | a flat plate of uniform thickness, material in a matrix box / as the gap between two blocks, at five orientations: lattice-aligned, 17°, 45°, a generic (17°, 29°, 41°) rotation, and walls on a lattice facet plane | the thin path is orientation-invariant: each regime's area share, volume error and elements per area agree with the lattice-aligned control within one cell of rim; the facet-plane walls mesh with `[V2]` clean (M-4.9) |
+| **A-18m / A-18g** | irregular thin plate / gap *(new, R-B3)* | a curved mid-surface (saddle, cylindrical patch) with a non-convex outline — a re-entrant corner and a hole — at uniform thickness | rims along an irregular outline; a curved mid-surface validated or its refusal named; `[V3]` clean across every rim (M-4.9) |
+| **A-19m / A-19g** | non-uniform thin plate / gap *(new, R-B3)* | thickness tapered from above `t_layer` to below `t_sheet` with a ripple on it; the gap variant a flat wedge closing to contact along one edge, and a rippled gap | regime boundaries where the analytic thickness crosses `t_sheet` and `t_layer`, within one cell, every boundary crossed more than once (M-4.9; A-10 is the curved, forged version) |
+| **A-20m / A-20g** | the real flake *(new, R-B3)* | tilted, curved, irregular and tapered at once, as material and as a gap between two bodies | all of A-17..A-19 at once, under each value of the thin options (R-E6, M-4.6, M-4.9) |
 
 Acceptance for every case: `mesh-verify` `fail = 0` on the **exported** mesh with `[V3]` clean
 (R7); volume and interface area within contracts §5; byte-identical at 1 and 8 threads; the mesh
@@ -2064,4 +2576,570 @@ for name, tris in [('two_solids_one_file', first + second), ('solid_and_sheet_on
     print(json.dumps(result))
     results.append(result)
 (OUT / 'results.json').write_text(json.dumps(results, indent=2))
+```
+
+
+# Appendix D — the rev 3.3 scripts (2026-09-25), verbatim
+
+Two stand-alone scripts, standard library only, behind every number rev 3.3 adds. They are kept
+here rather than in the repository because rev 3.3 is a plan-only revision; the subtasks that own
+them (M-1.7 and M-1.8) commit them beside their tests, and geometry rev 1.7's §14 record cites the
+committed copies.
+
+## D.1 `lattice_pattern.py` — the three split schemes through §3's transition machinery
+
+Builds geometry §2.2's table (Rule D), its parity-reflected instantiation (Rule X) and the 5-tet
+parity checkerboard (Rule T5) as leaves of an integer octree on a doubled grid, applies §3.1's split
+state and §3.3's face rule (P, E, Q) with each scheme's own diagonal rule, fans every fan cell to its
+centroid, and reports per-template quality, conformity on seven strongly balanced configurations
+plus an unbalanced negative control, a uniform block's edge directions, vertex valences and `{110}`
+/ `{111}` facet planes, and the exact volumes one plain leaf emits. The Rule D rows reproduce §3.7's
+frozen table to every printed digit, which is the script's own check. **D-9 chose the checkerboard
+(T5)**; the Rule X rows are the declined alternative, kept for the record. On the 6³ block the
+all-even and all-odd interior vertices are 27 + 8 = 35 of 125; on an unbounded lattice they are a
+quarter, so Rule X's mean valence is `0.25·26 + 0.75·10 = 14`, Rule D's everywhere, and the
+checkerboard's `0.5·18 + 0.5·6 = 12` (six edges per cube instead of seven).
+
+```python
+#!/usr/bin/env python3
+"""Lattice split-pattern enumeration for the plan (stdlib only).
+
+Three plain-cell schemes, each with the face rule its plain cells induce, run through
+SPEC geometry section 3's transition machinery (split state, face rule P/E/Q, centroid fan):
+
+  D  - uniform Freudenthal (the frozen section 2.2 table on every cube; Rule D:
+       min corner to max corner)
+  X  - parity-reflected Freudenthal (the section 2.2 table relabelled v_i -> v_(i xor m)
+       where m's bits are the parities of the cube's own-level index; Rule X: the
+       diagonal joins the two face corners whose in-plane own-level indices have
+       equal parity)
+  T5 - the 5-tet parity checkerboard (central tet on the four corners whose
+       own-level index sum is even; Rule T5: the diagonal joins the two face corners
+       whose own-level index sum, normal coordinate included, is even)
+
+Coordinates are integers on a doubled grid, so every predicate is exact.
+Reported: per-template quality (exact-arithmetic dihedrals via floats of exact
+vectors; AR = R/(3 r_in)), conformity of seven octree configurations (every
+interior triangle shared by exactly two tets, no node inside another triangle or
+edge, volume exact, every tet positive), and uniform-block isotropy statistics.
+"""
+import itertools
+import math
+from collections import Counter, defaultdict
+from fractions import Fraction
+
+# ----------------------------------------------------------------- geometry
+
+def sub(a, b):
+    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+
+def cross(a, b):
+    return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+
+def dot(a, b):
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def orient(t):
+    return dot(sub(t[1], t[0]), cross(sub(t[2], t[0]), sub(t[3], t[0])))
+
+
+def positive(t):
+    t = list(t)
+    o = orient(t)
+    assert o != 0, f"degenerate tet {t}"
+    if o < 0:
+        t[1], t[2] = t[2], t[1]
+    return tuple(t)
+
+
+def dihedrals(t):
+    out = []
+    for i, j in itertools.combinations(range(4), 2):
+        k, l = [m for m in range(4) if m not in (i, j)]
+        e = sub(t[j], t[i])
+        ee = dot(e, e)
+        u = sub(t[k], t[i])
+        v = sub(t[l], t[i])
+        up = [Fraction(u[a]) - Fraction(dot(u, e), ee) * e[a] for a in range(3)]
+        vp = [Fraction(v[a]) - Fraction(dot(v, e), ee) * e[a] for a in range(3)]
+        c = float(sum(up[a] * vp[a] for a in range(3))) / math.sqrt(
+            float(sum(x * x for x in up)) * float(sum(x * x for x in vp)))
+        out.append(math.degrees(math.acos(max(-1.0, min(1.0, c)))))
+    return out
+
+
+def aspect_ratio(t):
+    p0 = t[0]
+    rows = []
+    rhs = []
+    for p in t[1:]:
+        d = sub(p, p0)
+        rows.append([Fraction(2 * x) for x in d])
+        rhs.append(Fraction(dot(p, p) - dot(p0, p0)))
+    # Cramer's rule, exact
+    def det3(m):
+        return (m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+                - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+                + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]))
+    d = det3(rows)
+    c = []
+    for col in range(3):
+        m = [r[:] for r in rows]
+        for r in range(3):
+            m[r][col] = rhs[r]
+        c.append(det3(m) / d)
+    R = math.sqrt(float(sum((c[a] - p0[a]) ** 2 for a in range(3))))
+    vol6 = abs(orient(t))
+    area2 = 0.0
+    for f in itertools.combinations(t, 3):
+        n = cross(sub(f[1], f[0]), sub(f[2], f[0]))
+        area2 += math.sqrt(dot(n, n))
+    # r_in = 3V / A = (vol6/2) / (area2/2) = vol6 / area2
+    r_in = vol6 / area2
+    return R / (3.0 * r_in)
+
+
+# ----------------------------------------------------------------- the lattice
+
+# SPEC geometry 2.1: corner m has bits (bx, by, bz); 2.2's frozen table.
+KUHN = [(0, 1, 3, 7), (0, 1, 7, 5), (0, 2, 7, 3), (0, 2, 6, 7), (0, 4, 5, 7), (0, 4, 7, 6)]
+# 5-tet split on the even corners {0,3,5,6}; relabelled by xor 1 for the odd set.
+FIVE = [(0, 3, 5, 6), (1, 0, 3, 5), (2, 0, 6, 3), (4, 0, 5, 6), (7, 3, 6, 5)]
+
+
+def corner(origin, s, m):
+    return (origin[0] + (m & 1) * s, origin[1] + ((m >> 1) & 1) * s, origin[2] + ((m >> 2) & 1) * s)
+
+
+def plain_cell(scheme, origin, s):
+    """Tets of a leaf with no split face or edge. origin, s in the doubled grid."""
+    idx = [origin[a] // s for a in range(3)]  # own-level index
+    if scheme == "D":
+        rows, relabel = KUHN, 0
+    elif scheme == "X":
+        rows, relabel = KUHN, (idx[0] & 1) | ((idx[1] & 1) << 1) | ((idx[2] & 1) << 2)
+    elif scheme == "T5":
+        rows, relabel = FIVE, (sum(idx) & 1)  # odd cube: central tet on the other four
+    else:
+        raise ValueError(scheme)
+    return [positive(tuple(corner(origin, s, m ^ relabel) for m in row)) for row in rows]
+
+
+def face_diagonal(scheme, quad, s, axis):
+    """quad: four corners of an unsplit axis-aligned face of side s (cyclic order).
+    Returns the two diagonal endpoints the scheme's face rule picks."""
+    if scheme == "D":
+        lo = min(quad)
+        hi = max(quad)
+        return lo, hi
+    if scheme == "X":
+        a, b = [x for x in range(3) if x != axis]
+        for p in quad:
+            q = [r for r in quad if r[a] != p[a] and r[b] != p[b]][0]
+            if (p[a] // s) % 2 == (p[b] // s) % 2:
+                return p, q
+        raise AssertionError
+    if scheme == "T5":
+        for p in quad:
+            q = [r for r in quad if all(r[x] != p[x] for x in range(3) if x != axis)][0]
+            if sum(c // s for c in p) % 2 == 0:
+                return p, q
+        raise AssertionError
+    raise ValueError(scheme)
+
+
+def plain_face_tris(scheme, quad, s, axis):
+    p, q = face_diagonal(scheme, quad, s, axis)
+    others = [r for r in quad if r not in (p, q)]
+    return [(p, q, others[0]), (p, q, others[1])]
+
+
+def cube_faces(origin, s):
+    """Six faces as (axis, side, cyclic corner list)."""
+    out = []
+    for axis in range(3):
+        a, b = [x for x in range(3) if x != axis]
+        for side in (0, 1):
+            base = list(origin)
+            base[axis] += side * s
+            cyc = []
+            for da, db in ((0, 0), (1, 0), (1, 1), (0, 1)):
+                p = list(base)
+                p[a] += da * s
+                p[b] += db * s
+                cyc.append(tuple(p))
+            out.append((axis, side, cyc))
+    return out
+
+
+def midpoint(p, q):
+    return tuple((p[i] + q[i]) // 2 for i in range(3))
+
+
+def build(scheme, leaves):
+    """leaves: list of (origin, s) in the doubled grid (s even). Returns list of tets."""
+    nodes = set()
+    for o, s in leaves:
+        for m in range(8):
+            nodes.add(corner(o, s, m))
+    tets = []
+    for o, s in leaves:
+        faces = cube_faces(o, s)
+        split_any = False
+        for axis, side, cyc in faces:
+            c = midpoint(cyc[0], cyc[2])
+            if c in nodes:
+                split_any = True
+            for t in range(4):
+                if midpoint(cyc[t], cyc[(t + 1) % 4]) in nodes:
+                    split_any = True
+        if not split_any:
+            tets.extend(plain_cell(scheme, o, s))
+            continue
+        cen = tuple(o[i] + s // 2 for i in range(3))
+        for axis, side, cyc in faces:
+            c = midpoint(cyc[0], cyc[2])
+            tris = []
+            if c in nodes:  # case Q: case P at level L+1 on each quadrant
+                h = s // 2
+                for t in range(4):
+                    p = cyc[t]
+                    qa = midpoint(cyc[t], cyc[(t + 1) % 4])
+                    qb = midpoint(cyc[t], cyc[(t + 3) % 4])
+                    quad = [p, qa, c, qb]
+                    tris.extend(plain_face_tris(scheme, quad, h, axis))
+            else:
+                walk = []
+                k = 0
+                for t in range(4):
+                    walk.append(cyc[t])
+                    mid = midpoint(cyc[t], cyc[(t + 1) % 4])
+                    if mid in nodes:
+                        walk.append(mid)
+                        k += 1
+                if k == 0:  # case P
+                    tris.extend(plain_face_tris(scheme, cyc, s, axis))
+                else:  # case E
+                    for t in range(len(walk)):
+                        tris.append((c, walk[t], walk[(t + 1) % len(walk)]))
+            for tri in tris:
+                tets.append(positive((tri[0], tri[1], tri[2], cen)))
+    return tets
+
+
+def check_conformity(tets, box_lo, box_hi):
+    faces = Counter()
+    vol6 = 0
+    for t in tets:
+        o = orient(t)
+        assert o > 0
+        vol6 += o
+        for f in itertools.combinations(t, 3):
+            faces[tuple(sorted(f))] += 1
+    bad_interior = 0
+    for f, n in faces.items():
+        on_box = any(all(p[a] == f[0][a] for p in f) and f[0][a] in (box_lo[a], box_hi[a]) for a in range(3))
+        if on_box:
+            if n != 1:
+                bad_interior += 1
+        elif n != 2:
+            bad_interior += 1
+    verts = set(p for t in tets for p in t)
+    hanging = 0
+    for f in faces:
+        a, b, c = f
+        n = cross(sub(b, a), sub(c, a))
+        lo = [min(p[i] for p in f) for i in range(3)]
+        hi = [max(p[i] for p in f) for i in range(3)]
+        for v in verts:
+            if v in f or any(v[i] < lo[i] or v[i] > hi[i] for i in range(3)):
+                continue
+            if dot(n, sub(v, a)) != 0:
+                continue
+            # v in the closed triangle, not a vertex -> hanging
+            w = [dot(n, cross(sub(f[(i + 1) % 3], f[i]), sub(v, f[i]))) for i in range(3)]
+            if all(x >= 0 for x in w) or all(x <= 0 for x in w):
+                hanging += 1
+    box_vol6 = 6 * (box_hi[0] - box_lo[0]) * (box_hi[1] - box_lo[1]) * (box_hi[2] - box_lo[2])
+    return bad_interior, hanging, vol6 == box_vol6
+
+
+# ----------------------------------------------------------------- templates
+
+def template_quality(scheme):
+    rows = {}
+    # plain cell, every parity of its own-level index
+    plain = []
+    for idx in itertools.product((0, 1), repeat=3):
+        plain.extend(plain_cell(scheme, tuple(2 * i for i in idx), 2))
+    rows["plain cell"] = plain
+    # fan cell of side 4 at origin index parity p; fan over P, Q and E faces
+    fanP, fanQ, fanE = [], [], []
+    for idx in itertools.product((0, 1), repeat=3):
+        o = tuple(4 * i for i in idx)
+        s = 4
+        cen = tuple(o[i] + 2 for i in range(3))
+        for axis, side, cyc in cube_faces(o, s):
+            for tri in plain_face_tris(scheme, cyc, s, axis):
+                fanP.append(positive((*tri, cen)))
+            c = midpoint(cyc[0], cyc[2])
+            for t in range(4):
+                p = cyc[t]
+                qa = midpoint(cyc[t], cyc[(t + 1) % 4])
+                qb = midpoint(cyc[t], cyc[(t + 3) % 4])
+                for tri in plain_face_tris(scheme, [p, qa, c, qb], 2, axis):
+                    fanQ.append(positive((*tri, cen)))
+            walk = []
+            for t in range(4):
+                walk.append(cyc[t])
+                if t == 0:
+                    walk.append(midpoint(cyc[0], cyc[1]))
+            for t in range(len(walk)):
+                fanE.append(positive((c, walk[t], walk[(t + 1) % len(walk)], cen)))
+    rows["fan over a P face"] = fanP
+    rows["fan over a Q quadrant triangle"] = fanQ
+    rows["fan over an E face (k=1)"] = fanE
+    out = {}
+    for name, ts in rows.items():
+        dmin = min(min(dihedrals(t)) for t in ts)
+        dmax = max(max(dihedrals(t)) for t in ts)
+        ar = max(aspect_ratio(t) for t in ts)
+        out[name] = (dmin, dmax, ar, len(ts))
+    return out
+
+
+# ----------------------------------------------------------------- configurations
+
+def uniform(n, s=2, origin=(0, 0, 0)):
+    return [((origin[0] + i * s, origin[1] + j * s, origin[2] + k * s), s)
+            for i in range(n) for j in range(n) for k in range(n)]
+
+
+def refine(leaves, target):
+    out = []
+    for o, s in leaves:
+        if (o, s) == target:
+            h = s // 2
+            for m in range(8):
+                out.append((corner(o, h, m), h))
+        else:
+            out.append((o, s))
+    return out
+
+
+def configurations():
+    c = {}
+    base = uniform(2, 4)  # 2x2x2 coarse block, side 4 (doubled grid), box [0,8]^3
+    c["uniform 4^3"] = (uniform(4, 2), (0, 0, 0), (8, 8, 8))
+    c["one refined corner cell"] = (refine(base, ((0, 0, 0), 4)), (0, 0, 0), (8, 8, 8))
+    c["two refined, face-adjacent"] = (refine(refine(base, ((0, 0, 0), 4)), ((4, 0, 0), 4)), (0, 0, 0), (8, 8, 8))
+    c["two refined, edge-only"] = (refine(refine(base, ((0, 0, 0), 4)), ((4, 4, 0), 4)), (0, 0, 0), (8, 8, 8))
+    c["two refined, vertex-only"] = (refine(refine(base, ((0, 0, 0), 4)), ((4, 4, 4), 4)), (0, 0, 0), (8, 8, 8))
+    big = uniform(3, 4)  # 3x3x3, box [0,12]^3, centre refined
+    c["centre of 3^3 refined"] = (refine(big, ((4, 4, 4), 4)), (0, 0, 0), (12, 12, 12))
+    # three levels under strong 2:1 balance: a 4^3 block of side-8 cells, its central
+    # 2x2x2 refined to side 4, then one side-4 cell that touches no side-8 cell refined
+    # to side 2 (a corner child of one coarse cell would touch level 0 - unbalanced)
+    lv = uniform(4, 8)
+    for o in itertools.product((8, 16), repeat=3):
+        lv = refine(lv, (tuple(o), 8))
+    c["three levels, balanced"] = (refine(lv, ((12, 12, 12), 4)), (0, 0, 0), (32, 32, 32))
+    # the unbalanced one, kept as the negative control: every scheme must fail it
+    neg = refine(big, ((4, 4, 4), 4))
+    neg = [((o[0] * 2, o[1] * 2, o[2] * 2), s * 2) for o, s in neg]
+    c["NEGATIVE: level 2 touching level 0"] = (refine(neg, ((8, 8, 8), 4)), (0, 0, 0), (24, 24, 24))
+    return c
+
+
+def isotropy(scheme, n=6):
+    tets = build(scheme, uniform(n, 2))
+    edges = set()
+    for t in tets:
+        for a, b in itertools.combinations(t, 2):
+            edges.add(tuple(sorted((a, b))))
+    kinds = Counter()
+    for a, b in edges:
+        d = sub(b, a)
+        nz = sum(1 for x in d if x != 0)
+        if nz == 1:
+            kinds["axis"] += 1
+        else:
+            g = [x // 2 for x in d]
+            # canonical direction up to sign
+            if g < [-x for x in g]:
+                g = [-x for x in g]
+            kinds[("face" if nz == 2 else "body") + str(tuple(g))] += 1
+    val = defaultdict(int)
+    for a, b in edges:
+        val[a] += 1
+        val[b] += 1
+    interior = [v for v in val if all(0 < v[i] < 2 * n for i in range(3))]
+    vd = Counter(val[v] for v in interior)
+    return kinds, vd, len(tets)
+
+
+def diagonal_planes(scheme, n=6):
+    """Offsets (in cells) of the {110} and {111} facet planes n.x = d the uniform block carries."""
+    tets = build(scheme, uniform(n, 2))
+    fams = defaultdict(set)
+    for t in tets:
+        for f in itertools.combinations(t, 3):
+            nv = cross(sub(f[1], f[0]), sub(f[2], f[0]))
+            g = math.gcd(math.gcd(abs(nv[0]), abs(nv[1])), abs(nv[2]))
+            nv = tuple(x // g for x in nv)
+            if nv < tuple(-x for x in nv):
+                nv = tuple(-x for x in nv)
+            if sorted(abs(x) for x in nv) in ([0, 1, 1], [1, 1, 1]):
+                fams[nv].add(dot(nv, f[0]) // 2)
+    return {k: sorted(v) for k, v in sorted(fams.items())}
+
+
+def plain_volumes(scheme):
+    """Exact volumes (unit cube) of the tets one plain leaf emits, for both parities."""
+    out = set()
+    for origin in ((0, 0, 0), (2, 0, 0)):
+        for t in plain_cell(scheme, origin, 2):
+            out.add(Fraction(orient(t), 6 * 8))
+    return sorted(out)
+
+
+def main():
+    for scheme in ("D", "X", "T5"):
+        print(f"== scheme {scheme}")
+        for name, (dmin, dmax, ar, n) in template_quality(scheme).items():
+            print(f"  {name:32s} min {dmin:8.4f}  max {dmax:8.4f}  AR {ar:.4f}  ({n} tets)")
+        for name, (leaves, lo, hi) in configurations().items():
+            tets = build(scheme, leaves)
+            bad, hang, vol = check_conformity(tets, lo, hi)
+            print(f"  conformity {name:38s} tets {len(tets):5d}  bad faces {bad}  hanging {hang}  volume exact {vol}")
+        kinds, vd, nt = isotropy(scheme)
+        print(f"  uniform 6^3 block: {nt} tets; edge directions {dict(sorted(kinds.items(), key=str))}")
+        print(f"  interior vertex valence {dict(sorted(vd.items()))}")
+        print(f"  diagonal facet planes (normal: offsets in cells) {diagonal_planes(scheme)}")
+        print(f"  plain-leaf tet volumes (unit cube, both parities) {[str(v) for v in plain_volumes(scheme)]}")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+Output of the 2026-09-25 run (`python3 lattice_pattern.py`, ~2 s):
+
+```text
+== scheme D
+  plain cell                       min  45.0000  max  90.0000  AR 1.3938  (48 tets)
+  fan over a P face                min  45.0000  max 120.0000  AR 1.5607  (96 tets)
+  fan over a Q quadrant triangle   min  35.2644  max 125.2644  AR 1.6052  (384 tets)
+  fan over an E face (k=1)         min  45.0000  max  90.0000  AR 1.4268  (240 tets)
+  conformity uniform 4^3                            tets   384  bad faces 0  hanging 0  volume exact True
+  conformity one refined corner cell                tets   198  bad faces 0  hanging 0  volume exact True
+  conformity two refined, face-adjacent             tets   252  bad faces 0  hanging 0  volume exact True
+  conformity two refined, edge-only                 tets   276  bad faces 0  hanging 0  volume exact True
+  conformity two refined, vertex-only               tets   288  bad faces 0  hanging 0  volume exact True
+  conformity centre of 3^3 refined                  tets   492  bad faces 0  hanging 0  volume exact True
+  conformity three levels, balanced                 tets  1914  bad faces 0  hanging 0  volume exact True
+  conformity NEGATIVE: level 2 touching level 0     tets   642  bad faces 72  hanging 66  volume exact True
+  uniform 6^3 block: 1296 tets; edge directions {'axis': 882, 'body(1, 1, 1)': 216, 'face(0, 1, 1)': 252, 'face(1, 0, 1)': 252, 'face(1, 1, 0)': 252}
+  interior vertex valence {14: 125}
+  diagonal facet planes (normal: offsets in cells) {(0, 1, -1): [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5], (1, -1, 0): [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5], (1, 0, -1): [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5]}
+  plain-leaf tet volumes (unit cube, both parities) ['1/6']
+== scheme X
+  plain cell                       min  45.0000  max  90.0000  AR 1.3938  (48 tets)
+  fan over a P face                min  45.0000  max 120.0000  AR 1.5607  (96 tets)
+  fan over a Q quadrant triangle   min  45.0000  max  90.0000  AR 1.3938  (384 tets)
+  fan over an E face (k=1)         min  45.0000  max  90.0000  AR 1.4268  (240 tets)
+  conformity uniform 4^3                            tets   384  bad faces 0  hanging 0  volume exact True
+  conformity one refined corner cell                tets   198  bad faces 0  hanging 0  volume exact True
+  conformity two refined, face-adjacent             tets   252  bad faces 0  hanging 0  volume exact True
+  conformity two refined, edge-only                 tets   276  bad faces 0  hanging 0  volume exact True
+  conformity two refined, vertex-only               tets   288  bad faces 0  hanging 0  volume exact True
+  conformity centre of 3^3 refined                  tets   492  bad faces 0  hanging 0  volume exact True
+  conformity three levels, balanced                 tets  1914  bad faces 0  hanging 0  volume exact True
+  conformity NEGATIVE: level 2 touching level 0     tets   642  bad faces 72  hanging 66  volume exact True
+  uniform 6^3 block: 1296 tets; edge directions {'axis': 882, 'body(1, -1, -1)': 54, 'body(1, -1, 1)': 54, 'body(1, 1, -1)': 54, 'body(1, 1, 1)': 54, 'face(0, 1, -1)': 126, 'face(0, 1, 1)': 126, 'face(1, -1, 0)': 126, 'face(1, 0, -1)': 126, 'face(1, 0, 1)': 126, 'face(1, 1, 0)': 126}
+  interior vertex valence {10: 90, 26: 35}
+  diagonal facet planes (normal: offsets in cells) {(0, 1, -1): [-4, -2, 0, 2, 4], (0, 1, 1): [2, 4, 6, 8, 10], (1, -1, 0): [-4, -2, 0, 2, 4], (1, 0, -1): [-4, -2, 0, 2, 4], (1, 0, 1): [2, 4, 6, 8, 10], (1, 1, 0): [2, 4, 6, 8, 10]}
+  plain-leaf tet volumes (unit cube, both parities) ['1/6']
+== scheme T5
+  plain cell                       min  54.7356  max  90.0000  AR 1.3660  (40 tets)
+  fan over a P face                min  45.0000  max 120.0000  AR 1.5607  (96 tets)
+  fan over a Q quadrant triangle   min  45.0000  max  90.0000  AR 1.3938  (384 tets)
+  fan over an E face (k=1)         min  45.0000  max  90.0000  AR 1.4268  (240 tets)
+  conformity uniform 4^3                            tets   320  bad faces 0  hanging 0  volume exact True
+  conformity one refined corner cell                tets   189  bad faces 0  hanging 0  volume exact True
+  conformity two refined, face-adjacent             tets   236  bad faces 0  hanging 0  volume exact True
+  conformity two refined, edge-only                 tets   260  bad faces 0  hanging 0  volume exact True
+  conformity two refined, vertex-only               tets   272  bad faces 0  hanging 0  volume exact True
+  conformity centre of 3^3 refined                  tets   476  bad faces 0  hanging 0  volume exact True
+  conformity three levels, balanced                 tets  1853  bad faces 0  hanging 0  volume exact True
+  conformity NEGATIVE: level 2 touching level 0     tets   625  bad faces 72  hanging 66  volume exact True
+  uniform 6^3 block: 1080 tets; edge directions {'axis': 882, 'face(0, 1, -1)': 126, 'face(0, 1, 1)': 126, 'face(1, -1, 0)': 126, 'face(1, 0, -1)': 126, 'face(1, 0, 1)': 126, 'face(1, 1, 0)': 126}
+  interior vertex valence {6: 63, 18: 62}
+  diagonal facet planes (normal: offsets in cells) {(1, -1, -1): [-10, -8, -6, -4, -2, 0, 2, 4], (1, -1, 1): [-4, -2, 0, 2, 4, 6, 8, 10], (1, 1, -1): [-4, -2, 0, 2, 4, 6, 8, 10], (1, 1, 1): [2, 4, 6, 8, 10, 12, 14, 16]}
+  plain-leaf tet volumes (unit cube, both parities) ['1/6', '1/3']
+```
+
+## D.2 `reference_resolution.py` — what `run_reference.py` asks for, against the reference inputs
+
+```python
+#!/usr/bin/env python3
+"""What resolution run_reference.py actually asks for, against the reference tool's own inputs.
+
+For each reference case: the reference's background (*NUM_ELEMENT over *RVE_CORNERS) and
+per-section *SAMR_LEVEL, the logged `Base Mesh Element size` and first `SAMR levels:` line
+(what run_reference.py parses), and the ladder this mesher realises from them today (one root
+cube on the longest axis; forest level = first halving <= h_max; finest = first halving <= h_min).
+"""
+import glob, math, os, re, sys
+
+root = sys.argv[1] if len(sys.argv) > 1 else os.environ["RUSTMSPT_REFERENCE_DATASET"]
+for case in ("TestCaseIntersect1", "TestCaseIntersect2", "TestCaseIntersect3"):
+    d = os.path.join(root, case)
+    log = open(sorted(glob.glob(os.path.join(d, "*_mesh.log")))[0], errors="replace").read()
+    base = float(re.search(r"Base Mesh Element size:\s*([0-9.eE+-]+)", log).group(1))
+    first_levels = int(re.search(r"SAMR levels:\s*(\d+)", log).group(1))
+    corners = counts = None
+    levels = []
+    for f in sorted(glob.glob(os.path.join(d, "nurbs", "*.nurbs"))):
+        lines = open(f, errors="replace").read().splitlines()
+        for i, line in enumerate(lines):
+            if line.startswith("*RVE_CORNERS") and corners is None:
+                corners = [float(v) for v in lines[i + 1].split(",")]
+            if line.startswith("*NUM_ELEMENT") and counts is None:
+                counts = [int(v) for v in lines[i + 1].split(",")]
+            if line.startswith("*SAMR_LEVEL"):
+                levels.append(int(lines[i + 1].strip()))
+    ext = [corners[i + 3] - corners[i] for i in range(3)]
+    cell = [ext[i] / counts[i] for i in range(3)]
+    longest = max(ext)
+    # run_reference.py today: h_max = base, h_min = base / 2**max(first_levels, 1)
+    h_max, h_min = base, base / 2 ** max(first_levels, 1)
+    k = 0
+    while longest / 2 ** k > h_max:
+        k += 1
+    K = 0
+    while longest / 2 ** K > h_min:
+        K += 1
+    bg, fine = longest / 2 ** k, longest / 2 ** K
+    ref_fine = cell[0] / 2 ** max(levels)
+    print(f"{case}: reference background {counts} cells of {cell[0]:.6g} (cubic: {max(cell)/min(cell)-1:.1e}),"
+          f" section levels {sorted(set(levels))} (per section {levels});"
+          f" logged base {base:.6g} = sqrt2 x cell ({base/(math.sqrt(2)*cell[0]):.7f});"
+          f" first 'SAMR levels' {first_levels}")
+    print(f"    realised today: background {bg:.6g} ({[math.ceil(e/bg - 1e-9) for e in ext]} cells, {bg/cell[0]:.4f} x reference),"
+          f" finest {fine:.6g} ({fine/ref_fine:.4f} x the reference's finest {ref_fine:.6g}), levels {K-k}")
+```
+
+Output of the 2026-09-25 run (`RUSTMSPT_REFERENCE_DATASET` at the dataset root):
+
+```text
+TestCaseIntersect1: reference background [17, 17, 17] cells of 26.4706 (cubic: 0.0e+00), section levels [2] (per section [2, 2]); logged base 37.4351 = sqrt2 x cell (1.0000009); first 'SAMR levels' 2
+    realised today: background 28.125 ([16, 16, 16] cells, 1.0625 x reference), finest 7.03125 (1.0625 x the reference's finest 6.61765), levels 2
+TestCaseIntersect2: reference background [24, 24, 30] cells of 0.0166667 (cubic: 4.4e-16), section levels [2] (per section [2, 2]); logged base 0.0235702 = sqrt2 x cell (0.9999989); first 'SAMR levels' 2
+    realised today: background 0.015625 ([26, 26, 32] cells, 0.9375 x reference), finest 0.00390625 (0.9375 x the reference's finest 0.00416667), levels 2
+TestCaseIntersect3: reference background [22, 45, 45] cells of 0.0614125 (cubic: 3.1e-12), section levels [0, 2] (per section [2, 2, 2, 2, 2, 2, 2, 2, 0]); logged base 0.0868504 = sqrt2 x cell (1.0000001); first 'SAMR levels' 0
+    realised today: background 0.0863613 ([16, 32, 32] cells, 1.4062 x reference), finest 0.0431807 (2.8125 x the reference's finest 0.0153531), levels 1
 ```

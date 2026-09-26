@@ -22,22 +22,25 @@ GA-2）：精确谓词与单元质量原语（`src/meshgen/predicates.rs`）、�
 | `Severity` | `src/meshgen/verify.rs:21` | 发现项严重级别 `Info < Warn < Fail`，采用日志与 JSON 的契约拼写。 |
 | `CheckStatus` | `src/meshgen/verify.rs:40` | 单节结论：`PASS`/`WARN`/`FAIL`/`SKIPPED`；跳过时必定附带原因。 |
 | `VerifyItem` | `src/meshgen/verify.rs:63` | 单条发现：严重级别、稳定的 `code`、消息、点/单元编号与坐标（供 `mesh-render --highlight-from` 使用）。 |
-| `VerifySection` | `src/meshgen/verify.rs:88` | 单个目录条目：状态、具名指标、限长条目列表（`items_truncated`）。 |
-| `VerifyGates` | `src/meshgen/verify.rs:145` | 可配置门限；所有长度容差均为包围盒对角线的比例，因此门限与尺度无关。 |
-| `VerifyReport` | `src/meshgen/verify.rs:199` | 完整结果与元数据回显；提供 `passed`、`exit_code`、`fired_codes`、`section` 访问器。 |
-| `VerifyOptions` | `src/meshgen/verify.rs:714` | 文档之外的验证器输入；携带 `expected_stage`（从快照文件名解析）用于 [V12] 交叉校验。 |
-| `verify` | `src/meshgen/verify.rs:738` | 对契约 VTU 或外部 VTU 运行检查目录；按契约顺序为每个条目返回一节。 |
-| `verify_with_options` | `src/meshgen/verify.rs:749` | 带文档之外选项的 `verify`；面阶段 s00-s03 会跳过仅适用于体网格的 [V7]/[V8]/[V13]。 |
-| `BoundaryFace` | `src/meshgen/verify.rs:3903` | [V13] 眼中的一个材料边界面：面积、局部边长、到该分量曲面的平均/最大 \|距离\| 与**带符号**偏移。 |
-| `FidelityAcc` | `src/meshgen/verify.rs:3935` | [V13] 的逐分量累加器；所有求和均按面积加权，因此粗面不会仅凭「同样计一次」压过细面。 |
-| `absorb` | `src/meshgen/verify.rs:3952` | 将一个 `BoundaryFace` 折叠进 `FidelityAcc`。 |
-| `check_v13` | `src/meshgen/verify.rs:4006` | [V13] 界面保真度：从体网格读出材料边界（区域集对区域集，绝不查看面标签），并与输入曲面比对。 |
-| `report_to_json` | `src/meshgen/verify.rs:2358` | 序列化冻结的 JSON 报告（手写实现；项目不引入 JSON 依赖）。 |
-| `report_to_log` | `src/meshgen/verify.rs:2467` | 分节的人读日志，每项检查一行 `[PASS]/[WARN]/[FAIL]/[SKIP]`，末尾附汇总。 |
-| `annotate` | `src/meshgen/verify.rs:2529` | 附带质量数组与 `verify_flags` 位掩码的网格副本（第 *k* 位对应 `[V(k+1)]`）。 |
+| `VerifySection` | `src/meshgen/verify.rs:88` | 单个目录条目：状态、具名指标、**不受上限影响**的 `fail_count`/`warn_count`/`info_count` 与 `fired` 代码集合，以及限长条目列表（`items_truncated`）。`push` 统计每一条发现，只保留最严重的 `cap` 条（契约 §4.3）；`finish` 按契约顺序排序。 |
+| `VerifyGates` | `src/meshgen/verify.rs:200` | 可配置门限；所有长度容差均为包围盒对角线的比例，因此门限与尺度无关。 |
+| `VerifyReport` | `src/meshgen/verify.rs:254` | 完整结果与元数据回显；提供 `passed`、`exit_code`、`fired_codes`、`section` 访问器。 |
+| `VerifyOptions` | `src/meshgen/verify.rs:769` | 文档之外的验证器输入：`expected_stage`（从快照文件名解析）用于 [V12] 交叉校验；`delivered`（无论 `StageIndex` 为何都按区域盒严格检查，契约 §4.4）；以及 [V5]/[V13] 的 `surfaces`。 |
+| `verify` | `src/meshgen/verify.rs:798` | 对契约 VTU 或外部 VTU 运行检查目录；按契约顺序为每个条目返回一节。 |
+| `verify_with_options` | `src/meshgen/verify.rs:809` | 带文档之外选项的 `verify`；面阶段 s00-s03 会跳过仅适用于体网格的 [V7]/[V8]/[V13]。 |
+| `BoundaryFace` | `src/meshgen/verify.rs:4135` | [V13] 眼中的一个材料边界面：面积、局部边长、到该分量曲面的平均/最大 \|距离\| 与**带符号**偏移。 |
+| `FidelityAcc` | `src/meshgen/verify.rs:4167` | [V13] 的逐分量累加器；所有求和均按面积加权，因此粗面不会仅凭「同样计一次」压过细面。 |
+| `absorb` | `src/meshgen/verify.rs:4184` | 将一个 `BoundaryFace` 折叠进 `FidelityAcc`。 |
+| `check_v13` | `src/meshgen/verify.rs:4238` | [V13] 界面保真度：从体网格读出材料边界（区域集对区域集，绝不查看面标签），并与输入曲面比对。 |
+| `strict_domain_box` | `src/meshgen/verify.rs:1343` | [V3] 中自由面检查看不到的两项区域盒条件：每个被使用的节点都在 `[DomainMin, DomainMax]` 内（`V3.outside_domain`），四面体总体积等于区域盒体积（`V3.box_volume`）。凡不允许修剪前外壳放宽之处都运行。 |
+| `ContractStrength` / `contract_strength` | `src/meshgen/contract.rs:13/74` | §4.2 的校验强度，仅由元数据决定：仅几何（无 `SchemaVersion`）、主体网格（仅四面体且有 `region_key`）、混合契约（其余声明 `SchemaVersion = 1` 的文档）。 |
+| `validate_contract` | `src/meshgen/contract.rs:169` | 按该强度校验文档；返回每条被违反的规则（`presence`、`type`、`counts`、`sentinel`、`key_range`、`set_offsets`、`table_length`、`component`、`sheet_volume`、`orientation_length`、`side_elems`、`cell_kind`、`cell_type`）。[V12] 将每条报告为 `V12.contract` FAIL。 |
+| `report_to_json` | `src/meshgen/verify.rs:2603` | 序列化冻结的 JSON 报告（手写实现；项目不引入 JSON 依赖）。 |
+| `report_to_log` | `src/meshgen/verify.rs:2712` | 分节的人读日志，每项检查一行 `[PASS]/[WARN]/[FAIL]/[SKIP]`，末尾附汇总。 |
+| `annotate` | `src/meshgen/verify.rs:2774` | 附带质量数组与 `verify_flags` 位掩码的网格副本（第 *k* 位对应 `[V(k+1)]`）。 |
 | `VerifyGateParams`/`MeshVerifyParams`/`MeshVerifyConfig` | `src/config/mesh_verify.rs:8` | `mesh_verify:` YAML 块：输入、report/json/annotate 输出路径、门限覆盖。 |
 | `gates_from_config` | `src/pipeline/mesh_verify.rs:21` | 将 YAML 覆盖项叠加到契约默认门限上。 |
-| `verify_file` | `src/pipeline/mesh_verify.rs:53` | 加载 → 校验 → 验证 → 写出日志/JSON/带注解 VTU；返回报告。 |
+| `verify_file` | `src/pipeline/mesh_verify.rs:53` | 加载 → 校验 → 验证 → 写出日志/JSON/带注解 VTU；返回报告。`delivered`（来自 YAML `delivered: true`）设置 `VerifyOptions::delivered`。 |
 | `MeshVerifyPipeline` | `src/pipeline/mesh_verify.rs:12` | `mesh-verify` 子命令；门限不通过时返回错误（非零退出码）。 |
 
 ## 当前实现范围
@@ -50,17 +53,17 @@ GA-2）：精确谓词与单元质量原语（`src/meshgen/predicates.rs`）、�
 |---|---|---|
 | [V1] 单元 | **完整** | 非正体积（精确谓词）、单元内重复节点、重复单元、非有限坐标 |
 | [V2] 节点 | **完整** | 量化键判定的重合重复节点（FAIL）、未被引用节点（WARN） |
-| [V3] 协调性 | **完整** | 面的相邻四面体数 ≠2、边界泄漏（未打标签且不在任何域平面上的面）、悬挂节点（空间哈希加速）、非流形边（WARN）。**在切割前的快照上（`StageIndex` 5–7）边界泄漏规则被推迟**：背景晶格的边界是八叉树外壳，在 S8 修剪之前它每个轴向最多超出区域盒一个粗单元。该计数仍作为度量报告，并由一条 INFO `V3.deferred` 条目加以说明；面共享、悬挂节点与流形性——定理 T1 的实质内容——在任何阶段都仍为 FAIL。 |
+| [V3] 协调性 | **完整** | 面的相邻四面体数 ≠2、边界泄漏（未打标签且不在任何域平面上的面）、悬挂节点（空间哈希加速）、非流形边（WARN），以及**折叠面**（`V3.folded_face`：共享一个面的两个四面体位于该面的同一侧——二者重叠，[V1] 与面计数都看不到；A-3 在 `0a8eb1c` 上有 466 个）。**区域盒（契约 §4.4）：** 只有在 `StageIndex` 5–8、且未以 `delivered: true` 验证时，超出区域盒的网格才可把自身外壳当作外部（INFO `V3.pre_trim_overhang` 指明阶段）。其余情况下，每个被使用的节点都必须在盒内（`V3.outside_domain`），四面体必须填满区域盒（`V3.box_volume`，1%）。边界泄漏规则在 5–7 阶段仍被推迟（INFO `V3.deferred`）；面共享、悬挂节点、折叠与流形性在任何阶段都是 FAIL。 |
 | [V4] 质量 | **完整** | 纵横比、半径比、二面角极值、缩放雅可比、最小高；分布、最差 10 个、三项门限 |
 | [V5] 几何一致性 | **设置 `surfaces:` 后完整** | 双向曲面贴合度（网格界面到输入曲面，以及输入曲面回到界面）与逐分量体积。未提供输入曲面时报告 SKIPPED 并说明原因——此时没有可供一致性比对的对象。这里有两个分母各自出错过一次，值得记住：贴合容差是**局部界面边长**的比例，而非包围盒对角线的比例；`volume_expected` 是**优先级裁决后**的体积——即该分量中未被更高优先级实体覆盖的部分——而非其原始输入体积。 |
-| [V6] ID 语义 | **部分** | 区域键合法性与「同一键单一优先级」已可运行；分量体积误差与抽样审计需要输入曲面 |
+| [V6] ID 语义 | **部分** | 区域键合法性、同一键单一优先级、区域邻接，以及**未声明的材料边界**（`V6.undeclared_boundary`，自计划 M-1.0 起为 FAIL：进入或离开某分量的面必须携带该分量的标签）。在切割前的 5–7 阶段尚无界面，此 FAIL 被推迟，但计数仍会报告。面按键序遍历，因此保留的条目与 `undeclared_boundary_area` 每次运行都完全相同。分量体积误差与抽样审计需要输入曲面 |
 | [V7] 薄片与薄特征 | **部分** | 体阶段运行薄片面焊接性；s00-s03 因无四面体而报告 SKIPPED；单层带、中面与边缘一致性随 G7-1 落地 |
 | [V8] 分区 | **体阶段完整** | 重算薄片阻断的洪水填充并与 `partition_id` 比对（允许重编号）、针孔泄漏启发式、`expected_partitions` 门限；s00-s03 报告 SKIPPED |
 | [V9] 交汇 | 跳过 | 随 G6-4 落地 |
 | [V10] 导出完整性 | 跳过 | 随 G9-2 落地 |
 | [V11] 比较模式 | 跳过 | 随 GK-3 落地 |
-| [V12] 溯源与统计 | **完整** | 计数、元数据回显、`Counts` 与网格实际值一致性、`SchemaVersion` 校验、`StageIndex` 范围与文件名交叉校验（T-C6），以及计划中 P2 所依据的**单元数归因**：按 `provenance` 分类的四面体计数，以及在 `RUSTMSPT_CUT_DIAG` 下存在 `parent_cell` 时，其背后的 S5 单元数与每单元发射率。S5 单元本身就是一个晶格**四面体**，因此未被处理的单元恰好发射 1 个，`tets_per_cell_*` 可直接读作「该路径相对于放着不动多付出的代价」。 |
-| [V13] 界面保真度 | **设置 `surfaces:` 后完整** | 计划中的 P3，已可度量。见下文——它并不是 [V5] 的一个变体。 |
+| [V12] 溯源与统计 | **完整** | **契约校验**（契约 §4.2，计划 MG-08），强度由元数据选定——每条被违反的规则都是一条 `V12.contract` FAIL，强度以 INFO `V12.contract_strength` 与指标 `contract_strength`（0 仅几何、1 主体网格、2 混合契约）报告；计数、元数据回显、`Counts` 与网格实际值一致性、`SchemaVersion` 校验、`StageIndex` 范围与文件名交叉校验（T-C6），以及计划中 P2 所依据的**单元数归因**：按 `provenance` 分类的四面体计数，以及在 `RUSTMSPT_CUT_DIAG` 下存在 `parent_cell` 时，其背后的 S5 单元数与每单元发射率。S5 单元本身就是一个晶格**四面体**，因此未被处理的单元恰好发射 1 个，`tets_per_cell_*` 可直接读作「该路径相对于放着不动多付出的代价」。 |
+| [V13] 界面保真度 | **设置 `surfaces:` 后完整** | 计划中的 P3，已可度量。只要有任何材料边界面积不在曲面上，`V13.off_surface` 即为 **FAIL**（契约 rev 1.3；计划 M-1.0），每个违规面一条发现。见下文——它并不是 [V5] 的一个变体。 |
 
 **[V13] 做的是 [V5] 做不到的事。** [V5] 度量的是**已声明**的界面：带标签的 `VTK_TRIANGLE`
 单元，其节点已由 S7 吸附到输入曲面上。这些节点几乎精确地落在曲面上，因此即使一个网格真正
@@ -87,6 +90,15 @@ GA-2）：精确谓词与单元质量原语（`src/meshgen/predicates.rs`）、�
 P3 违规；这一对数字用于诊断，绝不用于把其中之一评为可接受。
 
 值得注意的设计要点：
+
+- **条目上限只约束存储，从不约束计数**（契约 §4.3）。每条发现都会抬升所在节的状态并
+  计入其严重级别计数；只保留最严重的 `max_items_per_section` 条，且保留哪些与发现的
+  先后顺序无关。`passed()` 读取各节状态。在计划 M-1.0 之前，汇总只统计已存储的条目，
+  因此在一个失败网格上设置 `max_items_per_section: 0` 会以 0 退出。故生产方应推送每一条
+  发现，而不是先用 `.take(cap)` 截取。
+- **自称契约的文档要被校验，而不是被信任**（契约 §4.2）。过去删除某个数组会让对应检查
+  SKIP，于是有缺陷的生产方也能验证通过；现在由元数据选择校验强度，缺失或格式错误的
+  数组就是一条 `V12.contract` FAIL。
 
 - **[V5] 的曲面优先级必须与生成网格时一致。** `volume_expected` 是**优先级裁决后**的
   体积——即该分量中未被更高优先级实体覆盖的部分——因此若某曲面以错误的优先级列出，
