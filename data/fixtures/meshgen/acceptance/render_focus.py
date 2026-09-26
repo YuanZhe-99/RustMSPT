@@ -3,39 +3,38 @@
 # requires-python = ">=3.10"
 # dependencies = ["pillow>=10"]
 # ///
-"""Focus-region renders for one meshed case (PLAN_mesh_generation.md R9, M-1.9).
+"""Input against output, for one meshed case (PLAN_mesh_generation.md R9, M-1.9).
 
-Why this exists: aggregates average away exactly the populations this project keeps finding.
-The limb's serration was seen by eye before any metric could name it, and a pixel diff on a
-fixed camera caught in one pass what three verifier metrics missed. So every change to what
-the mesher emits is looked at - and looked at where the geometry is hard: where two bodies
-meet (intersection curves), at sharp edges and corners.
+The question a picture has to answer is the owner's: what is the defect, where is it, and what
+does it look like. So every picture here sets the INPUT surface (the STL the mesher was given)
+beside the OUTPUT surface (the material boundary the mesh actually has - faces between elements
+that disagree about which body they are in), from the same camera.
 
-The places come from the INPUT, never from the mesh. The s02 arranged snapshot lists every
-curve the arrangement found (`CurveKind` 0 sharp, 1 rim, 2 intersection; 3 box is skipped);
-the mesh declares only the curves it kept - on a8, 24 of 1,404 - so regions read off the output
-would hide exactly what was lost.
+The output surface is coloured by how far each face's corners are from the input surface, as a
+share of the face's own edge length - [V13]'s own measurement, exported by
+`mesh-verify ... fidelity_vtu:`:
 
-Per sample point, three renders of the cut mesh (`s08` contract document), each framed on a
-window a few minimum element sizes wide and centred on the point, with the input curve drawn as
-red markers:
+    grey    < 2 %       on the surface ([V13]'s tolerance for "on")
+    yellow  2 - 10 %
+    orange  10 - 25 %
+    red     >= 25 %     a quarter of an element or more off the geometry
+    blue    the input surface
 
-  surf+ / surf-   the material only (background removed), wireframe, coloured by region, seen
-                  from the two sides of the curve. Does the boundary between two colours follow
-                  the curve? Is a sharp edge carried by an element edge, or chamfered/serrated?
-  cut             every cell whose centroid lies behind a plane through the point normal to the
-                  curve, seen face on. The profile of the material across the edge: a corner
-                  should be a corner.
+Two kinds of picture:
+
+  overview   the whole scene, input | output, from two opposite corners
+  defects    faces 10 % or more off the surface, clustered by location; the clusters with the
+             most off-surface area, each seen head-on and obliquely as input | output | both
+             (the overlay is semi-transparent: where the output lies on the input they merge,
+             where it does not you see both)
 
 Usage:
-    uv run data/fixtures/meshgen/acceptance/render_focus.py CASE_WORK_DIR CASE [--before DIR]
-                                                            [--per-kind N] [--width PX]
+    uv run data/fixtures/meshgen/acceptance/render_focus.py CASE_WORK_DIR CASE
+           [--mesh PATH] [--defects N] [--width PX]
 
-CASE_WORK_DIR is the directory `run_acceptance.py` wrote the case into (it holds
-`<case>.yaml` and `<case>.debug/`). Output goes to `CASE_WORK_DIR/<case>.focus/`: one config
-and one PNG per view, `manifest.json` (view -> point, tangent, curve, kind), and
-`<case>_focus_sheet.png`. With `--before DIR` (an earlier `.focus/` directory) each view gets a
-changed-pixel share in `diff.json` and a `diff_<view>.png` where the changes are red.
+CASE_WORK_DIR holds `<case>.yaml`, `<case>_verify.yaml` and `<case>.debug/` as
+`run_acceptance.py` writes them. Output: `CASE_WORK_DIR/<case>.focus/` with the comparison
+surface, one PNG per panel, `summary.json`, and `<case>_compare_sheet.png`.
 """
 
 import argparse
@@ -48,59 +47,7 @@ import sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
 BIN = os.path.join(ROOT, "target", "release", "rustmspt")
-KIND_NAME = {0: "sharp", 1: "rim", 2: "intersection"}
 
-
-# ----------------------------------------------------------------- reading the s02 snapshot
-
-def ascii_array(text, name):
-    """The values of one ascii DataArray by name (the pipeline writes every snapshot in ascii,
-    contracts D-19)."""
-    m = re.search(r'<DataArray[^>]*Name="%s"[^>]*format="ascii"[^>]*>([^<]*)<' % re.escape(name), text)
-    if m is None:
-        return None
-    return m.group(1).split()
-
-
-def points_of(text):
-    m = re.search(r"<Points>\s*<DataArray[^>]*>([^<]*)<", text)
-    v = [float(x) for x in m.group(1).split()]
-    return [tuple(v[i:i + 3]) for i in range(0, len(v), 3)]
-
-
-def read_curves(s02_path):
-    """Every non-box curve of the arrangement as a list of segments, keyed by curve id."""
-    text = open(s02_path, encoding="latin1").read()
-    pts = points_of(text)
-    conn = [int(x) for x in ascii_array(text, "connectivity")]
-    offs = [int(x) for x in ascii_array(text, "offsets")]
-    types = [int(x) for x in ascii_array(text, "types")]
-    curve_id = [int(x) for x in ascii_array(text, "curve_id")]
-    kinds = [int(x) for x in (ascii_array(text, "CurveKind") or [])]
-    comp_off = [int(x) for x in (ascii_array(text, "CurveCompOffsets") or [])]
-    comp_mem = [int(x) for x in (ascii_array(text, "CurveCompComponents") or [])]
-
-    def components(c):
-        if c >= len(comp_off):
-            return ()
-        return tuple(sorted(comp_mem[(comp_off[c - 1] if c else 0):comp_off[c]]))
-
-    curves = {}
-    start = 0
-    for i, end in enumerate(offs):
-        if types[i] == 4 and curve_id[i] >= 0:
-            c = curve_id[i]
-            kind = kinds[c] if c < len(kinds) else -1
-            if kind in KIND_NAME:
-                nodes = conn[start:end]
-                entry = curves.setdefault(c, {"kind": kind, "comps": components(c), "segs": []})
-                for a, b in zip(nodes, nodes[1:]):
-                    entry["segs"].append((pts[a], pts[b]))
-        start = end
-    return curves
-
-
-# ----------------------------------------------------------------- choosing the places
 
 def sub(a, b):
     return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
@@ -131,307 +78,220 @@ def unit(a):
     return scale(a, 1.0 / n) if n > 0 else a
 
 
-def key(p):
-    return tuple(round(x, 9) for x in p)
+def fmt(v):
+    return "[" + ", ".join(repr(round(float(x), 9)) for x in v) + "]"
 
 
-def along(segs, frac):
-    """The point at a fraction of a curve's total length, and the tangent there."""
-    total = sum(norm(sub(b, a)) for a, b in segs)
-    target = frac * total
-    for a, b in segs:
-        l = norm(sub(b, a))
-        if target <= l or (a, b) == segs[-1]:
-            t = 0.0 if l == 0 else min(1.0, target / l)
-            return add(a, scale(sub(b, a), t)), unit(sub(b, a))
-        target -= l
-    return segs[0][0], unit(sub(segs[0][1], segs[0][0]))
+# ----------------------------------------------------------------- the comparison surface
+
+def comparison_surface(work, case, mesh, out):
+    """Run mesh-verify with `fidelity_vtu` on the case's own verify config."""
+    base = open(os.path.join(work, case + "_verify.yaml")).read()
+    base = re.sub(r"(?m)^  input: .*$", f"  input: {mesh}", base)
+    base = re.sub(r"(?m)^  json: .*$", f"  json: {os.path.join(out, 'verify.json')}", base)
+    path = os.path.join(out, case + ".compare.vtu")
+    cfg = os.path.join(out, "verify.yaml")
+    with open(cfg, "w") as f:
+        f.write(base.rstrip("\n") + f"\n  fidelity_vtu: {path}\n")
+    subprocess.run([BIN, "mesh-verify", "--config", cfg], capture_output=True, text=True)
+    if not os.path.exists(path):
+        sys.exit(f"render_focus: mesh-verify wrote no comparison surface (is `surfaces:` set in {cfg}?)")
+    return path
 
 
-def choose_samples(curves, per_kind, spacing):
-    """Deterministic sample points, spread over what differs:
+def read_surface(path):
+    text = open(path).read()
 
-    - for each (kind, component set) - a cube's edges, a limb's edges, the curve where the two
-      meet - the longest `per_kind` curves at mid-length, so a short feature is not crowded out
-      by a long one of another body;
-    - up to `per_kind` corners, where three or more curve segments end, ranked by how many
-      bodies meet there (a triple point where an intersection curve reaches a sharp edge first);
-    - never two samples closer than `spacing`: two bodies in contact each declare the shared
-      rim, so the same place arrives twice under two curve ids.
-    """
-    samples = []
+    def arr(name):
+        m = re.search(r'<DataArray[^>]*Name="%s"[^>]*>([^<]*)<' % re.escape(name), text)
+        return m.group(1).split()
 
-    def far(p):
-        return all(norm(sub(p, s["point"])) >= spacing for s in samples)
-
-    groups = sorted({(e["kind"], e["comps"]) for e in curves.values()})
-    for kind, comps in groups:
-        ranked = sorted(
-            (c for c, e in curves.items() if (e["kind"], e["comps"]) == (kind, comps)),
-            key=lambda c: (-round(sum(norm(sub(b, a)) for a, b in curves[c]["segs"]), 12), c),
-        )
-        taken = 0
-        for c in ranked:
-            if taken == per_kind:
-                break
-            p, t = along(curves[c]["segs"], 0.5)
-            if not far(p):
-                continue
-            samples.append({"name": f"{KIND_NAME[kind]}_c{c}", "kind": KIND_NAME[kind],
-                            "curve": c, "point": p, "tangent": t,
-                            "components": list(comps)})
-            taken += 1
-    ends = {}
-    for c, e in curves.items():
-        for a, b in e["segs"]:
-            for p, q in ((a, b), (b, a)):
-                ends.setdefault(key(p), []).append((c, unit(sub(q, p)), p))
-    corners = []
-    for k in sorted(ends):
-        inc = ends[k]
-        dirs = {(round(d[0], 6), round(d[1], 6), round(d[2], 6)) for _, d, _ in inc}
-        if len(dirs) < 3:
-            continue
-        bodies = set()
-        for c, _, _ in inc:
-            bodies.update(curves[c]["comps"])
-        has_x = any(curves[c]["kind"] == 2 for c, _, _ in inc)
-        corners.append((-len(bodies), -int(has_x), k, inc, sorted(bodies)))
-    corners.sort(key=lambda r: r[:3])
-    taken = 0
-    for _, _, _, inc, bodies in corners:
-        if taken == per_kind:
-            break
-        p = inc[0][2]
-        if not far(p):
-            continue
-        bisector = scale(add(add(inc[0][1], inc[1][1]), inc[2][1]), -1.0)
-        t = unit(bisector) if norm(bisector) > 1e-9 else unit((1.0, 1.0, 1.0))
-        samples.append({"name": "corner_" + "_".join("%.4f" % x for x in p).replace("-", "m"),
-                        "kind": "corner", "curve": -1, "point": p, "tangent": t,
-                        "components": bodies})
-        taken += 1
-    return samples
+    v = [float(x) for x in re.search(r"<Points>\s*<DataArray[^>]*>([^<]*)<", text).group(1).split()]
+    pts = [tuple(v[i:i + 3]) for i in range(0, len(v), 3)]
+    conn = [int(x) for x in arr("connectivity")]
+    source = [int(x) for x in arr("source")]
+    dev = [float(x) for x in arr("dev_pct")]
+    comp = [int(x) for x in arr("component")]
+    faces = []
+    for i in range(len(source)):
+        a, b, c = (pts[conn[3 * i + k]] for k in range(3))
+        n = cross(sub(b, a), sub(c, a))
+        faces.append({"source": source[i], "dev": dev[i], "component": comp[i],
+                      "centroid": scale(add(add(a, b), c), 1.0 / 3.0),
+                      "area": 0.5 * norm(n), "normal": unit(n)})
+    return faces
 
 
-def finding_samples(report_path, per_code, spacing, existing):
-    """Where the verifier says something failed: up to `per_code` located FAIL findings per code,
-    so the picture and the metric are looked at in the same place (R9 item 4)."""
-    if not os.path.exists(report_path):
-        return []
-    report = json.load(open(report_path))
+# ----------------------------------------------------------------- choosing the defects
+
+def clusters(faces, radius, threshold):
+    """Greedy, deterministic clusters of faces at least `threshold` % off the surface, ranked by
+    the area they carry."""
+    bad = sorted((f for f in faces if f["source"] == 1 and f["dev"] >= threshold),
+                 key=lambda f: (-f["dev"], f["centroid"]))
     out = []
-    for section in report["sections"]:
-        by_code = {}
-        for item in section["items"]:
-            if item["severity"] == "FAIL" and item["coordinates"]:
-                by_code.setdefault(item["code"], []).append(tuple(item["coordinates"][0]))
-        for code in sorted(by_code):
-            taken = 0
-            for p in by_code[code]:
-                if taken == per_code:
-                    break
-                if all(norm(sub(p, q["point"])) >= spacing for q in existing + out):
-                    out.append({"name": f"{code.replace('.', '_')}_{taken}", "kind": "finding",
-                                "curve": -1, "point": p, "tangent": unit((1.0, 1.0, 1.0)),
-                                "components": [], "code": code})
-                    taken += 1
+    for f in bad:
+        for c in out:
+            if norm(sub(f["centroid"], c["seed"])) <= radius:
+                c["faces"].append(f)
+                break
+        else:
+            out.append({"seed": f["centroid"], "faces": [f]})
+    for c in out:
+        area = sum(f["area"] for f in c["faces"])
+        c["area"] = area
+        c["center"] = scale(
+            (sum(f["centroid"][0] * f["area"] for f in c["faces"]),
+             sum(f["centroid"][1] * f["area"] for f in c["faces"]),
+             sum(f["centroid"][2] * f["area"] for f in c["faces"])), 1.0 / area)
+        # Face normals carry the mesh's winding, which is not consistent; align them with the
+        # first before averaging, so the camera looks at the surface rather than along it.
+        ref = c["faces"][0]["normal"]
+        acc = (0.0, 0.0, 0.0)
+        for f in c["faces"]:
+            n = f["normal"] if dot(f["normal"], ref) >= 0 else scale(f["normal"], -1.0)
+            acc = add(acc, scale(n, f["area"]))
+        c["normal"] = unit(acc) if norm(acc) > 0 else (0.0, 0.0, 1.0)
+        c["max_dev"] = max(f["dev"] for f in c["faces"])
+        c["components"] = sorted({f["component"] for f in c["faces"]})
+    out.sort(key=lambda c: (-c["area"], c["seed"]))
     return out
 
 
 # ----------------------------------------------------------------- rendering
 
-def side_directions(t):
-    """Two opposite view directions perpendicular to the tangent, fixed by the tangent alone."""
-    ref = (0.0, 0.0, 1.0) if abs(t[2]) < 0.9 else (1.0, 0.0, 0.0)
-    d = unit(cross(t, ref))
-    d = unit(add(d, scale(unit(cross(t, d)), 0.5)))
-    return d, scale(d, -1.0)
-
-
-def curve_markers(curves, center, w, step):
-    """Red markers along every input curve inside the window, one per `step` of length."""
-    out = []
-    for c in sorted(curves):
-        for a, b in curves[c]["segs"]:
-            l = norm(sub(b, a))
-            n = max(1, int(l / step))
-            for i in range(n + 1):
-                p = add(a, scale(sub(b, a), i / n))
-                if all(abs(p[j] - center[j]) <= w for j in range(3)):
-                    out.append([round(x, 9) for x in p])
-    uniq = sorted({tuple(p) for p in out})
-    return [list(p) for p in uniq]
-
-
-def yaml_list(v):
-    return "[" + ", ".join(repr(float(x)) for x in v) + "]"
-
-
-def write_view(cfg_dir, out_dir, name, mesh, center, w, view_dir, filters, markers, width):
-    lo = [center[i] - w for i in range(3)]
-    hi = [center[i] + w for i in range(3)]
+def render(out, name, surface, view_dir, focus, frame, filters, colour, width, opacity=1.0):
     lines = [
         "mesh_render:",
-        f"  input: {mesh}",
-        f"  output_dir: {out_dir}",
+        f"  input: {surface}",
+        f"  output_dir: {os.path.join(out, 'png')}",
         "  views:",
         f"    - name: {name}",
-        f"      view_direction: {yaml_list(view_dir)}",
-        f"      focus_point: {yaml_list(center)}",
+        f"      view_direction: {fmt(view_dir)}",
+        f"      focus_point: {fmt(focus)}",
         f"  width: {width}",
         f"  height: {width}",
         "  background: [255, 255, 255]",
-        "  ambient: 0.35",
-        "  color_by: region_key",
+        "  ambient: 0.45",
         "  backend: cpu",
-        "  show_faces: false",
-        "  show_curves: true",
         "  wireframe: true",
         "  projection: orthographic",
-        "  fit_padding: 0.02",
-        f"  frame_box: {{ min: {yaml_list(lo)}, max: {yaml_list(hi)} }}",
-        "  filters:",
-        # The filter keeps whole cells by centroid, so its border is a sawtooth of cell faces.
-        # Filtering twice as wide as the frame puts that border outside the picture, where it
-        # cannot be mistaken for serration of the mesh itself.
-        f"    - {{ kind: bbox, min: {yaml_list([c - 2 * w for c in center])}, max: {yaml_list([c + 2 * w for c in center])} }}",
+        "  fit_padding: 0.0",
+        f"  face_opacity: {opacity}",
+        f"  frame_box: {{ min: {fmt(frame[0])}, max: {fmt(frame[1])} }}",
     ]
+    lines += colour
+    lines.append("  filters:")
     lines += ["    - " + f for f in filters]
-    if markers:
-        lines.append("  highlight_points:")
-        lines += [f"    - {yaml_list(p)}" for p in markers]
-    path = os.path.join(cfg_dir, name + ".yaml")
-    with open(path, "w") as f:
+    cfg = os.path.join(out, "cfg", name + ".yaml")
+    with open(cfg, "w") as f:
         f.write("\n".join(lines) + "\n")
-    return path
+    r = subprocess.run([BIN, "mesh-render", "--config", cfg], capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"[focus] {name}: mesh-render failed\n{r.stdout[-400:]}\n{r.stderr[-400:]}", file=sys.stderr)
+    stem = os.path.splitext(os.path.basename(surface))[0]
+    return os.path.join(out, "png", f"{stem}_{name}.png")
 
 
-def case_scale(case_yaml):
-    """h_min from the case's own config: the window is a few of the finest elements wide."""
-    text = open(case_yaml).read()
-    frac = float(re.search(r"h_min_frac:\s*([0-9.eE+-]+)", text).group(1))
-    lo = [float(x) for x in re.search(r"min:\s*\[([^\]]*)\]", text).group(1).split(",")]
-    hi = [float(x) for x in re.search(r"max:\s*\[([^\]]*)\]", text).group(1).split(",")]
-    diag = norm(sub(tuple(hi), tuple(lo)))
-    return frac * diag
+INPUT = ["  color_by: uniform", "  uniform_color: [77, 121, 168]"]
+OUTPUT = ["  color_by: dev_class"]
+ONLY_INPUT = "{ kind: array_range, array: source, min: 0, max: 0 }"
+ONLY_OUTPUT = "{ kind: array_range, array: source, min: 1, max: 1 }"
 
 
-# ----------------------------------------------------------------- sheet and diff
+def box(center, w):
+    return ([c - w for c in center], [c + w for c in center])
 
-def contact_sheet(out_dir, case, rows, width):
-    from PIL import Image, ImageDraw
-    tile = 512
-    cols = 3
-    label_h = 28
-    sheet = Image.new("RGB", (cols * tile, len(rows) * (tile + label_h)), (255, 255, 255))
-    draw = ImageDraw.Draw(sheet)
-    for r, (sample, views) in enumerate(rows):
-        for c, view in enumerate(views):
-            png = os.path.join(out_dir, "png", f"{case}_s08_cut_contract_{view}.png")
-            if not os.path.exists(png):
-                continue
-            img = Image.open(png).convert("RGB").resize((tile, tile))
-            sheet.paste(img, (c * tile, r * (tile + label_h) + label_h))
-            draw.text((c * tile + 6, r * (tile + label_h) + 6), view, fill=(0, 0, 0))
-        draw.line([(0, r * (tile + label_h)), (cols * tile, r * (tile + label_h))], fill=(160, 160, 160))
-    path = os.path.join(out_dir, f"{case}_focus_sheet.png")
-    sheet.save(path)
-    return path
-
-
-def diff_against(out_dir, before_dir, case, views):
-    from PIL import Image, ImageChops
-    result = {}
-    for view in views:
-        name = f"{case}_s08_cut_contract_{view}.png"
-        a, b = os.path.join(before_dir, "png", name), os.path.join(out_dir, "png", name)
-        if not (os.path.exists(a) and os.path.exists(b)):
-            result[view] = None
-            continue
-        ia, ib = Image.open(a).convert("RGB"), Image.open(b).convert("RGB")
-        if ia.size != ib.size:
-            result[view] = 1.0
-            continue
-        d = ImageChops.difference(ia, ib).convert("L").point(lambda x: 255 if x > 2 else 0)
-        changed = sum(1 for x in d.getdata() if x) / (d.size[0] * d.size[1])
-        result[view] = changed
-        if changed > 0:
-            red = Image.new("RGB", ib.size, (255, 0, 0))
-            Image.composite(red, ib.point(lambda x: x // 2 + 127), d).save(
-                os.path.join(out_dir, f"diff_{view}.png"))
-    with open(os.path.join(out_dir, "diff.json"), "w") as f:
-        json.dump(result, f, indent=1, sort_keys=True)
-    return result
-
-
-# ----------------------------------------------------------------- main
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("work")
     ap.add_argument("case")
-    ap.add_argument("--before")
-    ap.add_argument("--per-kind", type=int, default=4)
-    ap.add_argument("--width", type=int, default=2048)
-    ap.add_argument("--window", type=float, default=4.0, help="half-width in h_min")
-    ap.add_argument("--findings", type=int, default=2, help="located FAIL findings per code")
+    ap.add_argument("--mesh", help="the mesh to compare (default: <case>.debug/<case>_s08_cut_contract.vtu)")
+    ap.add_argument("--defects", type=int, default=6)
+    ap.add_argument("--threshold", type=float, default=10.0, help="percent of an edge")
+    ap.add_argument("--width", type=int, default=1200)
     args = ap.parse_args()
 
-    case, work = args.case, os.path.abspath(args.work)
-    debug = os.path.join(work, case + ".debug")
-    s02 = os.path.join(debug, f"{case}_s02_arranged.vtu")
-    mesh = os.path.join(debug, f"{case}_s08_cut_contract.vtu")
-    for p in (s02, mesh):
-        if not os.path.exists(p):
-            sys.exit(f"render_focus: {p} is missing (run the case with snapshots: key or all)")
-    h_min = case_scale(os.path.join(work, case + ".yaml"))
-    w = args.window * h_min
+    work, case = os.path.abspath(args.work), args.case
+    mesh = args.mesh or os.path.join(work, case + ".debug", f"{case}_s08_cut_contract.vtu")
+    out = os.path.join(work, case + ".focus")
+    os.makedirs(os.path.join(out, "cfg"), exist_ok=True)
+    os.makedirs(os.path.join(out, "png"), exist_ok=True)
+    surface = comparison_surface(work, case, mesh, out)
+    faces = read_surface(surface)
+    cfg = open(os.path.join(work, case + ".yaml")).read()
+    h_min_frac = float(re.search(r"h_min_frac:\s*([0-9.eE+-]+)", cfg).group(1))
+    lo = [float(x) for x in re.search(r"min:\s*\[([^\]]*)\]", cfg).group(1).split(",")]
+    hi = [float(x) for x in re.search(r"max:\s*\[([^\]]*)\]", cfg).group(1).split(",")]
+    h = h_min_frac * norm(sub(tuple(hi), tuple(lo)))
 
-    curves = read_curves(s02)
-    samples = choose_samples(curves, args.per_kind, w)
-    samples += finding_samples(os.path.join(work, case + ".json"), args.findings, w, samples)
-    out_dir = os.path.join(work, case + ".focus")
-    cfg_dir = os.path.join(out_dir, "cfg")
-    png_dir = os.path.join(out_dir, "png")
-    os.makedirs(cfg_dir, exist_ok=True)
-    os.makedirs(png_dir, exist_ok=True)
+    # summary: output boundary area per class
+    out_faces = [f for f in faces if f["source"] == 1]
+    total = sum(f["area"] for f in out_faces) or 1.0
+    bands = [(0.0, 2.0), (2.0, 10.0), (10.0, 25.0), (25.0, 1e30)]
+    shares = [sum(f["area"] for f in out_faces if a <= f["dev"] < b) / total for a, b in bands]
 
-    rows, manifest = [], []
-    for s in samples:
-        p, t = s["point"], s["tangent"]
-        markers = curve_markers(curves, p, w, h_min / 8.0)
-        d1, d2 = side_directions(t)
-        views = []
-        for suffix, view_dir, filters in (
-            ("surf+", d1, ["{ kind: background, keep: false }"]),
-            ("surf-", d2, ["{ kind: background, keep: false }"]),
-            ("cut", scale(t, -1.0), [f"{{ kind: clip_plane, origin: {yaml_list(p)}, normal: {yaml_list(t)} }}"]),
-        ):
-            name = f"{s['name']}_{suffix}"
-            cfg = write_view(cfg_dir, png_dir, name, mesh, p, w, view_dir, filters, markers, args.width)
-            r = subprocess.run([BIN, "mesh-render", "--config", cfg], capture_output=True, text=True)
-            if r.returncode != 0:
-                print(f"[focus] {name}: mesh-render failed\n{r.stdout}\n{r.stderr}", file=sys.stderr)
-            views.append(name)
-        rows.append((s, views))
-        manifest.append({"sample": s["name"], "kind": s["kind"], "curve": s["curve"],
-                         "components": s["components"],
-                         "point": [round(x, 9) for x in p], "tangent": [round(x, 9) for x in t],
-                         "window_half_width": w, "views": views})
-    with open(os.path.join(out_dir, "manifest.json"), "w") as f:
-        json.dump(manifest, f, indent=1)
-    sheet = contact_sheet(out_dir, case, rows, args.width)
-    counts = {}
-    for s in samples:
-        counts[s["kind"]] = counts.get(s["kind"], 0) + 1
-    print(f"[focus] {case}: {len(curves)} input curve(s); {len(samples)} sample(s) {counts}, "
-          f"{3 * len(samples)} view(s), window +-{w:.4g}; sheet {sheet}")
-    if args.before:
-        diff = diff_against(out_dir, os.path.abspath(args.before), case,
-                            [v for _, vs in rows for v in vs])
-        moved = {k: v for k, v in diff.items() if v}
-        print(f"[focus] {case}: {len(moved)} of {len(diff)} view(s) changed vs {args.before}")
+    # scene extent from the input surface
+    inp = [f["centroid"] for f in faces if f["source"] == 0]
+    smin = [min(p[i] for p in inp) for i in range(3)]
+    smax = [max(p[i] for p in inp) for i in range(3)]
+    center = [(smin[i] + smax[i]) / 2 for i in range(3)]
+    half = max(smax[i] - smin[i] for i in range(3)) * 0.62
+    frame = box(center, half)
+
+    panels = []
+    for tag, d in (("ne", (-1.0, -1.0, -1.0)), ("sw", (1.0, 1.0, 1.0))):
+        row = [render(out, f"overview_{tag}_input", surface, d, center, frame, [ONLY_INPUT], INPUT, args.width),
+               render(out, f"overview_{tag}_output", surface, d, center, frame, [ONLY_OUTPUT], OUTPUT, args.width)]
+        panels.append({"title": f"overview, from the {'+x+y+z' if tag == 'ne' else '-x-y-z'} corner",
+                       "labels": ["input", "output"], "files": row})
+
+    w = 4.0 * h
+    found = clusters(faces, 2.0 * w, args.threshold)
+    defects = []
+    for k, c in enumerate(found[:args.defects]):
+        n = c["normal"]
+        side = unit(cross(n, (0.0, 0.0, 1.0) if abs(n[2]) < 0.9 else (1.0, 0.0, 0.0)))
+        oblique = unit(add(scale(n, -1.0), scale(side, 1.2)))
+        fr = box(c["center"], w)
+        filt = [f"{{ kind: bbox, min: {fmt([x - 2 * w for x in c['center']])}, max: {fmt([x + 2 * w for x in c['center']])} }}"]
+        for view, d in (("head-on", scale(n, -1.0)), ("oblique", oblique)):
+            tag = f"defect{k + 1}_{'head' if view == 'head-on' else 'obl'}"
+            row = [render(out, tag + "_input", surface, d, c["center"], fr, filt + [ONLY_INPUT], INPUT, args.width),
+                   render(out, tag + "_output", surface, d, c["center"], fr, filt + [ONLY_OUTPUT], OUTPUT, args.width),
+                   render(out, tag + "_both", surface, d, c["center"], fr, filt, OUTPUT, args.width, opacity=0.55)]
+            panels.append({"title": f"defect {k + 1} ({view})", "labels": ["input", "output", "both"], "files": row})
+        defects.append({"rank": k + 1, "center": [round(x, 6) for x in c["center"]],
+                        "faces": len(c["faces"]), "area": c["area"], "area_share": c["area"] / total,
+                        "max_dev_pct": round(c["max_dev"], 1), "components": c["components"],
+                        "window_half_width": w})
+
+    summary = {"case": case, "mesh": mesh, "h_min": h, "boundary_faces": len(out_faces),
+               "area_share_by_class": dict(zip(["<2%", "2-10%", "10-25%", ">=25%"], shares)),
+               "clusters_at_or_above_threshold": len(found), "defects": defects, "panels": panels}
+    with open(os.path.join(out, "summary.json"), "w") as f:
+        json.dump(summary, f, indent=1)
+    sheet(out, case, panels)
+    print(f"[focus] {case}: {len(out_faces)} boundary faces; area on/2-10/10-25/>=25 % = "
+          + " / ".join(f"{100 * s:.2f}" for s in shares)
+          + f"; {len(found)} cluster(s) >= {args.threshold:g} %, {len(defects)} shown")
+
+
+def sheet(out, case, panels):
+    from PIL import Image, ImageDraw
+    tile, label = 420, 26
+    cols = 3
+    im = Image.new("RGB", (cols * tile, len(panels) * (tile + label)), (255, 255, 255))
+    draw = ImageDraw.Draw(im)
+    for r, p in enumerate(panels):
+        y = r * (tile + label)
+        draw.text((6, y + 6), p["title"], fill=(0, 0, 0))
+        for c, (lab, f) in enumerate(zip(p["labels"], p["files"])):
+            if os.path.exists(f):
+                im.paste(Image.open(f).convert("RGB").resize((tile, tile)), (c * tile, y + label))
+            draw.text((c * tile + 6, y + label + 4), lab, fill=(0, 0, 0))
+    im.save(os.path.join(out, f"{case}_compare_sheet.png"))
 
 
 if __name__ == "__main__":

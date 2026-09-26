@@ -162,6 +162,15 @@ cargo run --release -- mesh-verify \
   --annotate data/output/mesh_annotated.vtu
 ```
 
+`fidelity_vtu: out/compare.vtu` (needs `surfaces:`) writes the **input-versus-output
+comparison surface**: the material boundary `[V13]` measured, each face with `dev_pct` (corner
+distance to the input over the face's edge, in percent), `offset_pct` (signed) and `dev_class`
+(grey < 2 %, yellow 2–10 %, orange 10–25 %, red ≥ 25 % in `mesh-render`'s categorical palette),
+beside the input STL triangles (`source = 0`, split to the output's face size). Render it with
+`color_by: dev_class` and an `array_range` filter on `source` to set input and output side by
+side; `data/fixtures/meshgen/acceptance/render_focus.py` does this per case, including close-ups
+of the worst clusters.
+
 The annotated VTU carries `aspect_ratio`, `radius_ratio`, `min_dihedral_deg`,
 `scaled_jacobian` and `verify_flags`, which `mesh-render` can colour by or filter
 on (`{ kind: array_range, array: aspect_ratio, min: 10.0, max: 1.0e30 }`).

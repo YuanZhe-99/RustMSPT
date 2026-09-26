@@ -145,6 +145,8 @@ cargo run --release -- mesh-verify \
   --annotate data/output/mesh_annotated.vtu
 ```
 
+`fidelity_vtu: out/compare.vtu`（需要 `surfaces:`）写出**输入与输出的对照曲面**：`[V13]` 所测的材料边界面，每个面带 `dev_pct`（角点到输入曲面的距离占该面边长的百分比）、`offset_pct`（带符号）和 `dev_class`（在 `mesh-render` 的分类调色板中：灰 < 2%、黄 2–10%、橙 10–25%、红 ≥ 25%），以及输入 STL 三角形（`source = 0`，细分到与输出面相近的尺寸）。用 `color_by: dev_class` 并对 `source` 加 `array_range` 过滤，即可把输入与输出并排显示；`data/fixtures/meshgen/acceptance/render_focus.py` 对每个算例自动完成这些，包括最差聚集区的特写。
+
 带注解的 VTU 携带 `aspect_ratio`、`radius_ratio`、`min_dihedral_deg`、
 `scaled_jacobian` 与 `verify_flags`，`mesh-render` 可据此着色或过滤
 （`{ kind: array_range, array: aspect_ratio, min: 10.0, max: 1.0e30 }`）。

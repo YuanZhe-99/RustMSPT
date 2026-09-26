@@ -621,6 +621,15 @@ pub fn build_scene(doc: &VtuDoc, spec: &SceneSpec) -> Result<RenderScene> {
                     alpha: spec.face_opacity,
                     set: SetKind::Face,
                 });
+                // On a surface-only document the faces are the mesh, so its edges are what
+                // shows how the surface was cut up (a staircase, a chord, a sliver).
+                if spec.wireframe && surface_stage {
+                    for (u, v) in [(0, 1), (1, 2), (0, 2)] {
+                        let mut ek = [c[u], c[v]];
+                        ek.sort_unstable();
+                        wire_edges.entry(ek).or_insert(());
+                    }
+                }
             }
         }
     }

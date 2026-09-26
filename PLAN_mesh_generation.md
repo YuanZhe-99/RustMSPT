@@ -1009,7 +1009,12 @@ exactly what M-1.7 changes.
   stated as a hypothesis to be measured first: a piece that is not star-shaped from its
   centroid fans into inverted tets, and `orient_positively` (`cut.rs:978`) swaps two nodes and
   emits them positive and overlapping. Seen in M-1.9's renders at a3's fold location as
-  overlapping sliver sheets. Owner: **M-2** — no fan may emit a tet the fan's precondition does
+  overlapping sliver sheets. **Evidence for the mechanism (2026-09-26):** of the folded faces,
+  a3 461 of 466, a7a 1,440 of 1,440 and gated a1 952 of 952 contain a node the cut interned — the
+  fold face is a spoke of a fan from an interned apex, i.e. two adjacent base triangles seen from
+  the apex fold back to the same side: the piece is not star-shaped from its apex. Consistent
+  with the hypothesis; the per-tet proof (orientation before `orient_positively`) is M-2's first
+  measurement. Owner: **M-2** — no fan may emit a tet the fan's precondition does
   not support, and M-3 cannot read "not worse" on `[V3]` until both paths are at zero.
 - **M-1.1. The matrix harness.** `run_acceptance.py` gains: a path selector that exists only until
   M-3 deletes it (the env var is passed through, never defaulted), retention of the mesher log and
@@ -1284,17 +1289,22 @@ exactly what M-1.7 changes.
   serration, a3's chamfer where the sphere crosses the cube — or it is showing the wrong places
   (R8 applied to a picture); two runs give byte-identical PNGs; a view count per case printed and
   bounded. *Tier T2. Multimodal: yes — the sheets themselves, and the two known defects.*
-  **Status 2026-09-26 — first half landed, uncommitted.** `render_focus.py` reads s02's curves,
-  samples per (kind, component set) plus corners ranked by how many bodies meet there plus up to
-  two located FAIL findings per code from the case's own verify JSON, and renders surf+/surf-/cut
-  views through `mesh-render`'s new `frame_box` (the filter is twice the frame so the centroid
-  filter's sawtooth border stays out of the picture — the first version showed it and it read as
-  serration). a3: 17 samples, 51 views, 37 s. What it shows on a3's default path: spikes along
-  every sharp cube edge and a jagged, rounded corner profile in cross-section; a staircase where
-  the sphere's intersection curve crosses the cube face; overlapping slivers at the MG-15 fold.
-  Still to land: thin regions (needs `s03`, i.e. `snapshots: all`), lattice transitions from
-  `s05` (before M-1.7), a colour legend per region key, the runner calling it, and the
-  byte-identity check.
+  **Status 2026-09-26 — redesigned on the owner's review, landed.** The first version (sections
+  of the cut mesh coloured by region) was rejected by the owner as showing nothing: a picture of
+  the mesh alone cannot say what the defect is, where, or what it looks like. The rule it now
+  follows, and every later render must follow: **set the input STL beside the output, from the
+  same camera, and colour the output by how far it is from the input.** `mesh-verify` gained
+  `fidelity_vtu:`, which writes the material boundary [V13] measured (per face: corner deviation
+  over the face's edge, signed offset, and a traffic-light class — grey < 2 %, yellow 2–10 %,
+  orange 10–25 %, red ≥ 25 %) beside the input triangles (split to the output's face size so a
+  window cannot drop a two-triangle cube face), in one surface document. `render_focus.py`
+  renders an overview (input | output, two opposite corners) and the defects: faces ≥ 10 % off
+  clustered by location, ranked by off-surface area, each head-on and oblique as input | output |
+  semi-transparent overlay, with location, component and worst deviation in `summary.json`.
+  `mesh-render` draws element edges on surface-only documents. Renders are byte-identical run to
+  run. What a3 shows at once: a row of red/orange teeth along every cube edge where the input has
+  a straight sharp edge, and spikes along the sphere–cube intersection curve. Still to land:
+  thin-region and lattice-transition views, and the runner calling it.
 
 ### M-2 — Kernel completeness: the surface is a union of element faces everywhere
 

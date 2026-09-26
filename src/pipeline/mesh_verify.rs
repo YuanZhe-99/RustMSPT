@@ -58,6 +58,7 @@ pub fn verify_file(
     annotate_path: Option<&Path>,
     surfaces: &[crate::config::mesh_verify::MeshVerifySurface],
     delivered: bool,
+    fidelity_path: Option<&Path>,
 ) -> Result<VerifyReport> {
     let doc = load_vtu(input)?;
     doc.validate()?;
@@ -85,8 +86,26 @@ pub fn verify_file(
             tris,
         });
     }
+    let inputs: Vec<Vec<[crate::types::Vec3; 3]>> =
+        options.surfaces.iter().map(|c| c.tris.clone()).collect();
     let mut report = verify_with_options(&doc, gates, options);
     report.input = input.to_string_lossy().to_string();
+    if let Some(p) = fidelity_path {
+        let comparison = fidelity_doc(&doc, &report, &inputs);
+        if let Some(dir) = p.parent() {
+            if !dir.as_os_str().is_empty() {
+                std::fs::create_dir_all(dir)?;
+            }
+        }
+        // Ascii: a surface is small, and the focus script reads it without a VTU library.
+        save_vtu(p, &comparison, VtuEncoding::Ascii)?;
+        println!(
+            "[mesh-verify] wrote input-vs-output comparison {} ({} boundary faces, {} input triangles)",
+            p.display(),
+            report.fidelity.len(),
+            inputs.iter().map(Vec::len).sum::<usize>()
+        );
+    }
 
     let log = report_to_log(&report);
     print!("{log}");
@@ -113,6 +132,111 @@ pub fn verify_file(
         println!("[mesh-verify] wrote annotated mesh {}", p.display());
     }
     Ok(report)
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: The input-versus-output comparison surface (plan R9): the mesh's material boundary as [V13] measured it, and the input STL triangles, in one surface-only document.
+// Inputs: the verified document, its report (whose `fidelity` [V13] filled), and the input triangles per component.
+// Returns: a VtuDoc of triangles with cell arrays `source` (0 input, 1 output), `component` (1-based), `dev_pct` (corner deviation over the face's edge, in percent; -1 on input), `offset_pct` (signed; -1e9 sentinel on input), `dev_class` (categorical traffic light: 9 on surface, 5 2-10 %, 1 10-25 %, 2 >= 25 %, 0 input).
+// Side effects: None.
+// Notes: Output faces keep the mesh's own coordinates, so the two surfaces overlay exactly.
+fn fidelity_doc(
+    doc: &crate::io::vtu::VtuDoc,
+    report: &VerifyReport,
+    inputs: &[Vec<[crate::types::Vec3; 3]>],
+) -> crate::io::vtu::VtuDoc {
+    use crate::io::vtu::{ArrayData, DataArray, VtuDoc, VTK_TRIANGLE};
+    let mut points = Vec::new();
+    let mut connectivity = Vec::new();
+    let (mut source, mut component, mut dev, mut offset) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    // Severity as a categorical class, chosen so mesh-render's palette reads as a traffic light:
+    // 9 grey on the surface (< 2 % of the face's edge, [V13]'s "on"), 5 yellow 2-10 %, 1 orange
+    // 10-25 %, 2 red >= 25 %; 0 blue is the input.
+    let class_of = |pct: f64| -> i32 {
+        if pct < 2.0 {
+            9
+        } else if pct < 10.0 {
+            5
+        } else if pct < 25.0 {
+            1
+        } else {
+            2
+        }
+    };
+    let mut class = Vec::new();
+    let mut remap: std::collections::HashMap<usize, i64> = std::collections::HashMap::new();
+    for f in &report.fidelity {
+        for &n in &f.nodes {
+            let id = *remap.entry(n).or_insert_with(|| {
+                points.push(doc.points[n]);
+                (points.len() - 1) as i64
+            });
+            connectivity.push(id);
+        }
+        source.push(1i32);
+        component.push(f.component as i32 + 1);
+        dev.push((f.deviation_frac * 100.0) as f32);
+        class.push(class_of(f.deviation_frac * 100.0));
+        offset.push((f.offset_frac * 100.0) as f32);
+    }
+    // Input triangles are split down to the output's own face size: an STL cube face is two
+    // triangles, and a window filtered by face centroid would otherwise drop the whole face.
+    let mut edges: Vec<f64> = report
+        .fidelity
+        .iter()
+        .map(|f| {
+            let p = f.nodes.map(|n| doc.points[n]);
+            p[1].sub(p[0]).dot(p[1].sub(p[0])).sqrt()
+        })
+        .collect();
+    edges.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let target = edges.get(edges.len() / 2).copied().unwrap_or(f64::INFINITY) * 2.0;
+    for (x, tris) in inputs.iter().enumerate() {
+        let mut split: Vec<[crate::types::Vec3; 3]> = Vec::new();
+        let mut stack: Vec<[crate::types::Vec3; 3]> = tris.iter().rev().copied().collect();
+        while let Some(t) = stack.pop() {
+            let longest = (0..3)
+                .map(|k| t[(k + 1) % 3].sub(t[k]))
+                .map(|e| e.dot(e).sqrt())
+                .fold(0.0f64, f64::max);
+            if longest <= target || split.len() > 2_000_000 {
+                split.push(t);
+                continue;
+            }
+            let m = |a: crate::types::Vec3, b: crate::types::Vec3| a.add(b).scale(0.5);
+            let (ab, bc, ca) = (m(t[0], t[1]), m(t[1], t[2]), m(t[2], t[0]));
+            for c in [[ca, bc, t[2]], [bc, ca, ab], [ab, t[1], bc], [t[0], ab, ca]] {
+                stack.push(c);
+            }
+        }
+        for t in &split {
+            for p in t {
+                points.push(*p);
+                connectivity.push((points.len() - 1) as i64);
+            }
+            source.push(0);
+            component.push(x as i32 + 1);
+            dev.push(-1.0);
+            class.push(0);
+            offset.push(-1.0e9);
+        }
+    }
+    let cells = source.len();
+    VtuDoc {
+        points,
+        connectivity,
+        offsets: (1..=cells as i64).map(|i| 3 * i).collect(),
+        types: vec![VTK_TRIANGLE; cells],
+        point_data: Vec::new(),
+        cell_data: vec![
+            DataArray::scalar("source", ArrayData::I32(source)),
+            DataArray::scalar("component", ArrayData::I32(component)),
+            DataArray::scalar("dev_pct", ArrayData::F32(dev)),
+            DataArray::scalar("offset_pct", ArrayData::F32(offset)),
+            DataArray::scalar("dev_class", ArrayData::I32(class)),
+        ],
+        field_data: Vec::new(),
+    }
 }
 
 // AI-FUNC-SUMMARY: Write bytes, creating the parent directory when needed; returns Ok(()) or Io error; side effects: writes to disk.
@@ -145,6 +269,7 @@ impl Pipeline for MeshVerifyPipeline {
             p.annotate.as_deref().map(Path::new),
             &p.surfaces,
             p.delivered,
+            p.fidelity_vtu.as_deref().map(Path::new),
         )?;
         if !report.passed() {
             return Err(RustMsptError::InvalidMesh(format!(

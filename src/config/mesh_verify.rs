@@ -97,6 +97,11 @@ pub struct MeshVerifyParams {
     /// strictly regardless of `StageIndex`. Set it on the file handed over, never on a snapshot.
     #[serde(default)]
     pub delivered: bool,
+    /// Write the input-versus-output comparison surface here (plan R9): the mesh's material
+    /// boundary with [V13]'s per-face deviation beside the input STL triangles, for
+    /// `mesh-render`. Needs `surfaces:`.
+    #[serde(default)]
+    pub fidelity_vtu: Option<String>,
 }
 
 // AI-FUNC-SUMMARY: Top-level YAML wrapper for the `mesh_verify:` config block; side effects: none.

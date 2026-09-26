@@ -247,6 +247,21 @@ impl Default for VerifyGates {
     }
 }
 
+// AI-FUNC-SUMMARY: One material-boundary face as [V13] measured it, exported so the boundary can be drawn against the input surface (plan R9); side effects: none.
+#[derive(Clone, Debug)]
+pub struct FaceFidelity {
+    /// The face's three node ids in the verified document.
+    pub nodes: [usize; 3],
+    /// The component (0-based index into the surfaces) whose surface the face is measured against.
+    pub component: usize,
+    /// Largest corner distance to that surface, over the face's own longest edge.
+    pub deviation_frac: f64,
+    /// Area-weighted signed corner offset over the edge: + outside the body, - inside.
+    pub offset_frac: f64,
+    pub area: f64,
+    pub centroid: Vec3,
+}
+
 // AI-FUNC-SUMMARY:
 // Purpose: Complete verification result for one mesh: metadata echo, section list and totals.
 // Notes: `exit_code()` implements the subcommand contract (nonzero on FAIL, or on WARN when gated fatal).
@@ -265,6 +280,8 @@ pub struct VerifyReport {
     pub checks_run: usize,
     pub checks_skipped: usize,
     pub warn_is_fatal: bool,
+    /// [V13]'s per-face measurements (empty when [V13] did not run).
+    pub fidelity: Vec<FaceFidelity>,
 }
 
 impl VerifyReport {
@@ -833,6 +850,7 @@ pub fn verify_with_options(
         .iter()
         .map(|&c| tet_quality(view.tet_points(c)))
         .collect();
+    let mut fidelity: Vec<FaceFidelity> = Vec::new();
 
     let mut sections = vec![check_v1(&view, &quality, cap), check_v2(&view, gates, cap)];
     let (v3, face_owners) = check_v3(&view, gates, cap, stage_index, options.delivered);
@@ -888,7 +906,7 @@ pub fn verify_with_options(
              boundary to measure",
         ));
     } else {
-        sections.push(check_v13(&view, &face_owners, &options.surfaces, gates, cap));
+        sections.push(check_v13(&view, &face_owners, &options.surfaces, gates, cap, &mut fidelity));
     }
 
     let (mut fail, mut warn, mut info) = (0, 0, 0);
@@ -920,6 +938,7 @@ pub fn verify_with_options(
         checks_run: run,
         checks_skipped: skipped,
         warn_is_fatal: gates.warn_is_fatal,
+        fidelity,
     }
 }
 
@@ -4275,6 +4294,7 @@ fn check_v13(
     surfaces: &[SurfaceComponent],
     gates: &VerifyGates,
     cap: usize,
+    export: &mut Vec<FaceFidelity>,
 ) -> VerifySection {
     let mut s = VerifySection::new("V13", "Interface fidelity");
     if surfaces.is_empty() {
@@ -5281,6 +5301,14 @@ fn check_v13(
             cap,
         );
     }
+    export.extend(boundary.iter().map(|f| FaceFidelity {
+        nodes: f.nodes,
+        component: f.component,
+        deviation_frac: f.deviation_max / f.local_h.max(f64::MIN_POSITIVE),
+        offset_frac: f.offset / f.local_h.max(f64::MIN_POSITIVE),
+        area: f.area,
+        centroid: f.centroid,
+    }));
     s
 }
 
