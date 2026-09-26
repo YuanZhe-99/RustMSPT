@@ -376,7 +376,7 @@ Batched scheduling changes stochastic interleavings; optimize still has no cross
   `calculate_s2` and the GPU S2 pipeline compute the correlation curve that
   SA's loss function (`l2_norm`) compares against the target.
 
-GPU MC runtime errors now obey `cpu_fallback`: true disables the failed instance and recomputes the same mesh-MC method on CPU; false propagates a stage-labelled error before final outputs are written. See `PLAN.Performance.md` §14.
+GPU MC runtime errors now obey `cpu_fallback`: true disables the failed instance and recomputes the same mesh-MC method on CPU; false propagates a stage-labelled error before final outputs are written. See `PLAN.Performance.md@1349c46` §14.
 
 ### Persistent merged geometry (PERF-10)
 

@@ -6,7 +6,7 @@ use std::hash::{BuildHasherDefault, Hasher};
 /// Vertex-weld map: quantized coordinates to the vertex index first assigned to them.
 ///
 /// Only looked up and inserted, never iterated, so the hasher cannot affect which index a vertex gets;
-/// SipHash cost more than the rest of a binary load (PLAN.Performance.md section 73).
+/// SipHash cost more than the rest of a binary load (PLAN.Performance.md@1349c46 section 73).
 type WeldMap = HashMap<(i64, i64, i64), usize, BuildHasherDefault<WeldHasher>>;
 
 // AI-FUNC-SUMMARY: Multiply-xor hasher for quantized vertex keys with a 64-bit finalizer so the low bits the table indexes by depend on every input bit; returns the hash; side effects: none.

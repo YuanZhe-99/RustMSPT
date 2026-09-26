@@ -414,13 +414,13 @@ fn place_all(
 
 /// Largest speculative batch per worker. Each batch ends at a barrier and attempt costs are heavy-tailed
 /// (most die in the cheap tests, a few reach the exact ones), so a batch lasts as long as its slowest
-/// attempt. Measured at volume fraction 0.30 (PLAN.Performance.md §70): caps of 2x/4x/8x the workers
+/// attempt. Measured at volume fraction 0.30 (PLAN.Performance.md@1349c46 §70): caps of 2x/4x/8x the workers
 /// gave 3.82/2.94/2.87 s on 4 workers and 3.12/3.15/2.63 s on 8, against about 5-6 s serial.
 const SPECULATIVE_BATCH_PER_WORKER: usize = 8;
 
 /// Attempts a particle makes one at a time before its batches start to grow. A sparse run places most
 /// particles within a few attempts, and even a batch of two pays a pool wake-up that costs more than
-/// the attempt (PLAN.Performance.md §70).
+/// the attempt (PLAN.Performance.md@1349c46 §70).
 const SERIAL_ATTEMPTS_BEFORE_BATCHING: usize = 4;
 
 /// One attempt's variates, drawn in the fixed schedule before any check runs.

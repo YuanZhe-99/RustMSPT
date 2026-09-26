@@ -154,7 +154,7 @@ GPU 运行时错误、射线交点溢出和 f32 数值认证仍为 PERF-04/05 �
 迁移同时携带几何、loss 和曲线。全局迁移锁在几何/S2 工作前释放，GPU 锁在 CPU VF 工作前释放，
 防止嵌套 Rayon 任务等待其暂停调用方持有的锁。分批调度会改变随机执行交错；optimize 仍不承诺跨线程 SA 逐字节一致。
 
-GPU MC 运行时错误现遵守 `cpu_fallback`：true 停用失败实例并以 CPU 重算同一 mesh-MC 方法；false 在最终输出写入前返回带阶段的错误。见 `PLAN.Performance.md` §14。
+GPU MC 运行时错误现遵守 `cpu_fallback`：true 停用失败实例并以 CPU 重算同一 mesh-MC 方法；false 在最终输出写入前返回带阶段的错误。见 `PLAN.Performance.md@1349c46` §14。
 
 ### Persistent merged geometry (PERF-10)
 

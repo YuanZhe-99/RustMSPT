@@ -14,7 +14,7 @@ use rayon::prelude::*;
 /// 1.4-2x from two clear pairs upward, but end to end on dense runs (PLAN.Performance, PERF-12 item 2)
 /// about 98 % of attempts are rejected, the ordered search still waits for in-flight speculative
 /// distances, and the parallel path measured 0-10 % slower on a shared 4-core host, so it is off by
-/// default. Re-measured after the gap screen (PLAN.Performance.md §68) on an idle 8-core host: 4 set
+/// default. Re-measured after the gap screen (PLAN.Performance.md@1349c46 §68) on an idle 8-core host: 4 set
 /// against serial gave 0.97-1.05x end to end at volume fraction 0.25-0.30 on 4 and 8 threads, so it
 /// stays off. The answer is identical either way; only speed changes.
 pub const PAIR_PARALLEL_MIN: usize = usize::MAX;

@@ -12,7 +12,7 @@ use std::fs;
 use std::path::Path;
 
 /// Average kept-particle face count from which output files are written two at a time. Below it the
-/// pool fork/join per pair costs more than the write it overlaps (PLAN.Performance.md section 72).
+/// pool fork/join per pair costs more than the write it overlaps (PLAN.Performance.md@1349c46 section 72).
 const WRITE_PAIR_MIN_FACES: usize = 65_536;
 
 pub struct SplitFilterPipeline {
@@ -530,7 +530,7 @@ impl SplitFilterPipeline {
         // Keep at most two STL writers active; consume errors in stable output-rank order. Pairs of
         // writers pay one pool fork/join per two files, which only a large file amortises: on a split
         // of ~3,700 small granules it cost more than the writing (0.074 s serial against 0.222 s on 8
-        // workers, PLAN.Performance.md section 72), so small outputs are written one at a time.
+        // workers, PLAN.Performance.md@1349c46 section 72), so small outputs are written one at a time.
         let kept_faces: usize = kept_indices.iter().map(|&i| particles[i].faces.len()).sum();
         let parallel_writes = kept_faces / kept_indices.len() >= WRITE_PAIR_MIN_FACES;
         let write_rank = |rank: usize, idx: usize| {

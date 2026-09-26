@@ -238,7 +238,7 @@ out-of-domain offsets before unsigned arithmetic and processes lists in batches
 of at most 200,000 offsets. Reduction remains the equal-weight mean of valid
 per-offset ratios across every batch; empty lists retain only the supplied VF.
 These fixes do not resolve the 64-hit ray limit, MC radius limits, general workload
-planning, or runtime error fallback; see `PLAN.Performance.md` §12.
+planning, or runtime error fallback; see `PLAN.Performance.md@1349c46` §12.
 
 ### Overflow ray recovery (2026-09-13)
 
@@ -249,9 +249,9 @@ and count parity using the same anchored `1e-6` GPU tolerance. (Superseded by th
 is dropped or resampled. Recovery requires constant extra storage but can cost
 O(triangles × distinct hits), so this correctness fix may be slow on dense scenes.
 CPU/GPU numerical equivalence and runtime device/readback errors remain unresolved.
-See the GPU function reference and `PLAN.Performance.md` §13 for tests and limitations.
+See the GPU function reference and `PLAN.Performance.md@1349c46` §13 for tests and limitations.
 
-MC execution now returns checked capacity/readback/device errors. The legacy GPU wrapper retries continuous CPU mesh MC; optimize honors its explicit fallback policy. Voxel/shell runtime propagation remains pending. See the GPU reference and `PLAN.Performance.md` §14.
+MC execution now returns checked capacity/readback/device errors. The legacy GPU wrapper retries continuous CPU mesh MC; optimize honors its explicit fallback policy. Voxel/shell runtime propagation remains pending. See the GPU reference and `PLAN.Performance.md@1349c46` §14.
 
 Measure now keeps positive-pitch voxel MC distinct from continuous mesh MC, performs CPU fallback inside its configured pool, and records actual per-method backends. The fallible GPU exact entry normalizes nonpositive pitch to 1.0 and propagates voxel/shell execution errors; it does not silently select an approximate method.
 

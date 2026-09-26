@@ -108,7 +108,7 @@ def case_definitions(repo, chain, large=False):
 
     `large` raises the work per run so worker scaling is measurable: the shipped inputs finish most
     pipelines in 3-90 ms, which measures process and pool start-up rather than scaling
-    (PLAN.Performance.md section 68). It changes only sizes and targets, never a method.
+    (PLAN.Performance.md@1349c46 section 68). It changes only sizes and targets, never a method.
     """
     inp = repo / "data" / "input"
 

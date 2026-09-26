@@ -223,7 +223,7 @@ fn particle_voxel_coverage(mesh: &Mesh, bbox: BoundingBox, voxel_pitch: f64, dim
 }
 
 /// Candidate voxels in one particle's ranges below which its containment queries run serially.
-/// Measured at ~1 us per query (PLAN.Performance.md §68): 448 voxels ran 0.42 ms serial against
+/// Measured at ~1 us per query (PLAN.Performance.md@1349c46 §68): 448 voxels ran 0.42 ms serial against
 /// 0.55 ms on 8 workers, while 9,504 voxels ran 9.8 ms serial against 3.7 ms on 8 workers.
 pub(crate) const COVERAGE_PARALLEL_MIN_VOXELS: usize = 1024;
 
@@ -729,7 +729,7 @@ fn direct_working_set_bytes(dims: [usize; 3], r_max: usize, max_shell_offsets: u
 // Inputs: grid dims, r_max, positive pitch, worker count, working-set budget in bytes.
 // Returns: ExactCpuPlan with both modeled wall times, both checked working sets, the selection and a reason string.
 // Side effects: None (enumerates the clamped offset box once in the current Rayon pool).
-// Notes: Constants are release fits on an idle 8-core host (exact_cost_model_calibration; refit for the packed direct kernel, PLAN.Performance.md §79). FFT time = NS_PER_FFT_UNIT*P*log2(P) / (1 + FFT_PARALLEL_EFFICIENCY*(workers-1)); direct time = NS_PER_DIRECT_PAIR*W / (1 + DIRECT_PARALLEL_EFFICIENCY*(min(workers, K)-1)). Only kernels whose working set fits are eligible; the cheaper eligible one wins (FFT on ties). When neither fits, direct is chosen because it needs the least memory and the reason says so. Both kernels return identical integer counts, so the choice never changes results.
+// Notes: Constants are release fits on an idle 8-core host (exact_cost_model_calibration; refit for the packed direct kernel, PLAN.Performance.md@1349c46 §79). FFT time = NS_PER_FFT_UNIT*P*log2(P) / (1 + FFT_PARALLEL_EFFICIENCY*(workers-1)); direct time = NS_PER_DIRECT_PAIR*W / (1 + DIRECT_PARALLEL_EFFICIENCY*(min(workers, K)-1)). Only kernels whose working set fits are eligible; the cheaper eligible one wins (FFT on ties). When neither fits, direct is chosen because it needs the least memory and the reason says so. Both kernels return identical integer counts, so the choice never changes results.
 pub(crate) fn plan_exact_cpu(dims: [usize; 3], r_max: usize, pitch: f64, workers: usize, budget_bytes: u64) -> ExactCpuPlan {
     let workers = workers.max(1);
     let padded_opt = padded_fft_dims(dims);
@@ -1375,7 +1375,7 @@ pub struct VoxelS2 {
 }
 
 /// Total voxel Monte Carlo samples (samples per radius times radii) below which the radii run
-/// serially. Measured on a 50^3 grid (PLAN.Performance.md §68): at 20k total samples 8 workers
+/// serially. Measured on a 50^3 grid (PLAN.Performance.md@1349c46 §68): at 20k total samples 8 workers
 /// took 2.0x the serial time and 4 workers 1.4x; at 80k parallel broke even on 8 workers and won
 /// 0.64x on 2-4; from 320k up it won 0.25-0.45x.
 pub(crate) const VOXEL_MC_PARALLEL_MIN_SAMPLES: usize = 1 << 16;

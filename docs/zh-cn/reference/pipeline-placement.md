@@ -165,7 +165,7 @@ run_placement
 
 **投机尝试批次从不改变结果。** `try_place_one` 按固定消费顺序串行抽取一批候选，并记录每个候选之后的 ChaCha 流位置；然后对未改变的已放置集合并行评估，再按顺序检查结果：第一个接受之前的拒绝照常计数；一旦接受，就把生成器回退（`set_word_pos`）到该次尝试结束处，丢弃其后的全部抽样。每个颗粒的前 `SERIAL_ATTEMPTS_BEFORE_BATCHING`（4）次尝试逐个进行，之后批次加倍，上限为 worker 数的 `SPECULATIVE_BATCH_PER_WORKER`（8）倍；单 worker 从不批处理。体积分数 0.30 时 4/8 worker 的墙钟时间降至串行的 0.53/0.44 倍；0.10 时差异在噪声内。`a_dense_run_is_identical_on_one_two_and_eight_threads` 在每次放置约 175 次尝试的运行上逐字节比较 1/2/8 worker 的输出，去掉回退即失败。
 
-**网格统计（PLAN.Performance.md §79 第 8 项）。** 放置结束后打印 `[GridStats] placement buckets=.. non_empty=.. max_occupancy=.. mean_occupancy_non_empty=.. memberships=.. items=..` 与 `[GridStats] placement queries grid_queries=.. grid_candidates=..`（并行评估中以 relaxed 原子量累计，包含投机评估，从不影响决定）。标签生成已在 `[Info] Voxel label queries` 行打印逐体素 bbox 检查数。VF 0.30 时网格 27 个桶、平均每桶 18 个颗粒（每次查询约 130 个候选）；把单元缩小到 1/2、1/4 使候选最多减少 2.8 倍而运行时间不变，因此单元大小（最大颗粒外延加间隙）保持不变。
+**网格统计（PLAN.Performance.md@1349c46 §79 第 8 项）。** 放置结束后打印 `[GridStats] placement buckets=.. non_empty=.. max_occupancy=.. mean_occupancy_non_empty=.. memberships=.. items=..` 与 `[GridStats] placement queries grid_queries=.. grid_candidates=..`（并行评估中以 relaxed 原子量累计，包含投机评估，从不影响决定）。标签生成已在 `[Info] Voxel label queries` 行打印逐体素 bbox 检查数。VF 0.30 时网格 27 个桶、平均每桶 18 个颗粒（每次查询约 130 个候选）；把单元缩小到 1/2、1/4 使候选最多减少 2.8 倍而运行时间不变，因此单元大小（最大颗粒外延加间隙）保持不变。
 
 **并行的颗粒对检查从不改变结果。** 廉价的邻居测试串行执行；随后相交与嵌套检查串行进行到第一个失败的
 存活邻居为止，只有在它之前的颗粒对才需要代价占绝大部分的精确距离。当这样的颗粒对数量达到

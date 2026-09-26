@@ -186,7 +186,7 @@
   - `bbox` — 参考包围盒（例如堆积容器）。
 - **返回值：** 限制在 `[0, 1]` 内的 `f64`：`(盒内体积之和) / max(bbox.volume(), 1e-12)`。
 - **副作用：** 无（仅并行计算，不进行修改）。
-- **说明：** 每个网格首先通过 `split_mesh_into_granules` 拆分为连通分量（单个网格可能代表多个不相连的颗粒体），每个分量的盒内体积通过 `particle_volume_in_bbox` 独立计算后求和；若某个网格没有拆分出分量，则回退为将整个网格视为一个颗粒处理。每个网格的计算通过 `rayon` 的 `par_iter` 并行化；分量数不少于 `VF_PARALLEL_MIN_PARTS`（32）的网格会并行计算各分量体积，写入按序索引的缓冲后按分量顺序求和，因此体积与串行求和逐位一致。forge 传入的是一个合并网格，过去其 VF 只在一个 worker 上运行；在 1,755 个颗粒的网格上，8 worker 时每个 VF 阶段由 0.061 s 降至 0.042 s，报告完全一致（PLAN.Performance.md §74）。
+- **说明：** 每个网格首先通过 `split_mesh_into_granules` 拆分为连通分量（单个网格可能代表多个不相连的颗粒体），每个分量的盒内体积通过 `particle_volume_in_bbox` 独立计算后求和；若某个网格没有拆分出分量，则回退为将整个网格视为一个颗粒处理。每个网格的计算通过 `rayon` 的 `par_iter` 并行化；分量数不少于 `VF_PARALLEL_MIN_PARTS`（32）的网格会并行计算各分量体积，写入按序索引的缓冲后按分量顺序求和，因此体积与串行求和逐位一致。forge 传入的是一个合并网格，过去其 VF 只在一个 worker 上运行；在 1,755 个颗粒的网格上，8 worker 时每个 VF 阶段由 0.061 s 降至 0.042 s，报告完全一致（PLAN.Performance.md@1349c46 §74）。
 - **另请参阅：** `../algorithms/mesh-clipping-volume-fraction.md`。
 
 ## collision.rs

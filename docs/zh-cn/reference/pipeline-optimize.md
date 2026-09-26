@@ -96,7 +96,7 @@ Metropolis 规则见算法文档。候选 MC 样本数为 `round(mc_samples * (0
 避免嵌套 Rayon 工作等待调用方持有的同一把锁。返回最佳快照和候选阶段计时，修改历史及全局状态，打印进度。
 
 
-**带种子的运行（PLAN.Performance.md §79）。** `optimization.seed` 使单岛运行在任意 worker 数下可复现。`stage_rng(seed, stage)` 为剪枝（阶段 1）与各岛（阶段 100 + id）提供 ChaCha12 随机流；每次 S2 评估从该流取一个种子（仅在设了种子时抽取，因此未设种子时随机流不变），传给 `calculate_s2_seeded`、`VoxelS2::calculate_seeded` 或 `calculate_s2_gpu_seeded`；target、input、final 评估使用 `fixed_eval_seed`。体素 MC 每个半径一条随机流，并行调度无法改变曲线。多岛依线程时序交换快照，仍不可复现。测试：`a_seeded_single_island_optimize_is_reproducible_on_any_worker_count`（体素 MC 与网格 MC，1 与 4 worker，另一种子必须不同）。
+**带种子的运行（PLAN.Performance.md@1349c46 §79）。** `optimization.seed` 使单岛运行在任意 worker 数下可复现。`stage_rng(seed, stage)` 为剪枝（阶段 1）与各岛（阶段 100 + id）提供 ChaCha12 随机流；每次 S2 评估从该流取一个种子（仅在设了种子时抽取，因此未设种子时随机流不变），传给 `calculate_s2_seeded`、`VoxelS2::calculate_seeded` 或 `calculate_s2_gpu_seeded`；target、input、final 评估使用 `fixed_eval_seed`。体素 MC 每个半径一条随机流，并行调度无法改变曲线。多岛依线程时序交换快照，仍不可复现。测试：`a_seeded_single_island_optimize_is_reproducible_on_any_worker_count`（体素 MC 与网格 MC，1 与 4 worker，另一种子必须不同）。
 #### OptimizePipeline::run
 
 `fn run(&self) -> Result<()>` 保留 `cpu_max` 到可用并行度的钳制规则，创建一个 Rayon 池并安装

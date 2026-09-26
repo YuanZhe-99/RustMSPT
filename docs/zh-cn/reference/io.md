@@ -180,7 +180,7 @@
   - `v` — 待查找或插入的顶点。
 - **返回值：** `v` 在 `vertices` 中的索引（已存在或新插入）。
 - **副作用：** 原地修改 `vertices` 和 `map`。
-- **说明：** `map` 为 `WeldMap`：使用本地 `WeldHasher`（乘法-异或加 64 位终结混合）替代 SipHash 的 `HashMap`。该表只做查找与插入、从不迭代，因此哈希函数不会改变顶点获得的索引；在 34 MB 二进制 STL 上载入阶段由 0.127 s 降至约 0.06 s，下游输出逐字节一致（PLAN.Performance.md §73）。二进制读取还按文件头的三角形数预分配顶点、面与哈希表（上限 2^24，避免损坏的文件头过量预留）。
+- **说明：** `map` 为 `WeldMap`：使用本地 `WeldHasher`（乘法-异或加 64 位终结混合）替代 SipHash 的 `HashMap`。该表只做查找与插入、从不迭代，因此哈希函数不会改变顶点获得的索引；在 34 MB 二进制 STL 上载入阶段由 0.127 s 降至约 0.06 s，下游输出逐字节一致（PLAN.Performance.md@1349c46 §73）。二进制读取还按文件头的三角形数预分配顶点、面与哈希表（上限 2^24，避免损坏的文件头过量预留）。
 
 #### AsciiStlBuilder / push_line
 
@@ -489,17 +489,17 @@ Binary STL output now uses a 64 KiB BufWriter and explicitly flushes before succ
 
 ### 文件夹有界解码（2026-09-23）
 
-`consume_file_batches` 使用当前 Rayon 池最多并行加载两个 RAW/TIFF 文件（单 worker 池一次一个），随后按原文件名顺序验证并合并。逐文件 Result 保持有序，因此较早文件的 shape/type 错误优先于较晚的解码错误；失败后不启动后续批次。每个 TIFF reader 仍串行推进页，文件夹范围仍选择完整文件。上限是两个已解码文件而非字节预算：单个多页文件和汇总 Volume3D 仍常驻内存。I/O 不创建线程池，单文件 TIFF 加载仍顺序执行，输出遵循下方有界 writer 契约。线程/类型/顺序/存活缓冲验证和性能限制见 PLAN.Performance.md §59。
+`consume_file_batches` 使用当前 Rayon 池最多并行加载两个 RAW/TIFF 文件（单 worker 池一次一个），随后按原文件名顺序验证并合并。逐文件 Result 保持有序，因此较早文件的 shape/type 错误优先于较晚的解码错误；失败后不启动后续批次。每个 TIFF reader 仍串行推进页，文件夹范围仍选择完整文件。上限是两个已解码文件而非字节预算：单个多页文件和汇总 Volume3D 仍常驻内存。I/O 不创建线程池，单文件 TIFF 加载仍顺序执行，输出遵循下方有界 writer 契约。线程/类型/顺序/存活缓冲验证和性能限制见 PLAN.Performance.md@1349c46 §59。
 
 小于 512 KiB 的 RAW 文件即使多 worker 也串行解码；该阈值依据 §59 的小文件退化与较大切片对照。只有一个文件的批次始终直接解码。
 
 ### TIFF 文件夹有界写出与显式刷新（2026-09-23）
 
-`save_tiff_or_folder_with_ext` 借用切片数据、不复制整个 volume，按原 z 索引分配文件名，在当前 Rayon 池最多启用两个 encoder/writer。每批全部完成后按切片顺序检查错误，返回最早切片的错误，不启动后续批次。失败批中的另一个文件可能已经创建或覆盖；保留部分文件，不删除已有用户输出。单 worker 或单切片批直接执行，单个多页 TIFF 仍顺序编码。`write_tiff_pages<W: Write + Seek>` 借用 writer，按顺序写页，释放 encoder 后显式 flush，两种输出模式都传播刷新错误。这仅确认缓冲写出，不等于 fsync 持久化。尺寸乘积及 u32 范围检查在创建输出前拒绝溢出。测试/基准与限制见 PLAN.Performance.md §60。
+`save_tiff_or_folder_with_ext` 借用切片数据、不复制整个 volume，按原 z 索引分配文件名，在当前 Rayon 池最多启用两个 encoder/writer。每批全部完成后按切片顺序检查错误，返回最早切片的错误，不启动后续批次。失败批中的另一个文件可能已经创建或覆盖；保留部分文件，不删除已有用户输出。单 worker 或单切片批直接执行，单个多页 TIFF 仍顺序编码。`write_tiff_pages<W: Write + Seek>` 借用 writer，按顺序写页，释放 encoder 后显式 flush，两种输出模式都传播刷新错误。这仅确认缓冲写出，不等于 fsync 持久化。尺寸乘积及 u32 范围检查在创建输出前拒绝溢出。测试/基准与限制见 PLAN.Performance.md@1349c46 §60。
 
 ### RAW 汇总缓冲预留（2026-09-23）
 
-RAW 平面大小、文件字节数和选定输出体素数均使用 checked arithmetic。首个选定切片成功解码后，以 `try_reserve_exact` 一次预留最终体素数，后续按序追加不再触发几何增长。首片格式错误仍先于预留返回，分配失败显式传播。双文件解码上限和 512 KiB 并行阈值保持不变。Vec 容量请求不是进程 RSS 上限，单片临时缓冲仍与最终输出共存。见 PLAN.Performance.md §63。
+RAW 平面大小、文件字节数和选定输出体素数均使用 checked arithmetic。首个选定切片成功解码后，以 `try_reserve_exact` 一次预留最终体素数，后续按序追加不再触发几何增长。首片格式错误仍先于预留返回，分配失败显式传播。双文件解码上限和 512 KiB 并行阈值保持不变。Vec 容量请求不是进程 RSS 上限，单片临时缓冲仍与最终输出共存。见 PLAN.Performance.md@1349c46 §63。
 
 ### ASCII STL 流式解析（PERF-18，2026-09-25）
 

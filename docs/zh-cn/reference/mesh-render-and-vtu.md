@@ -146,11 +146,11 @@ checked planner 按可见三角形每面 120、启用 segment 每条 64、marker
 
 ### CPU 像素任务划分
 
-STL 最近命中和 prepared 透明 scene 渲染均使用不重叠连续像素任务。当行数不少于 worker 且每 worker 不超过 1024 像素时保留按行，避免最小块粒度减少并行任务；其他图单 worker 为单任务，否则目标为每 worker 四个任务，粒度夹取 256..4096 像素，整行能放下时按行对齐。宽行可跨任务，短行可合并。任务仅在起点计算 (x,y)，随后递增原整数像素坐标，射线运算、命中排序/合成与串行叠加不变。scene depth/RGBA 共用边界并复用任务内 hits scratch。两种投影、非整除尺寸、极端纵横比在 1/2/8 worker 下逐字节对照按行参考。粒度性能验收见 PLAN.Performance.md §40。
+STL 最近命中和 prepared 透明 scene 渲染均使用不重叠连续像素任务。当行数不少于 worker 且每 worker 不超过 1024 像素时保留按行，避免最小块粒度减少并行任务；其他图单 worker 为单任务，否则目标为每 worker 四个任务，粒度夹取 256..4096 像素，整行能放下时按行对齐。宽行可跨任务，短行可合并。任务仅在起点计算 (x,y)，随后递增原整数像素坐标，射线运算、命中排序/合成与串行叠加不变。scene depth/RGBA 共用边界并复用任务内 hits scratch。两种投影、非整除尺寸、极端纵横比在 1/2/8 worker 下逐字节对照按行参考。粒度性能验收见 PLAN.Performance.md@1349c46 §40。
 
 ### GPU PNG 有界写出（2026-09-23）
 
-GPU 多视图且配置 worker 数大于 1 时，`consume_frames` 通过零容量通道按顺序将图像所有权移交给单个 PNG writer。最多一张图像正在编码、一张由渲染生产端持有；GPU 渲染目标继续复用。返回或 CPU 回退前，必须等待 writer 退出并排空已接收帧。输出错误优先于 GPU 错误，不触发回退；即使 producer 成功，末帧写出错误也不会丢失。单 worker 或单视图保持顺序执行；这证明有界重叠机制，不代表端到端提速；软件 GPU 冷进程 CLI 对照（含 PNG 身份与 RSS）见 PLAN.Performance.md §56；完整负载和硬件验收仍开放。
+GPU 多视图且配置 worker 数大于 1 时，`consume_frames` 通过零容量通道按顺序将图像所有权移交给单个 PNG writer。最多一张图像正在编码、一张由渲染生产端持有；GPU 渲染目标继续复用。返回或 CPU 回退前，必须等待 writer 退出并排空已接收帧。输出错误优先于 GPU 错误，不触发回退；即使 producer 成功，末帧写出错误也不会丢失。单 worker 或单视图保持顺序执行；这证明有界重叠机制，不代表端到端提速；软件 GPU 冷进程 CLI 对照（含 PNG 身份与 RSS）见 PLAN.Performance.md@1349c46 §56；完整负载和硬件验收仍开放。
 
 ### CPU PNG 写出重叠（PERF-17，2026-09-25）
 
@@ -162,4 +162,4 @@ CPU 视图改由 `render_and_write_overlapped` 处理：第 *i* 个视图在 `ra
 
 ### 不透明场景最近命中组（2026-09-23）
 
-准备后的场景至少有 192 个三角形、且每个 clamp 后的 alpha 都恰为 1 时，先用 QBVH 求最近距离，再以向外取整的 `nearest + 2 * dedup_tol` 为界枚举附近命中。保留原距离/triangle ID 排序及移动锚点的 Face-over-Volume 去重，只取首组；所选法线、颜色和深度交给原合成器与覆盖线逻辑。更小场景或包含零/部分/NaN alpha 时维持全命中枚举。三角形阈值避开了实测 24 三角形场景的双遍历退化，只是保守启发式，不能保证所有空间布局提速。分层场景 release 对照和限制见 PLAN.Performance.md §57。
+准备后的场景至少有 192 个三角形、且每个 clamp 后的 alpha 都恰为 1 时，先用 QBVH 求最近距离，再以向外取整的 `nearest + 2 * dedup_tol` 为界枚举附近命中。保留原距离/triangle ID 排序及移动锚点的 Face-over-Volume 去重，只取首组；所选法线、颜色和深度交给原合成器与覆盖线逻辑。更小场景或包含零/部分/NaN alpha 时维持全命中枚举。三角形阈值避开了实测 24 三角形场景的双遍历退化，只是保守启发式，不能保证所有空间布局提速。分层场景 release 对照和限制见 PLAN.Performance.md@1349c46 §57。

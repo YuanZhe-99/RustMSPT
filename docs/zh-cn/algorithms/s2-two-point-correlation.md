@@ -211,16 +211,16 @@ Voxel 参数共 48 字节，射线方向从字节 32 开始。MC 和 voxel 三�
 中减去 bbox 原点，再转为 f32，保留大平移下的局部几何。Shell 计数在无符号运算前
 排除域外偏移，每批最多处理 200,000 项；跨批次按有效偏移的 hits/valid 等权平均。
 空列表只保留传入的 VF。这些修复尚未解决 64-hit 射线限制、MC 半径限制、通用工作集
-规划和运行时错误回退，见 `PLAN.Performance.md` §12。
+规划和运行时错误回退，见 `PLAN.Performance.md@1349c46` §12。
 
 ### 射线溢出恢复（2026-09-13）
 
 MC 和 voxel shader 在正向三角形原始命中超过 64 次时，不再静默截断，而是逐轮完整扫描，
 选择下一个不同交点，按原 GPU 的锚定 `1e-6` 容差去重并统计奇偶性（已被下文 f32 认证取代：两条路径现均使用 CPU 的 `1e-8` 带并证明每个间隔）。普通射线仍走原排序数组
 路径，MC 样本不丢弃、不重抽。恢复仅需常数额外空间，但成本可达 O(三角形数×不同命中数)，
-复杂场景可能较慢。CPU/GPU 数值一致性和设备/读回错误仍待解决，验证见 `PLAN.Performance.md` §13。
+复杂场景可能较慢。CPU/GPU 数值一致性和设备/读回错误仍待解决，验证见 `PLAN.Performance.md@1349c46` §13。
 
-MC 执行现返回容量/读回/设备错误；旧 GPU 包装函数回退到连续 CPU mesh MC，optimize 则遵守显式回退策略。Voxel/shell 的运行时传播仍待办，见 GPU 函数文档及 `PLAN.Performance.md` §14。
+MC 执行现返回容量/读回/设备错误；旧 GPU 包装函数回退到连续 CPU mesh MC，optimize 则遵守显式回退策略。Voxel/shell 的运行时传播仍待办，见 GPU 函数文档及 `PLAN.Performance.md@1349c46` §14。
 
 Measure 现区分正 pitch voxel MC 与连续 mesh MC，CPU 回退在配置池内执行并记录各方法实际后端。可失败的 GPU exact 入口将非正 pitch 规范为 1.0，传播 voxel/shell 执行错误，不静默改用近似方法。
 
