@@ -1450,6 +1450,24 @@ cell's boundary without being a trace point of that face, where no Steiner point
   (`[V6]` PASS → FAIL). Eight rounds instead of three ran away (50 CPU-minutes on a3). Next attempt
   should start from the interior class: dump one interior-declined cell (`RUSTMSPT_PLC_DUMP`) and
   read which mesh edge crosses the facet and why flips cannot remove it before choosing a point.
+  **Follow-up 2026-09-26 — the interior class was mostly a false refusal; landed.** Dumping every
+  interior-declined facet on a3 (`RUSTMSPT_FACET_DIAG`, print-only) found **90 % with no mesh edge
+  crossing them at all**: their vertices sit 10¹–10⁶ `tol` off the facet's plane - the rim is
+  snapped to the face traces (§6.43), so a facet is planar only to its own snap - and the
+  `tol = edge·1e-9` plane test rejected every face of the facet, covered area 0, while the faces a
+  little off the plane covered it to the digit. `cdt::facet_plane` gives the facet's band (own
+  deviation + `tol`), used by the coverage check (now by projected area), `regions_by_constraint`
+  and the interface attribution. Gated: interior class **224 → 42 (a3), 48 → 4 (a6a), 632 → 246
+  (a8)**; on-surface 93.77 → **95.64 %**, 99.865 → **99.903 %**, 97.80 → **98.13 %**; containment
+  93.41 → 95.35 %, 99.870 → 99.903 %, 97.70 → 98.04 %; input covered 89.96 → 94.22 % on a3;
+  `[V6]` a3 undeclared 101 → 85; `[V1]`/`[V3]` held, no new FAIL, R-P2 byte-identical (a3, 1
+  thread). Visual (R9, a3): the orange sawtooth along the cube's left and bottom edges is gone;
+  what remains is the sawtooth where the sphere meets the cube's x = 0.5 face (up to 129 % of an
+  edge) and four spots on the sphere near x ≈ 0.25 - both present before. It also exposed a writer
+  bug: `FaceTagOrientation` had one entry per face, not per member (`[V12]` failed on gated a6a
+  before this change); fixed. The edge class is untouched (a8 1,835), so M-2.1's GO criterion is
+  still unmet and the Steiner prototype stays reverted; the next attempt on the edge class starts
+  from a dump, as the interior one did.
 - **M-2.2. Boundary consistency: a facet vertex on the cell's boundary is a trace point.** The
   "hull carries a node the boundary has never heard of" class (a8 1,200 cells, 38.3 % of its
   stranded area) is the residue of record §6.43, which took it from 72 % of the population by making

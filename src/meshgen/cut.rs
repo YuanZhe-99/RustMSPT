@@ -7547,12 +7547,15 @@ pub fn cut_to_doc(mesh: &CutMesh, components: &[ArrangeComponent]) -> VtuDoc {
     let mut tag_kind: Vec<u8> = Vec::with_capacity(faces);
     let mut tag_side_elems: Vec<i32> = Vec::with_capacity(faces * 2);
     for (_, tags) in &tagged {
+        // One orientation per MEMBER, not per face (contracts §4.2 `orientation_length`): a face
+        // two components share carries two tags, and writing one entry for it shifted every
+        // later face's orientation onto the wrong member.
         for index in tags {
             tag_components.push(mesh.interfaces[*index].component);
+            tag_orientation.push(1);
         }
         tag_offsets.push(tag_components.len() as i64);
         let first = &mesh.interfaces[tags[0]];
-        tag_orientation.push(1);
         tag_kind.push(first.kind);
         tag_side_elems.push(first.side_elems[0]);
         tag_side_elems.push(first.side_elems[1]);
@@ -8351,18 +8354,12 @@ fn plc_attempt(
             if facet.len() < 3 || named.contains(&facet_of[slot]) {
                 continue;
             }
-            let corner = |at: usize| arena.points[facet[at] as usize];
-            let mut normal = Vec3::new(0.0, 0.0, 0.0);
-            for at in 1..facet.len() - 1 {
-                normal = normal.add(corner(at).sub(corner(0)).cross(corner(at + 1).sub(corner(0))));
-            }
-            let length = normal.dot(normal).sqrt();
-            if length <= 0.0 {
+            let Some((normal, offset, band)) =
+                crate::meshgen::cdt::facet_plane(facet, &arena.points, tol)
+            else {
                 continue;
-            }
-            let normal = normal.scale(1.0 / length);
-            let offset = normal.dot(corner(0));
-            if p.iter().any(|q| (normal.dot(*q) - offset).abs() > tol) {
+            };
+            if p.iter().any(|q| (normal.dot(*q) - offset).abs() > band) {
                 continue;
             }
             let _ = centre;

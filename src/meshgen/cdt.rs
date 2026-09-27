@@ -3473,11 +3473,14 @@ pub fn constrained_tets(
         if want_area <= 0.0 {
             return Err("a facet has no area");
         }
-        let normal = want.scale(1.0 / (want.dot(want).sqrt()));
-        let offset = normal.dot(corner(0));
-        // Every face of the mesh lying in the facet's plane and inside its outline. Summed by area,
-        // because a facet the mesh cuts through is short and one it covers twice is long, and only
-        // an area test sees both.
+        let Some((normal, offset, band)) = facet_plane(facet, points, tol) else {
+            return Err("a facet has no area");
+        };
+        // Every face of the mesh lying ON the facet and inside its outline. Summed by PROJECTED
+        // area, because a facet the mesh cuts through is short and one it covers twice is long, and
+        // only an area test sees both - and projected because the facet is bent to its own snap
+        // (`facet_plane`), and the projection of a triangulation of a bent polygon sums to the
+        // polygon's vector area whichever way it is triangulated.
         let mut covered = 0.0;
         for face in carried.keys() {
             let p = [
@@ -3485,7 +3488,7 @@ pub fn constrained_tets(
                 points[face[1] as usize],
                 points[face[2] as usize],
             ];
-            if p.iter().any(|q| (normal.dot(*q) - offset).abs() > tol) {
+            if p.iter().any(|q| (normal.dot(*q) - offset).abs() > band) {
                 continue;
             }
             let centre = p[0].add(p[1]).add(p[2]).scale(1.0 / 3.0);
@@ -3493,7 +3496,7 @@ pub fn constrained_tets(
                 continue;
             }
             let area2 = p[1].sub(p[0]).cross(p[2].sub(p[0]));
-            covered += area2.dot(area2).sqrt() * 0.5;
+            covered += area2.dot(normal).abs() * 0.5;
         }
         if (covered - want_area).abs() > want_area * 1.0e-9 {
             facets_ok = false;
@@ -3522,6 +3525,33 @@ pub fn constrained_tets(
                 facet_edges_missing += missing;
             } else {
                 facet_interior_uncovered += 1;
+                // Print-only: what an uncovered facet looks like - its own bend against `tol`,
+                // how much of it the faces cover, how many mesh edges cross it, how many reflex
+                // corners it has. This is what showed the class was mostly a planarity artefact.
+                if std::env::var_os("RUSTMSPT_FACET_DIAG").is_some() {
+                    let dev = facet
+                        .iter()
+                        .map(|v| (normal.dot(points[*v as usize]) - offset).abs())
+                        .fold(0.0f64, f64::max);
+                    let crossing = facet_crossing_edges(&tets, points, facet).len();
+                    let mut reflex = 0usize;
+                    for slot in 0..facet.len() {
+                        let a = corner((slot + facet.len() - 1) % facet.len());
+                        let b = corner(slot);
+                        let c = corner((slot + 1) % facet.len());
+                        if b.sub(a).cross(c.sub(b)).dot(normal) < 0.0 {
+                            reflex += 1;
+                        }
+                    }
+                    eprintln!(
+                        "[FACET-DIAG] n {} dev/tol {:.3e} covered/want {:.6} crossing {} reflex {}",
+                        facet.len(),
+                        dev / tol,
+                        covered / want_area,
+                        crossing,
+                        reflex
+                    );
+                }
             }
         }
     }
@@ -3622,24 +3652,11 @@ pub fn regions_by_constraint(
     tol: f64,
 ) -> Vec<u32> {
     // Each facet's plane once, so the per-face test is a handful of dot products.
-    let planes: Vec<(Vec3, f64, &Vec<u32>)> = facets
+    let planes: Vec<(Vec3, f64, f64, &Vec<u32>)> = facets
         .iter()
         .filter_map(|facet| {
-            if facet.len() < 3 {
-                return None;
-            }
-            let corner = |slot: usize| points[facet[slot] as usize];
-            let mut normal = Vec3::new(0.0, 0.0, 0.0);
-            for slot in 1..facet.len() - 1 {
-                normal =
-                    normal.add(corner(slot).sub(corner(0)).cross(corner(slot + 1).sub(corner(0))));
-            }
-            let length = normal.dot(normal).sqrt();
-            if length <= 0.0 {
-                return None;
-            }
-            let normal = normal.scale(1.0 / length);
-            Some((normal, normal.dot(corner(0)), facet))
+            let (normal, offset, band) = facet_plane(facet, points, tol)?;
+            Some((normal, offset, band, facet))
         })
         .collect();
     let blocked = |face: [u32; 3]| -> bool {
@@ -3649,8 +3666,8 @@ pub fn regions_by_constraint(
             points[face[2] as usize],
         ];
         let centre = p[0].add(p[1]).add(p[2]).scale(1.0 / 3.0);
-        planes.iter().any(|(normal, offset, facet)| {
-            p.iter().all(|q| (normal.dot(*q) - offset).abs() <= tol)
+        planes.iter().any(|(normal, offset, band, facet)| {
+            p.iter().all(|q| (normal.dot(*q) - offset).abs() <= *band)
                 && inside_polygon(centre, facet, points, *normal, tol)
         })
     };
@@ -3703,6 +3720,41 @@ pub fn regions_by_constraint(
 // Notes: Convex by construction - the facets are triangles clipped to a tet - so the sign of the
 //   cross product against the normal is the whole test, and a point on an edge counts as inside so
 //   that two faces meeting along one are both credited.
+// AI-FUNC-SUMMARY:
+// Purpose: A constraint facet's plane and the band within which a face lies ON the facet.
+// Inputs: the facet as an index polygon, the point table and the cell's relative tolerance.
+// Returns: (unit normal, offset, band), or None for a facet with no area.
+// Side effects: None.
+// Notes: **A facet is planar only to its own snap.** Its rim vertices are matched to the face
+//   traces (§6.43), which moves them off the clipped triangle's plane by up to the weld distance,
+//   so a facet of four to six vertices is a slightly bent polygon. Testing faces against `tol`
+//   alone rejected every face of such a facet - on A-3, 90 % of the "interior is not covered"
+//   refusals had no crossing edge at all and were covered to the digit by faces a few hundred to
+//   a few million `tol` off the plane. The band is the facet's own deviation plus `tol`, so every
+//   triangle of the facet's own vertices lies inside it by construction and nothing else is
+//   widened beyond what the facet itself already is.
+pub(crate) fn facet_plane(facet: &[u32], points: &[Vec3], tol: f64) -> Option<(Vec3, f64, f64)> {
+    if facet.len() < 3 {
+        return None;
+    }
+    let corner = |slot: usize| points[facet[slot] as usize];
+    let mut normal = Vec3::new(0.0, 0.0, 0.0);
+    for slot in 1..facet.len() - 1 {
+        normal = normal.add(corner(slot).sub(corner(0)).cross(corner(slot + 1).sub(corner(0))));
+    }
+    let length = normal.dot(normal).sqrt();
+    if length <= 0.0 {
+        return None;
+    }
+    let normal = normal.scale(1.0 / length);
+    let offset = normal.dot(corner(0));
+    let deviation = facet
+        .iter()
+        .map(|v| (normal.dot(points[*v as usize]) - offset).abs())
+        .fold(0.0f64, f64::max);
+    Some((normal, offset, tol + deviation))
+}
+
 fn inside_polygon(point: Vec3, facet: &[u32], points: &[Vec3], normal: Vec3, tol: f64) -> bool {
     for slot in 0..facet.len() {
         let a = points[facet[slot] as usize];
@@ -4248,6 +4300,30 @@ mod tests {
     }
 
     // Nothing constrains the cell, so it is one region however many tets it happens to have.
+    #[test]
+    fn a_facet_bent_by_its_snap_still_owns_its_own_triangles() {
+        // A quad whose fourth vertex the trace snap lifted by 1e-6 of its edge: `tol` alone
+        // (1e-9) would reject both of its own triangles; the band must hold them, and must not
+        // be wider than the bend itself plus `tol`.
+        let lift = 1.0e-6;
+        let points = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(1.0, 1.0, lift),
+            Vec3::new(0.0, 1.0, 0.0),
+        ];
+        let facet = [0u32, 1, 2, 3];
+        let tol = 1.0e-9;
+        let (normal, offset, band) = facet_plane(&facet, &points, tol).expect("has area");
+        assert!(band > tol && band <= tol + lift, "band {band}");
+        for triangle in [[0usize, 1, 2], [0, 2, 3], [0, 1, 3], [1, 2, 3]] {
+            for at in triangle {
+                assert!((normal.dot(points[at]) - offset).abs() <= band);
+            }
+        }
+        assert!(facet_plane(&[0, 1, 1], &points, tol).is_none());
+    }
+
     #[test]
     fn a_cell_with_no_constraint_is_one_region() {
         let points = vec![

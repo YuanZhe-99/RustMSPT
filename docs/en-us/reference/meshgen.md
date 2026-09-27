@@ -168,6 +168,7 @@ the shape. `s08_cut` is the first snapshot that fits the input.
 | Item | Source | Summary |
 |---|---|---|
 | `CUT_VOLUME_TOLERANCE` / `CUT_MIN_DIHEDRAL_DEG` | `src/meshgen/cut.rs` | `0.01` / `8.0` - the guarded dry-run's volume tolerance and the §4.4 runtime dihedral floor. |
+| `facet_plane` | `src/meshgen/cdt.rs:3736` | A §7.4 constraint facet's unit normal, offset and the band within which a face lies ON it: the facet's own deviation from its plane (its rim is snapped to the face traces, §6.43) plus `tol`. Used by the facet-coverage check, `regions_by_constraint` and the gated path's interface attribution; before it, a facet bent by its snap had none of its own faces counted and 90 % of A-3's "interior is not covered" refusals were this artefact. |
 | `NodeSide` | `src/meshgen/cut.rs:80` | Where a parent node sits relative to the patch: `Inside` / `Outside` / `OnCut`. |
 | `Escalation` | `src/meshgen/cut.rs:91` | Why a cell could not take §6's path: junction, K1 multi-crossing, inconsistent state, dry-run failure, quality. |
 | `InterfaceFace` | `src/meshgen/cut.rs:107` | One tagged cut triangle with its `(inside, outside)` element pair. |
@@ -1911,6 +1912,24 @@ by asking which tets carry the triangle and what their records say, so it can be
 rebuilt from the mesh alone and a stale index is impossible. `side_elems[0]` is the
 element inside the component and `[1]` the one outside - the export contract PLAN
 §10.13 reserves for cohesive and split-node tooling.
+
+### A constraint facet is planar only to its own snap (`facet_plane`)
+
+A §7.4 facet's rim vertices are matched to the face traces (§6.43), which moves them off the
+clipped triangle's plane by up to the weld distance, so a facet of four to six vertices is a
+slightly bent polygon. Every test asking "does this mesh face lie on the facet" - the coverage
+check in `constrained_tets`, `regions_by_constraint`, and the gated path's interface attribution -
+now uses `facet_plane`'s band (the facet's own deviation plus `tol`) instead of `tol` alone, and
+coverage compares projected area, which is independent of how a bent polygon is triangulated.
+Measured on the gated path, "a facet's edges are all there but its interior is not covered" fell
+224 -> 42 (A-3), 48 -> 4 (A-6a), 632 -> 246 (A-8); `[V13]` on-surface 93.77 -> 95.64 %,
+99.865 -> 99.903 %, 97.80 -> 98.13 %; `[V1]`/`[V3]` unchanged, R-P2 byte-identical.
+`RUSTMSPT_FACET_DIAG` (print-only) prints each remaining uncovered facet's bend, coverage,
+crossing edges and reflex corners.
+
+The same run exposed a writer bug: `FaceTagOrientation` carried one entry per face rather than
+one per `FaceTagComponents` member, so a face two components share failed `[V12]`'s
+`orientation_length`. It is now one per member.
 
 ### Welded sheet cuts (G6-5)
 

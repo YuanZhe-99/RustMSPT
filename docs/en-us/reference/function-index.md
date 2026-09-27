@@ -727,6 +727,7 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `unique_edges` | Mesh Generation | `src/meshgen/snap.rs:887` | The lattice's unique edge set as ascending node pairs. |
 | `move_preserves_orientation` | Mesh Generation | `src/meshgen/snap.rs:957` | The exact ARB-10 test: whether moving one node keeps every incident tet positively oriented. |
 | `snapped_to_doc` | Mesh Generation | `src/meshgen/snap.rs:1841` | Encode the snapped lattice as the `s07_snapped` snapshot VTU. |
+| `facet_plane` | Mesh Generation | `src/meshgen/cdt.rs:3736` | A §7.4 constraint facet's unit normal, offset and the band within which a face lies ON it: the facet's own deviation from its plane (its rim is snapped to the face traces, §6.43) plus `tol`. Used by the facet-coverage check, `regions_by_constraint` and the gated path's interface attribution; before it, a facet bent by its snap had none of its own faces counted and 90 % of A-3's "interior is not covered" refusals were this artefact. |
 | `CUT_VOLUME_TOLERANCE` / `CUT_MIN_DIHEDRAL_DEG` | Mesh Generation | `src/meshgen/cut.rs:33/36` | The guarded dry-run's 1 % volume tolerance and the §4.4 runtime 8-degree dihedral floor. |
 | `NodeSide` / `Escalation` | Mesh Generation | `src/meshgen/cut.rs:43/54` | Where a parent node sits relative to the patch, and why a cell could not take §6's path. |
 | `InterfaceFace` | Mesh Generation | `src/meshgen/cut.rs:107` | One tagged cut triangle with its `(inside, outside)` element pair - the reserved export contract. |

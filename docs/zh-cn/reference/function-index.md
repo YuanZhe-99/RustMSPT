@@ -652,6 +652,7 @@
 | `unique_edges` | 网格生成 | `src/meshgen/snap.rs:887` | 晶格的去重边集合，每条以升序节点对表示。 |
 | `move_preserves_orientation` | 网格生成 | `src/meshgen/snap.rs:957` | ARB-10 的精确判据：移动某节点后其所有相邻四面体是否仍为正定向。 |
 | `snapped_to_doc` | 网格生成 | `src/meshgen/snap.rs:1841` | 将吸附后的晶格编码为 `s07_snapped` 快照 VTU。 |
+| `facet_plane` | 网格生成 | `src/meshgen/cdt.rs:3736` | §7.4 约束小面的单位法向、偏移量，以及"面位于小面上"的判定带宽：小面自身顶点到其平面的最大偏差（其边缘被吸附到面迹上，§6.43）加 `tol`。供小面覆盖检查、`regions_by_constraint` 与门控路径的界面归属使用；此前被吸附弯折的小面连自己的三角形都不被计入，A-3 上 90% 的"内部未被覆盖"拒绝都是这一假象。 |
 | `CUT_VOLUME_TOLERANCE` / `CUT_MIN_DIHEDRAL_DEG` | 网格生成 | `src/meshgen/cut.rs:33/36` | 受保护试运行的 1% 体积容差，以及 §4.4 运行期 8 度二面角下限。 |
 | `NodeSide` / `Escalation` | 网格生成 | `src/meshgen/cut.rs:43/54` | 母节点相对面片的位置，以及单元无法走 §6 路径的原因。 |
 | `InterfaceFace` | 网格生成 | `src/meshgen/cut.rs:107` | 一个带标签的切割三角形及其 `(内侧, 外侧)` 单元对——预留的导出契约。 |
