@@ -5301,6 +5301,58 @@ fn check_v13(
             cap,
         );
     }
+    // **P3 as containment (contracts §5, plan M-1.5 / MG-02).** The corner test above is
+    // necessary and not sufficient: three corners on a piecewise-planar surface do not put the
+    // triangle they span on it - `good_cube.vtu` against a unit-cube STL reads 100 % "on" while
+    // two of its interface triangles cut straight through the cube. A material-boundary face
+    // meets P3 only if it lies inside the union of the input's facets, and the input meets it
+    // only if every facet some body does not hide is covered by the mesh's boundary. Both
+    // directions are measured here.
+    let tagged: Vec<[usize; 3]> = view
+        .faces
+        .iter()
+        .map(|&c| {
+            let n = view.doc.cell(c);
+            [n[0] as usize, n[1] as usize, n[2] as usize]
+        })
+        .collect();
+    let cover = containment(view, &boundary, &tagged, surfaces, &per_component, gates.interface_on_surface_frac);
+    s.metric("contained_area_frac", cover.contained_area_frac);
+    s.metric("faces_not_contained", cover.not_contained.len() as f64);
+    s.metric("input_covered_area_frac", cover.input_covered_area_frac);
+    s.metric("input_triangles_uncovered", cover.uncovered_inputs.len() as f64);
+    s.metric("input_triangles_hidden_by_priority", cover.hidden as f64);
+    for (i, frac) in &cover.not_contained {
+        let f = &boundary[*i];
+        let mut item = VerifyItem::bare(
+            Severity::Fail,
+            "V13.not_contained",
+            format!(
+                "a material-boundary face of area {:.3e} is {:.1}% outside the union of the input's \
+                 facets: no input facet coplanar with it covers it (a face across a crease, or off \
+                 the surface)",
+                f.area,
+                frac * 100.0
+            ),
+        );
+        item.point_ids.extend(f.nodes.iter().map(|n| *n as i64));
+        item.coordinates.push(f.centroid);
+        s.push(item, cap);
+    }
+    for (x, t, frac, centroid) in &cover.uncovered_inputs {
+        let mut item = VerifyItem::bare(
+            Severity::Fail,
+            "V13.boundary_missing",
+            format!(
+                "input facet {t} of component {} is {:.1}% uncovered by the mesh's boundary: \
+                 the surface is there in the input and not in the mesh",
+                x + 1,
+                frac * 100.0
+            ),
+        );
+        item.coordinates.push(*centroid);
+        s.push(item, cap);
+    }
     export.extend(boundary.iter().map(|f| FaceFidelity {
         nodes: f.nodes,
         component: f.component,
@@ -5310,6 +5362,211 @@ fn check_v13(
         centroid: f.centroid,
     }));
     s
+}
+
+/// What [V13]'s containment test found (contracts §5, plan M-1.5).
+struct Containment {
+    /// (boundary face index, uncovered share of its samples).
+    not_contained: Vec<(usize, f64)>,
+    contained_area_frac: f64,
+    /// (component, input triangle index, uncovered share, centroid).
+    uncovered_inputs: Vec<(usize, usize, f64, Vec3)>,
+    input_covered_area_frac: f64,
+    hidden: usize,
+}
+
+/// Barycentric sample points of a triangle: a regular grid of `n` steps per edge, corners and
+/// edges included - 28 points at n = 6.
+fn tri_samples(t: [Vec3; 3], n: usize) -> Vec<Vec3> {
+    let mut out = Vec::with_capacity((n + 1) * (n + 2) / 2);
+    for i in 0..=n {
+        for j in 0..=(n - i) {
+            let k = n - i - j;
+            let (a, b, c) = (i as f64 / n as f64, j as f64 / n as f64, k as f64 / n as f64);
+            out.push(t[0].scale(a).add(t[1].scale(b)).add(t[2].scale(c)));
+        }
+    }
+    out
+}
+
+fn longest_edge(t: [Vec3; 3]) -> f64 {
+    (0..3)
+        .map(|k| {
+            let e = t[(k + 1) % 3].sub(t[k]);
+            e.dot(e).sqrt()
+        })
+        .fold(0.0, f64::max)
+}
+
+/// Every corner of `face` within `tol` of `facet`'s plane.
+fn coplanar(face: [Vec3; 3], facet: [Vec3; 3], tol: f64) -> bool {
+    let Some(n) = tri_normal(facet) else {
+        return false;
+    };
+    face.iter().all(|p| p.sub(facet[0]).dot(n).abs() <= tol)
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: P3's containment half and its coverage half (contracts §5, plan M-1.5): is every material-boundary face inside the union of the input's facets, and is every input facet no higher-priority body hides covered by the mesh's boundary?
+// Inputs: the view, [V13]'s boundary faces, the tagged face cells (they carry sheets and declared interfaces), the input surfaces and their indexes, and the "on" tolerance as a fraction of a face's longest edge.
+// Returns: a Containment.
+// Side effects: None.
+// Notes: A facet counts for a face only if all three of the face's corners are within the tolerance of the facet's plane, so a face across a crease - even a shallow one on a faceted sphere - is not contained: the plan's position is that carrying the crease makes the face exact. Coverage is sampled (a 28-point barycentric grid per triangle), so an uncovered sliver finer than a sixth of an edge can be missed; the answer is a function of the geometry alone and does not depend on evaluation order. Input facets whose centroid lies outside the domain box, or inside a closed body of strictly higher precedence (lower priority number, R-A4), are not expected to appear and are counted as hidden.
+fn containment(
+    view: &MeshView,
+    boundary: &[BoundaryFace],
+    tagged: &[[usize; 3]],
+    surfaces: &[SurfaceComponent],
+    per_component: &[TriIndex],
+    frac: f64,
+) -> Containment {
+    use rayon::prelude::*;
+    let pts = &view.doc.points;
+    let tri_of = |n: [usize; 3]| [pts[n[0]], pts[n[1]], pts[n[2]]];
+    let inputs: Vec<(usize, usize, [Vec3; 3])> = surfaces
+        .iter()
+        .enumerate()
+        .flat_map(|(x, c)| c.tris.iter().enumerate().map(move |(i, t)| (x, i, *t)))
+        .collect();
+    let input_index = TriIndex::build(inputs.iter().map(|(_, _, t)| *t).collect());
+    let mesh_faces: Vec<[Vec3; 3]> = boundary
+        .iter()
+        .map(|f| tri_of(f.nodes))
+        .chain(tagged.iter().map(|n| tri_of(*n)))
+        .collect();
+    let mesh_index = TriIndex::build(mesh_faces.clone());
+    let near = |index: &TriIndex, t: [Vec3; 3], pad: f64| -> Vec<usize> {
+        let mut lo = t[0];
+        let mut hi = t[0];
+        for p in &t {
+            lo = Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z));
+            hi = Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
+        }
+        let pad = Vec3::new(pad, pad, pad);
+        let mut ids: Vec<usize> = index
+            .cells_in(lo.sub(pad), hi.add(pad))
+            .into_iter()
+            .flat_map(|k| index.buckets[k].iter().map(|i| *i as usize))
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        ids
+    };
+
+    // Direction 1: each boundary face inside the input's facets.
+    let face_uncovered: Vec<f64> = boundary
+        .par_iter()
+        .map(|f| {
+            let t = tri_of(f.nodes);
+            let tol = frac * longest_edge(t);
+            let facets: Vec<[Vec3; 3]> = near(&input_index, t, tol)
+                .into_iter()
+                .map(|i| inputs[i].2)
+                .filter(|facet| coplanar(t, *facet, tol))
+                .collect();
+            let samples = tri_samples(t, 6);
+            let missed = samples
+                .iter()
+                .filter(|p| {
+                    !facets
+                        .iter()
+                        .any(|q| point_triangle_dist2(**p, q[0], q[1], q[2]) <= tol * tol)
+                })
+                .count();
+            missed as f64 / samples.len() as f64
+        })
+        .collect();
+    let total: f64 = boundary.iter().map(|f| f.area).sum();
+    let mut contained = 0.0;
+    let mut not_contained = Vec::new();
+    for (i, u) in face_uncovered.iter().enumerate() {
+        if *u == 0.0 {
+            contained += boundary[i].area;
+        } else {
+            not_contained.push((i, *u));
+        }
+    }
+
+    // Direction 2: each input facet no higher-precedence body hides, covered by the mesh.
+    let domain = view.domain;
+    // Err(true): hidden by a body of higher precedence; Err(false): outside the domain or on its box.
+    let input_uncovered: Vec<Result<f64, bool>> = inputs
+        .par_iter()
+        .map(|(x, _, t)| {
+            let centroid = t[0].add(t[1]).add(t[2]).scale(1.0 / 3.0);
+            if let Some((lo, hi)) = domain {
+                let outside = centroid.x < lo.x
+                    || centroid.y < lo.y
+                    || centroid.z < lo.z
+                    || centroid.x > hi.x
+                    || centroid.y > hi.y
+                    || centroid.z > hi.z;
+                if outside {
+                    return Err(false);
+                }
+                // A facet on a domain plane is the box, not a material boundary to mesh (C10).
+                let on_plane = |get: fn(&Vec3) -> f64| {
+                    let tol = 1e-9 * hi.sub(lo).dot(hi.sub(lo)).sqrt();
+                    t.iter().all(|p| (get(p) - get(&lo)).abs() <= tol)
+                        || t.iter().all(|p| (get(p) - get(&hi)).abs() <= tol)
+                };
+                if on_plane(|v| v.x) || on_plane(|v| v.y) || on_plane(|v| v.z) {
+                    return Err(false);
+                }
+            }
+            let hidden = surfaces.iter().enumerate().any(|(y, c)| {
+                y != *x
+                    && c.closed
+                    && c.priority < surfaces[*x].priority
+                    && per_component[y].contains(centroid)
+            });
+            if hidden {
+                return Err(true);
+            }
+            let candidates: Vec<[Vec3; 3]> = near(&mesh_index, *t, frac * longest_edge(*t))
+                .into_iter()
+                .map(|i| mesh_faces[i])
+                .filter(|f| coplanar(*f, *t, frac * longest_edge(*f)))
+                .collect();
+            let samples = tri_samples(*t, 6);
+            let missed = samples
+                .iter()
+                .filter(|p| {
+                    !candidates.iter().any(|f| {
+                        let tol = frac * longest_edge(*f);
+                        point_triangle_dist2(**p, f[0], f[1], f[2]) <= tol * tol
+                    })
+                })
+                .count();
+            Ok(missed as f64 / samples.len() as f64)
+        })
+        .collect();
+    let mut hidden = 0;
+    let mut active_area = 0.0;
+    let mut covered_area = 0.0;
+    let mut uncovered_inputs = Vec::new();
+    for ((x, i, t), u) in inputs.iter().zip(input_uncovered.iter()) {
+        let u = match u {
+            Ok(u) => u,
+            Err(by_priority) => {
+                hidden += usize::from(*by_priority);
+                continue;
+            }
+        };
+        let a = t[1].sub(t[0]).cross(t[2].sub(t[0])).dot(t[1].sub(t[0]).cross(t[2].sub(t[0]))).sqrt() / 2.0;
+        active_area += a;
+        covered_area += a * (1.0 - u);
+        if *u > 0.0 {
+            uncovered_inputs.push((*x, *i, *u, t[0].add(t[1]).add(t[2]).scale(1.0 / 3.0)));
+        }
+    }
+    Containment {
+        not_contained,
+        contained_area_frac: if total > 0.0 { contained / total } else { 1.0 },
+        uncovered_inputs,
+        input_covered_area_frac: if active_area > 0.0 { covered_area / active_area } else { 1.0 },
+        hidden,
+    }
 }
 
 #[cfg(test)]
@@ -5607,12 +5864,13 @@ mod tests {
         SurfaceComponent { priority: 0, closed: true, tris }
     }
 
-    /// The distinction the sphere forced: a flat facet whose three corners are on a curved
-    /// surface is a **chord** of it, not a displacement of it. Its sag falls as `h^2` and is
-    /// what refinement buys; counting it as a P3 violation would declare every curved
-    /// surface unmeshable and bury the staircase inside a number that can never reach zero.
+    /// A flat face whose three corners are vertices of the input still does not lie on it when
+    /// the input folds between them. The corner test reads this boundary as 100 % anchored and
+    /// measures the sag as `chord_*`; P3 as containment (plan M-1.5) fails it, because an STL
+    /// is piecewise planar and carrying the crease as an element edge is what makes the face
+    /// exact. This is the plan's "chord across an input crease" fixture.
     #[test]
-    fn v13_does_not_charge_a_face_for_chording_a_curved_surface() {
+    fn a_chord_across_an_input_crease_is_not_contained() {
         let doc = fidelity_block(|_, layer| layer == 0);
         let options = VerifyOptions {
             expected_stage: None,
@@ -5624,16 +5882,145 @@ mod tests {
             .cloned()
             .unwrap();
 
-        // Every corner is a vertex of the input surface, so the boundary is anchored...
         assert_eq!(metric(&s, "on_surface_area_frac"), 1.0);
         assert!(metric(&s, "deviation_max") < 1.0e-15);
-        assert_eq!(s.status, CheckStatus::Pass, "items: {:?}", s.items);
-        // ...and the sag between the corners is measured, separately, and not as a violation.
-        assert!(
-            metric(&s, "chord_mean") > 1.0e-3,
-            "the tent rises 0.01 above the mesh's flat faces; the sag must be reported, got {}",
-            metric(&s, "chord_mean")
-        );
+        assert!(metric(&s, "chord_mean") > 1.0e-3, "the sag is still reported");
+        assert_eq!(s.status, CheckStatus::Fail, "items: {:?}", s.items);
+        assert!(s.fired.contains("V13.not_contained"));
+        assert!(metric(&s, "contained_area_frac") < 1.0);
+    }
+
+    /// MG-02: `good_cube.vtu`'s two interface triangles run through a unit cube with every corner
+    /// on its surface. The corner test passed it; containment must not.
+    #[test]
+    fn mg02_an_interface_through_the_body_is_not_contained() {
+        let doc = crate::io::vtu::load_vtu(std::path::Path::new(
+            "data/fixtures/meshgen/good_cube.vtu",
+        ))
+        .unwrap();
+        let unit = slab(1.0);
+        let s = verify_with_options(
+            &doc,
+            &VerifyGates::default(),
+            VerifyOptions { expected_stage: None, delivered: false, surfaces: vec![unit] },
+        )
+        .section("V13")
+        .cloned()
+        .unwrap();
+        assert_eq!(metric(&s, "on_surface_area_frac"), 1.0, "the corner test is fooled");
+        assert_eq!(s.status, CheckStatus::Fail);
+        assert!(s.fired.contains("V13.not_contained"), "items: {:?}", s.items);
+        assert_eq!(metric(&s, "contained_area_frac"), 0.0);
+        // every facet of the unit cube lies on the domain box, so none is expected in the mesh
+        assert_eq!(metric(&s, "input_triangles_uncovered"), 0.0);
+    }
+
+    /// The same plane, triangulated differently from the input, is contained: containment asks
+    /// whether the face is inside the facets' union, not whether it is one of them.
+    #[test]
+    fn a_retriangulated_coplanar_boundary_is_contained() {
+        let doc = fidelity_block(|_, layer| layer == 0);
+        let s = verify_with_options(
+            &doc,
+            &VerifyGates::default(),
+            VerifyOptions { expected_stage: None, delivered: false, surfaces: vec![slab(ZS[1])] },
+        )
+        .section("V13")
+        .cloned()
+        .unwrap();
+        assert_eq!(metric(&s, "contained_area_frac"), 1.0, "items: {:?}", s.items);
+        assert_eq!(metric(&s, "faces_not_contained"), 0.0);
+    }
+
+    /// A body in the input with no boundary in the mesh is a FAIL of its own, not an absence of
+    /// measurements.
+    #[test]
+    fn a_missing_body_is_reported_as_missing_boundary() {
+        let doc = fidelity_block(|_, layer| layer == 0);
+        let c = |x: f64, y: f64, z: f64| Vec3::new(x, y, z);
+        let quad = |a: Vec3, b: Vec3, d: Vec3, e: Vec3| vec![[a, b, d], [a, d, e]];
+        // wholly inside the fixture's domain box ([0.4,0.8] x [0.4,0.6] x [0,0.3]), above the slab
+        let (l, h, zl, zh) = (0.45, 0.55, 0.18, 0.26);
+        let mut tris = Vec::new();
+        tris.extend(quad(c(l, l, zl), c(l, h, zl), c(h, h, zl), c(h, l, zl)));
+        tris.extend(quad(c(l, l, zh), c(h, l, zh), c(h, h, zh), c(l, h, zh)));
+        tris.extend(quad(c(l, l, zl), c(h, l, zl), c(h, l, zh), c(l, l, zh)));
+        tris.extend(quad(c(h, l, zl), c(h, h, zl), c(h, h, zh), c(h, l, zh)));
+        tris.extend(quad(c(h, h, zl), c(l, h, zl), c(l, h, zh), c(h, h, zh)));
+        tris.extend(quad(c(l, h, zl), c(l, l, zl), c(l, l, zh), c(l, h, zh)));
+        let missing = SurfaceComponent { priority: 0, closed: true, tris };
+        let s = verify_with_options(
+            &doc,
+            &VerifyGates::default(),
+            VerifyOptions {
+                expected_stage: None,
+                delivered: false,
+                surfaces: vec![slab(ZS[1]), missing],
+            },
+        )
+        .section("V13")
+        .cloned()
+        .unwrap();
+        assert!(s.fired.contains("V13.boundary_missing"), "items: {:?}", s.items);
+        assert!(metric(&s, "input_triangles_uncovered") >= 12.0);
+    }
+
+    /// An open sheet has no volume and so no region change, but it is still input surface the
+    /// mesh must carry (as tagged faces); one the mesh drops is missing, not absent by design.
+    #[test]
+    fn a_missing_open_sheet_is_reported_as_missing_boundary() {
+        let doc = fidelity_block(|_, layer| layer == 0);
+        let c = |x: f64, y: f64, z: f64| Vec3::new(x, y, z);
+        let sheet = SurfaceComponent {
+            priority: 0,
+            closed: false,
+            tris: vec![
+                [c(0.45, 0.45, 0.2), c(0.75, 0.45, 0.2), c(0.75, 0.55, 0.2)],
+                [c(0.45, 0.45, 0.2), c(0.75, 0.55, 0.2), c(0.45, 0.55, 0.2)],
+            ],
+        };
+        let s = verify_with_options(
+            &doc,
+            &VerifyGates::default(),
+            VerifyOptions { expected_stage: None, delivered: false, surfaces: vec![slab(ZS[1]), sheet] },
+        )
+        .section("V13")
+        .cloned()
+        .unwrap();
+        assert!(s.fired.contains("V13.boundary_missing"), "items: {:?}", s.items);
+        assert_eq!(metric(&s, "input_triangles_uncovered"), 2.0);
+    }
+
+    /// A facet hidden inside a body of higher precedence (R-A4) is a legitimate absence.
+    #[test]
+    fn a_priority_hidden_facet_is_not_missing() {
+        let doc = fidelity_block(|_, layer| layer == 0);
+        let c = |x: f64, y: f64, z: f64| Vec3::new(x, y, z);
+        let quad = |a: Vec3, b: Vec3, d: Vec3, e: Vec3| vec![[a, b, d], [a, d, e]];
+        // a small box wholly inside the slab, at a lower precedence than the slab
+        let (l, h, t) = (0.45, 0.55, ZS[1] * 0.5);
+        let mut tris = Vec::new();
+        tris.extend(quad(c(l, l, 0.2 * t), c(l, h, 0.2 * t), c(h, h, 0.2 * t), c(h, l, 0.2 * t)));
+        tris.extend(quad(c(l, l, t), c(h, l, t), c(h, h, t), c(l, h, t)));
+        tris.extend(quad(c(l, l, 0.2 * t), c(h, l, 0.2 * t), c(h, l, t), c(l, l, t)));
+        tris.extend(quad(c(h, l, 0.2 * t), c(h, h, 0.2 * t), c(h, h, t), c(h, l, t)));
+        tris.extend(quad(c(h, h, 0.2 * t), c(l, h, 0.2 * t), c(l, h, t), c(h, h, t)));
+        tris.extend(quad(c(l, h, 0.2 * t), c(l, l, 0.2 * t), c(l, l, t), c(l, h, t)));
+        let hidden = SurfaceComponent { priority: 5, closed: true, tris };
+        let s = verify_with_options(
+            &doc,
+            &VerifyGates::default(),
+            VerifyOptions {
+                expected_stage: None,
+                delivered: false,
+                surfaces: vec![slab(ZS[1]), hidden],
+            },
+        )
+        .section("V13")
+        .cloned()
+        .unwrap();
+        assert_eq!(metric(&s, "input_triangles_uncovered"), 0.0, "items: {:?}", s.items);
+        assert_eq!(metric(&s, "input_triangles_hidden_by_priority"), 12.0);
     }
 
     /// [V5] measures the *declared* interface and this measures the material boundary the

@@ -543,6 +543,18 @@ surface" as the effective surface once D-6 is decided.
 > the severity to FAIL or the tolerance to zero does not close this; only containment does (plan
 > M-1.5). The feature-curve conformance and sharp-corner rows below are **not implemented** in
 > `verify.rs` (plan S-12); the remaining rows are as §4 states.
+>
+> **Built (rev 1.3.1, plan M-1.5; D-12 closed, D-26 records the departures).** `[V13]` now tests
+> containment in both directions: `contained_area_frac` (boundary area whose every sample lies on
+> an input facet coplanar with the whole face — all three corners within
+> `interface_on_surface_frac` of the facet's plane) with `V13.not_contained` FAIL per face, and
+> `input_covered_area_frac` (input facet area, excluding facets on the domain box and facets
+> inside a closed body of strictly higher precedence, covered by coplanar material-boundary or
+> tagged faces) with `V13.boundary_missing` FAIL per facet. `good_cube.vtu` against a unit-cube
+> STL now reads `contained_area_frac = 0` and FAILs. Fixtures (unit tests in `verify.rs`): the
+> MG-02 cube, a re-triangulated coplanar boundary (contained), a chord across an input crease
+> (not contained), a missing closed body and a missing open sheet (boundary missing), a
+> priority-hidden body (not missing).
 
 ---
 
@@ -705,7 +717,7 @@ byte-identical between `0a8eb1c` and `891badc`):
 | D-9 | **Severity counts and the exit status are computed over every finding, not over the stored items** (§4.3); as built the cap changes the exit status. *Closed at rev 1.3.1 (plan M-1.0)* | Plan MG-01; the mechanism (`push` before the cap, `summary` from stored items) is recorded so the fix is not a `cap ≥ 1` band-aid |
 | D-10 | **The octree-hull relaxation of `[V3]`'s box test ends at `StageIndex` 8** (§4.4); as built it applies at 11. *Closed at rev 1.3.1 (plan M-1.0)* | Plan MG-03; `check_delivered` is not an independent box test until this lands |
 | D-11 | **Contract validation by metadata-selected strength** (§4.2); as built only structural validation exists and absent arrays degrade every semantic check to SKIPPED. *Closed at rev 1.3.1 (plan M-1.0)* | Plan MG-08; a self-declared final document is not an external geometry-only file |
-| D-12 | **P3 is containment; the corner test is its necessary half** (§5); as built only the corner test exists | Plan MG-02; `[V13]`'s own landing note said corners were read to separate chord sag from the staircase, which is right, and never claimed sufficiency — the gate did |
+| D-12 | **P3 is containment; the corner test is its necessary half** (§5); as built only the corner test exists. *Closed at rev 1.3.1 (plan M-1.5), with D-26's departures* | Plan MG-02; `[V13]`'s own landing note said corners were read to separate chord sag from the staircase, which is right, and never claimed sufficiency — the gate did |
 | D-13 | **`FaceTagOrientation` is one `±1` per flattened member** (§2.3, unchanged); as built `cut_to_doc` writes one `+1` per face cell, so the array is shorter than `FaceTagComponents` wherever a face carries several tags (two cubes in contact at `x = 0.4`: 280 members, 270 entries), and `FaceTagSideElems` takes the first tag's `(inside, outside)` | Plan MG-07; the writer accepts the inconsistent lengths, which §4.2's validator must refuse. Plan M-4.8 |
 | D-14 | **`partition_id` is written as `0` on every cell** by `cut_to_doc`, including non-tets where §2.1 requires `−1`; the flood fill of `[V8]` has never been produced by the mesher. *The sentinel half is fixed at rev 1.3.1 (plan M-1.0): non-tets carry `−1`, which §4.2's validator requires; tets still carry `0` until M-6.1* | Plan MG-13; plan M-6.1 builds it (v3 said "moves" it). `[V8]` on every acceptance case has passed a stored array of zeros against a recomputed fill of one partition, which is vacuous agreement on a single-partition domain |
 | D-15 | **S10 has no snapshot index of its own**; the stage enumeration (`9` thin, `10` quality, `11` final) is unchanged and plan M-6.1's `s10_regions` is withdrawn | The review's erratum: one index cannot carry two names |
@@ -718,6 +730,7 @@ byte-identical between `0a8eb1c` and `891badc`):
 | D-23 | **`V5.self_intersecting_input` is INFO, not WARN** (rev 1.3.1) | It describes the *input*, and its consequence — the volume basis switches to the sampled estimate — is carried by the metrics. As WARN it contradicted `[V5]`'s status, which `check_v5` reset to PASS with an unconditional `if !fired` at the end; the reset is removed and the section status is whatever its findings say |
 | D-24 | **`V6.undeclared_boundary` is deferred on `StageIndex` 5–7 and on the delivered volume** (rev 1.3.1) | Interfaces are declared by the cut (S8), so the classified staircase of `s06`/`s07` has no tag by construction; the delivered tets-only volume carries none by definition (D-18). The count is still reported where it means something; the FAIL applies from S8 on the contract document |
 | D-25 | **The fixture generator restates `FaceTagSideElems` after every mutation**, and `bad_radial_patches` enters component 2 in the component table (rev 1.3.1) | §4.2's validator found stale side-element tables on six fixtures and an undeclared component on one — artifacts of the generator, not the defects the fixtures carry. `recompute_side_elems` rebuilds the table from the cells as emitted. Seven fixture files changed; `good_cube.vtu` is byte-identical |
+| D-26 | **Containment as built (rev 1.3.1) departs from §5's row in three stated ways**: it is measured against the **input** triangles, not the arranged patches the face names (the same surface on clean input; D-6 decides which surface is right); coverage is **sampled** on a 28-point barycentric grid per triangle, not an exact 2-D overlay, so an uncovered sliver narrower than a sixth of an edge can be missed; and a face across an input crease is **not split** and tested in parts but fails whole, which is stricter than §5 | The sampled test answers the gate's question on every acceptance case and every fixture; the exact overlay and the per-patch attribution are owned by plan M-2.5 (the P3 residual audit), which needs them to charge each uncovered piece to an arm |
 | D-21 | **`CurveRadialPatches` is `0` for every curve the pipeline writes** — the box clip drops S2's radial order and the column is emitted on `s08` only — so `[V9]`'s radial-patch clause is exercised by the `bad_radial_patches` fixture and by no pipeline output (§2.3) | A check whose producer never fills its input: the plan's own recorded anti-pattern. Carry `radial_patches` through `clip_arranged_to_box`'s polyline split and emit the column on `s02`/`s03` (plan M-4.0); until then the clause is stated as not exercised |
 
 Open items:

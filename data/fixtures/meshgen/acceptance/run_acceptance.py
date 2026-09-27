@@ -273,6 +273,8 @@ def run(case, stls, overrides):
         "vol_err": max(errors) if errors else 0.0,
         # --- P3, from [V13] ---
         "on_surface": v13.get("on_surface_area_frac", float("nan")),
+        "contained": v13.get("contained_area_frac", float("nan")),
+        "covered": v13.get("input_covered_area_frac", float("nan")),
         "dev_mean_h": v13.get("deviation_mean_frac_h", float("nan")),
         "dev_max_h": v13.get("deviation_max_frac_h", float("nan")),
         "offset_h": v13.get("offset_mean_frac_h", float("nan")),
@@ -345,8 +347,11 @@ def main():
     table(
         rows,
         "P3 - exact surfaces: the material boundary against the input surface ([V13])",
-        "Read at the face CORNERS: on% is the share of boundary area anchored to the "
-        "surface, and P3 is met only at 100.000. dev/h, off/h: area-weighted mean "
+        "P3 is containment (plan M-1.5): cont% is the share of boundary area inside the union of "
+        "the input's facets, cover% the share of input facet area (not hidden by priority, not on "
+        "the domain box) the boundary covers; P3 is met only when both read 100.000. The rest is "
+        "read at the face CORNERS: on% is the share anchored to the surface - necessary, not "
+        "sufficient. dev/h, off/h: area-weighted mean "
         "|distance| and SIGNED distance, per local edge. disp: |offset|/deviation - 0 rough "
         "about the right place, 1 a sheet in the wrong one. chord/h is the sag of an "
         "anchored flat facet across curvature - it falls as h^2, it is P2's business, and "
@@ -355,6 +360,8 @@ def main():
             ("case", 5, lambda r: r["case"]),
             ("V13", 6, lambda r: r["V13"]),
             ("faces", 9, lambda r: num(r["bnd_faces"], "d")),
+            ("cont%", 9, lambda r: num(r["contained"], ".3f", 100.0)),
+            ("cover%", 9, lambda r: num(r["covered"], ".3f", 100.0)),
             ("on%", 9, lambda r: num(r["on_surface"], ".3f", 100.0)),
             ("dev/h%", 8, lambda r: num(r["dev_mean_h"], ".2f", 100.0)),
             ("max/h%", 8, lambda r: num(r["dev_max_h"], ".1f", 100.0)),

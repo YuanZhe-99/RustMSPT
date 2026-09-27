@@ -1059,6 +1059,35 @@ exactly what M-1.7 changes.
   and a priority-hidden inactive patch each have a fixture with the expected code in contracts §6;
   the §2.2/§2.3 on-surface columns are re-measured under the new criterion and recorded beside the
   old — the old values are not inherited as a baseline. *Tier T3. Multimodal: no.*
+  **Status 2026-09-26 — landed.** `[V13]` measures containment both ways (contracts rev 1.3.1,
+  D-12 closed, D-26 records three departures: against the input triangles, sampled coverage, a
+  crease-crossing face fails whole). The MG-02 cube now reads `contained_area_frac = 0` and FAILs;
+  the six fixtures are unit tests in `verify.rs`; `run_acceptance.py`'s P3 table leads with
+  `cont%` and `cover%`. **Re-measured at the current tree**, containment / input coverage /
+  the old corner share:
+
+  | case | default path | gated path |
+  |---|---|---|
+  | a1 | **0.97** / 6.23 / 92.52 | 99.73 / 99.88 / 99.79 |
+  | a2 | 100 / 100 / 100 | 100 / 100 / 100 |
+  | a3 | **51.73** / 43.46 / 92.78 | 97.16 / 93.03 / 97.21 |
+  | a4 | **52.69** / 58.77 / 98.82 | 99.03 / 99.68 / 99.09 |
+  | a6a | 99.32 / 93.83 / 99.54 | 99.94 / 99.63 / 99.95 |
+  | a6b | 99.35 / 92.57 / 99.44 | 99.96 / 99.53 / 99.96 |
+  | a7a | 98.76 / 87.23 / 99.83 | 99.97 / 100 / 99.96 |
+  | a7b | 99.32 / 92.90 / 99.89 | 99.99 / 100 / 99.98 |
+  | a8 | 88.09 / 53.71 / 92.04 | (running) |
+
+  **What this changes.** On the default path the corner share over-states P3 by up to 92 points:
+  on every curved or intersecting input most of the boundary chords across the STL's own facet
+  creases (a1's 1,280 facets: 2,476 of 2,644 faces not contained). On the gated path containment
+  and the corner share agree to within 0.1 point — §7.4 takes the facets as constraints and
+  carries their creases, which is exactly what containment asks. The default path's P3 case is
+  therefore weaker than §2.2 recorded, and M-3's "gated not worse on every FAIL gate" is, on P3,
+  already true by a wide margin; what still stands between the gated path and M-3 is MG-15 and
+  the `[V2]`/`[V9]` rows. The thin cases' input coverage (a7a 87 % default) is the collapsed gap
+  walls, D-8's known departure.
+
 - **M-1.6. Conditioning and identity: the one-ULP pairs (was M-4.1; moved here so M-3 has no
   cycle, MG-12; re-scoped under MG-11).** The `[V2]` pairs are as §2.2 records: a3 19 default / 3
   gated, a6b 1, a8 6, every pair two trace endpoints one float32 ULP apart where a lattice plane
