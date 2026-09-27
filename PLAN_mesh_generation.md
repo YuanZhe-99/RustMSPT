@@ -1589,6 +1589,18 @@ cell's boundary without being a trace point of that face, where no Steiner point
   438 → 171; default path and every other case byte-identical; R-P2 byte-identical on a8. The
   hull classes (863, 494) and a8's 61 `[V9]` nodes are unmoved, so buried faces were not their
   cause - they remain M-2.2's to explain.
+  **M-2.2's archetype is a tessellation diagonal, not a missing trace point; the remedy measured
+  mixed and is not kept (patch in the session scratchpad as `facet_merge.patch`).** Dumping a8 cell
+  507276 (`RUSTMSPT_PLC_CELL`, facet `[4, 7, 3, 9, 1]`): the strut face x = 0.2967 is one plane
+  tessellated into two input triangles; the fragment clip works per triangle, so their shared
+  diagonal becomes a facet edge (9–1), and 9 - where the diagonal crosses the lattice face, exactly
+  on the face trace's straight chord 3–6 (1.5e-14) - is a hull node the frozen boundary does not
+  have. Merging coplanar same-component facets that share an edge, then dropping non-boundary
+  vertices left collinear on the merged rim: a8 declines 3,457 → 2,871 (facet-edge class 1,451 →
+  801) and elements −0.5 %, but on-surface 98.796 → 98.783 and `[V9]` 61 → 67 (the hull class rose
+  863 → 940); a3 +0.04, a6a flat. Not strictly better, so reverted. The finding stands: the fragment
+  side must see one facet per input *plane*, not per input triangle, and the next attempt should
+  explain why the merged cells that still decline moved to the hull class before changing the rule.
 - **M-2.2. Boundary consistency: a facet vertex on the cell's boundary is a trace point.** The
   "hull carries a node the boundary has never heard of" class (a8 1,200 cells, 38.3 % of its
   stranded area) is the residue of record §6.43, which took it from 72 % of the population by making
