@@ -1561,6 +1561,18 @@ cell's boundary without being a trace point of that face, where no Steiner point
   from trace node 52349), interned anew because only on-plane vertices were matched. Now any arena
   node within `DUPLICATE_NODE_FRAC` is adopted: gated `[V2]` PASS on all nine, on-surface a8 98.445
   → 98.448, a6b unchanged, R-P2 byte-identical.
+  **Gated `[V9]` on a8, located; one remedy refuted, 2026-09-27.** Gated a8's 50 `[V9]` nodes (default:
+  0) sit on strut edges in cells §7.4 declined, which the gated path cones whole (`PlcPlan::Fan`,
+  plc_path 2) and labels tet by tet; the strut's material there is a sliver ~1 `eps` thick (the
+  strut face lies 1.75e-4 from lattice plane x = 0.296875; 0.5–1.2 % of the cell), so no fan tet's
+  centroid is inside it. The default path tries §7.6's split before its whole-cell fan; the gated
+  path does not. Calling `split_escalated_cell` on the gated boundary before `PlcPlan::Fan` was
+  built and measured: a3 on-surface 97.11 → 97.37, but a6a **`[V3]` 28 boundary leaks, `[V6]`,
+  `[V9]` open fans and `[V12]` side_elems FAIL** - the split reads the default path's face states
+  (`cut_index`/`on_cut`), and the augmented boundary's trace points are unknown to it, so its
+  pieces do not match the neighbours. Reverted. What would work is the split driven by the trace
+  points the boundary carries - i.e. §7.4's own facet-split fan made able to separate an
+  eps-thin sliver - not the default path's split.
 - **M-2.2. Boundary consistency: a facet vertex on the cell's boundary is a trace point.** The
   "hull carries a node the boundary has never heard of" class (a8 1,200 cells, 38.3 % of its
   stranded area) is the residue of record §6.43, which took it from 72 % of the population by making
