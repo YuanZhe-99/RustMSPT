@@ -1069,6 +1069,15 @@ exactly what M-1.7 changes.
   the share is met or the case exceeds 2 GB), beside the gated path's count at its own `h`. This is
   the number R2 gates against from here on.
   *Acceptance:* the table, with the sweep script committed. *Tier T2. Multimodal: no.*
+  **Status 2026-09-28 — landed.** `data/fixtures/meshgen/acceptance/p2_equal_fidelity.py`
+  (halves `h_max_frac`, `h_min_frac` and `eps_frac` together until the default path's `[V13]`
+  on-surface share meets the gated one, the sizing leaf budget is reached, or 2 GB is exceeded);
+  table in `p2_equal_fidelity.md`, at `b9aefe5`. The default path meets the gated share only on a1
+  (h/2, 187,626 tets against gated 49,545 - 3.8×) and a7a (h/4, 1,690,573 against 362,723 - 4.7×);
+  a3, a4, a6a, a6b and a7b hit the 1,000,000-leaf sizing budget first (a3 98.03 % at 2.08 M tets
+  against gated 98.51 % at 251 k; a6a *falls* with refinement, 99.47 → 99.03 %), and a8 reaches
+  2 GB at h/4 six points short. So at equal fidelity the gated path is the cheaper one by 3.8× or
+  more wherever the comparison can be made at all; R2 gates against the gated counts.
 - **M-1.5. The P3 criterion (MG-02).** `[V13]`'s corner test is necessary and not sufficient:
   `good_cube.vtu` verified against a `[0,1]³` cube STL reports `on_surface_area_frac = 1.0`,
   `deviation_max = 0`, `chord_max = 0.5` — its two interior interface triangles run through the cube
@@ -2237,7 +2246,7 @@ without the stated fallback.
 | M-1.1 | Matrix harness: both paths, logs kept, timing, census extended | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ◐ harness, both paths, logs, timing, `--focus` landed; reference cases and census extension open |
 | M-1.2 | Byte-identity on the matrix | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ◐ `check_determinism.py` + `determinism_{gated,default}.txt` committed: all nine acceptance cases, both paths, delivered and contract files byte-identical at 1 thread vs default (`8854559`); the three reference cases not yet run |
 | M-1.3 | Time budgets | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ● budget line recorded (`b9aefe5`, host stated): gated a3 16.6 s, a4 83.8 s, a8 125.1 s; reference cases pending |
-| M-1.4 | P2 baseline at equal fidelity | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ |
+| M-1.4 | P2 baseline at equal fidelity | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ● table + sweep committed: default meets gated fidelity only on a1 (3.8× the tets) and a7a (4.7×); elsewhere never, within the leaf budget / 2 GB |
 | M-1.5 | The P3 criterion: containment in the effective surface's facets (MG-02) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ● landed 2026-09-26 (`cont%`/`cover%`) |
 | M-1.6 | Conditioning and identity: the one-ULP pairs under MG-11's constraints (was M-4.1) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ◐ S2 keeps constructed points on their facets (gated a3 98.51 %, a6a −37 % tets); `[V2]` PASS all nine both paths; move/merge report and default-path a3 regression open |
 | M-1.7 | The X-pattern lattice: the 5-tet parity checkerboard, Rule T5, geometry rev 1.7 (R-E5, D-9 decided, S-53) | T2 / T3 | GLM 5.2 Max / GPT 5.6 Sol Medium; Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — box-face wireframes beside the reference tool's own mesh, transition cutaways | ● landed `17e5a9d`; cost measured 2026-09-27 (gated a1/a3/a8 on-surface fell), a1/a3 repaid by `a718767`; open: a8 −0.69, a7b −0.2, a6b −0.06 pt gated; default-path `[V9]` a3 closed (`pierces_shared_by_an_edge`, `[V2]` 17 → 0), a6a/a6b open (whole-cell fan apex on the limb edge; M-2.3) |
