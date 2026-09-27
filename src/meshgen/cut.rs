@@ -147,6 +147,8 @@ pub struct CutStats {
     pub n_escalated: BTreeMap<Escalation, usize>,
     /// Escalated cells re-meshed as a centroid fan over a conforming boundary (G6-4).
     pub n_steiner_fans: usize,
+    /// §7.6 pieces not star-shaped from their centroid, meshed by the constrained kernel instead.
+    pub n_cdt_pieces: usize,
     /// Escalated cells the G7-1 doubly-cut face rule split into three slabs instead,
     /// so their thin gap survives as elements rather than being chamfered away.
     pub n_band_cells: usize,
@@ -4020,6 +4022,32 @@ pub fn cut_lattice(
                             mesh.parent_of.push(index as u32);
                             mesh.regime.push(meshed.template.regime_code());
                             mesh.band_region.push(band_region_id);
+                        }
+                        continue;
+                    }
+                }
+                // A split piece that is not star-shaped from its centroid was accepted by the split
+                // only because the constrained kernel can mesh it; mesh it that way here.
+                if pairs.is_none()
+                    && split_slabs.contains(&slot)
+                    && !fan_is_sound(slab, &mesh.nodes)
+                {
+                    if let Some(tets) = cdt_piece(slab, &mesh.nodes) {
+                        mesh.stats.n_cdt_pieces += 1;
+                        for oriented in tets {
+                            mesh.tets.push(oriented);
+                            mesh.records.push(seed_record(
+                                parent_record,
+                                oriented,
+                                &all_components,
+                                &mesh.nodes,
+                                classifier,
+                                &mut seed_uncertain,
+                            ));
+                            seeded_pieces += 1;
+                            mesh.parent_of.push(index as u32);
+                            mesh.regime.push(REGIME_NORMAL);
+                            mesh.band_region.push(-1);
                         }
                         continue;
                     }
@@ -9193,7 +9221,17 @@ fn split_escalated_cell(
     // 588 interface cracks on A-4, exactly one for one. Declining the split here costs
     // the cell its cut and nothing else, because the fallback fan is unconditionally
     // valid; dropping the tet costs conformity, which is not recoverable downstream.
-    if !pieces.iter().all(|piece| fan_is_sound(piece, nodes)) {
+    // A piece the centroid fan cannot mesh is meshed by the constrained kernel instead, when it can
+    // (`cdt_piece`); only a piece neither can mesh declines the split.
+    let meshed: Vec<Option<Vec<[u32; 4]>>> = pieces
+        .iter()
+        .map(|piece| if fan_is_sound(piece, nodes) { None } else { cdt_piece(piece, nodes) })
+        .collect();
+    if pieces
+        .iter()
+        .zip(&meshed)
+        .any(|(piece, m)| m.is_none() && !fan_is_sound(piece, nodes))
+    {
         if std::env::var_os("RUSTMSPT_JCT_DIAG").is_some() {
             println!("[JCT-DIAG] cell {index}: a piece does not fan without a flat or folded tet");
         }
@@ -9216,7 +9254,7 @@ fn split_escalated_cell(
             return None;
         }
     }
-    if !cell_fan_is_conforming(&pieces, boundary, nodes) {
+    if !cell_fan_is_conforming(&pieces, &meshed, boundary, nodes) {
         if std::env::var_os("RUSTMSPT_JCT_DIAG").is_some() {
             println!("[JCT-DIAG] cell {index}: the pieces' fans are not conforming among themselves");
         }
@@ -9812,6 +9850,7 @@ fn soup_volume(soup: &[[u32; 3]], nodes: &[Vec3]) -> Option<f64> {
 //   declines is one `[V3]` would have failed.
 fn cell_fan_is_conforming(
     pieces: &[SmallVec<[[u32; 3]; 16]>],
+    meshed: &[Option<Vec<[u32; 4]>>],
     boundary: &[[u32; 3]],
     nodes: &[Vec3],
 ) -> bool {
@@ -9861,10 +9900,17 @@ fn cell_fan_is_conforming(
     let mut corners: BTreeSet<u32> = BTreeSet::new();
     for (index, piece) in pieces.iter().enumerate() {
         let apex = apex_id(index);
-        corners.insert(apex);
+        let tets: Vec<[u32; 4]> = match meshed.get(index).and_then(|m| m.as_ref()) {
+            Some(tets) => tets.clone(),
+            None => {
+                corners.insert(apex);
+                piece.iter().map(|t| [t[0], t[1], t[2], apex]).collect()
+            }
+        };
         for triangle in piece.iter() {
             corners.extend(triangle.iter().copied());
-            let tet = [triangle[0], triangle[1], triangle[2], apex];
+        }
+        for tet in tets {
             for slot in 0..4 {
                 let mut face = [
                     tet[(slot + 1) % 4],
@@ -9904,6 +9950,63 @@ fn cell_fan_is_conforming(
         }
     }
     true
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Tetrahedralise one closed §7.6 piece with the constrained kernel, from its own nodes only.
+// Inputs: the piece's boundary soup and the node table.
+// Returns: tets over the piece's own node ids, each positively oriented, or None.
+// Side effects: None.
+// Notes: The centroid fan needs the piece star-shaped from its centroid, and MG-15 made a piece
+//   that is not decline the whole cell - which then takes the whole-cell fan and loses whatever
+//   body the cut had separated: a3's cube corners (0.8217, 0.6783, 0.3217) and (0.8217, 0.3217,
+//   0.6783) came out with no cube element touching them (`[V9] curve_node_id`) on the checkerboard
+//   lattice. `constrained_tets` fills the piece's convex hull and shaves back to the piece's own
+//   boundary, adding no node, so the piece's boundary - the shared faces and the caps - is
+//   untouched and J1 holds. Accepted only when every tet orients and the tets' volume equals the
+//   soup's own to 1e-9, so a shave that went wrong cannot pass.
+fn cdt_piece(soup: &[[u32; 3]], nodes: &[Vec3]) -> Option<Vec<[u32; 4]>> {
+    let mut ids: Vec<u32> = soup.iter().flat_map(|t| t.iter().copied()).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let local: BTreeMap<u32, u32> = ids.iter().enumerate().map(|(i, id)| (*id, i as u32)).collect();
+    let points: Vec<Vec3> = ids.iter().map(|id| nodes[*id as usize]).collect();
+    let mut longest = 0.0f64;
+    for t in soup {
+        for slot in 0..3 {
+            let d = nodes[t[slot] as usize].sub(nodes[t[(slot + 1) % 3] as usize]);
+            longest = longest.max(d.dot(d).sqrt());
+        }
+    }
+    if longest <= 0.0 {
+        return None;
+    }
+    let keys: Vec<NodeKey> = points.iter().map(|p| node_key(*p, longest * 1.0e-12)).collect();
+    let boundary: Vec<[u32; 3]> = soup
+        .iter()
+        .map(|t| [local[&t[0]], local[&t[1]], local[&t[2]]])
+        .collect();
+    let tets = crate::meshgen::cdt::constrained_tets(&points, &keys, &boundary, &[], longest * 1.0e-9)
+        .ok()?;
+    let want = soup_volume(soup, nodes)?;
+    let mut out: Vec<[u32; 4]> = Vec::with_capacity(tets.len());
+    let mut total = 0.0;
+    for t in tets {
+        let global = [ids[t[0] as usize], ids[t[1] as usize], ids[t[2] as usize], ids[t[3] as usize]];
+        let oriented = orient_positively(global, nodes)?;
+        let p = [
+            nodes[oriented[0] as usize],
+            nodes[oriented[1] as usize],
+            nodes[oriented[2] as usize],
+            nodes[oriented[3] as usize],
+        ];
+        total += p[1].sub(p[0]).cross(p[2].sub(p[0])).dot(p[3].sub(p[0])).abs() / 6.0;
+        out.push(oriented);
+    }
+    if (total - want).abs() > want.max(f64::MIN_POSITIVE) * 1.0e-9 {
+        return None;
+    }
+    Some(out)
 }
 
 // AI-FUNC-SUMMARY: The volume a closed polygon soup encloses, summed as unsigned tets over an interior point; returns f64; side effects: none.

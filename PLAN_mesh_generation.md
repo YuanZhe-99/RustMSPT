@@ -1523,6 +1523,18 @@ cell's boundary without being a trace point of that face, where no Steiner point
   (a1/a3/a6a identical to the digit): every apex is either not a star centre of the ring (want/got
   sign mismatch, 2,500+) or yields a new sliver (900+). Reverted; the diagnostic kept. This class
   is ≤ 20 % of a8's stranded area. Not pursued further now.
+  **Non-star §7.6 pieces meshed by the constrained kernel (default path), 2026-09-27.** The
+  default path's new `[V9]` FAILs (a3/a6a/a6b) are cube corners no body element touches: the
+  corner cells escalate `Inconsistent`, the split declines ("a piece does not fan without a flat
+  or folded tet", MG-15's guard, or no component crossing at all) and the whole-cell fan labels
+  every tet background. `cdt_piece` now meshes a non-star piece from its own nodes with
+  `constrained_tets` (volume checked to 1e-9) instead of declining the split: a3 94, a6a 63, a6b
+  122, a8 835 pieces. Full matrix (`data/output/acceptance_m23`), default on-surface a3 93.53 →
+  **94.96**, a6a 99.47 → 99.61, a6b 99.20 → 99.26, a8 91.06 → **91.95**, the rest equal or up;
+  gated (with the composite move) a1 94.80, a3 97.11, a4 99.48, a8 98.45; no status changes,
+  tets equal or fewer, R-P2 byte-identical (a3). The `[V9]` corners stay: the corner lies on a
+  shared lattice face with no edge crossing, so neither the split nor the kernel has a cut to
+  make there - the sub-cell body of record §6.14 in its corner form.
 - **M-2.2. Boundary consistency: a facet vertex on the cell's boundary is a trace point.** The
   "hull carries a node the boundary has never heard of" class (a8 1,200 cells, 38.3 % of its
   stranded area) is the residue of record §6.43, which took it from 72 % of the population by making
@@ -2109,7 +2121,7 @@ without the stated fallback.
 | M-1.4 | P2 baseline at equal fidelity | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ |
 | M-1.5 | The P3 criterion: containment in the effective surface's facets (MG-02) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ● landed 2026-09-26 (`cont%`/`cover%`) |
 | M-1.6 | Conditioning and identity: the one-ULP pairs under MG-11's constraints (was M-4.1) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ |
-| M-1.7 | The X-pattern lattice: the 5-tet parity checkerboard, Rule T5, geometry rev 1.7 (R-E5, D-9 decided, S-53) | T2 / T3 | GLM 5.2 Max / GPT 5.6 Sol Medium; Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — box-face wireframes beside the reference tool's own mesh, transition cutaways | ● landed `17e5a9d`; cost measured 2026-09-27 (gated a1/a3/a8 on-surface fell), a1/a3 repaid by `a718767`; open: a8 −0.69, a7b −0.2, a6b −0.06 pt, default-path `[V9]` a3/a6a/a6b |
+| M-1.7 | The X-pattern lattice: the 5-tet parity checkerboard, Rule T5, geometry rev 1.7 (R-E5, D-9 decided, S-53) | T2 / T3 | GLM 5.2 Max / GPT 5.6 Sol Medium; Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — box-face wireframes beside the reference tool's own mesh, transition cutaways | ● landed `17e5a9d`; cost measured 2026-09-27 (gated a1/a3/a8 on-surface fell), a1/a3 repaid by `a718767`; open: a8 −0.69, a7b −0.2, a6b −0.06 pt gated; default-path `[V9]` a3/a6a/a6b (cube corners on a lattice face; `cdt_piece` raised default a3 to 94.96 %, a8 to 91.95 % but does not reach them) |
 | M-1.8 | Resolution as background × maximum level, given; per-input levels; the reference cases at their own resolution (R-E4, S-54, §6.2 item 18) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** (R9) — M-1.9's set, nine cases unchanged; reference-case contacts before/after | ◐ ladder, per-input levels, `run_reference.py` mapping landed; the §2.3 table on the three reference cases, both paths, open |
 | M-1.9 | Focus-region render harness: intersection curves, sharp edges/corners, thin regions, transitions, from the input; before/after diffs (R9) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — the contact sheets, and the two known defects they must show | ◐ input-vs-output comparison harness landed (R9); thin-region and transition views, runner call open |
 | M-2.0 | J1 fingerprint mismatch is a hard error; fingerprint = constraint entity ids (MG-06) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ● landed `9b9c1a2` |

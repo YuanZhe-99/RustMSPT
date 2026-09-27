@@ -1394,6 +1394,12 @@ impl Pipeline for MeshGenPipeline {
                 cut.stats.n_junction_splits, cut.stats.n_junction_split_pieces,
             );
         }
+        if cut.stats.n_cdt_pieces > 0 {
+            println!(
+                "[S8] {} §7.6 piece(s) not star-shaped from their centroid meshed by the constrained kernel",
+                cut.stats.n_cdt_pieces
+            );
+        }
         if cut.stats.n_steiner_fans > 0 {
             println!(
                 "[JCT-FALLBACK] {} escalated cell(s) re-meshed as a conforming centroid fan ({} face(s) off the frozen table); their material boundary is chamfered by at most one cell",

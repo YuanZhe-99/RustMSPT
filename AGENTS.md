@@ -695,6 +695,8 @@ When inspecting code:
 - **A search that accepts only strictly-better moves stalls wherever the target is several neutral moves away.** Two triangulations of one planar hexagon differ in four faces and need two or three flips during which the wrong-face count holds, so `recover_boundary` stopped on every such cell - which the 5-tet checkerboard produces on cell faces the 6-tet lattice did not. A secondary measure that the intermediate moves do lower (wrong hull *edges*), compared lexicographically, keeps termination and removes the stall. When a refusal is "every candidate is legal and none helps", look for a finer measure before a new move.
 - **A lattice change that cuts elements can raise the cost of every fallback.** The checkerboard kept a1's decline count almost flat and multiplied the off-surface area each decline strands by 2.6x, because its central tet is a third of the cube. Compare the stranded *area*, not the decline count, when a lattice or cell template changes.
 
+- **A guard that declines a whole cell for one bad piece should first ask whether another mesher can take that piece.** MG-15's `fan_is_sound` was right to refuse coning a non-star piece, but declining the *split* sent the whole cell to the whole-cell fan, which is worse. `cdt_piece` meshes such a piece from its own nodes with the constrained kernel (no node added, volume checked to 1e-9); on the default path it takes 94-835 pieces per case with no status change.
+
 ## Reporting to the owner (standing rule, set 2026-08-16)
 
 Every substantial reply ends with a status block covering four things, in this order. It is not

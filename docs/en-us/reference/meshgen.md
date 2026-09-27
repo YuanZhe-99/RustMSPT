@@ -168,6 +168,7 @@ the shape. `s08_cut` is the first snapshot that fits the input.
 | Item | Source | Summary |
 |---|---|---|
 | `CUT_VOLUME_TOLERANCE` / `CUT_MIN_DIHEDRAL_DEG` | `src/meshgen/cut.rs` | `0.01` / `8.0` - the guarded dry-run's volume tolerance and the §4.4 runtime dihedral floor. |
+| `cdt_piece` | `src/meshgen/cut.rs:9968` | Tetrahedralise one closed §7.6 piece that is not star-shaped from its centroid with `cdt::constrained_tets`, from its own nodes only (no node added, so J1 holds); accepted only when every tet orients and the volume equals the soup's own to 1e-9. Used by `split_escalated_cell` instead of declining the split, and by the caller instead of the centroid fan. |
 | `facet_plane` | `src/meshgen/cdt.rs:3988` | A §7.4 constraint facet's unit normal, offset and the band within which a face lies ON it: the facet's own deviation from its plane (its rim is snapped to the face traces, §6.43) plus `tol`. Used by the facet-coverage check, `regions_by_constraint` and the gated path's interface attribution; before it, a facet bent by its snap had none of its own faces counted and 90 % of A-3's "interior is not covered" refusals were this artefact. |
 | `constrained_tets_with_steiner` | `src/meshgen/cdt.rs:3283` | Plan M-2.1 on the gated path: `constrained_tets`, then up to three rounds of Steiner points on the constraint - (a) the midpoint of each facet edge the tetrahedralisation lacks, unless both ends lie in one cell face plane (J1), accepted only when `intern` creates a NEW node; (b) facet-plane crossings of mesh edges inside the facet. On refusal the facets and the arena are restored, so the facet-split fan sees exactly what it would have without the pass. Edge class 114 -> 49 (A-3), 25 -> 2 (A-6a), 1,835 -> 1,454 (A-8). |
 | `NodeArena::truncate` | `src/meshgen/cdt.rs:115` | Drop every node interned after the first `len` (points, keys and key index); the Steiner pass's rollback. |
@@ -1959,6 +1960,13 @@ polygon refusals a1 18 -> 12, a3 30 -> 24, a6a 56 -> 6, a8 1,024 -> 733; on-surf
 a3 +0.11, a8 +0.04 points, a6a unchanged. The freed cells mostly stop at "a tet is thinner than
 the node quantum" (a8 186 -> 438, a6a 11 -> 61). `RUSTMSPT_HULL_DIAG` also prints `[HULL-QUAD]`
 (convexity and fan size) for a two-face disagreement.
+
+On the default path §7.6's split used to decline a whole cell when one of its pieces was not
+star-shaped from its centroid (MG-15's guard), which handed the cell to the whole-cell fan. Such a
+piece is now meshed by `cdt_piece` (the constrained kernel over the piece's own nodes) when it can
+be: a3 94, a6a 63, a6b 122, a8 835 pieces; `[S8] ... meshed by the constrained kernel` counts
+them. The cube corners on a3/a6a/a6b that `[V9]` flags are not reached by it: the corner lies on a
+shared lattice face with no edge crossing, so the split has nothing to cut by.
 
 ### Welded sheet cuts (G6-5)
 
