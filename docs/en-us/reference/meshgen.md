@@ -170,6 +170,7 @@ the shape. `s08_cut` is the first snapshot that fits the input.
 | `CUT_VOLUME_TOLERANCE` / `CUT_MIN_DIHEDRAL_DEG` | `src/meshgen/cut.rs` | `0.01` / `8.0` - the guarded dry-run's volume tolerance and the §4.4 runtime dihedral floor. |
 | `cdt_piece` | `src/meshgen/cut.rs:9968` | Tetrahedralise one closed §7.6 piece that is not star-shaped from its centroid with `cdt::constrained_tets`, from its own nodes only (no node added, so J1 holds); accepted only when every tet orients and the volume equals the soup's own to 1e-9. Used by `split_escalated_cell` instead of declining the split, and by the caller instead of the centroid fan. |
 | `pierces_shared_by_an_edge` | `src/meshgen/cut.rs:9672` | The pierce entries two faces sharing an edge both report within `[V2]`'s duplicate-node bound (`DUPLICATE_NODE_FRAC`, 1e-6 of the diagonal); `curve_pierce_points` (now taking that bound) drops them for both faces, because such a point is on the edge and interning it per face made coincident hubs - a3\'s cube corner, 2.4e-8 off a checkerboard face diagonal, gave 17 duplicate nodes (`[V2]`) and the `[V9]` corners. A genuine near-edge pierce is reported by one face and kept. |
+| `face_on_facet_plane` | `src/meshgen/cdt.rs:4166` | Whether a mesh face lies on a constraint facet: every vertex a facet vertex within the facet's band, or any other node within `tol`. The band covers only the facet's own snapped vertices; extending it to other nodes counted a sliver lying along a bent facet as covering it (a8 cell 507267 read 1.416 coverage). Used by the coverage check, `regions_by_constraint` and interface attribution. |
 | `facet_plane` | `src/meshgen/cdt.rs:3988` | A §7.4 constraint facet's unit normal, offset and the band within which a face lies ON it: the facet's own deviation from its plane (its rim is snapped to the face traces, §6.43) plus `tol`. Used by the facet-coverage check, `regions_by_constraint` and the gated path's interface attribution; before it, a facet bent by its snap had none of its own faces counted and 90 % of A-3's "interior is not covered" refusals were this artefact. |
 | `constrained_tets_with_steiner` | `src/meshgen/cdt.rs:3283` | Plan M-2.1 on the gated path: `constrained_tets`, then up to three rounds of Steiner points on the constraint - (a) the midpoint of each facet edge the tetrahedralisation lacks, unless both ends lie in one cell face plane (J1), accepted only when `intern` creates a NEW node; (b) facet-plane crossings of mesh edges inside the facet. On refusal the facets and the arena are restored, so the facet-split fan sees exactly what it would have without the pass. Edge class 114 -> 49 (A-3), 25 -> 2 (A-6a), 1,835 -> 1,454 (A-8). |
 | `NodeArena::truncate` | `src/meshgen/cdt.rs:115` | Drop every node interned after the first `len` (points, keys and key index); the Steiner pass's rollback. |
@@ -1988,6 +1989,12 @@ On the gated path a surface-fragment vertex that is off every cell-face plane wa
 new node even when it is the same point as a node the cell already has (a6b's limb corner, 1.7e-7
 from trace node 52349). It now takes any existing arena node within `[V2]`'s duplicate bound
 (`DUPLICATE_NODE_FRAC`): gated duplicates a6b 1 -> 0, a8 11 -> 0, on-surface unchanged.
+
+The facet band is for the facet's own vertices only (`face_on_facet_plane`); other nodes must be
+within `tol`. With the band applied to every node, a sliver tet lying flat along a bent facet had
+both faces counted, and the facet read over-covered (a8 cell 507267: 1.416) and was refused as
+"interior not covered". Gated a6a `[V9]` FAIL -> PASS; a3 97.11 -> 97.15 %, a8 98.448 -> 98.455 %.
+`RUSTMSPT_PLC_CELL=<lattice index>` (print-only) turns the cdt facet/hull diagnostics on for one cell.
 
 ### Welded sheet cuts (G6-5)
 

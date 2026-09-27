@@ -97,6 +97,17 @@ impl Plane {
     }
 }
 
+thread_local! {
+    /// Print-only: set while `plc_attempt` works on the cell named by `RUSTMSPT_PLC_CELL`, so the
+    /// facet and hull diagnostics can be read for one cell instead of for every cell.
+    pub static DIAG_CELL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+// AI-FUNC-SUMMARY: Whether a print-only cdt diagnostic named by `var` is on for the current cell; returns bool; side effects: none.
+fn diag_on(var: &str) -> bool {
+    std::env::var_os(var).is_some() || DIAG_CELL.with(|c| c.get())
+}
+
 /// Interns points as nodes, so a point produced twice - by two clips, or by the two cells
 /// sharing a face - is one node and not a coincident pair.
 ///
@@ -2110,7 +2121,7 @@ fn recover_boundary(
             let wanted = frozen.difference(&hull).count();
             // Print-only: the stalled disagreement - its size, its node set, and whether every
             // disagreeing face lies in one plane (a flat boundary region split two ways) or not.
-            if std::env::var_os("RUSTMSPT_HULL_DIAG").is_some() {
+            if diag_on("RUSTMSPT_HULL_DIAG") {
                 let faces: Vec<[u32; 3]> = hull
                     .difference(frozen)
                     .chain(frozen.difference(&hull))
@@ -3785,7 +3796,7 @@ fn constrained_tets_detailed(
                 points[face[1] as usize],
                 points[face[2] as usize],
             ];
-            if p.iter().any(|q| (normal.dot(*q) - offset).abs() > band) {
+            if !face_on_facet_plane(*face, facet, points, (normal, offset, band), tol) {
                 continue;
             }
             let centre = p[0].add(p[1]).add(p[2]).scale(1.0 / 3.0);
@@ -3823,7 +3834,7 @@ fn constrained_tets_detailed(
                 // Print-only: for each missing facet edge, the node nearest to lying ON it
                 // (perpendicular distance over length, strictly between the ends), whether the
                 // mesh joins both ends to that node, and the facet's own bend over its length.
-                if std::env::var_os("RUSTMSPT_FACET_DIAG").is_some() {
+                if diag_on("RUSTMSPT_FACET_DIAG") {
                     let bend = facet
                         .iter()
                         .map(|v| (normal.dot(points[*v as usize]) - offset).abs())
@@ -3891,7 +3902,7 @@ fn constrained_tets_detailed(
                 // Print-only: what an uncovered facet looks like - its own bend against `tol`,
                 // how much of it the faces cover, how many mesh edges cross it, how many reflex
                 // corners it has. This is what showed the class was mostly a planarity artefact.
-                if std::env::var_os("RUSTMSPT_FACET_DIAG").is_some() {
+                if diag_on("RUSTMSPT_FACET_DIAG") {
                     let dev = facet
                         .iter()
                         .map(|v| (normal.dot(points[*v as usize]) - offset).abs())
@@ -4094,7 +4105,7 @@ pub fn regions_by_constraint(
         ];
         let centre = p[0].add(p[1]).add(p[2]).scale(1.0 / 3.0);
         planes.iter().any(|(normal, offset, band, facet)| {
-            p.iter().all(|q| (normal.dot(*q) - offset).abs() <= *band)
+            face_on_facet_plane(face, facet, points, (*normal, *offset, *band), tol)
                 && inside_polygon(centre, facet, points, *normal, tol)
         })
     };
@@ -4147,6 +4158,29 @@ pub fn regions_by_constraint(
 // Notes: Convex by construction - the facets are triangles clipped to a tet - so the sign of the
 //   cross product against the normal is the whole test, and a point on an edge counts as inside so
 //   that two faces meeting along one are both credited.
+// AI-FUNC-SUMMARY: Whether a mesh face lies ON a constraint facet's plane - every vertex either a facet vertex within the facet's own band or any other node within `tol`; returns bool; side effects: none.
+// Notes: The band exists because the facet's own vertices are bent by their snap (`facet_plane`);
+//   it must not extend to other nodes. Letting it did: a sliver tet lying flat along a bent facet
+//   has its apex inside the band, so both of its faces counted as the facet and a8's cell 507267
+//   read 1.416 of its facet covered - refused as "interior not covered" for being covered twice.
+pub(crate) fn face_on_facet_plane(
+    face: [u32; 3],
+    facet: &[u32],
+    points: &[Vec3],
+    plane: (Vec3, f64, f64),
+    tol: f64,
+) -> bool {
+    let (normal, offset, band) = plane;
+    face.iter().all(|v| {
+        let d = (normal.dot(points[*v as usize]) - offset).abs();
+        if facet.contains(v) {
+            d <= band
+        } else {
+            d <= tol
+        }
+    })
+}
+
 // AI-FUNC-SUMMARY:
 // Purpose: A constraint facet's plane and the band within which a face lies ON the facet.
 // Inputs: the facet as an index polygon, the point table and the cell's relative tolerance.

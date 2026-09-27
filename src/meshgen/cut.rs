@@ -2624,13 +2624,22 @@ pub fn cut_lattice(
             .zip(excluded.par_iter())
             .map(|(tet, out)| (!out).then(|| cell_boundary(tet)).flatten())
             .collect();
+        // Print-only: `RUSTMSPT_PLC_CELL=<lattice index>` turns the cdt diagnostics on for one cell.
+        let focus_cell: Option<usize> =
+            std::env::var("RUSTMSPT_PLC_CELL").ok().and_then(|v| v.parse().ok());
         let attempt: Vec<Option<Result<PlcCell, &'static str>>> = lattice
             .tets
             .par_iter()
             .zip(boundaries.par_iter())
-            .map(|(tet, boundary)| {
+            .enumerate()
+            .map(|(index, (tet, boundary))| {
                 boundary.as_ref().map(|boundary| {
-                    plc_attempt(
+                    let focus = focus_cell == Some(index);
+                    crate::meshgen::cdt::DIAG_CELL.with(|c| c.set(focus));
+                    if focus {
+                        eprintln!("[PLC-CELL] {index}: corners {:?}", tet);
+                    }
+                    let outcome = plc_attempt(
                         *tet,
                         boundary,
                         &mesh.nodes,
@@ -2638,7 +2647,9 @@ pub fn cut_lattice(
                         classifier,
                         tol,
                         options.eps,
-                    )
+                    );
+                    crate::meshgen::cdt::DIAG_CELL.with(|c| c.set(false));
+                    outcome
                 })
             })
             .collect();
@@ -8427,7 +8438,13 @@ fn plc_attempt(
             else {
                 continue;
             };
-            if p.iter().any(|q| (normal.dot(*q) - offset).abs() > band) {
+            if !crate::meshgen::cdt::face_on_facet_plane(
+                *face,
+                facet,
+                &arena.points,
+                (normal, offset, band),
+                tol,
+            ) {
                 continue;
             }
             let _ = centre;
