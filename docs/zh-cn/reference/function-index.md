@@ -653,6 +653,7 @@
 | `move_preserves_orientation` | 网格生成 | `src/meshgen/snap.rs:957` | ARB-10 的精确判据：移动某节点后其所有相邻四面体是否仍为正定向。 |
 | `snapped_to_doc` | 网格生成 | `src/meshgen/snap.rs:1841` | 将吸附后的晶格编码为 `s07_snapped` 快照 VTU。 |
 | `cdt_piece` | 网格生成 | `src/meshgen/cut.rs:9968` | 用 `cdt::constrained_tets` 对从质心看不是星形的闭合 §7.6 片段做四面体化，只用片段自身的节点（不新增节点，J1 成立）；仅当每个四面体都能定向且体积与片段自身相差不超过 1e-9 时接受。`split_escalated_cell` 用它代替拒绝分割，调用方用它代替质心扇形。 |
+| `pierces_shared_by_an_edge` | 网格生成 | `src/meshgen/cut.rs:9672` | 共享一条边的两个面在 `[V2]` 重复节点界限（`DUPLICATE_NODE_FRAC`，对角线的 1e-6）内都报告的穿透点条目；`curve_pierce_points`（现在接收该界限）对两个面都丢弃它们，因为这样的点位于边上，按面内化会产生重合的中心点——a3 的立方体角点离棋盘格面对角线 2.4e-8，造成 17 个重复节点（`[V2]`）和 `[V9]` 角点失败。只被一个面报告的真正近边穿透点保留。 |
 | `facet_plane` | 网格生成 | `src/meshgen/cdt.rs:3988` | §7.4 约束小面的单位法向、偏移量，以及"面位于小面上"的判定带宽：小面自身顶点到其平面的最大偏差（其边缘被吸附到面迹上，§6.43）加 `tol`。供小面覆盖检查、`regions_by_constraint` 与门控路径的界面归属使用；此前被吸附弯折的小面连自己的三角形都不被计入，A-3 上 90% 的"内部未被覆盖"拒绝都是这一假象。 |
 | `constrained_tets_with_steiner` | 网格生成 | `src/meshgen/cdt.rs:3283` | 门控路径上的计划 M-2.1：先 `constrained_tets`，再最多三轮在约束上插入 Steiner 点——(a) 四面体化缺少的小面边的中点（两端同在一个单元面平面上时除外，J1），仅当 `intern` 真正新建节点时接受；(b) 网格边与小面平面在小面内部的交点。拒绝时恢复小面与节点池，使小面分割扇形看到的与未经此步完全相同。边类拒绝 114 → 49（A-3）、25 → 2（A-6a）、1,835 → 1,454（A-8）。 |
 | `NodeArena::truncate` | 网格生成 | `src/meshgen/cdt.rs:115` | 丢弃前 `len` 个之后新建的所有节点（点、键与键索引）；Steiner 步骤的回滚。 |

@@ -1542,6 +1542,20 @@ cell's boundary without being a trace point of that face, where no Steiner point
   `[V3]` FAIL), leaving the `[V9]` corners of a6a/a6b untouched. Reverted; `[JCT-CDT]` (print-only,
   under `RUSTMSPT_JCT_DIAG`) kept. The corner cell (a3 53265) still takes the whole-cell fan, and
   of its 16 tets the four touching the corner are all background.
+  **The a3 corners, closed 2026-09-27.** Probing which site interned the corner showed two crease
+  hubs, one per face around the checkerboard diagonal 20322–20489: a3's cube corner (0.8217,
+  0.6783, 0.3217) lies 2.4e-8 off that diagonal (float32 input on the ...17/...83 convention), and
+  `segment_pierces_triangle`'s 1e-9 barycentric slack admits it for both faces. Two coincident
+  nodes (a3's 17 `[V2]` duplicates were all this), a zero-area fan triangle, an unmeshable piece, a
+  whole-cell fan, no cube element at the corner. Measured and rejected on the way: a distance rule
+  at `eps` (a3 −0.98, a8 −0.39) and at the ordering quantum (too fine - duplicates stay); genuine
+  near-edge hubs occupy every decade from 1e-3 to 1e-7, so no distance separates them. The rule
+  that works is the duplication itself (`pierces_shared_by_an_edge`): a pierce two faces sharing an
+  edge both report within `[V2]`'s duplicate bound (`DUPLICATE_NODE_FRAC`, 1e-6 of the diagonal) is
+  dropped for both. Default a3 `[V2]` and `[V9]` FAIL → **PASS**, duplicates 17 → 0, on-surface
+  94.96 → 94.90; every other case and the gated path unchanged; R-P2 byte-identical. Left: a6a/a6b's
+  `[V9]` node is a whole-cell fan centroid landing on the limb edge in a cell whose limb chords lie
+  along walk edges - the fan M-2.3 removes.
 - **M-2.2. Boundary consistency: a facet vertex on the cell's boundary is a trace point.** The
   "hull carries a node the boundary has never heard of" class (a8 1,200 cells, 38.3 % of its
   stranded area) is the residue of record §6.43, which took it from 72 % of the population by making
@@ -2128,7 +2142,7 @@ without the stated fallback.
 | M-1.4 | P2 baseline at equal fidelity | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ |
 | M-1.5 | The P3 criterion: containment in the effective surface's facets (MG-02) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ● landed 2026-09-26 (`cont%`/`cover%`) |
 | M-1.6 | Conditioning and identity: the one-ULP pairs under MG-11's constraints (was M-4.1) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ |
-| M-1.7 | The X-pattern lattice: the 5-tet parity checkerboard, Rule T5, geometry rev 1.7 (R-E5, D-9 decided, S-53) | T2 / T3 | GLM 5.2 Max / GPT 5.6 Sol Medium; Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — box-face wireframes beside the reference tool's own mesh, transition cutaways | ● landed `17e5a9d`; cost measured 2026-09-27 (gated a1/a3/a8 on-surface fell), a1/a3 repaid by `a718767`; open: a8 −0.69, a7b −0.2, a6b −0.06 pt gated; default-path `[V9]` a3/a6a/a6b (cube corners on a lattice face; `cdt_piece` raised default a3 to 94.96 %, a8 to 91.95 % but does not reach them) |
+| M-1.7 | The X-pattern lattice: the 5-tet parity checkerboard, Rule T5, geometry rev 1.7 (R-E5, D-9 decided, S-53) | T2 / T3 | GLM 5.2 Max / GPT 5.6 Sol Medium; Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — box-face wireframes beside the reference tool's own mesh, transition cutaways | ● landed `17e5a9d`; cost measured 2026-09-27 (gated a1/a3/a8 on-surface fell), a1/a3 repaid by `a718767`; open: a8 −0.69, a7b −0.2, a6b −0.06 pt gated; default-path `[V9]` a3 closed (`pierces_shared_by_an_edge`, `[V2]` 17 → 0), a6a/a6b open (whole-cell fan apex on the limb edge; M-2.3) |
 | M-1.8 | Resolution as background × maximum level, given; per-input levels; the reference cases at their own resolution (R-E4, S-54, §6.2 item 18) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** (R9) — M-1.9's set, nine cases unchanged; reference-case contacts before/after | ◐ ladder, per-input levels, `run_reference.py` mapping landed; the §2.3 table on the three reference cases, both paths, open |
 | M-1.9 | Focus-region render harness: intersection curves, sharp edges/corners, thin regions, transitions, from the input; before/after diffs (R9) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — the contact sheets, and the two known defects they must show | ◐ input-vs-output comparison harness landed (R9); thin-region and transition views, runner call open |
 | M-2.0 | J1 fingerprint mismatch is a hard error; fingerprint = constraint entity ids (MG-06) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ● landed `9b9c1a2` |

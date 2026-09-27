@@ -169,6 +169,7 @@ the shape. `s08_cut` is the first snapshot that fits the input.
 |---|---|---|
 | `CUT_VOLUME_TOLERANCE` / `CUT_MIN_DIHEDRAL_DEG` | `src/meshgen/cut.rs` | `0.01` / `8.0` - the guarded dry-run's volume tolerance and the §4.4 runtime dihedral floor. |
 | `cdt_piece` | `src/meshgen/cut.rs:9968` | Tetrahedralise one closed §7.6 piece that is not star-shaped from its centroid with `cdt::constrained_tets`, from its own nodes only (no node added, so J1 holds); accepted only when every tet orients and the volume equals the soup's own to 1e-9. Used by `split_escalated_cell` instead of declining the split, and by the caller instead of the centroid fan. |
+| `pierces_shared_by_an_edge` | `src/meshgen/cut.rs:9672` | The pierce entries two faces sharing an edge both report within `[V2]`'s duplicate-node bound (`DUPLICATE_NODE_FRAC`, 1e-6 of the diagonal); `curve_pierce_points` (now taking that bound) drops them for both faces, because such a point is on the edge and interning it per face made coincident hubs - a3\'s cube corner, 2.4e-8 off a checkerboard face diagonal, gave 17 duplicate nodes (`[V2]`) and the `[V9]` corners. A genuine near-edge pierce is reported by one face and kept. |
 | `facet_plane` | `src/meshgen/cdt.rs:3988` | A §7.4 constraint facet's unit normal, offset and the band within which a face lies ON it: the facet's own deviation from its plane (its rim is snapped to the face traces, §6.43) plus `tol`. Used by the facet-coverage check, `regions_by_constraint` and the gated path's interface attribution; before it, a facet bent by its snap had none of its own faces counted and 90 % of A-3's "interior is not covered" refusals were this artefact. |
 | `constrained_tets_with_steiner` | `src/meshgen/cdt.rs:3283` | Plan M-2.1 on the gated path: `constrained_tets`, then up to three rounds of Steiner points on the constraint - (a) the midpoint of each facet edge the tetrahedralisation lacks, unless both ends lie in one cell face plane (J1), accepted only when `intern` creates a NEW node; (b) facet-plane crossings of mesh edges inside the facet. On refusal the facets and the arena are restored, so the facet-split fan sees exactly what it would have without the pass. Edge class 114 -> 49 (A-3), 25 -> 2 (A-6a), 1,835 -> 1,454 (A-8). |
 | `NodeArena::truncate` | `src/meshgen/cdt.rs:115` | Drop every node interned after the first `len` (points, keys and key index); the Steiner pass's rollback. |
@@ -1967,6 +1968,21 @@ piece is now meshed by `cdt_piece` (the constrained kernel over the piece's own 
 be: a3 94, a6a 63, a6b 122, a8 835 pieces; `[S8] ... meshed by the constrained kernel` counts
 them. The cube corners on a3/a6a/a6b that `[V9]` flags are not reached by it: the corner lies on a
 shared lattice face with no edge crossing, so the split has nothing to cut by.
+
+The checkerboard's face diagonals run along (1, -1, 1)-type directions, and a3's cube corners
+(bounds on the ...17 / ...83 convention, float32 input) land on one to 2.4e-8.
+`segment_pierces_triangle`'s barycentric slack (1e-9 of the face) let that point through as
+interior to **both** faces sharing the diagonal, and each interned its own crease hub there: two
+coincident nodes, a zero-area fan triangle, a piece neither §7.6 nor the kernel could mesh, and a
+whole-cell fan with no cube element at the corner. No distance threshold separates this from a
+genuine near-edge hub (those sit at every decade from 1e-3 to 1e-7 of the edge; dropping every
+pierce within `eps` of an edge cost a3 0.98 and a8 0.39 points), so the rule is the duplication
+itself: `pierces_shared_by_an_edge` drops a pierce that two faces sharing an edge both report
+within `[V2]`'s duplicate-node bound (`DUPLICATE_NODE_FRAC`; `eps` was also measured too wide,
+a8 -0.24), for both faces. a3 `[V2]` duplicates 17 -> 0 and `[V9]` PASS on the default path, a3
+on-surface 94.96 -> 94.90 %, every other case unchanged.
+a6a/a6b's remaining `[V9]` node is a different case - a whole-cell fan's centroid apex that lands
+on the limb's edge by symmetry in a cell whose limb chords lie along walk edges.
 
 ### Welded sheet cuts (G6-5)
 

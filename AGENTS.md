@@ -697,6 +697,8 @@ When inspecting code:
 
 - **A guard that declines a whole cell for one bad piece should first ask whether another mesher can take that piece.** MG-15's `fan_is_sound` was right to refuse coning a non-star piece, but declining the *split* sent the whole cell to the whole-cell fan, which is worse. `cdt_piece` meshes such a piece from its own nodes with the constrained kernel (no node added, volume checked to 1e-9); on the default path it takes 94-835 pieces per case with no status change.
 
+- **A lattice change moves which input coordinates are "special".** The 6-tet lattice's diagonals never met a3's ...17/...83 cube corners; the checkerboard's (1, -1, 1) face diagonals pass through them to 2.4e-8 (float32 input). A per-face "strictly interior" test with a relative 1e-9 slack then admits the point for both faces around the edge, and each face interns its own node there - two coincident nodes that `[V2]` reported as 17 duplicates. A distance threshold cannot fix it (genuine near-edge hubs occupy every decade down to 1e-7, and `eps` cost a3 a point); detecting the duplication itself does. When `[V2]` reports duplicates, find which interning site made both before anything else.
+
 ## Reporting to the owner (standing rule, set 2026-08-16)
 
 Every substantial reply ends with a status block covering four things, in this order. It is not

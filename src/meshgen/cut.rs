@@ -66,6 +66,11 @@ pub const REGIME_NORMAL: u8 = 0;
 
 /// How much finer than the weld grid S8's ordering key is (see `cut_lattice`).
 pub const KEY_ORDER_REFINEMENT: f64 = 1.0e-6;
+/// Two nodes closer than this fraction of the domain diagonal are one node to the delivered
+/// file's own check (`[V2]`'s `duplicate_node_tol_frac` default, contracts §4). S8 runs in the
+/// normalized frame, where the diagonal is 1, so this is also an absolute distance there. Used
+/// where S8 must not emit what `[V2]` would call the same node twice.
+pub const DUPLICATE_NODE_FRAC: f64 = 1.0e-6;
 
 /// A node key in the canonical frame - the total order every tie-break uses.
 pub type NodeKey = (i64, i64, i64);
@@ -1445,7 +1450,14 @@ pub fn cut_lattice(
         .collect();
 
     // --- G6-0: the point where a locked curve pierces a lattice face ---
-    let curve_pierce = curve_pierce_points(lattice, &nodes, &keys, &options.curve_segments);
+    let curve_pierce =
+        curve_pierce_points(
+            lattice,
+            &nodes,
+            &keys,
+            &options.curve_segments,
+            DUPLICATE_NODE_FRAC,
+        );
     let curve_nodes = nodes_on_curve(&nodes, &options.curve_segments, options.eps);
     let slots = classification.solid_components.len();
     let inside_of = |node: u32, slot: usize| -> bool {
@@ -1507,7 +1519,13 @@ pub fn cut_lattice(
         if curve.segments.is_empty() {
             continue;
         }
-        for (face, _) in curve_pierce_points(lattice, &nodes, &keys, &curve.segments) {
+        for (face, _) in curve_pierce_points(
+            lattice,
+            &nodes,
+            &keys,
+            &curve.segments,
+            DUPLICATE_NODE_FRAC,
+        ) {
             let entry = pierce_components.entry(face).or_default();
             for component in &curve.components {
                 if !entry.contains(component) {
@@ -9410,6 +9428,7 @@ fn curve_pierce_points(
     nodes: &[Vec3],
     keys: &[NodeKey],
     segments: &[(Vec3, Vec3)],
+    eps: f64,
 ) -> BTreeMap<[u32; 3], Vec3> {
     if segments.is_empty() {
         return BTreeMap::new();
@@ -9465,8 +9484,24 @@ fn curve_pierce_points(
             key(&left.1).cmp(&key(&right.1))
         })
     });
+    // **A point two faces sharing an edge both report is ON that edge.** The barycentric slack
+    // above is 1e-9 of the face; a3's cube corner lies 2.4e-8 off a checkerboard face diagonal
+    // (float32 input, x - 0.8125 = 0.6875 - y = z - 0.3125 to that precision), which passes it for
+    // both faces around the diagonal, and each interned its own crease hub there: two coincident
+    // nodes (a3's 17 `[V2]` duplicates), a zero-area fan triangle, a piece neither §7.6 nor the
+    // kernel could mesh, and a whole-cell fan with no cube element at the corner (`[V9]`). No
+    // distance threshold separates it: genuine near-edge hubs sit at every decade from 1e-3 to 1e-7
+    // of the edge, and dropping all within `eps` cost a3 0.98 and a8 0.39 points. What identifies
+    // the case is the duplication itself - one pierce reported by two faces that share an edge,
+    // within `[V2]`'s own duplicate-node bound (`DUPLICATE_NODE_FRAC`) - and only those are
+    // dropped, for both faces. The coarser `eps` was measured too wide: it also dropped distinct
+    // near-edge hubs on a8 (-0.24 points) that were never duplicates.
+    let dropped = pierces_shared_by_an_edge(&found, eps);
     let mut out: BTreeMap<[u32; 3], Vec3> = BTreeMap::new();
-    for (corners, point) in found {
+    for (slot, (corners, point)) in found.into_iter().enumerate() {
+        if dropped.contains(&slot) {
+            continue;
+        }
         out.entry(corners).or_insert(point);
     }
     out
@@ -9631,6 +9666,43 @@ fn fan_from_walk_node(loop_nodes: &[u32], hub: usize, nodes: &[Vec3]) -> Option<
         out.push(triangle);
     }
     (out.len() + 2 == count).then_some(out)
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: The pierce entries that two faces sharing an edge both report at one place (within `eps`).
+// Inputs: the (face corners, pierce point) list and the coincidence tolerance.
+// Returns: the indices of every such entry, to be dropped for all faces involved.
+// Side effects: None.
+// Notes: Such a point lies on the shared edge, not in either face's interior; interning it per face
+//   made coincident hubs (a3's cube corner on a checkerboard face diagonal). A genuine near-edge
+//   pierce is reported by one face only and is kept.
+fn pierces_shared_by_an_edge(found: &[([u32; 3], Vec3)], eps: f64) -> BTreeSet<usize> {
+    let mut by_edge: BTreeMap<[u32; 2], Vec<(usize, Vec3)>> = BTreeMap::new();
+    for (slot, (corners, point)) in found.iter().enumerate() {
+        for pair in [[0usize, 1], [0, 2], [1, 2]] {
+            let (x, y) = (corners[pair[0]], corners[pair[1]]);
+            by_edge
+                .entry(if x <= y { [x, y] } else { [y, x] })
+                .or_default()
+                .push((slot, *point));
+        }
+    }
+    let mut dropped: BTreeSet<usize> = BTreeSet::new();
+    for entries in by_edge.values() {
+        for i in 0..entries.len() {
+            for j in i + 1..entries.len() {
+                if found[entries[i].0].0 == found[entries[j].0].0 {
+                    continue;
+                }
+                let d = entries[i].1.sub(entries[j].1);
+                if d.dot(d) <= eps * eps {
+                    dropped.insert(entries[i].0);
+                    dropped.insert(entries[j].0);
+                }
+            }
+        }
+    }
+    dropped
 }
 
 // AI-FUNC-SUMMARY:
@@ -9992,6 +10064,15 @@ fn cdt_piece(soup: &[[u32; 3]], nodes: &[Vec3]) -> Option<Vec<[u32; 4]>> {
             Err(reason) => {
                 if std::env::var_os("RUSTMSPT_JCT_DIAG").is_some() {
                     println!("[JCT-CDT] piece of {} triangles refused: {reason}", soup.len());
+                    if std::env::var_os("RUSTMSPT_JCT_CDT_DUMP").is_some() {
+                        for t in soup {
+                            let q = |i: u32| nodes[i as usize];
+                            println!(
+                                "[JCT-CDT-TRI] {:?} {:?} {:?} {:?}",
+                                t, q(t[0]), q(t[1]), q(t[2])
+                            );
+                        }
+                    }
                 }
                 return None;
             }
@@ -10036,6 +10117,21 @@ fn fan_volume(soup: &[[u32; 3]], centre: Vec3, nodes: &[Vec3]) -> f64 {
 #[cfg(test)]
 mod j1_tests {
     use super::*;
+
+    #[test]
+    fn a_pierce_two_faces_around_an_edge_both_report_is_dropped_for_both() {
+        let corner = Vec3::new(0.5, 1.0e-8, 0.0);
+        let found = vec![
+            ([0u32, 1, 2], corner),
+            ([0u32, 1, 3], Vec3::new(0.5, 1.0e-8 + 1.0e-12, 0.0)),
+            ([0u32, 2, 4], Vec3::new(0.2, 0.3, 0.0)),
+            ([5u32, 6, 7], Vec3::new(0.5, 1.0e-8, 0.0)),
+        ];
+        let dropped = pierces_shared_by_an_edge(&found, 1.0e-4);
+        // faces 0 and 1 share edge (0, 1) and report one point: both dropped; the lone
+        // near-edge pierce of an unrelated face and the interior one of face 2 are kept
+        assert_eq!(dropped.into_iter().collect::<Vec<_>>(), vec![0, 1]);
+    }
 
     fn setup() -> (Vec<Vec3>, Vec<NodeKey>) {
         // a face (0, 1, 2) with two trace points 3 and 4 on its edges, and a spare node 5
