@@ -190,7 +190,7 @@ fn fidelity_doc(
         })
         .collect();
     edges.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let target = edges.get(edges.len() / 2).copied().unwrap_or(f64::INFINITY) * 2.0;
+    let target = edges.get(edges.len() / 2).copied().unwrap_or(f64::INFINITY) * 4.0;
     for (x, tris) in inputs.iter().enumerate() {
         let mut split: Vec<[crate::types::Vec3; 3]> = Vec::new();
         let mut stack: Vec<[crate::types::Vec3; 3]> = tris.iter().rev().copied().collect();

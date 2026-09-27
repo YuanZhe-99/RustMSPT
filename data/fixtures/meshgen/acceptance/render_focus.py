@@ -112,14 +112,41 @@ def read_surface(path):
     source = [int(x) for x in arr("source")]
     dev = [float(x) for x in arr("dev_pct")]
     comp = [int(x) for x in arr("component")]
+    klass = [int(x) for x in arr("dev_class")]
     faces = []
     for i in range(len(source)):
         a, b, c = (pts[conn[3 * i + k]] for k in range(3))
         n = cross(sub(b, a), sub(c, a))
         faces.append({"source": source[i], "dev": dev[i], "component": comp[i],
+                      "class": klass[i], "tri": (a, b, c),
                       "centroid": scale(add(add(a, b), c), 1.0 / 3.0),
                       "area": 0.5 * norm(n), "normal": unit(n)})
     return faces
+
+
+def write_window(faces, lo, hi, path):
+    """The faces whose centroid lies in [lo, hi], as a small surface VTU: a defect close-up then
+    loads a few thousand triangles instead of the whole comparison surface."""
+    keep = [f for f in faces if all(lo[i] <= f["centroid"][i] <= hi[i] for i in range(3))]
+    pts = [p for f in keep for p in f["tri"]]
+    n = len(keep)
+
+    def arr(name, typ, vals, comps=""):
+        return f'<DataArray type="{typ}" Name="{name}"{comps} format="ascii">' + " ".join(vals) + "</DataArray>\n"
+    with open(path, "w") as o:
+        o.write('<?xml version="1.0"?>\n<VTKFile type="UnstructuredGrid" version="1.0" '
+                'byte_order="LittleEndian" header_type="UInt64">\n<UnstructuredGrid>\n')
+        o.write(f'<Piece NumberOfPoints="{len(pts)}" NumberOfCells="{n}">\n<Points>\n')
+        o.write(arr("Points", "Float64", (repr(c) for p in pts for c in p), ' NumberOfComponents="3"'))
+        o.write("</Points>\n<Cells>\n")
+        o.write(arr("connectivity", "Int64", (str(i) for i in range(len(pts)))))
+        o.write(arr("offsets", "Int64", (str(3 * (i + 1)) for i in range(n))))
+        o.write(arr("types", "UInt8", ("5" for _ in range(n))))
+        o.write("</Cells>\n<CellData>\n")
+        o.write(arr("source", "Int32", (str(f["source"]) for f in keep)))
+        o.write(arr("dev_class", "Int32", (str(f["class"]) for f in keep)))
+        o.write("</CellData>\n</Piece>\n</UnstructuredGrid>\n</VTKFile>\n")
+    return path
 
 
 # ----------------------------------------------------------------- choosing the defects
@@ -160,15 +187,13 @@ def clusters(faces, radius, threshold):
 
 # ----------------------------------------------------------------- rendering
 
-def render(out, name, surface, view_dir, focus, frame, filters, colour, width, opacity=1.0):
-    lines = [
-        "mesh_render:",
-        f"  input: {surface}",
-        f"  output_dir: {os.path.join(out, 'png')}",
-        "  views:",
-        f"    - name: {name}",
-        f"      view_direction: {fmt(view_dir)}",
-        f"      focus_point: {fmt(focus)}",
+def render(out, name, surface, view_dir, focus, frame, filters, colour, width, opacity=1.0, extra=()):
+    """One mesh-render call; `extra` adds (name, view_dir) views that share its filters."""
+    lines = ["mesh_render:", f"  input: {surface}", f"  output_dir: {os.path.join(out, 'png')}", "  views:"]
+    for view_name, direction in [(name, view_dir)] + list(extra):
+        lines += [f"    - name: {view_name}", f"      view_direction: {fmt(direction)}",
+                  f"      focus_point: {fmt(focus)}"]
+    lines += [
         f"  width: {width}",
         f"  height: {width}",
         "  background: [255, 255, 255]",
@@ -181,8 +206,9 @@ def render(out, name, surface, view_dir, focus, frame, filters, colour, width, o
         f"  frame_box: {{ min: {fmt(frame[0])}, max: {fmt(frame[1])} }}",
     ]
     lines += colour
-    lines.append("  filters:")
-    lines += ["    - " + f for f in filters]
+    if filters:
+        lines.append("  filters:")
+        lines += ["    - " + f for f in filters]
     cfg = os.path.join(out, "cfg", name + ".yaml")
     with open(cfg, "w") as f:
         f.write("\n".join(lines) + "\n")
@@ -241,11 +267,17 @@ def main():
     frame = box(center, half)
 
     panels = []
-    for tag, d in (("ne", (-1.0, -1.0, -1.0)), ("sw", (1.0, 1.0, 1.0))):
-        row = [render(out, f"overview_{tag}_input", surface, d, center, frame, [ONLY_INPUT], INPUT, args.width),
-               render(out, f"overview_{tag}_output", surface, d, center, frame, [ONLY_OUTPUT], OUTPUT, args.width)]
+    stem = os.path.splitext(os.path.basename(surface))[0]
+    png = lambda n: os.path.join(out, "png", f"{stem}_{n}.png")
+    # one call per surface; the two corners are two views of it
+    render(out, "overview_ne_input", surface, (-1.0, -1.0, -1.0), center, frame, [ONLY_INPUT], INPUT,
+           args.width, extra=[("overview_sw_input", (1.0, 1.0, 1.0))])
+    render(out, "overview_ne_output", surface, (-1.0, -1.0, -1.0), center, frame, [ONLY_OUTPUT], OUTPUT,
+           args.width, extra=[("overview_sw_output", (1.0, 1.0, 1.0))])
+    for tag in ("ne", "sw"):
         panels.append({"title": f"overview, from the {'+x+y+z' if tag == 'ne' else '-x-y-z'} corner",
-                       "labels": ["input", "output"], "files": row})
+                       "labels": ["input", "output"],
+                       "files": [png(f"overview_{tag}_input"), png(f"overview_{tag}_output")]})
 
     w = 4.0 * h
     found = clusters(faces, 2.0 * w, args.threshold)
@@ -255,13 +287,21 @@ def main():
         side = unit(cross(n, (0.0, 0.0, 1.0) if abs(n[2]) < 0.9 else (1.0, 0.0, 0.0)))
         oblique = unit(add(scale(n, -1.0), scale(side, 1.2)))
         fr = box(c["center"], w)
-        filt = [f"{{ kind: bbox, min: {fmt([x - 2 * w for x in c['center']])}, max: {fmt([x + 2 * w for x in c['center']])} }}"]
-        for view, d in (("head-on", scale(n, -1.0)), ("oblique", oblique)):
-            tag = f"defect{k + 1}_{'head' if view == 'head-on' else 'obl'}"
-            row = [render(out, tag + "_input", surface, d, c["center"], fr, filt + [ONLY_INPUT], INPUT, args.width),
-                   render(out, tag + "_output", surface, d, c["center"], fr, filt + [ONLY_OUTPUT], OUTPUT, args.width),
-                   render(out, tag + "_both", surface, d, c["center"], fr, filt, OUTPUT, args.width, opacity=0.55)]
-            panels.append({"title": f"defect {k + 1} ({view})", "labels": ["input", "output", "both"], "files": row})
+        window = write_window(faces, [x - 2 * w for x in c["center"]], [x + 2 * w for x in c["center"]],
+                              os.path.join(out, f"window{k + 1}.vtu"))
+        wstem = os.path.splitext(os.path.basename(window))[0]
+        h_tag, o_tag = f"defect{k + 1}_head", f"defect{k + 1}_obl"
+        head = scale(n, -1.0)
+        render(out, h_tag + "_input", window, head, c["center"], fr, [ONLY_INPUT], INPUT, args.width,
+               extra=[(o_tag + "_input", oblique)])
+        render(out, h_tag + "_output", window, head, c["center"], fr, [ONLY_OUTPUT], OUTPUT, args.width,
+               extra=[(o_tag + "_output", oblique)])
+        render(out, h_tag + "_both", window, head, c["center"], fr, [], OUTPUT, args.width, opacity=0.55,
+               extra=[(o_tag + "_both", oblique)])
+        for view, tag in (("head-on", h_tag), ("oblique", o_tag)):
+            panels.append({"title": f"defect {k + 1} ({view})", "labels": ["input", "output", "both"],
+                           "files": [os.path.join(out, "png", f"{wstem}_{tag}_{s}.png")
+                                     for s in ("input", "output", "both")]})
         defects.append({"rank": k + 1, "center": [round(x, 6) for x in c["center"]],
                         "faces": len(c["faces"]), "area": c["area"], "area_share": c["area"] / total,
                         "max_dev_pct": round(c["max_dev"], 1), "components": c["components"],

@@ -1437,6 +1437,19 @@ cell's boundary without being a trace point of that face, where no Steiner point
   *Tier T3. Multimodal: yes — cutaway renders (`mesh-render`, clip through the cube's edges on a3
   and a strut junction on a8) before/after, because a junction that meshes but tears is visible
   before it is countable.*
+  **Prototype 2026-09-26 — NO-GO, reverted (patch kept as `scratchpad/m21_steiner.patch`).**
+  Built as `constrained_tets_with_steiner` (a detailed `constrained_tets` that also returns the
+  tetrahedralisation it reached; up to 3 rounds; (a) midpoint splits of missing facet edges not in
+  a cell face plane, inserted into every facet carrying the edge; (b) facet-plane crossings of
+  mesh edges inside the facet) and wired into `plc_attempt`, on the checkerboard lattice + M-2.0.
+  Gated, facet-class declines (edge / interior): **a3 114 / 224 → 60 / 281**, a6a 25 / 48 → 2 / 43.
+  The edge move works - it removes half to nearly all of its class - but the cells it frees mostly
+  fall to the interior class, and the interior move fired only 35 times on a3: the crossings it
+  inserts do not make the interior coverable. a3 containment 93.41 → 93.84 %, `[V1]`/`[V3]` held,
+  but a6a gained 2 undeclared material-boundary faces at a Steiner point on the limb edge
+  (`[V6]` PASS → FAIL). Eight rounds instead of three ran away (50 CPU-minutes on a3). Next attempt
+  should start from the interior class: dump one interior-declined cell (`RUSTMSPT_PLC_DUMP`) and
+  read which mesh edge crosses the facet and why flips cannot remove it before choosing a point.
 - **M-2.2. Boundary consistency: a facet vertex on the cell's boundary is a trace point.** The
   "hull carries a node the boundary has never heard of" class (a8 1,200 cells, 38.3 % of its
   stranded area) is the residue of record §6.43, which took it from 72 % of the population by making
