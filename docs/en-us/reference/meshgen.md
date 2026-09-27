@@ -168,7 +168,9 @@ the shape. `s08_cut` is the first snapshot that fits the input.
 | Item | Source | Summary |
 |---|---|---|
 | `CUT_VOLUME_TOLERANCE` / `CUT_MIN_DIHEDRAL_DEG` | `src/meshgen/cut.rs` | `0.01` / `8.0` - the guarded dry-run's volume tolerance and the §4.4 runtime dihedral floor. |
-| `facet_plane` | `src/meshgen/cdt.rs:3736` | A §7.4 constraint facet's unit normal, offset and the band within which a face lies ON it: the facet's own deviation from its plane (its rim is snapped to the face traces, §6.43) plus `tol`. Used by the facet-coverage check, `regions_by_constraint` and the gated path's interface attribution; before it, a facet bent by its snap had none of its own faces counted and 90 % of A-3's "interior is not covered" refusals were this artefact. |
+| `facet_plane` | `src/meshgen/cdt.rs:3988` | A §7.4 constraint facet's unit normal, offset and the band within which a face lies ON it: the facet's own deviation from its plane (its rim is snapped to the face traces, §6.43) plus `tol`. Used by the facet-coverage check, `regions_by_constraint` and the gated path's interface attribution; before it, a facet bent by its snap had none of its own faces counted and 90 % of A-3's "interior is not covered" refusals were this artefact. |
+| `constrained_tets_with_steiner` | `src/meshgen/cdt.rs:3283` | Plan M-2.1 on the gated path: `constrained_tets`, then up to three rounds of Steiner points on the constraint - (a) the midpoint of each facet edge the tetrahedralisation lacks, unless both ends lie in one cell face plane (J1), accepted only when `intern` creates a NEW node; (b) facet-plane crossings of mesh edges inside the facet. On refusal the facets and the arena are restored, so the facet-split fan sees exactly what it would have without the pass. Edge class 114 -> 49 (A-3), 25 -> 2 (A-6a), 1,835 -> 1,454 (A-8). |
+| `NodeArena::truncate` | `src/meshgen/cdt.rs:115` | Drop every node interned after the first `len` (points, keys and key index); the Steiner pass's rollback. |
 | `NodeSide` | `src/meshgen/cut.rs:80` | Where a parent node sits relative to the patch: `Inside` / `Outside` / `OnCut`. |
 | `Escalation` | `src/meshgen/cut.rs:91` | Why a cell could not take §6's path: junction, K1 multi-crossing, inconsistent state, dry-run failure, quality. |
 | `InterfaceFace` | `src/meshgen/cut.rs:107` | One tagged cut triangle with its `(inside, outside)` element pair. |
@@ -1930,6 +1932,14 @@ crossing edges and reflex corners.
 The same run exposed a writer bug: `FaceTagOrientation` carried one entry per face rather than
 one per `FaceTagComponents` member, so a face two components share failed `[V12]`'s
 `orientation_length`. It is now one per member.
+
+M-2.1's Steiner pass (`constrained_tets_with_steiner`) runs on top of this on the gated path:
+edge-class refusals 114 -> 49 (A-3), 25 -> 2 (A-6a), 1,835 -> 1,454 (A-8); on-surface
+95.64 -> 96.39 %, 99.903 -> 99.924 %, 98.13 -> 98.41 %. It either recovers the cell or leaves no
+trace: the first version kept its midpoints on refusal, and the facet-split fan then capped with
+collinear triangles (+32 undeclared faces on A-3). `RUSTMSPT_FACET_DIAG` also prints, per missing
+facet edge, the nearest node to it - on A-3 only 14 of 1,370 have one within 1e-6 of the edge, so
+the edge class is genuine recovery, not a blocking near-collinear node.
 
 ### Welded sheet cuts (G6-5)
 

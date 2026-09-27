@@ -689,6 +689,9 @@ When inspecting code:
 - **Before inserting a point to repair a refusal, check the refusal is real.** M-2.1's Steiner prototype attacked "a facet's edges are all there but its interior is not covered" and moved it the wrong way (a3 224 -> 281). One print-only dump of the refused facets showed 90 % had **no crossing edge at all**: the facet is planar only to its own trace snap (10^1-10^6 `tol` off its plane), so a `tol` plane test counted none of its own faces. Giving the facet its own band (`cdt::facet_plane`) took the class 224 -> 42 / 48 -> 4 / 632 -> 246 with no new node. A test that measures a snapped object must use the snap's own size, not the arithmetic tolerance.
 - **A table with one entry per member must be written per member.** `FaceTagOrientation` was written once per face and passed for as long as no face carried two tags; the first gated contact face made `[V12]` fail. When a face (or node, or cell) can carry a set, check every parallel array is indexed by the set's members, not by its owner.
 
+- **A refutation that ran through an artefact is not a refutation.** M-2.1's Steiner pass was recorded NO-GO because the cells it freed fell into "interior not covered" - a class that turned out an hour later to be mostly a planarity artefact. Re-measured on top of the fix, with the two defects its own failure named (accept only a newly created node; roll back on refusal), it measured strictly better on all three cases. When a verdict depended on a number that has since been corrected, re-run the verdict.
+- **A pass that edits its inputs in place must either succeed or leave no trace.** The fallback after a refused Steiner pass saw the pass's midpoints and fanned caps through them - collinear triangles, 32 undeclared faces. Snapshot on entry, restore on every refusal path.
+
 ## Reporting to the owner (standing rule, set 2026-08-16)
 
 Every substantial reply ends with a status block covering four things, in this order. It is not

@@ -111,6 +111,13 @@ pub struct NodeArena {
 }
 
 impl NodeArena {
+    // AI-FUNC-SUMMARY: Drop every node interned after the first `len`; returns nothing; side effects: shrinks points, keys and the key index.
+    pub fn truncate(&mut self, len: usize) {
+        for key in self.keys.drain(len.min(self.keys.len())..) {
+            self.index.remove(&key);
+        }
+        self.points.truncate(len);
+    }
     // AI-FUNC-SUMMARY: Start an arena over existing nodes, adopting their keys; returns NodeArena; side effects: none.
     pub fn new(points: Vec<Vec3>, quantum: f64) -> NodeArena {
         let keys: Vec<NodeKey> = points.iter().map(|p| node_key(*p, quantum)).collect();
@@ -3258,8 +3265,187 @@ pub fn constrained_tets(
     facets: &[Vec<u32>],
     tol: f64,
 ) -> Result<Vec<[u32; 4]>, &'static str> {
+    constrained_tets_detailed(points, keys, boundary, facets, tol).map_err(|(reason, _)| reason)
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Plan M-2.1 - `constrained_tets` with facet recovery by Steiner points ON the constraint, retried a bounded number of rounds.
+// Inputs: the cell's node arena (points are interned into it), its frozen boundary, its facets (edited in place when a facet edge is split), the tolerance, the cell's own face planes and the plane tolerance, and the round limit.
+// Returns: the tets, or the last refusal.
+// Side effects: on success, interns Steiner points into `arena` and edits `facets`; on refusal,
+//   restores both exactly (the arena is truncated to its entry length).
+// Notes: Two moves, each only where recovery stalled. (a) A facet edge that is not an edge of the
+//   tetrahedralisation, and does not lie in one of the cell's own face planes, is split at its
+//   midpoint - accepted only when `intern` creates a NEW node, since a welded existing node is
+//   not on the edge and bends the facet (a6a's `[V6]` regression) - and the midpoint is inserted into every facet
+//   carrying that edge. (b) A facet whose edges are present but whose interior a mesh edge crosses
+//   receives that edge's intersection with the facet plane, when it lies inside the facet. Neither
+//   move ever places a point on a cell face - a facet lying wholly in one is skipped - so the faces
+//   the neighbours share are untouched (Invariant J1).
+pub fn constrained_tets_with_steiner(
+    arena: &mut NodeArena,
+    boundary: &[[u32; 3]],
+    facets: &mut Vec<Vec<u32>>,
+    tol: f64,
+    cell_planes: &[(Vec3, f64)],
+    plane_tol: f64,
+    rounds: usize,
+) -> Result<Vec<[u32; 4]>, &'static str> {
+    let mut last: &'static str = "no attempt";
+    // A refusal hands the cell to the facet-split fan, which must see the facets and nodes it would
+    // have seen without this pass: its caps fan each facet from its first vertex, and a midpoint
+    // inserted on a facet edge is collinear with that edge - a zero-area cap and, on a3, 32 extra
+    // undeclared material-boundary faces. So the pass either succeeds or leaves no trace.
+    let entry_facets = facets.clone();
+    let entry_nodes = arena.points.len();
+    for round in 0..=rounds {
+        let outcome =
+            constrained_tets_detailed(&arena.points, &arena.keys, boundary, facets, tol);
+        let (reason, tets) = match outcome {
+            Ok(tets) => {
+                if round > 0 {
+                    note_split("steiner: a cell recovered after Steiner insertion");
+                }
+                return Ok(tets);
+            }
+            Err(failure) => failure,
+        };
+        last = reason;
+        if round == rounds || tets.is_empty() {
+            break;
+        }
+        let edge_class = reason == "a facet edge is not an edge of the tetrahedralisation";
+        let interior_class = reason == "a facet's edges are all there but its interior is not covered";
+        if !edge_class && !interior_class {
+            break;
+        }
+        let on_one_cell_face = |ids: &[u32], points: &[Vec3]| {
+            cell_planes.iter().any(|(normal, offset)| {
+                ids.iter()
+                    .all(|id| (normal.dot(points[*id as usize]) - offset).abs() <= plane_tol)
+            })
+        };
+        let mut mesh_edges: std::collections::BTreeSet<[u32; 2]> = std::collections::BTreeSet::new();
+        for t in &tets {
+            for pair in [[0usize, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]] {
+                let (x, y) = (t[pair[0]], t[pair[1]]);
+                mesh_edges.insert(if x <= y { [x, y] } else { [y, x] });
+            }
+        }
+        let mut inserted = 0usize;
+        if edge_class {
+            let mut to_split: std::collections::BTreeSet<[u32; 2]> = std::collections::BTreeSet::new();
+            for facet in facets.iter() {
+                if facet.len() < 3 || on_one_cell_face(facet, &arena.points) {
+                    continue;
+                }
+                for slot in 0..facet.len() {
+                    let (a, b) = (facet[slot], facet[(slot + 1) % facet.len()]);
+                    let key = if a <= b { [a, b] } else { [b, a] };
+                    if a == b || mesh_edges.contains(&key) || on_one_cell_face(&[a, b], &arena.points) {
+                        continue;
+                    }
+                    to_split.insert(key);
+                }
+            }
+            for [a, b] in to_split {
+                let (pa, pb) = (arena.points[a as usize], arena.points[b as usize]);
+                let d = pb.sub(pa);
+                if d.dot(d).sqrt() <= 2.0 * tol {
+                    continue;
+                }
+                // Only a NEW node: `intern` welds within the quantum, and an existing node it hands
+                // back is not on this edge - inserting it bends the facet off its own plane.
+                let before = arena.points.len();
+                let mid = arena.intern(pa.add(pb).scale(0.5));
+                if arena.points.len() == before {
+                    continue;
+                }
+                for facet in facets.iter_mut() {
+                    let n = facet.len();
+                    let mut at = None;
+                    for slot in 0..n {
+                        let (x, y) = (facet[slot], facet[(slot + 1) % n]);
+                        if (x == a && y == b) || (x == b && y == a) {
+                            at = Some(slot + 1);
+                            break;
+                        }
+                    }
+                    if let Some(at) = at {
+                        facet.insert(at, mid);
+                        inserted += 1;
+                    }
+                }
+            }
+        } else {
+            let mut points_to_add: Vec<Vec3> = Vec::new();
+            for facet in facets.iter() {
+                if facet.len() < 3 || on_one_cell_face(facet, &arena.points) {
+                    continue;
+                }
+                let corner = |slot: usize| arena.points[facet[slot] as usize];
+                let mut want = Vec3::new(0.0, 0.0, 0.0);
+                for slot in 1..facet.len() - 1 {
+                    want = want.add(corner(slot).sub(corner(0)).cross(corner(slot + 1).sub(corner(0))));
+                }
+                let len = want.dot(want).sqrt();
+                if len <= 0.0 {
+                    continue;
+                }
+                let normal = want.scale(1.0 / len);
+                let offset = normal.dot(corner(0));
+                for [u, v] in facet_crossing_edges(&tets, &arena.points, facet) {
+                    let (pu, pv) = (arena.points[u as usize], arena.points[v as usize]);
+                    let (du, dv) = (normal.dot(pu) - offset, normal.dot(pv) - offset);
+                    if (du > 0.0) == (dv > 0.0) || du == dv {
+                        continue;
+                    }
+                    let t = du / (du - dv);
+                    let x = pu.add(pv.sub(pu).scale(t));
+                    if !inside_polygon(x, facet, &arena.points, normal, -tol) {
+                        continue;
+                    }
+                    if facet.iter().any(|id| {
+                        let d = arena.points[*id as usize].sub(x);
+                        d.dot(d).sqrt() <= tol
+                    }) {
+                        continue;
+                    }
+                    points_to_add.push(x);
+                }
+            }
+            for x in points_to_add {
+                let before = arena.points.len();
+                arena.intern(x);
+                if arena.points.len() > before {
+                    inserted += 1;
+                }
+            }
+        }
+        if inserted == 0 {
+            break;
+        }
+        note_split(if edge_class {
+            "steiner: facet edges split at their midpoints"
+        } else {
+            "steiner: facet-plane crossings inserted"
+        });
+    }
+    *facets = entry_facets;
+    arena.truncate(entry_nodes);
+    Err(last)
+}
+
+// AI-FUNC-SUMMARY: `constrained_tets`, returning on refusal the tetrahedralisation it had reached as well as the reason (plan M-2.1 needs it to place Steiner points); side effects: none.
+fn constrained_tets_detailed(
+    points: &[Vec3],
+    keys: &[NodeKey],
+    boundary: &[[u32; 3]],
+    facets: &[Vec<u32>],
+    tol: f64,
+) -> Result<Vec<[u32; 4]>, (&'static str, Vec<[u32; 4]>)> {
     let Some(tets) = delaunay_tets(points, keys) else {
-        return Err("the points have no tetrahedralisation");
+        return Err(("the points have no tetrahedralisation", Vec::new()));
     };
     // **A facet edge that runs through a node is two facet edges.** The same rule
     // `constrained_face_triangulation` applies to its 2D constraints (§6.32), now applied in 3D
@@ -3462,7 +3648,7 @@ pub fn constrained_tets(
     let mut facet_interior_uncovered = 0usize;
     for facet in facets {
         if facet.len() < 3 {
-            return Err("a facet has fewer than three vertices");
+            return Err(("a facet has fewer than three vertices", Vec::new()));
         }
         let corner = |slot: usize| points[facet[slot] as usize];
         let mut want = Vec3::new(0.0, 0.0, 0.0);
@@ -3471,10 +3657,10 @@ pub fn constrained_tets(
         }
         let want_area = want.dot(want).sqrt() * 0.5;
         if want_area <= 0.0 {
-            return Err("a facet has no area");
+            return Err(("a facet has no area", Vec::new()));
         }
         let Some((normal, offset, band)) = facet_plane(facet, points, tol) else {
-            return Err("a facet has no area");
+            return Err(("a facet has no area", Vec::new()));
         };
         // Every face of the mesh lying ON the facet and inside its outline. Summed by PROJECTED
         // area, because a facet the mesh cuts through is short and one it covers twice is long, and
@@ -3523,6 +3709,72 @@ pub fn constrained_tets(
                 .count();
             if missing > 0 {
                 facet_edges_missing += missing;
+                // Print-only: for each missing facet edge, the node nearest to lying ON it
+                // (perpendicular distance over length, strictly between the ends), whether the
+                // mesh joins both ends to that node, and the facet's own bend over its length.
+                if std::env::var_os("RUSTMSPT_FACET_DIAG").is_some() {
+                    let bend = facet
+                        .iter()
+                        .map(|v| (normal.dot(points[*v as usize]) - offset).abs())
+                        .fold(0.0f64, f64::max);
+                    for slot in 0..facet.len() {
+                        let (x, y) = (facet[slot], facet[(slot + 1) % facet.len()]);
+                        let key = if x <= y { [x, y] } else { [y, x] };
+                        if mesh_edges.contains(&key) {
+                            continue;
+                        }
+                        let (p, q) = (points[x as usize], points[y as usize]);
+                        let along = q.sub(p);
+                        let len2 = along.dot(along);
+                        let mut best = (f64::INFINITY, u32::MAX, 0.0f64);
+                        for (id, point) in points.iter().enumerate() {
+                            let id = id as u32;
+                            if id == x || id == y {
+                                continue;
+                            }
+                            let rel = point.sub(p);
+                            let t = rel.dot(along) / len2;
+                            if !(0.0..=1.0).contains(&t) {
+                                continue;
+                            }
+                            let off = rel.sub(along.scale(t));
+                            let d = (off.dot(off) / len2).sqrt();
+                            if d < best.0 {
+                                best = (d, id, t);
+                            }
+                        }
+                        let joined = best.1 != u32::MAX && {
+                            let e = |a: u32, b: u32| mesh_edges.contains(&if a <= b { [a, b] } else { [b, a] });
+                            e(x, best.1) && e(best.1, y)
+                        };
+                        let crossing = tets.iter().any(|tet| {
+                            [[0usize, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]].iter().any(|pr| {
+                                let (u, v) = (tet[pr[0]], tet[pr[1]]);
+                                u != x && u != y && v != x && v != y && {
+                                    let (a, b) = (points[u as usize], points[v as usize]);
+                                    let n = b.sub(a).cross(along);
+                                    let nn = n.dot(n);
+                                    nn > 0.0 && {
+                                        let w = p.sub(a);
+                                        let dist = (w.dot(n)).abs() / nn.sqrt();
+                                        let s1 = w.cross(along).dot(n) / nn;
+                                        let t1 = w.cross(b.sub(a)).dot(n) / nn;
+                                        dist <= 1.0e-9 * len2.sqrt() && (0.0..=1.0).contains(&s1) && (0.0..=1.0).contains(&t1)
+                                    }
+                                }
+                            })
+                        });
+                        eprintln!(
+                            "[EDGE-DIAG] facet n {} bend/len {:.3e} nearest node off/len {:.3e} at t {:.3} joined {} crossed-by-mesh-edge {}",
+                            facet.len(),
+                            bend / len2.sqrt(),
+                            best.0,
+                            best.2,
+                            joined,
+                            crossing
+                        );
+                    }
+                }
             } else {
                 facet_interior_uncovered += 1;
                 // Print-only: what an uncovered facet looks like - its own bend against `tol`,
@@ -3606,11 +3858,9 @@ pub fn constrained_tets(
         }
         volume <= longest * longest * tol
     });
-    match (boundary_ok, facets_ok, structural || intruding > 0) {
-        (true, true, _) if unmeasurable => {
-            Err("a tet is thinner than the node quantum")
-        }
-        (true, true, _) => Ok(tets),
+    let verdict: Result<(), &'static str> = match (boundary_ok, facets_ok, structural || intruding > 0) {
+        (true, true, _) if unmeasurable => Err("a tet is thinner than the node quantum"),
+        (true, true, _) => Ok(()),
         (false, true, false) => Err(recovery_failed
             .unwrap_or("the boundary is split differently, but on the same nodes")),
         (false, true, true) => Err(if structural {
@@ -3625,6 +3875,10 @@ pub fn constrained_tets(
         }),
         (false, false, false) => Err("neither the boundary nor the facets survive"),
         (false, false, true) => Err("a boundary node is off the hull, and the facets fail too"),
+    };
+    match verdict {
+        Ok(()) => Ok(tets),
+        Err(reason) => Err((reason, tets)),
     }
 }
 

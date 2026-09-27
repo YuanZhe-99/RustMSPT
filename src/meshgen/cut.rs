@@ -8200,12 +8200,15 @@ fn plc_attempt(
     // may abandon conformity to the interface, and the whole-cell fan abandons it by construction.
     // Every guard inside the split declines rather than guesses, and a decline still reaches the
     // caller's own fan.
-    let outcome = crate::meshgen::cdt::constrained_tets(
-        &arena.points,
-        &arena.keys,
+    // Plan M-2.1: facet recovery by Steiner points on the constraint, never on a cell face.
+    let outcome = crate::meshgen::cdt::constrained_tets_with_steiner(
+        &mut arena,
         &boundary_local,
-        &facets,
+        &mut facets,
         tol,
+        &planes,
+        edge * 1.0e-6,
+        3,
     );
     let (tets, regions, fanned) = match outcome {
         Ok(tets) => {

@@ -1468,6 +1468,22 @@ cell's boundary without being a trace point of that face, where no Steiner point
   before this change); fixed. The edge class is untouched (a8 1,835), so M-2.1's GO criterion is
   still unmet and the Steiner prototype stays reverted; the next attempt on the edge class starts
   from a dump, as the interior one did.
+  **Re-measured on top of `facet_plane` 2026-09-26 — landed on the gated path; GO gate still
+  unmet.** The NO-GO above turned on the interior class, which was mostly the planarity artefact,
+  so the prototype was re-applied with two corrections: a midpoint is accepted only when `intern`
+  creates a new node (a welded existing node bent the facet - a6a's `[V6]` regression), and a
+  refusal restores the facets and truncates the arena (`NodeArena::truncate`), because the
+  facet-split fan capped with the collinear midpoints (+32 undeclared faces on a3). Against the
+  `facet_plane` baseline: edge / interior refusals **a3 114 / 42 → 49 / 69, a6a 25 / 4 → 2 / 3,
+  a8 1,835 / 246 → 1,454 / 273**; on-surface 95.64 → **96.39 %**, 99.903 → **99.924 %**, 98.13 →
+  **98.41 %**; containment 95.35 → 96.22, 99.903 → 99.924, 98.04 → 98.30 %; every section keeps
+  its status on all three, `[V6]` a3 undeclared 85 unchanged, R-P2 byte-identical (a3), time
+  unchanged (a3 15 s, a8 188 s). Visual (R9, a3): no new defect; the x = 0.5 intersection
+  sawtooth and the sphere spots remain. It measures strictly better, so it lands; but the gate
+  "both facet classes halved on each case" is not met on a8 (−17 %), so the fan is **not**
+  deleted (M-2.3 stays blocked). A missing facet edge on a3 has a node within 1e-6 of it in only
+  14 of 1,370 cases (`RUSTMSPT_FACET_DIAG`), so the edge class is genuine recovery; a8's 1,454
+  is the next dump.
 - **M-2.2. Boundary consistency: a facet vertex on the cell's boundary is a trace point.** The
   "hull carries a node the boundary has never heard of" class (a8 1,200 cells, 38.3 % of its
   stranded area) is the residue of record §6.43, which took it from 72 % of the population by making

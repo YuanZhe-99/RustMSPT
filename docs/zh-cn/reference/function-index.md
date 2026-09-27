@@ -652,7 +652,9 @@
 | `unique_edges` | 网格生成 | `src/meshgen/snap.rs:887` | 晶格的去重边集合，每条以升序节点对表示。 |
 | `move_preserves_orientation` | 网格生成 | `src/meshgen/snap.rs:957` | ARB-10 的精确判据：移动某节点后其所有相邻四面体是否仍为正定向。 |
 | `snapped_to_doc` | 网格生成 | `src/meshgen/snap.rs:1841` | 将吸附后的晶格编码为 `s07_snapped` 快照 VTU。 |
-| `facet_plane` | 网格生成 | `src/meshgen/cdt.rs:3736` | §7.4 约束小面的单位法向、偏移量，以及"面位于小面上"的判定带宽：小面自身顶点到其平面的最大偏差（其边缘被吸附到面迹上，§6.43）加 `tol`。供小面覆盖检查、`regions_by_constraint` 与门控路径的界面归属使用；此前被吸附弯折的小面连自己的三角形都不被计入，A-3 上 90% 的"内部未被覆盖"拒绝都是这一假象。 |
+| `facet_plane` | 网格生成 | `src/meshgen/cdt.rs:3988` | §7.4 约束小面的单位法向、偏移量，以及"面位于小面上"的判定带宽：小面自身顶点到其平面的最大偏差（其边缘被吸附到面迹上，§6.43）加 `tol`。供小面覆盖检查、`regions_by_constraint` 与门控路径的界面归属使用；此前被吸附弯折的小面连自己的三角形都不被计入，A-3 上 90% 的"内部未被覆盖"拒绝都是这一假象。 |
+| `constrained_tets_with_steiner` | 网格生成 | `src/meshgen/cdt.rs:3283` | 门控路径上的计划 M-2.1：先 `constrained_tets`，再最多三轮在约束上插入 Steiner 点——(a) 四面体化缺少的小面边的中点（两端同在一个单元面平面上时除外，J1），仅当 `intern` 真正新建节点时接受；(b) 网格边与小面平面在小面内部的交点。拒绝时恢复小面与节点池，使小面分割扇形看到的与未经此步完全相同。边类拒绝 114 → 49（A-3）、25 → 2（A-6a）、1,835 → 1,454（A-8）。 |
+| `NodeArena::truncate` | 网格生成 | `src/meshgen/cdt.rs:115` | 丢弃前 `len` 个之后新建的所有节点（点、键与键索引）；Steiner 步骤的回滚。 |
 | `CUT_VOLUME_TOLERANCE` / `CUT_MIN_DIHEDRAL_DEG` | 网格生成 | `src/meshgen/cut.rs:33/36` | 受保护试运行的 1% 体积容差，以及 §4.4 运行期 8 度二面角下限。 |
 | `NodeSide` / `Escalation` | 网格生成 | `src/meshgen/cut.rs:43/54` | 母节点相对面片的位置，以及单元无法走 §6 路径的原因。 |
 | `InterfaceFace` | 网格生成 | `src/meshgen/cut.rs:107` | 一个带标签的切割三角形及其 `(内侧, 外侧)` 单元对——预留的导出契约。 |
