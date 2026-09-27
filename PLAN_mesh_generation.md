@@ -1053,6 +1053,17 @@ exactly what M-1.7 changes.
   in §2.6; a phase that exceeds a case's budget by more than 25 % states why and gets the owner's
   decision before landing. The number 25 % is a reporting threshold, not a mesh setting.
   *Acceptance:* the table exists, with the host identified. *Tier T1. Multimodal: no.*
+  **Status 2026-09-28 — the budget line (landed).** Per-case mesher wall time, seconds, at `b9aefe5`
+  on host *WSL2 aarch64, 8 × Cortex-X1C, 19 GB*, uncontended (`data/output/acceptance_m30`, the
+  runner's own `total` column; verifier time excluded):
+
+  | case | a1 | a2 | a3 | a4 | a6a | a6b | a7a | a7b | a8 |
+  |---|---|---|---|---|---|---|---|---|---|
+  | default | 0.4 | 1.0 | 3.2 | 15.2 | 1.9 | 2.3 | 2.6 | 2.9 | 108.4 |
+  | gated | 3.4 | 2.9 | 16.6 | 83.8 | 6.7 | 9.2 | 8.0 | 8.7 | 125.1 |
+
+  A later phase exceeding its case's gated budget by more than 25 % states why and asks the owner
+  before landing. The reference cases are not in this table yet.
 - **M-1.4. The P2 baseline at equal fidelity.** For each case, the shipped path's element count at
   the `h` that reaches the gated path's on-surface share (record §6.50's method, `h` halved until
   the share is met or the case exceeds 2 GB), beside the gated path's count at its own `h`. This is
@@ -2225,7 +2236,7 @@ without the stated fallback.
 | M-1.0 | Verifier trust: MG-01 cap, MG-03 domain at stage 11, MG-08 contract validator, `[V13]` FAIL | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ● landed 2026-09-26 |
 | M-1.1 | Matrix harness: both paths, logs kept, timing, census extended | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ◐ harness, both paths, logs, timing, `--focus` landed; reference cases and census extension open |
 | M-1.2 | Byte-identity on the matrix | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ◐ `check_determinism.py` + `determinism_{gated,default}.txt` committed: all nine acceptance cases, both paths, delivered and contract files byte-identical at 1 thread vs default (`8854559`); the three reference cases not yet run |
-| M-1.3 | Time budgets | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ◐ per-stage wall times collected on both paths; budgets not set |
+| M-1.3 | Time budgets | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ● budget line recorded (`b9aefe5`, host stated): gated a3 16.6 s, a4 83.8 s, a8 125.1 s; reference cases pending |
 | M-1.4 | P2 baseline at equal fidelity | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ |
 | M-1.5 | The P3 criterion: containment in the effective surface's facets (MG-02) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ● landed 2026-09-26 (`cont%`/`cover%`) |
 | M-1.6 | Conditioning and identity: the one-ULP pairs under MG-11's constraints (was M-4.1) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ◐ S2 keeps constructed points on their facets (gated a3 98.51 %, a6a −37 % tets); `[V2]` PASS all nine both paths; move/merge report and default-path a3 regression open |
