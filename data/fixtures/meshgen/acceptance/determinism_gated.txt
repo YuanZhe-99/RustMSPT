@@ -1,0 +1,11 @@
+# R-P2, gated path: default worker count against RAYON_NUM_THREADS=1
+# case  delivered-volume  contract-document  (sha256 prefix, run-naming lines excluded)
+a1    same 2f913b8cbb31c4f1  same e5aabd7d0cbf7a93
+a2    same 7ecc9e66148ff631  same a82b227dc74c07e7
+a3    same bd5bdd0b1ca3f15f  same 67ac2a17a105e86a
+a4    same 74ca437182c96003  same 0f75260a65d9c141
+a6a   same c89e01ebedc84721  same a5d1929edf36e9d1
+a6b   same a07b880d5af77e5e  same 228ed1fa57d06c6f
+a7a   same f348bbce2d6bd9bc  same b969a3a6cf83e1cf
+a7b   same bab1bbb099067fe3  same 7fa5c3ac5534f6de
+a8    same e683f26fc9ff55f9  same 95d8c75a67a2fac1

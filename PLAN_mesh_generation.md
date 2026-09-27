@@ -1043,6 +1043,12 @@ exactly what M-1.7 changes.
   is asserted, and the a8 lesson applies.
   *Acceptance:* a committed table of hashes; any mismatch is a FAIL gate blocking M-3. *Tier T1.
   Multimodal: no.*
+  **Status 2026-09-28 — nine of twelve.** `data/fixtures/meshgen/acceptance/check_determinism.py`
+  re-runs each case's own config at `RAYON_NUM_THREADS=1` under the runner's environment and
+  compares SHA-256 of the delivered volume and the contract document, excluding only the lines that
+  name the run (config hash, output paths). On the `acceptance_m28` matrix: 9 / 9 byte-identical on
+  both paths, tables in `determinism_gated.txt` / `determinism_default.txt`. Open: the three
+  reference cases.
 - **M-1.3. Time budgets.** Per-case wall time at `0a8eb1c` on both paths becomes the budget line
   in §2.6; a phase that exceeds a case's budget by more than 25 % states why and gets the owner's
   decision before landing. The number 25 % is a reporting threshold, not a mesh setting.
@@ -2218,7 +2224,7 @@ without the stated fallback.
 | M-0.2 | Post-M-2/M-5 revision (geometry 1.8, numerics 1.4, contracts 1.4) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ waits on M-2/M-5 |
 | M-1.0 | Verifier trust: MG-01 cap, MG-03 domain at stage 11, MG-08 contract validator, `[V13]` FAIL | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ● landed 2026-09-26 |
 | M-1.1 | Matrix harness: both paths, logs kept, timing, census extended | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ◐ harness, both paths, logs, timing, `--focus` landed; reference cases and census extension open |
-| M-1.2 | Byte-identity on the matrix | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ◐ spot checks only: a1, a3 gated byte-identical at 1 thread; the committed hash table not built |
+| M-1.2 | Byte-identity on the matrix | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ◐ `check_determinism.py` + `determinism_{gated,default}.txt` committed: all nine acceptance cases, both paths, delivered and contract files byte-identical at 1 thread vs default (`8854559`); the three reference cases not yet run |
 | M-1.3 | Time budgets | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ◐ per-stage wall times collected on both paths; budgets not set |
 | M-1.4 | P2 baseline at equal fidelity | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ |
 | M-1.5 | The P3 criterion: containment in the effective surface's facets (MG-02) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ● landed 2026-09-26 (`cont%`/`cover%`) |
