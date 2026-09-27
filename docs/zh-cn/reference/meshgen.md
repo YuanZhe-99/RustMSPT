@@ -85,7 +85,7 @@ S0、S1 与 G2-1 至 G2-5 已实现。流水线在 S0 前按区域对角线归�
 | `FREUDENTHAL` / `CellTemplate` | `src/meshgen/lattice.rs:54/493` | 冻结的 6-tet Kuhn 表，以及叶子采用了哪类模板。 |
 | `balance_octree` / `balance_violation` | `src/meshgen/lattice.rs:156/286` | 强（面+边+顶点）2:1 平衡，以及对该性质的直接检验。 |
 | `Lattice` / `LatticeStats` / `LatticeOptions` | `src/meshgen/lattice.rs:520/502/531` | 四面体化晶格、其构建报告与四面体预算。 |
-| `build_lattice` / `build_lattice_with_splits` | `src/meshgen/lattice.rs:611/616` | 以 Freudenthal 与扇形模板对平衡八叉树作四面体化。 |
+| `build_lattice` / `build_lattice_with_splits` | `src/meshgen/lattice.rs:611/616` | 以五四面体棋盘格（普通叶子，Rule T5 面；rev 1.7）与扇形模板对平衡八叉树作四面体化。 |
 | `lattice_to_doc` | `src/meshgen/lattice.rs:837` | 将晶格编码为 `s05_lattice` 快照 VTU。 |
 | `Side` / `Provenance` / `OwnershipRecord` | `src/meshgen/classify.rs:60/68/82` | 四面体相对构件的内外侧、条目来源与稀疏记录。 |
 | `resolve` | `src/meshgen/classify.rs:180` | 冻结的标签规则（SPEC_meshgen_geometry §9.1）。 |
@@ -426,6 +426,8 @@ C(R) = 对薄区域 r 取 min( geometry(r),  若 R(r) = Normal 则 t_r(r)/gap_ce
 涟漪算法：对层级 `L` 的每个叶子，考察其 26 个层级 `L` 的邻*单元*；若包含某邻单元的叶子比 `L - 1` 更粗，则分裂之；迭代至不动点。该算法是完备的——若两叶子违反规则，无论以何种方式接触，较粗者必包含较细者的某个层级 `L` 邻单元——且必然终止，因为每趟都严格加深某个叶子，而 `max_level` 是上界。若某邻单元**没有**包含它的叶子，则它要么已细化到 `L` 以下（下一趟从细的一侧处理），要么在区域之外（那里什么也没有），故两种情形跳过都正确。分裂产生的子单元继承父的 `h`，这既保持了"叶子不大于其内部场值"的不变量（子单元只有一半大），又使平衡独立于它所平衡的场。
 
 ### 分裂状态与两类模板
+
+> **Rev 1.7（计划 M-1.7，2026-09-26）：普通模板改为五四面体奇偶棋盘格，Rule T5 取代 Rule D。** 没有分裂面或分裂边的叶子输出 `CHECKERBOARD`：以四个索引和为偶数的角点构成的正四面体（`h³/3`）加上四个角四面体（`h³/6`）；叶子本层原点索引和为奇数时沿 x 镜像——共五个四面体而不是六个。每个未分裂的面（情形 P，以及情形 Q 的各象限按其自身边长）取连接“本层索引和（含法向坐标）为偶数”的两个角点的对角线（`case_plain`）。于是轴平面上每个 2×2 面块的对角线交于其中心——即计划 R-E5 要求的 X 形——且不存在体对角线。定理 T1 不变（其测试原样通过）；晶格中最差的四面体从 35.264° 提高到 45.000°（P 面扇形，AR 1.5607），普通单元为 54.736°。模板名为 `CellTemplate::Plain`，计数为 `LatticeStats::n_plain`；下文描述的是 rev 1.6 的 Freudenthal/Rule D 晶格及其测量，作为记录保留。
 
 `split(edge)` 与 `split(face)` 是把边中点/面心拿去与叶子角点集合做成员测试——精确整数查找，且共享该实体的两个单元求值完全一致。**没有**分裂面且**没有**分裂边的叶子采用冻结的 6-tet Freudenthal 表；其余叶子皆为扇形单元。"单条分裂边即已足够"这一点是承重的：正是它阻止了 Freudenthal 邻居在某条边带有中点的面上画出朴素对角线。
 

@@ -60,6 +60,20 @@ pub const FREUDENTHAL: [[usize; 4]; 6] = [
     [0, 4, 7, 6], // K5: z y x
 ];
 
+/// The 5-tet parity checkerboard (plan M-1.7, D-9; geometry rev 1.7 §2.2): the plain-leaf
+/// template. For a leaf whose own-level origin index sum is even, a central tet on the four
+/// even-sum corners `{0, 3, 5, 6}` and one corner tet at each odd corner; for an odd sum the same
+/// rows with every corner index XOR 1 (mirrored in x). The central tet is regular with volume
+/// `s^3/3`, each corner tet has volume `s^3/6`, and every cube face carries the diagonal joining
+/// its two even-sum corners - Rule T5. Rows are emitted through the canonical orientation fix.
+pub const CHECKERBOARD: [[usize; 4]; 5] = [
+    [0, 3, 5, 6], // central
+    [1, 0, 3, 5],
+    [2, 0, 6, 3],
+    [4, 0, 5, 6],
+    [7, 3, 6, 5],
+];
+
 /// The six cube faces, corners in cyclic order. Each row's componentwise-min and
 /// componentwise-max corners are diagonal, which is what makes Rule D (SPEC §2.3)
 /// a pure function of the face's global coordinates.
@@ -407,28 +421,35 @@ fn is_corner(corners: &[[u32; 3]], point: [u32; 3]) -> bool {
 }
 
 // AI-FUNC-SUMMARY:
-// Purpose: Rule D (SPEC §2.3) on one quad - the diagonal joins the componentwise-minimum corner to
-//   the componentwise-maximum corner.
-// Inputs: the quad's four corners in cyclic order.
+// Purpose: Rule T5 (plan M-1.7, geometry rev 1.7 §2.3) on one quad - the diagonal joins the two corners whose own-level index sum, normal coordinate included, is even.
+// Inputs: the quad's four corners in cyclic order (an axis-aligned square in the doubled index space).
 // Returns: two triangles.
 // Side effects: None.
-// Notes: Stated in **global** index space, so two cells sharing the quad compute the same diagonal
-//   from the same four coordinates - that translation invariance is the whole reason the primary
-//   lattice is Freudenthal rather than the 5-tet checkerboard.
+// Notes: A pure function of the four corners and the quad's own side, exact in integers: the side
+//   `s` is read off the quad, each corner's own-level index is `p / s`, and exactly two diagonally
+//   opposite corners of a square have an even sum. No node order and no calling cell enters, so two
+//   cells sharing the quad - walking it in opposite directions - draw the same diagonal (Invariant
+//   C). Case Q's quadrants call it at their own, halved side, which is what puts the X of a coarse
+//   face's four quadrants through its centre. It replaces Rule D, whose one diagonal direction per
+//   plane family is what the owner asked to be rid of (R-E5); the spec's reason for preferring Rule
+//   D - that parity does not survive level transitions - was refuted by Appendix D.1 (S-53).
 fn case_plain(quad: [[u32; 3]; 4]) -> [[[u32; 3]; 3]; 2] {
-    let mut lo = 0usize;
-    for index in 1..4 {
-        if quad[index] < quad[lo] {
-            lo = index;
-        }
-    }
-    // The componentwise minimum and maximum of an axis-aligned quad are diagonal.
-    let hi = (lo + 2) % 4;
-    let o1 = (lo + 1) % 4;
-    let o2 = (lo + 3) % 4;
+    let side = (0..3)
+        .map(|axis| quad[0][axis].abs_diff(quad[1][axis]))
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    let even = (0..4)
+        .find(|&k| {
+            quad[k].iter().map(|c| (c / side) as u64).sum::<u64>() % 2 == 0
+        })
+        .unwrap_or(0);
+    let hi = (even + 2) % 4;
+    let o1 = (even + 1) % 4;
+    let o2 = (even + 3) % 4;
     [
-        [quad[lo], quad[o1], quad[hi]],
-        [quad[lo], quad[hi], quad[o2]],
+        [quad[even], quad[o1], quad[hi]],
+        [quad[even], quad[hi], quad[o2]],
     ]
 }
 
@@ -488,8 +509,8 @@ fn face_rule(quad: [[u32; 3]; 4], corners: &[[u32; 3]]) -> Vec<[[u32; 3]; 3]> {
 // AI-FUNC-SUMMARY: How a leaf was tetrahedralized; side effects: none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CellTemplate {
-    /// No face and no edge split: the frozen 6-tet Freudenthal table.
-    Freudenthal,
+    /// No face and no edge split: the 5-tet parity checkerboard (`CHECKERBOARD`).
+    Plain,
     /// At least one split face or edge: the centroid fan over `f(F)`.
     Fan,
 }
@@ -498,7 +519,7 @@ pub enum CellTemplate {
 #[derive(Debug, Clone, Default)]
 pub struct LatticeStats {
     pub n_leaves: usize,
-    pub n_freudenthal: usize,
+    pub n_plain: usize,
     pub n_fan: usize,
     pub n_nodes: usize,
     pub n_tets: usize,
@@ -567,7 +588,7 @@ fn cell_triangles(
         )
     });
     if !split_edge && !split_face {
-        return (CellTemplate::Freudenthal, Vec::new(), Vec::new());
+        return (CellTemplate::Plain, Vec::new(), Vec::new());
     }
 
     let mut triangles = Vec::with_capacity(48);
@@ -676,7 +697,7 @@ pub fn build_lattice_with_splits(
     let estimate: usize = templates
         .iter()
         .map(|template| match template {
-            CellTemplate::Freudenthal => 6,
+            CellTemplate::Plain => 5,
             CellTemplate::Fan => 48,
         })
         .sum();
@@ -703,13 +724,15 @@ pub fn build_lattice_with_splits(
             let (template, triangles, _) = cell_triangles(max_level, leaf, &corners);
             let mut out: Vec<[u32; 4]> = Vec::new();
             match template {
-                CellTemplate::Freudenthal => {
-                    for row in FREUDENTHAL {
+                CellTemplate::Plain => {
+                    // Parity of the leaf's own-level origin; odd leaves mirror the table in x.
+                    let flip = (leaf.coord[0] + leaf.coord[1] + leaf.coord[2]) as usize & 1;
+                    for row in CHECKERBOARD {
                         out.push(oriented(
-                            cube[row[0]],
-                            cube[row[1]],
-                            cube[row[2]],
-                            cube[row[3]],
+                            cube[row[0] ^ flip],
+                            cube[row[1] ^ flip],
+                            cube[row[2] ^ flip],
+                            cube[row[3] ^ flip],
                             &lookup,
                         ));
                     }
@@ -754,9 +777,9 @@ pub fn build_lattice_with_splits(
 
     let mut stats = LatticeStats {
         n_leaves: cells.len(),
-        n_freudenthal: templates
+        n_plain: templates
             .iter()
-            .filter(|template| **template == CellTemplate::Freudenthal)
+            .filter(|template| **template == CellTemplate::Plain)
             .count(),
         n_fan: templates
             .iter()
@@ -968,90 +991,119 @@ fn push_field(doc: &mut VtuDoc, name: &str, components: usize, data: ArrayData) 
 mod tests {
     use super::*;
 
-    // AI-FUNC-SUMMARY: The frozen Freudenthal table must be positive and tile the cube exactly (SPEC §2.2, §14 [1]).
-    #[test]
-    fn the_frozen_freudenthal_table_is_positive_and_tiles_the_cube() {
-        let cube: [[u32; 3]; 8] = CORNER_BITS;
-        let mut total = 0i64;
-        for row in FREUDENTHAL {
-            let volume = orient3d_index(cube[row[0]], cube[row[1]], cube[row[2]], cube[row[3]]);
-            assert_eq!(volume, 1, "row {row:?} must have orient3d = +1 on the unit cube");
-            total += volume;
-        }
-        // Six tets of volume 1/6 each: the determinants sum to 6 = 6 * V(cube).
-        assert_eq!(total, 6);
+    fn sorted_triangles(triangles: &[[[u32; 3]; 3]]) -> Vec<Vec<[u32; 3]>> {
+        let mut out: Vec<Vec<[u32; 3]>> = triangles
+            .iter()
+            .map(|t| {
+                let mut n = t.to_vec();
+                n.sort_unstable();
+                n
+            })
+            .collect();
+        out.sort();
+        out
     }
 
-    // AI-FUNC-SUMMARY: Rule D must agree with the frozen sub-triangle table of SPEC §2.3.
+    // AI-FUNC-SUMMARY: The checkerboard table, both parities, is positive and tiles the cube exactly: a central tet of volume s^3/3 and four corner tets of s^3/6 (plan M-1.7, geometry rev 1.7 §2.2).
     #[test]
-    fn rule_d_reproduces_the_frozen_face_table() {
+    fn the_checkerboard_is_positive_and_tiles_the_cube_in_both_parities() {
         let cube: [[u32; 3]; 8] = CORNER_BITS;
-        // (face index, the two frozen sub-triangles as corner-id sets)
-        let expected: [[[usize; 3]; 2]; 6] = [
-            [[0, 2, 6], [0, 4, 6]],
-            [[1, 3, 7], [1, 5, 7]],
-            [[0, 1, 5], [0, 4, 5]],
-            [[2, 3, 7], [2, 6, 7]],
-            [[0, 1, 3], [0, 2, 3]],
-            [[4, 5, 7], [4, 6, 7]],
-        ];
-        for (face, rows) in FACES.iter().zip(expected.iter()) {
-            let quad = [cube[face[0]], cube[face[1]], cube[face[2]], cube[face[3]]];
-            let mut got: Vec<Vec<[u32; 3]>> = case_plain(quad)
-                .iter()
-                .map(|triangle| {
-                    let mut nodes = triangle.to_vec();
-                    nodes.sort_unstable();
-                    nodes
-                })
-                .collect();
-            got.sort();
-            let mut want: Vec<Vec<[u32; 3]>> = rows
-                .iter()
-                .map(|row| {
-                    let mut nodes: Vec<[u32; 3]> = row.iter().map(|id| cube[*id]).collect();
-                    nodes.sort_unstable();
-                    nodes
-                })
-                .collect();
-            want.sort();
-            assert_eq!(got, want, "face {face:?}");
+        for flip in [0usize, 1] {
+            let mut total = 0i64;
+            for (k, row) in CHECKERBOARD.iter().enumerate() {
+                let mut v = orient3d_index(
+                    cube[row[0] ^ flip],
+                    cube[row[1] ^ flip],
+                    cube[row[2] ^ flip],
+                    cube[row[3] ^ flip],
+                );
+                // the emitter applies the canonical orientation fix; the table's sign is a detail
+                v = v.abs();
+                // orient3d is 6 x volume: central s^3/3 -> 2, corner s^3/6 -> 1
+                assert_eq!(v, if k == 0 { 2 } else { 1 }, "parity {flip}, row {row:?}");
+                total += v;
+            }
+            assert_eq!(total, 6, "parity {flip}: the five tets must fill the cube");
         }
     }
 
-    // AI-FUNC-SUMMARY: Rule D must be independent of which cyclic rotation the caller supplies.
+    // AI-FUNC-SUMMARY: A plain leaf's own faces carry exactly the diagonals Rule T5 draws - for both parities - which is what lets T1's proof hold with Rule T5 in place of Rule D.
     #[test]
-    fn rule_d_is_invariant_under_rotation_of_the_quad() {
-        let quad = [[2u32, 4, 6], [6, 4, 6], [6, 8, 6], [2, 8, 6]];
-        let canonical: Vec<Vec<[u32; 3]>> = {
-            let mut out: Vec<Vec<[u32; 3]>> = case_plain(quad)
+    fn both_parities_face_traces_obey_rule_t5() {
+        for origin in [[0u32, 0, 0], [1, 0, 0]] {
+            let flip = ((origin[0] + origin[1] + origin[2]) & 1) as usize;
+            let cube: Vec<[u32; 3]> = CORNER_BITS
                 .iter()
-                .map(|t| {
-                    let mut n = t.to_vec();
-                    n.sort_unstable();
-                    n
-                })
+                .map(|b| [origin[0] + b[0], origin[1] + b[1], origin[2] + b[2]])
                 .collect();
-            out.sort();
-            out
+            let mut edges: std::collections::BTreeSet<[[u32; 3]; 2]> = Default::default();
+            for row in CHECKERBOARD {
+                let t: Vec<[u32; 3]> = row.iter().map(|i| cube[i ^ flip]).collect();
+                for i in 0..4 {
+                    for j in (i + 1)..4 {
+                        let mut e = [t[i], t[j]];
+                        e.sort_unstable();
+                        edges.insert(e);
+                    }
+                }
+            }
+            for face in FACES {
+                let quad = [cube[face[0]], cube[face[1]], cube[face[2]], cube[face[3]]];
+                let triangles = case_plain(quad);
+                // the diagonal Rule T5 draws is the edge the two triangles share
+                let shared: Vec<[u32; 3]> = triangles[0]
+                    .iter()
+                    .filter(|p| triangles[1].contains(p))
+                    .copied()
+                    .collect();
+                let mut diagonal = [shared[0], shared[1]];
+                diagonal.sort_unstable();
+                assert!(edges.contains(&diagonal), "origin {origin:?}, face {face:?}");
+            }
+        }
+    }
+
+    // AI-FUNC-SUMMARY: Rule T5 depends only on the quad: every rotation AND reversal of the corners gives the same two triangles (two cells walk a shared face in opposite directions).
+    #[test]
+    fn rule_t5_is_invariant_under_rotation_and_reversal_of_the_quad() {
+        for quad in [
+            [[2u32, 4, 6], [6, 4, 6], [6, 8, 6], [2, 8, 6]],
+            [[4u32, 4, 6], [8, 4, 6], [8, 8, 6], [4, 8, 6]],
+            [[0u32, 2, 2], [0, 4, 2], [0, 4, 4], [0, 2, 4]],
+        ] {
+            let canonical = sorted_triangles(&case_plain(quad));
+            for rotation in 0..4usize {
+                for reverse in [false, true] {
+                    let mut q = [
+                        quad[rotation % 4],
+                        quad[(rotation + 1) % 4],
+                        quad[(rotation + 2) % 4],
+                        quad[(rotation + 3) % 4],
+                    ];
+                    if reverse {
+                        q.reverse();
+                    }
+                    assert_eq!(sorted_triangles(&case_plain(q)), canonical, "rotation {rotation}, reversed {reverse}");
+                }
+            }
+        }
+    }
+
+    // AI-FUNC-SUMMARY: Rule T5 alternates: two faces side by side on one plane draw opposite diagonals, and the X of a 2x2 block of faces meets at its centre (R-E5, the owner's pattern).
+    #[test]
+    fn rule_t5_draws_the_x_pattern() {
+        // four unit faces of the plane z = 0, side 2 in the doubled index space
+        let face = |x: u32, y: u32| [[x, y, 0], [x + 2, y, 0], [x + 2, y + 2, 0], [x, y + 2, 0]];
+        let diagonal = |q: [[u32; 3]; 4]| {
+            let t = case_plain(q);
+            let mut d: Vec<[u32; 3]> = t[0].iter().filter(|p| t[1].contains(p)).copied().collect();
+            d.sort_unstable();
+            d
         };
-        for rotation in 1..4usize {
-            let rotated = [
-                quad[rotation % 4],
-                quad[(rotation + 1) % 4],
-                quad[(rotation + 2) % 4],
-                quad[(rotation + 3) % 4],
-            ];
-            let mut got: Vec<Vec<[u32; 3]>> = case_plain(rotated)
-                .iter()
-                .map(|t| {
-                    let mut n = t.to_vec();
-                    n.sort_unstable();
-                    n
-                })
-                .collect();
-            got.sort();
-            assert_eq!(got, canonical, "rotation {rotation}");
+        let centre = [2u32, 2, 0];
+        for (x, y) in [(0, 0), (2, 0), (0, 2), (2, 2)] {
+            assert!(diagonal(face(x, y)).contains(&centre), "face at ({x}, {y}) must reach the block centre");
         }
+        assert_ne!(diagonal(face(0, 0)), diagonal(face(2, 0)));
     }
 }

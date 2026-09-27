@@ -46,9 +46,9 @@ import sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
 HERE = os.path.dirname(os.path.abspath(__file__))
-WORK = os.path.join(ROOT, "data", "output", "acceptance")
+WORK = os.environ.get("RUSTMSPT_ACCEPTANCE_WORK", os.path.join(ROOT, "data", "output", "acceptance"))
 PATH = "default"
-BIN = os.path.join(ROOT, "target", "release", "rustmspt")
+BIN = os.environ.get("RUSTMSPT_BIN", os.path.join(ROOT, "target", "release", "rustmspt"))
 
 # (case, input STLs, sizing overrides). A-6's h_max_frac 0.04 is not a taste: the limb
 # thicknesses are sized against the *converged* h, and 0.04 converges to h = 0.034641,

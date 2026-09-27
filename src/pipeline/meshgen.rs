@@ -1169,10 +1169,10 @@ impl Pipeline for MeshGenPipeline {
         // --- S5/G4-2: strong 2:1 balance + Freudenthal/fan tetrahedralization ---
         // (built inside the K1 loop above; reported here on the pass that survived)
         println!(
-            "[S5/G4-2] lattice: {} leaves after {} balance split(s) ({} Freudenthal, {} fan), {} nodes, {} tets, V in [{:.3e}, {:.3e}]",
+            "[S5/G4-2] lattice: {} leaves after {} balance split(s) ({} plain checkerboard, {} fan), {} nodes, {} tets, V in [{:.3e}, {:.3e}]",
             lattice.stats.n_leaves,
             lattice.stats.n_balance_splits,
-            lattice.stats.n_freudenthal,
+            lattice.stats.n_plain,
             lattice.stats.n_fan,
             lattice.stats.n_nodes,
             lattice.stats.n_tets,

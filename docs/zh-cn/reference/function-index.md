@@ -634,7 +634,7 @@
 | `FREUDENTHAL` / `CellTemplate` | 网格生成 | `src/meshgen/lattice.rs:54/493` | 冻结的 6-tet Kuhn 表，以及叶子采用了哪类模板。 |
 | `balance_octree` / `balance_violation` | 网格生成 | `src/meshgen/lattice.rs:156/286` | 将八叉树细化到强（面+边+顶点）2:1 平衡；并可直接检验该性质。 |
 | `Lattice` / `LatticeStats` / `LatticeOptions` | 网格生成 | `src/meshgen/lattice.rs:520/502/531` | 四面体化的背景晶格、其构建报告与四面体预算。 |
-| `build_lattice` / `build_lattice_with_splits` | 网格生成 | `src/meshgen/lattice.rs:611/616` | 以 Freudenthal 与形心扇形模板对平衡八叉树作四面体化。 |
+| `build_lattice` / `build_lattice_with_splits` | 网格生成 | `src/meshgen/lattice.rs:611/616` | 以五四面体棋盘格（rev 1.7）与形心扇形模板对平衡八叉树作四面体化。 |
 | `lattice_to_doc` | 网格生成 | `src/meshgen/lattice.rs:837` | 将晶格编码为 `s05_lattice` 快照 VTU（四面体而非体素——见修订说明）。 |
 | `Side` / `Provenance` / `OwnershipRecord` | 网格生成 | `src/meshgen/classify.rs:60/68/82` | 四面体相对构件的内外侧（缺省即外部，`Ambiguous` 表示由切割裁定）、条目来源，以及稀疏记录本身。 |
 | `resolve` | 网格生成 | `src/meshgen/classify.rs:180` | 冻结的标签规则：内部集合取优先级最小者；集合为空时为 `{0}`。 |

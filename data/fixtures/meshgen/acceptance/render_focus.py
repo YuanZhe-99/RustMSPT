@@ -46,7 +46,7 @@ import subprocess
 import sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
-BIN = os.path.join(ROOT, "target", "release", "rustmspt")
+BIN = os.environ.get("RUSTMSPT_BIN", os.path.join(ROOT, "target", "release", "rustmspt"))
 
 
 def sub(a, b):

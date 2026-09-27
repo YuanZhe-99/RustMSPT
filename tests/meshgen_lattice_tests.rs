@@ -201,7 +201,7 @@ fn balance_is_strong_not_merely_face_to_face() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn a_uniform_lattice_is_all_freudenthal_and_tiles_the_domain_exactly() {
+fn a_uniform_lattice_is_all_checkerboard_and_tiles_the_domain_exactly() {
     let options = options();
     let lookup = SizingLookup::build(Vec::new(), &options);
     let field = build_sizing_field(&lookup, &options);
@@ -209,8 +209,9 @@ fn a_uniform_lattice_is_all_freudenthal_and_tiles_the_domain_exactly() {
     let lattice = build_lattice(&balanced, &LatticeOptions::default()).unwrap();
 
     assert_eq!(lattice.stats.n_fan, 0);
-    assert_eq!(lattice.stats.n_freudenthal, balanced.leaves.len());
-    assert_eq!(lattice.tets.len(), balanced.leaves.len() * 6);
+    assert_eq!(lattice.stats.n_plain, balanced.leaves.len());
+    // plan M-1.7: five tets per plain leaf (the 5-tet parity checkerboard), not six
+    assert_eq!(lattice.tets.len(), balanced.leaves.len() * 5);
 
     // Volume closes exactly against the leaves it was built from.
     let mut lattice_volume = 0.0;
@@ -239,27 +240,27 @@ fn a_graded_lattice_uses_fan_cells_and_stays_within_the_template_inventory() {
     let (balanced, _, lattice) = random_lattice(7, 6);
     assert!(lattice.stats.n_fan > 0, "a graded field must produce fans");
     assert_eq!(
-        lattice.stats.n_fan + lattice.stats.n_freudenthal,
+        lattice.stats.n_fan + lattice.stats.n_plain,
         balanced.leaves.len()
     );
-    // SPEC §3.5: 6 tets for a Freudenthal cell, 18..48 for a fan cell.
+    // Geometry rev 1.7 §3.5: 5 tets for a plain checkerboard cell, 18..48 for a fan cell.
     let mut per_cell: HashMap<u32, usize> = HashMap::new();
     for cell in &lattice.cell_of_tet {
         *per_cell.entry(*cell).or_insert(0) += 1;
     }
     for (cell, count) in &per_cell {
         match lattice.templates[*cell as usize] {
-            CellTemplate::Freudenthal => assert_eq!(*count, 6),
+            CellTemplate::Plain => assert_eq!(*count, 5),
             CellTemplate::Fan => assert!(
                 (18..=48).contains(count),
                 "fan cell emitted {count} tets, outside the frozen 18..48 range"
             ),
         }
     }
-    // Bound P1: h^3/48 <= V <= h^3/6 for the finest and coarsest cells present.
+    // Bound P1 (rev 1.7): h^3/48 <= V <= h^3/3 - the checkerboard's central tet is s^3/3.
     let coarsest = balanced.level_size(balanced.leaves.iter().map(|l| l.level).min().unwrap());
     let finest = balanced.level_size(balanced.leaves.iter().map(|l| l.level).max().unwrap());
-    assert!(lattice.stats.max_volume <= coarsest.powi(3) / 6.0 + 1.0e-12);
+    assert!(lattice.stats.max_volume <= coarsest.powi(3) / 3.0 + 1.0e-12);
     assert!(lattice.stats.min_volume >= finest.powi(3) / 48.0 - 1.0e-12);
 }
 
@@ -280,11 +281,10 @@ fn every_lattice_node_is_distinct_and_in_node_key_order() {
 
 #[test]
 fn the_templates_match_the_corrected_quality_table() {
-    // SPEC §3.7 rev 1.2. The frozen text's Q row read 45 degrees, which is the
-    // centre-corner-midpoint row's number; the true worst case over all eight
-    // quadrant triangles is arctan(1/sqrt2). Nothing about the *rules* changed -
-    // the value is forced by Rule D and §3.4 - so this test pins the corrected
-    // prediction the G4-3 gate is measured against.
+    // Geometry rev 1.7 §3.7 (plan M-1.7, Appendix D.1). Under Rule T5 a coarse face's quadrant
+    // diagonals all run through its centre, so every fan tet over a case-Q triangle is a Kuhn
+    // simplex and the Q row rises from arctan(1/sqrt2) = 35.264 to 45 degrees; the lattice-wide
+    // worst is then the P-face fan: 45 degrees minimum at aspect ratio 1.5607.
     let (_, _, lattice) = random_lattice(4, 5);
     let mut worst_dihedral = 180.0f64;
     let mut worst_ratio = 0.0f64;
@@ -298,19 +298,60 @@ fn the_templates_match_the_corrected_quality_table() {
         worst_dihedral = worst_dihedral.min(quality.min_dihedral_deg);
         worst_ratio = worst_ratio.max(quality.aspect_ratio);
     }
-    let expected = (1.0f64 / 2.0f64.sqrt()).atan().to_degrees();
     assert!(
-        (worst_dihedral - expected).abs() < 1.0e-9,
-        "worst dihedral {worst_dihedral} should be arctan(1/sqrt2) = {expected}"
+        (worst_dihedral - 45.0).abs() < 1.0e-9,
+        "worst dihedral {worst_dihedral} should be 45 degrees"
     );
     assert!(
-        (worst_ratio - 1.605_171_715_522_5).abs() < 1.0e-9,
-        "worst aspect ratio {worst_ratio}"
+        (worst_ratio - 1.5607).abs() < 1.0e-4,
+        "worst aspect ratio {worst_ratio} should be the P-face fan's 1.5607"
     );
-    // And well clear of any usable FEM gate - the correction changes a claim, not
-    // the go/no-go outlook.
-    assert!(worst_dihedral > 30.0);
-    assert!(worst_ratio < 2.0);
+}
+
+#[test]
+fn a_uniform_block_has_the_x_pattern_and_no_body_diagonal() {
+    // R-E5: on a uniform block every direction class of lattice edge is symmetric under the
+    // three axis reflections (the diagonals split evenly between both orientations of each plane
+    // family), and no edge runs along a body diagonal (+-1, +-1, +-1).
+    let options = options();
+    let lookup = SizingLookup::build(Vec::new(), &options);
+    let field = build_sizing_field(&lookup, &options);
+    let (balanced, _) = balance_octree(&field);
+    let lattice = build_lattice(&balanced, &LatticeOptions::default()).unwrap();
+    let mut edges: HashSet<(u32, u32)> = HashSet::new();
+    for tet in &lattice.tets {
+        for i in 0..4 {
+            for j in (i + 1)..4 {
+                edges.insert((tet[i].min(tet[j]), tet[i].max(tet[j])));
+            }
+        }
+    }
+    let mut histogram: HashMap<[i64; 3], usize> = HashMap::new();
+    for (a, b) in edges {
+        let (p, q) = (lattice.node_index[a as usize], lattice.node_index[b as usize]);
+        let mut d = [0i64; 3];
+        for axis in 0..3 {
+            d[axis] = (q[axis] as i64 - p[axis] as i64).signum();
+        }
+        // canonical direction: first nonzero component positive
+        if d.iter().find(|v| **v != 0).copied().unwrap_or(1) < 0 {
+            d = [-d[0], -d[1], -d[2]];
+        }
+        assert!(d.iter().any(|v| *v == 0), "an edge along a body diagonal: {d:?}");
+        *histogram.entry(d).or_insert(0) += 1;
+    }
+    for (d, n) in &histogram {
+        if d.iter().filter(|v| **v != 0).count() == 2 {
+            let mut mirror = *d;
+            let second = (0..3).rev().find(|a| d[*a] != 0).unwrap();
+            mirror[second] = -mirror[second];
+            assert_eq!(
+                histogram.get(&mirror).copied().unwrap_or(0),
+                *n,
+                "face diagonals {d:?} and {mirror:?} must be equally common"
+            );
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

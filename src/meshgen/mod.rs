@@ -43,7 +43,7 @@ pub use junction::{
 pub use features::{detect_features, FeatureCurve, FeatureEdgeKind, FeatureSet};
 pub use lattice::{
     balance_octree, balance_violation, build_lattice, build_lattice_with_splits, lattice_to_doc,
-    CellTemplate, Lattice, LatticeOptions, LatticeStats, FREUDENTHAL, LATTICE_MAX_TETS,
+    CellTemplate, Lattice, LatticeOptions, LatticeStats, CHECKERBOARD, FREUDENTHAL, LATTICE_MAX_TETS,
 };
 pub use gapfield::{
     compute_gap_field, gapfield_to_doc, validate_mid_surface, GapField, GapFieldOptions, GapFieldStats, GapGroup,

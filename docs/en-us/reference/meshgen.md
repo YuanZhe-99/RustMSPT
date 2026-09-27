@@ -128,7 +128,7 @@ the shape. `s08_cut` is the first snapshot that fits the input.
 | `FREUDENTHAL` / `CellTemplate` | `src/meshgen/lattice.rs:54/493` | The frozen 6-tet Kuhn table, and which template a leaf took. |
 | `balance_octree` / `balance_violation` | `src/meshgen/lattice.rs:156/286` | Strong (face+edge+vertex) 2:1 balance, and a direct check of the property. |
 | `Lattice` / `LatticeStats` / `LatticeOptions` | `src/meshgen/lattice.rs:520/502/531` | The tetrahedralized lattice, its build report, and the tet budget. |
-| `build_lattice` / `build_lattice_with_splits` | `src/meshgen/lattice.rs:611/616` | Tetrahedralize a balanced octree with the Freudenthal and fan templates. |
+| `build_lattice` / `build_lattice_with_splits` | `src/meshgen/lattice.rs:611/616` | Tetrahedralize a balanced octree with the 5-tet checkerboard (plain leaves, Rule T5 faces; rev 1.7) and fan templates. |
 | `lattice_to_doc` | `src/meshgen/lattice.rs:837` | Encode the lattice as the `s05_lattice` snapshot VTU. |
 | `Side` / `Provenance` / `OwnershipRecord` | `src/meshgen/classify.rs:60/68/82` | A tet's side of a component, the entry's origin, and the sparse record. |
 | `resolve` | `src/meshgen/classify.rs:180` | The frozen label rule (SPEC_meshgen_geometry §9.1). |
@@ -980,6 +980,18 @@ correct in both cases. Split children inherit the parent's `h`, which preserves
 keeping balance independent of the field it balances.
 
 ### Split state, and the two templates
+
+> **Rev 1.7 (plan M-1.7, 2026-09-26): the plain template is the 5-tet parity checkerboard, and
+> Rule T5 replaces Rule D.** A leaf with no split face or edge emits `CHECKERBOARD`: a regular
+> central tet on its four even-index-sum corners (`h³/3`) and four corner tets (`h³/6`), mirrored
+> in x when the leaf's own-level origin sum is odd - five tets, not six. Every unsplit face (case P,
+> and each quadrant of case Q at its own side) takes the diagonal joining its two corners whose
+> own-level index sum, normal coordinate included, is even (`case_plain`). The diagonals of every
+> 2×2 block of faces on an axis plane then meet at its centre - the X pattern of plan R-E5 - and
+> there is no body diagonal. T1 holds unchanged (its tests pass unedited); the worst lattice tet
+> rises from 35.264° to 45.000° (the P-face fan, AR 1.5607) and plain cells start at 54.736°. The
+> template is `CellTemplate::Plain`, counted as `LatticeStats::n_plain`; the text below describes
+> the rev 1.6 Freudenthal/Rule D lattice and its measurements, kept as the record.
 
 `split(edge)` and `split(face)` are membership tests of the edge midpoint / face
 centre against the set of leaf corners — exact integer lookups, evaluated identically

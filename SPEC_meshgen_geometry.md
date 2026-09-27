@@ -1,6 +1,6 @@
 # SPEC — Mesh generation: geometry and topology freeze (subtask G0-1)
 
-**Status:** frozen (rev 1.6, 2026-09-23 — audited clause by clause against the code at `891badc`; §0 gains `[R1]` and re-states the two items that were left unfrozen; §1, §3–§9, §11 and §12 gain as-built notes; §5.4, §7.7, §8.3 and §8.4 are new (as built); §13 gains a status column; §14 [11] is the audit record; §15 gains D-17..D-43 and its open-item list is re-stated. No frozen *table* changed. rev 1.5; §7.1's triage widened 2026-08-20 — a cell the surface's trace crosses is offered §7.2 ahead of §6's table, additive, see the note there; rev 1.4: §1.2 gained Rule K-O on 2026-07-31 — an ordering key must separate the nodes it orders, which the weld grid does not for constructed crossings — see §14 [10] and §15 D-16; G2-3 degeneracy boundary and C10 ownership clarified 2026-07-28; §3.7's informative quality prediction corrected 2026-07-30 — see the note there and §14 [8]; §8.2's informative measured band-cell row corrected 2026-07-31 — see the note there and §14 [9]). Normative for all `src/meshgen/` work.
+**Status:** frozen (rev 1.7, 2026-09-26 — plan M-1.7 / D-9 / R-E5: the plain-leaf template becomes the 5-tet parity checkerboard and Rule T5 replaces Rule D (§2.2–§2.4, §3.4–§3.7); plan M-1.8's resolution ladder moves the octree root to `h_bg·2^m` (§3.1 note); S-53's refuted rationale is corrected. rev 1.6, 2026-09-23 — audited clause by clause against the code at `891badc`; §0 gains `[R1]` and re-states the two items that were left unfrozen; §1, §3–§9, §11 and §12 gain as-built notes; §5.4, §7.7, §8.3 and §8.4 are new (as built); §13 gains a status column; §14 [11] is the audit record; §15 gains D-17..D-43 and its open-item list is re-stated. No frozen *table* changed. rev 1.5; §7.1's triage widened 2026-08-20 — a cell the surface's trace crosses is offered §7.2 ahead of §6's table, additive, see the note there; rev 1.4: §1.2 gained Rule K-O on 2026-07-31 — an ordering key must separate the nodes it orders, which the weld grid does not for constructed crossings — see §14 [10] and §15 D-16; G2-3 degeneracy boundary and C10 ownership clarified 2026-07-28; §3.7's informative quality prediction corrected 2026-07-30 — see the note there and §14 [8]; §8.2's informative measured band-cell row corrected 2026-07-31 — see the note there and §14 [9]). Normative for all `src/meshgen/` work.
 **Date:** 2026-07-31 (rev 1.6: 2026-09-23)
 **Subtask:** G0-1 (Phase G0, tier T3) of [`PLAN_mesh_generation.md`](PLAN_mesh_generation.md); the rev 1.6 audit is that plan's M-0.1.
 **Scope (from the plan's G0-1 acceptance):** Freudenthal node orderings +
@@ -188,7 +188,7 @@ byte-identity across thread counts is measured on that order.
 
 ---
 
-## 2. Background lattice — Freudenthal–Kuhn 6-tet decomposition
+## 2. Background lattice — the 5-tet parity checkerboard (rev 1.7; Freudenthal–Kuhn before it)
 
 ### 2.1 Cube corner numbering
 
@@ -203,6 +203,22 @@ i.e. `m`'s bits are `(bx, by, bz)`. `v0` is the componentwise-minimum corner,
 `v7` the maximum; `v0–v7` is the main diagonal shared by all six tets.
 
 ### 2.2 The frozen table
+
+> **Rev 1.7 (plan M-1.7, owner decision D-9, 2026-09-26): the plain-leaf template is the 5-tet
+> parity checkerboard.** For a leaf with own-level origin index `(a, b, c)`:
+>
+> | parity of `a+b+c` | central tet (regular, `V = h³/3`) | corner tets (`V = h³/6` each) |
+> |---|---|---|
+> | even | `(v0, v3, v5, v6)` | `(v1; v0,v3,v5)`, `(v2; v0,v6,v3)`, `(v4; v0,v5,v6)`, `(v7; v3,v6,v5)` |
+> | odd | the same rows with every corner index XOR 1 (`v_i → v_{i⊕1}`, a mirror in x) | |
+>
+> Each row is emitted under the canonical orientation fix (§1.1). `|orient3d|` on the unit cube is
+> `2` for the central tet and `1` for each corner tet; the five sum to `6 = 6·V(cube)` exactly,
+> and the central tet's four faces are the only interior faces. A plain leaf has no body diagonal
+> and no interior node. Machine-checked: `lattice::tests::the_checkerboard_is_positive_and_tiles_the_cube_in_both_parities`
+> and Appendix D.1 of the plan (§14 [12]). The Freudenthal–Kuhn table below is kept as the
+> **history** of the template before rev 1.7; `FREUDENTHAL` stays exported for the record and
+> test fixtures, and no production path emits it.
 
 Each tet is the monotone lattice walk `v0 → +e_{σ1} → +e_{σ1}+e_{σ2} → v7` for one
 permutation σ of the axes; equivalently the Kuhn simplex
@@ -230,6 +246,23 @@ the shared boundary faces and are measure-zero. Machine-checked: §14 [1].
 
 ### 2.3 Face diagonal rule (translation invariance)
 
+> **Rule T5 (rev 1.7, replacing Rule D).** On any axis-aligned lattice face of side `s`, the
+> diagonal joins the **two corners whose own-level index sum — the normal coordinate included — is
+> even**. Exactly two diagonally opposite corners of a square qualify. It is a pure function of the
+> face's four corners and its own side, exact in integers, independent of the calling cell and of
+> the order it walks the face (Invariant C); `lattice::case_plain` implements it and
+> `rule_t5_is_invariant_under_rotation_and_reversal_of_the_quad` pins the invariance. A plain
+> leaf's six faces obey it by construction (each face holds two of the leaf's even-sum corners,
+> diagonally opposite — `both_parities_face_traces_obey_rule_t5`), so Theorem T1's proof (§3.6)
+> holds verbatim with Rule T5 in place of Rule D. Because the normal coordinate enters the parity,
+> the diagonals of every 2×2 block of faces on an axis plane meet at its centre, and the X on one
+> plane sits one cell over from the X on the next — the pattern the owner asked for (plan R-E5),
+> the reference tool's own. The paragraph below is the rev 1.6 text; **its closing rationale is
+> refuted** (plan S-53): parity bookkeeping does survive octree level transitions — Appendix D.1
+> of the plan builds the checkerboard through §3's transition machinery on seven strongly balanced
+> configurations with zero unpaired faces and zero hanging nodes, and T1's randomized, edge-only
+> and non-cubic tests pass unedited on the rev 1.7 lattice.
+
 > **Rule D (lattice diagonal).** On any axis-aligned lattice face, the diagonal
 > joins the **componentwise-minimum corner to the componentwise-maximum corner**.
 
@@ -254,8 +287,8 @@ Invariant C: the min corner is the smallest `NodeKey` of the face.
 
 ### 2.4 Applicability
 
-The Freudenthal template applies to a leaf **iff none of its 6 faces and none of
-its 12 edges is split** (§3.1). Every other leaf uses §3.
+The plain template (the checkerboard since rev 1.7; Freudenthal before it) applies to a leaf
+**iff none of its 6 faces and none of its 12 edges is split** (§3.1). Every other leaf uses §3.
 
 ---
 
@@ -348,7 +381,8 @@ V = (1/3) · area(t) · (h/2) = area(t) · h / 6 > 0
 with a uniform lower bound from the smallest template triangle
 (`area = h²/8`, cases E and Q):
 
-> **Bound P1.** Every lattice tet satisfies `h³/48 ≤ V ≤ h³/6`.
+> **Bound P1.** Every lattice tet satisfies `h³/48 ≤ V ≤ h³/3` (rev 1.7: the checkerboard's
+> central tet; `h³/6` under the Freudenthal table before it).
 
 Volume closes exactly: each face contributes total area `h²`, so
 `Σ_F Σ_t area(t)·h/6 = 6·h²·h/6 = h³`.
@@ -357,7 +391,7 @@ Volume closes exactly: each face contributes total area `h²`, so
 
 | Cell state | Faces (P/E/Q) | Tets | min V | max V |
 |---|---|---|---|---|
-| no split (Freudenthal) | 6 P | 6 | `h³/6` | `h³/6` |
+| no split (checkerboard, rev 1.7) | 6 P | 5 | `h³/6` | `h³/3` |
 | one split edge | 4 P, 2 E(k=1) | 18 | `h³/48` | `h³/12` |
 | one split face | 1 Q, 4 E(k=1), 1 P | 30 | `h³/48` | `h³/12` |
 | all six faces split | 6 Q | 48 | `h³/48` | `h³/48` |
@@ -366,14 +400,14 @@ General count: `Σ_F t(F)` with `t(P) = 2`, `t(E) = 4 + k_F`, `t(Q) = 8`; the ra
 is 18…48 for fan cells.
 
 **Budget (as built).** Before emission the implementation bounds the tet count by
-`6·N_Freudenthal + 48·N_fan` and refuses the build (`InvalidConfig`) when that exceeds
+`5·N_plain + 48·N_fan` (rev 1.7; `6·N_Freudenthal` before) and refuses the build (`InvalidConfig`) when that exceeds
 `LatticeOptions::max_tets` (default `LATTICE_MAX_TETS = 20 000 000`). The bound is this
 section's inventory maximum, not a measurement.
 
 ### 3.6 Conformity theorem
 
 > **Theorem T1.** A strongly 2:1-balanced octree, tetrahedralised by §2.2 for
-> Freudenthal cells and §3.4 for fan cells, is conforming: every interior
+> plain cells (the checkerboard, with Rule T5 in cases (i) and (ii) below) and §3.4 for fan cells, is conforming: every interior
 > triangular face is shared by exactly two tets, and no node lies in the interior
 > of another tet's face or edge.
 
@@ -399,11 +433,25 @@ hanging nodes, exact volume in all cases.
 Measured over **every** tet each template class emits (exact interior dihedral,
 `AR = R/(3·r_in)`):
 
+> **Rev 1.7 (Rule T5, the checkerboard).** The plain row becomes the checkerboard's
+> `54.736° / 90.000° / AR 1.3660` (the corner tets; the central tet is regular, `70.529°` and AR
+> `1.0`). Under Rule T5 a coarse face's quadrant diagonals all run through its centre, so every fan
+> tet over a Q triangle is a Kuhn simplex: the Q row becomes `45.000° / 90.000° / 1.3938`. The P
+> and E rows are unchanged, so the **lattice-wide worst is `45.000°` minimum and `120.000°`
+> maximum dihedral at AR `1.5607`** (the P-face fan). Verified twice (§14 [12]): Appendix D.1's
+> enumeration, and the shipped `[V4]` on graded lattices —
+> `meshgen_lattice_tests::the_templates_match_the_corrected_quality_table` (worst 45.000° at AR
+> 1.5607 on a random graded field) and the G6-6 gate's pre-snap rows (plain `54.736°`, fan
+> `45.000°`). The table below is the rev 1.6 one.
+
 | Template class | min dihedral | max dihedral | AR | V |
 |---|---|---|---|---|
-| Freudenthal tet | 45.000° | 90.000° | 1.3938 | `h³/6` |
+| Freudenthal tet (before rev 1.7) | 45.000° | 90.000° | 1.3938 | `h³/6` |
+| checkerboard central tet (rev 1.7) | 70.529° | 70.529° | 1.0000 | `h³/3` |
+| checkerboard corner tet (rev 1.7) | 54.736° | 90.000° | 1.3660 | `h³/6` |
 | fan over a plain (P) face | 45.000° | 120.000° | 1.5607 | `h³/12` |
-| fan over a quadrant (Q) triangle | **35.264°** | **125.264°** | **1.6052** | `h³/48` |
+| fan over a quadrant (Q) triangle, Rule D (before rev 1.7) | **35.264°** | **125.264°** | **1.6052** | `h³/48` |
+| fan over a quadrant (Q) triangle, Rule T5 (rev 1.7) | 45.000° | 90.000° | 1.3938 | `h³/48` |
 | fan, centre–corner–midpoint (E) | 45.000° | 90.000° | 1.3938 | `h³/48` |
 | fan, centre–corner–corner (E) | 45.000° | 90.000° | 1.4268 | `h³/24` |
 
@@ -1861,6 +1909,18 @@ plus an identical sheet → 0 box-tagged faces; cube + coincident sheet → `C3`
 → `C1`). The probe crate is not committed; plan M-4.0 commits the cases as fixtures.
 
 
+
+**[12] Rev 1.7 — the checkerboard and Rule T5 (2026-09-26, plan M-1.7).** Two independent
+confirmations (R6): (a) the plan's Appendix D.1 (`lattice_pattern.py`) enumerates both schemes
+through §3's transition machinery on seven strongly balanced configurations and prints the
+quality rows above; (b) the shipped code, on the rev 1.7 lattice: the checkerboard table is
+positive and tiles the cube in both parities, both parities' face traces obey Rule T5, Rule T5 is
+invariant under rotation and reversal of the quad and draws the X (four new unit tests in
+`lattice.rs`); a uniform block has symmetric face-diagonal counts and no body diagonal
+(`a_uniform_block_has_the_x_pattern_and_no_body_diagonal`); a random graded lattice's worst
+tet is `45.000°` at AR `1.5607`; the G6-6 gate reads plain `54.736°`, fan `45.000°` pre-snap. T1's
+randomized (`a_graded_lattice_is_conforming_theorem_t1`), edge-only and non-cubic tests pass
+**unedited**.
 ---
 
 ## 15. Deviations and open items
@@ -1913,6 +1973,7 @@ its reason:
 | D-41 | **§10 row C10 as built:** no box-clip curve is emitted for a sheet (only solid cap loops build `Box` curves); the box tag is gated on the primary `face.component`, so a sheet merged under a solid's primary tag (C9 ∩ C10) is not box-tagged; "tagged both" is `FaceTagKind = 2` with the sheet X in the set, sheet-ness read from `ComponentKind` | The existing test checks only `face.box_tagged`. The curve and the gating are G2-5's unfinished half of the row; plan M-4.0 |
 | D-42 | **Invariant M1 does not survive S2b:** `rebuild_topology` selects faces by the primary tag, leaves a fully merged component unclassified, and S6 defaults it to `Sheet` — two identical solids at equal priority deliver one solid and lose the other's material (§10 as-built note, §14 [12]) | Not accepted: it contradicts R-A3 and rows C1/C7's "all tags preserved". Plan M-4.0b is widened from closure to the full per-X member set; fixture A-16 |
 | D-43 | **A C7 match declined by complete-link keeps its C7 event** (so `reject` refuses it) and is recorded as a `QuantizedOrderAmbiguity` degraded neighbourhood; the pair stays two faces | Consistent with the G2-3 boundary's intent (never silently skipped); the enumerated trigger list now names the decline |
+| D-44 | **Rev 1.7: the plain template is the 5-tet parity checkerboard and Rule T5 replaces Rule D** (§2.2–§2.4, §3.4–§3.7) | The owner's R-E5 (an X pattern on every axis plane, not one diagonal direction) and decision D-9 (the reference tool's own construction over the parity-reflected Freudenthal alternative). §2.3's rationale for Rule D ("parity bookkeeping does not survive level transitions") was refuted before the change (plan S-53); plain cells emit five tets instead of six, and the lattice-wide worst dihedral rises from 35.264° to 45.000° |
 
 Open items explicitly **not** frozen here, with their owners (re-stated at rev 1.6):
 

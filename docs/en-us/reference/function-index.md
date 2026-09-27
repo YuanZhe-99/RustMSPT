@@ -709,7 +709,7 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `FREUDENTHAL` / `CellTemplate` | Mesh Generation | `src/meshgen/lattice.rs:54/493` | The frozen 6-tet Kuhn table, and which template a leaf took. |
 | `balance_octree` / `balance_violation` | Mesh Generation | `src/meshgen/lattice.rs:156/286` | Refine an octree to strong (face+edge+vertex) 2:1 balance; check the property directly. |
 | `Lattice` / `LatticeStats` / `LatticeOptions` | Mesh Generation | `src/meshgen/lattice.rs:520/502/531` | The tetrahedralized background lattice, its build report, and the tet budget. |
-| `build_lattice` / `build_lattice_with_splits` | Mesh Generation | `src/meshgen/lattice.rs:611/616` | Tetrahedralize a balanced octree with the Freudenthal and centroid-fan templates. |
+| `build_lattice` / `build_lattice_with_splits` | Mesh Generation | `src/meshgen/lattice.rs:611/616` | Tetrahedralize a balanced octree with the 5-tet checkerboard (rev 1.7) and centroid-fan templates. |
 | `lattice_to_doc` | Mesh Generation | `src/meshgen/lattice.rs:837` | Encode the lattice as the `s05_lattice` snapshot VTU (tets, not voxels - see the amendment note). |
 | `Side` / `Provenance` / `OwnershipRecord` | Mesh Generation | `src/meshgen/classify.rs:60/68/82` | A tet's side of a component (absent = outside, `Ambiguous` = the cut decides), where the entry came from, and the sparse record itself. |
 | `resolve` | Mesh Generation | `src/meshgen/classify.rs:180` | The frozen label rule: the inside set reduced to its minimum-priority members; `{0}` when empty. |

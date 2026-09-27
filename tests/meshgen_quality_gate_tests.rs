@@ -23,9 +23,13 @@ use rustmspt::meshgen::{
 };
 use rustmspt::types::{Mesh, Triangle, Vec3};
 
-/// The corrected worst-case pre-snap dihedral of the centroid-fan templates
-/// (`SPEC_meshgen_geometry.md` §3.7 rev 1.2): `arctan(1/sqrt(2))`.
-const FAN_BASELINE_DEG: f64 = 35.264_389_682_754_654;
+/// The worst-case pre-snap dihedral of the centroid-fan templates under Rule T5
+/// (`SPEC_meshgen_geometry.md` §3.7 rev 1.7, plan M-1.7): a coarse face's quadrant diagonals
+/// all run through its centre, so every fan tet over a case-Q triangle is a Kuhn simplex and
+/// the fans' worst is the P-face fan's 45 degrees - up from Rule D's `arctan(1/sqrt(2))`.
+/// The plain checkerboard cells start at 54.736 degrees (the corner tets; the central tet is
+/// regular).
+const FAN_BASELINE_DEG: f64 = 45.0;
 
 // AI-FUNC-SUMMARY: A closed UV sphere; returns Mesh; side effects: none.
 fn sphere(center: Vec3, radius: f64, bands: usize) -> Mesh {
@@ -243,7 +247,7 @@ fn transition_fans_survive_the_snap_and_the_cut() {
     }
 
     println!("G6-6: min-dihedral (degrees) by the template of the parent cell");
-    println!("{:<20} {:>34} {:>34}", "stage", "Freudenthal", "centroid fan");
+    println!("{:<20} {:>34} {:>34}", "stage", "plain checkerboard", "centroid fan");
     for (label, freudenthal, fan) in &stage {
         println!(
             "{label:<20} {:>7} n / {:>6.3} worst / {:>6.3} p5 / {:>6.3} med   {:>7} n / {:>6.3} worst / {:>6.3} p5 / {:>6.3} med",
@@ -262,8 +266,8 @@ fn transition_fans_survive_the_snap_and_the_cut() {
     let (_, _, snap_fan) = stage[1];
     let (_, cut_freudenthal, cut_fan) = stage[2];
 
-    // The pre-snap baseline is the corrected §3.7 value, and it is exact: the fan's
-    // worst case is forced by Rule D, not measured.
+    // The pre-snap baseline is the §3.7 rev 1.7 value, and it is exact: the fan's worst
+    // case is forced by Rule T5, not measured.
     assert!(
         (pre_fan.worst - FAN_BASELINE_DEG).abs() < 1.0e-6,
         "the pre-snap fan worst case ({:.6} deg) is not the corrected §3.7 baseline",
@@ -271,7 +275,7 @@ fn transition_fans_survive_the_snap_and_the_cut() {
     );
     assert!(
         pre_freudenthal.worst > pre_fan.worst,
-        "the Freudenthal cells should start no worse than the fans"
+        "the plain checkerboard cells (54.736 deg) should start no worse than the fans"
     );
 
     // The gate. A fan tet is smaller than a Freudenthal tet of the same cell, so it

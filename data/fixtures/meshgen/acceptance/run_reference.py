@@ -29,7 +29,8 @@ import sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
 WORK = os.path.join(ROOT, "data", "output", "reference")
-BIN = os.path.join(ROOT, "target", "release", "rustmspt")
+BIN = os.environ.get("RUSTMSPT_BIN", os.path.join(ROOT, "target", "release", "rustmspt"))
+WORK = os.environ.get("RUSTMSPT_REFERENCE_WORK", WORK)
 
 DEFAULT_ROOT = os.environ.get(
     "RUSTMSPT_REFERENCE_DATASET", "/home/yuanzhe/workspace/data"
