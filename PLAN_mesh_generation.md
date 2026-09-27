@@ -1623,6 +1623,12 @@ cell's boundary without being a trace point of that face, where no Steiner point
   identical (`data/output/acceptance_m28`), carried curves a3 90 → 94, a8 392 → 376; the default
   path's a6a/a6b/a7a `[V9]` pass too. **M-3.1's FAIL rule now holds**: both paths fail exactly
   `[V6]` on a3 and `[V13]`, and the gated path's `[V13]` is better on every case.
+  **Link-polygon class, two more remedies refuted, 2026-09-28.** After the S2 fix the dominant
+  stranded class on every case is "the link polygon has no valid triangulation". (1) Following the
+  2-3-then-removal composite for up to four flips: inert on a3/a6a (counts identical). (2) Re-coning
+  the hull edge's whole fan from a link vertex with the quad's other diagonal as the new hull: inert
+  - a3 cell 3303's fan region is star-shaped from no link vertex, and the ones on the same cell face
+  are coplanar with other hull faces there. Neither kept.
 - **M-2.2. Boundary consistency: a facet vertex on the cell's boundary is a trace point.** The
   "hull carries a node the boundary has never heard of" class (a8 1,200 cells, 38.3 % of its
   stranded area) is the residue of record §6.43, which took it from 72 % of the population by making
@@ -1645,6 +1651,14 @@ cell's boundary without being a trace point of that face, where no Steiner point
   declaration through coplanar facets and `declare_contact_components` is what remains. Measure its
   count on the matrix; when it is 0 everywhere, delete it and its tolerance.
   *Acceptance:* deleted, `[V6]` unchanged. *Tier T1. Multimodal: no.*
+  **Measured 2026-09-28 — blocked by resolution, not by the fan.** `[G6-3] contact_chamfered_by
+  declared N` (print-only, `RUSTMSPT_CUT_DIAG`): a6a 895 gated / 533 default, a6b 2,396 / 1,816; 0
+  wherever S2 declares no coincident patch. On gated a6a 859 of the 895 lie between two
+  §7.4-meshed tets (plc_path 1) and within ±6e-5 of the contact plane x = 0.5817 - not a fan
+  chamfer but lattice faces S7 snapped into the plane that extend past the limb's footprint: the
+  limb is 0.006 thick in z and a lattice face ~0.0069 across, so `declare_contact_components`'s
+  "every corner on a coincident patch" cannot hold and this rule declares the rest. It retires when
+  the contact strip is resolved by more than one face, not before.
 - **M-2.5. P3 residual audit.** With the fan gone, charge every remaining off-surface face to
   `plc_path`, `escalation_reason` and node kind (record §6.9's decomposition) on all twelve cases.
   Expected residue: §6's table where the trace agrees with §5.2 (exact by construction), and the
@@ -2216,7 +2230,7 @@ without the stated fallback.
 | M-2.1 | Facet recovery by Steiner points on the constraint — gate | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — cutaway renders at a3's cube edges and an a8 strut junction, before/after | ◐ facet band (`3198276`), Steiner with weld guard and rollback (`691aaed`), lexicographic boundary recovery (`a718767`), the composite 2-3 + removal near-duplicate adoption (gated `[V2]` PASS on all nine) the facet-vertex-only band (gated a6a `[V9]` PASS) and buried faces out of S8 (gated a8 98.80 %, −5.8 % tets) landed on the gated path; GO gate unmet on a8 (edge class 1,835 → 1,462); gated a8 98.445 % against 99.134 % on the old lattice |
 | M-2.2 | Boundary consistency: facet vertices on the cell boundary are trace points | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ next after a8 analysis |
 | M-2.3 | Delete the whole-cell fan | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ blocked by M-2.1/M-2.2 |
-| M-2.4 | Retire `contact_chamfered_by` | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ○ |
+| M-2.4 | Retire `contact_chamfered_by` | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ◐ counted (a6a 895, a6b 2,396 gated); blocked: the limb's contact strip is thinner than a lattice face, so the faces it declares are genuine rim chamfer |
 | M-2.5 | P3 residual audit | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — the same cutaways | ○ |
 | M-3.1 | The control | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ◐ FAIL rule holds on the matrix (`acceptance_m28`): both paths fail only a3 `[V6]` and `[V13]`, gated `[V13]` better everywhere; element (M-1.4) and time (M-1.3) budgets not yet stated |
 | M-3.2 | Delete the five handles | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ○ |

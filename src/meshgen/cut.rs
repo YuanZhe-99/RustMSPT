@@ -7216,6 +7216,8 @@ fn declare_labelled_boundary(
         tagged.insert((key, face.component));
     }
     let empty: Vec<i32> = Vec::new();
+    // Print-only (plan M-2.4): how many faces only `contact_chamfered_by` lets through.
+    let mut chamfer_declared = 0usize;
     for (face, at) in &sides {
         if at.len() != 2 {
             continue;
@@ -7231,10 +7233,11 @@ fn declare_labelled_boundary(
         difference.sort_unstable();
         // A step of two is only ever declared where S2 says the two surfaces are **coincident**,
         // and then for the pair it names. See `contact_chamfered_by` for what that costs.
-        if difference.len() == 2
-            && !contact_chamfered_by(mesh, face, at, &difference, patches, eps)
-        {
-            continue;
+        if difference.len() == 2 {
+            if !contact_chamfered_by(mesh, face, at, &difference, patches, eps) {
+                continue;
+            }
+            chamfer_declared += 1;
         }
         if difference.len() > 2 {
             continue;
@@ -7251,6 +7254,9 @@ fn declare_labelled_boundary(
                 side_elems: [at[inside] as i32, at[1 - inside] as i32],
             });
         }
+    }
+    if std::env::var_os("RUSTMSPT_CUT_DIAG").is_some() {
+        println!("[G6-3] contact_chamfered_by declared {chamfer_declared} two-component step face(s)");
     }
 }
 
