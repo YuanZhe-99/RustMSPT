@@ -3969,6 +3969,68 @@ fn constrained_tets_detailed(
         }
         volume <= longest * longest * tol
     });
+    // Print-only: what the surviving thin tets are - hull faces they carry and protected edges.
+    if unmeasurable && boundary_ok && facets_ok && std::env::var_os("RUSTMSPT_THIN_DIAG").is_some() {
+        let hull_set: std::collections::BTreeSet<[u32; 3]> = outer.iter().copied().collect();
+        let mut prot = edges_of(&outer);
+        let boundary_edges = prot.len();
+        for facet in facets {
+            for slot in 0..facet.len() {
+                let (a, b) = (facet[slot], facet[(slot + 1) % facet.len()]);
+                prot.insert(if a <= b { [a, b] } else { [b, a] });
+            }
+        }
+        let _ = boundary_edges;
+        let bedges = edges_of(&outer);
+        for t in &tets {
+            let p = [points[t[0] as usize], points[t[1] as usize], points[t[2] as usize], points[t[3] as usize]];
+            let volume = crate::meshgen::predicates::tet_signed_volume(p[0], p[1], p[2], p[3]).abs();
+            let mut longest = 0.0f64;
+            for a in 0..4 {
+                for b in a + 1..4 {
+                    let d = p[b].sub(p[a]);
+                    longest = longest.max(d.dot(d).sqrt());
+                }
+            }
+            if volume > longest * longest * tol {
+                continue;
+            }
+            let hull_faces = tet_faces(*t)
+                .iter()
+                .filter(|f| {
+                    let mut k = **f;
+                    k.sort_unstable();
+                    hull_set.contains(&k)
+                })
+                .count();
+            let mut pe = 0;
+            let mut be = 0;
+            for pair in [[0usize, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]] {
+                let (x, y) = (t[pair[0]], t[pair[1]]);
+                let e = if x <= y { [x, y] } else { [y, x] };
+                if prot.contains(&e) { pe += 1; }
+                if bedges.contains(&e) { be += 1; }
+            }
+            let mut free = String::new();
+            for pair in [[0usize, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]] {
+                let (x, y) = (t[pair[0]], t[pair[1]]);
+                let e = if x <= y { [x, y] } else { [y, x] };
+                if prot.contains(&e) {
+                    continue;
+                }
+                let ring = tets.iter().filter(|u| u.contains(&x) && u.contains(&y)).count();
+                let r = match remove_edge(&tets, points, e) {
+                    Ok(_) => "ok".to_string(),
+                    Err(w) => w.to_string(),
+                };
+                free.push_str(&format!(" ring {} -> {}", ring, r));
+            }
+            eprintln!(
+                "[THIN-DIAG] height/longest {:.3e} hull_faces {} protected_edges {} boundary_edges {} facets {}{}",
+                volume / (longest * longest) / longest, hull_faces, pe, be, facets.len(), free
+            );
+        }
+    }
     let verdict: Result<(), &'static str> = match (boundary_ok, facets_ok, structural || intruding > 0) {
         (true, true, _) if unmeasurable => Err("a tet is thinner than the node quantum"),
         (true, true, _) => Ok(()),

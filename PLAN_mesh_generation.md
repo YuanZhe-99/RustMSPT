@@ -1515,6 +1515,14 @@ cell's boundary without being a trace point of that face, where no Steiner point
   a6a 56 → 6, a8 1,024 → 733; on-surface a1 94.68 → 94.80, a3 97.08 → 97.19, a6a 99.924
   unchanged, a8 98.406 → 98.445; statuses unchanged, R-P2 byte-identical. The freed cells mostly
   reach "a tet is thinner than the node quantum" (a8 186 → 438) - the next dump.
+  **Thin-tet residue, 2026-09-27 — dumped, one remedy refuted.** `RUSTMSPT_THIN_DIAG`: the thin
+  tets `remove_thin_tets` leaves are slivers lying flat on a planar quad of a cell face (2 hull
+  faces, 5 boundary edges; a6a 833 of 837), dihedral ~π at the quad's other diagonal, whose ring
+  (sliver + 2–4 interior tets) `remove_edge` cannot re-split (425) or re-splits into another
+  sliver (383). Re-coning the whole ring from one of its vertices was built and measured **inert**
+  (a1/a3/a6a identical to the digit): every apex is either not a star centre of the ring (want/got
+  sign mismatch, 2,500+) or yields a new sliver (900+). Reverted; the diagnostic kept. This class
+  is ≤ 20 % of a8's stranded area. Not pursued further now.
 - **M-2.2. Boundary consistency: a facet vertex on the cell's boundary is a trace point.** The
   "hull carries a node the boundary has never heard of" class (a8 1,200 cells, 38.3 % of its
   stranded area) is the residue of record §6.43, which took it from 72 % of the population by making
