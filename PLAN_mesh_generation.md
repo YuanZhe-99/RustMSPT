@@ -1025,6 +1025,12 @@ exactly what M-1.7 changes.
   residuals to `plc_path`, as `plc_path` already charges `[V13]`.
   *Acceptance:* one command reproduces §2.2, §2.3 and §2.4 of this document to the digit at
   `0a8eb1c`. *Tier T2. Multimodal: no.*
+  **Status 2026-09-26 — first half landed.** `run_acceptance.py --path default|gated` (the
+  gated env var is set only when named, and removed otherwise), per-path directories under
+  `data/output/acceptance/<path>/` keeping `<case>.mesh.log` and `<case>.verify.log`, a timing
+  table parsed from `[STAGE-TIME]`, `--focus` running R9's comparison renders per case, and the P3
+  table's `cont%`/`cover%`. Still open: folding the reference cases in (with M-1.8, which
+  rewrites their resolution mapping) and extending `escalation_census.py` to `[V4]`/`[V6]`/`[V9]`.
 - **M-1.2. Byte-identity on the matrix (R-P2).** Both paths, all twelve cases, `RAYON_NUM_THREADS`
   1 vs 8, primary and contract file hashes. a1 gated is measured identical today (§2.6); the rest
   is asserted, and the a8 lesson applies.

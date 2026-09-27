@@ -22,6 +22,14 @@ Three tables, one per goal property that has a number (PLAN Part I §1):
 Usage:
     python3 data/fixtures/meshgen/acceptance/run_acceptance.py [case ...]
     python3 data/fixtures/meshgen/acceptance/run_acceptance.py --json baseline.json
+    python3 data/fixtures/meshgen/acceptance/run_acceptance.py --path gated --focus a3 a8
+
+`--path default|gated` (plan M-1.1) selects the S8 path: `gated` sets `RUSTMSPT_PLC_PASS=1`,
+`default` removes it from the environment, so the path is always the one named and never
+inherited from the shell. Each path writes to `data/output/acceptance/<path>/`, keeping the
+mesher's and the verifier's logs per case, so the two paths no longer overwrite each other.
+Stage wall times (`RUSTMSPT_TIME_STAGES`) are parsed from the mesher log into a timing table.
+`--focus` renders the input-versus-output comparison (render_focus.py, plan R9) after each case.
 
 With no arguments it runs all nine. `RUSTMSPT_CUT_DIAG` is set for every run so the
 `parent_cell` array is present - it is what turns element counts into per-lattice-cell
@@ -31,12 +39,15 @@ one escalated cell from a disagreement between two.
 
 import json
 import os
+import re
+import time
 import subprocess
 import sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
 HERE = os.path.dirname(os.path.abspath(__file__))
 WORK = os.path.join(ROOT, "data", "output", "acceptance")
+PATH = "default"
 BIN = os.path.join(ROOT, "target", "release", "rustmspt")
 
 # (case, input STLs, sizing overrides). A-6's h_max_frac 0.04 is not a taste: the limb
@@ -221,10 +232,20 @@ def run(case, stls, overrides):
     ):
         if os.path.exists(stale):
             os.remove(stale)
-    env = dict(os.environ, RUSTMSPT_CUT_DIAG="1")
+    env = dict(os.environ, RUSTMSPT_CUT_DIAG="1", RUSTMSPT_TIME_STAGES="1")
+    env.pop("RUSTMSPT_PLC_PASS", None)
+    if PATH == "gated":
+        env["RUSTMSPT_PLC_PASS"] = "1"
+        env["RUSTMSPT_PLC_DIAG"] = "1"
+    started = time.monotonic()
     mesh = subprocess.run(
         [BIN, "mesh", "--config", config], capture_output=True, text=True, env=env
     )
+    wall = time.monotonic() - started
+    with open(os.path.join(WORK, case + ".mesh.log"), "w") as f:
+        f.write(mesh.stdout)
+        f.write(mesh.stderr)
+    stages = stage_times(mesh.stdout + mesh.stderr)
     # `mesh` exits non-zero by design - S9..S11 are unimplemented - after writing the
     # s08 cut snapshot, which is the mesh these gates are measured on.
     if not os.path.exists(contract):
@@ -242,6 +263,9 @@ def run(case, stls, overrides):
         text=True,
         env=env,
     )
+    with open(os.path.join(WORK, case + ".verify.log"), "w") as f:
+        f.write(verify.stdout)
+        f.write(verify.stderr)
     if not os.path.exists(js):
         return {"case": case, "error": [verify.stderr.strip()[-200:]]}
     with open(js) as f:
@@ -257,6 +281,9 @@ def run(case, stls, overrides):
     area = v13.get("input_surface_area", 0.0)
     return {
         "case": case,
+        "path": PATH,
+        "wall_s": wall,
+        "stages": stages,
         "tets": tets,
         "V1": status_of(report, "V1"),
         "V3": status_of(report, "V3"),
@@ -304,6 +331,15 @@ def run(case, stls, overrides):
     }
 
 
+def stage_times(log):
+    """`[STAGE-TIME] <name> <Duration debug>` lines into {name: seconds}; repeated names add."""
+    unit = {"s": 1.0, "ms": 1e-3, "µs": 1e-6, "us": 1e-6, "ns": 1e-9}
+    out = {}
+    for m in re.finditer(r"\[STAGE-TIME\] (\S+) ([0-9.]+)(s|ms|µs|us|ns)\b", log):
+        out[m.group(1)] = out.get(m.group(1), 0.0) + float(m.group(2)) * unit[m.group(3)]
+    return out
+
+
 def table(rows, title, note, columns):
     """Print one goal property's table. `columns` is (header, width, formatter)."""
     print()
@@ -328,8 +364,19 @@ def num(value, spec, scale=1.0):
 
 
 def main():
-    os.makedirs(WORK, exist_ok=True)
+    global WORK, PATH
     argv = list(sys.argv[1:])
+    if "--path" in argv:
+        at = argv.index("--path")
+        PATH = argv[at + 1]
+        del argv[at : at + 2]
+        if PATH not in ("default", "gated"):
+            sys.exit(f"--path must be default or gated, not {PATH}")
+    focus = "--focus" in argv
+    if focus:
+        argv.remove("--focus")
+    WORK = os.path.join(WORK, PATH)
+    os.makedirs(WORK, exist_ok=True)
     baseline = None
     if "--json" in argv:
         at = argv.index("--json")
@@ -341,6 +388,11 @@ def main():
     for case, stls, overrides in cases:
         r = run(case, stls, overrides)
         rows.append(r)
+        if focus and "error" not in r:
+            subprocess.run(
+                ["uv", "run", os.path.join(HERE, "render_focus.py"), WORK, case],
+                capture_output=True, text=True,
+            )
         print(f"[{case}] done", file=sys.stderr)
         sys.stderr.flush()
 
@@ -437,6 +489,17 @@ def main():
             ("undecl", 7, lambda r: num(r["undecl"], "d")),
             ("vol%", 7, lambda r: num(r["vol_err"], ".3f", 100.0)),
         ],
+    )
+
+    stage_names = sorted({k for r in rows if "stages" in r for k in r["stages"]})
+    table(
+        rows,
+        f"Time - wall seconds per case on the {PATH} path (plan M-1.1, M-1.3)",
+        "total is the mesher's wall time as the runner measured it; the stage columns are its "
+        "own [STAGE-TIME] lines, summed over repeats (the K1 loop reruns S4-S7).",
+        [("case", 5, lambda r: r["case"]), ("total", 8, lambda r: num(r.get("wall_s", -1), ".1f"))]
+        + [(n[:10], 10, (lambda n: lambda r: num(r.get("stages", {}).get(n, -1), ".2f"))(n))
+           for n in stage_names],
     )
 
     if baseline:
