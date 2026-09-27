@@ -699,6 +699,8 @@ When inspecting code:
 
 - **A lattice change moves which input coordinates are "special".** The 6-tet lattice's diagonals never met a3's ...17/...83 cube corners; the checkerboard's (1, -1, 1) face diagonals pass through them to 2.4e-8 (float32 input). A per-face "strictly interior" test with a relative 1e-9 slack then admits the point for both faces around the edge, and each face interns its own node there - two coincident nodes that `[V2]` reported as 17 duplicates. A distance threshold cannot fix it (genuine near-edge hubs occupy every decade down to 1e-7, and `eps` cost a3 a point); detecting the duplication itself does. When `[V2]` reports duplicates, find which interning site made both before anything else.
 
+- **When one stage learns a face is not a boundary, every stage that reads the geometry must learn it too.** S6 marked a8's buried faces inactive and S7 honoured it, while S8 read the classifier's full triangle list for its face traces and fragment clips - and cut cells along walls with the same material on both sides, for a whole plan phase. `restrict_to_active` fixed it in one line at the pipeline and bought gated a8 +0.34 points at 5.8 % fewer elements. When a mask exists, grep every consumer of the unmasked data.
+
 ## Reporting to the owner (standing rule, set 2026-08-16)
 
 Every substantial reply ends with a status block covering four things, in this order. It is not

@@ -885,7 +885,7 @@ impl Pipeline for MeshGenPipeline {
                 build_lattice_with_splits(&balanced, &LatticeOptions::default(), balance_splits)?;
             clock = stage_time("S5-lattice", clock);
 
-            let point_classifier = PointClassifier::build(
+            let mut point_classifier = PointClassifier::build(
                 &clipped,
                 &topo,
                 &ClassifyOptions {
@@ -902,6 +902,9 @@ impl Pipeline for MeshGenPipeline {
                     domain_max,
                 },
             );
+            // S8 cuts along the faces that bound material, not the ones S6 found buried in a
+            // component's own union (`restrict_to_active`); the inside test keeps every face.
+            point_classifier.restrict_to_active(&classification.active_face);
             clock = stage_time("S6", clock);
 
             let snapped = snap_lattice(

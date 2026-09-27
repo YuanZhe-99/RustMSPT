@@ -487,6 +487,11 @@ struct ComponentGeometry {
     faces: Vec<ArrangedFace>,
     grids: Vec<ProjectionGrid>,
     defective: bool,
+    /// Index into the arranged surface's faces of each entry of `triangles`.
+    face_ids: Vec<usize>,
+    /// The triangles S8 cuts along once the active mask is known: `triangles` minus faces S6
+    /// found buried inside the component's own union (`restrict_to_active`). `None` until then.
+    active_triangles: Option<Vec<[Vec3; 3]>>,
 }
 
 // AI-FUNC-SUMMARY:
@@ -561,12 +566,15 @@ impl PointClassifier {
                 ComponentClassification::SolidDefective => n_defective += 1,
                 ComponentClassification::SolidClosed => {}
             }
-            let faces: Vec<ArrangedFace> = surface
+            let face_ids: Vec<usize> = surface
                 .faces
                 .iter()
-                .filter(|face| face.components.contains(&component.x))
-                .cloned()
+                .enumerate()
+                .filter(|(_, face)| face.components.contains(&component.x))
+                .map(|(id, _)| id)
                 .collect();
+            let faces: Vec<ArrangedFace> =
+                face_ids.iter().map(|id| surface.faces[*id].clone()).collect();
             let triangles: Vec<[Vec3; 3]> = faces
                 .iter()
                 .map(|face| {
@@ -593,6 +601,8 @@ impl PointClassifier {
                 x: component.x,
                 triangles,
                 faces,
+                face_ids,
+                active_triangles: None,
                 grids,
                 // GWN is required for a **self-intersecting** component as well as an
                 // uncertifiable one. Ray parity counts every shell crossing, so where a
@@ -653,8 +663,30 @@ impl PointClassifier {
     pub fn triangles_of(&self, slot: usize) -> &[[Vec3; 3]] {
         self.solids
             .get(slot)
-            .map(|solid| solid.triangles.as_slice())
+            .map(|solid| solid.active_triangles.as_deref().unwrap_or(solid.triangles.as_slice()))
             .unwrap_or(&[])
+    }
+
+    // AI-FUNC-SUMMARY:
+    // Purpose: Make `triangles_of` return only the faces that bound material, once S6 knows them.
+    // Inputs: S6's `active_face` mask over the arranged surface's faces.
+    // Returns: None.
+    // Side effects: fills each solid's `active_triangles`; the inside test keeps using every face.
+    // Notes: A self-intersecting component (a8's strut lattice) carries faces buried inside its own
+    //   union. They are needed for the winding number and are not material boundaries: S7 already
+    //   drops them (`active_face`), and S8's face traces and fragment clips must too, or a cell is
+    //   cut along a wall with the same material on both sides.
+    pub fn restrict_to_active(&mut self, active_face: &[bool]) {
+        for solid in &mut self.solids {
+            let kept: Vec<[Vec3; 3]> = solid
+                .face_ids
+                .iter()
+                .zip(solid.triangles.iter())
+                .filter(|(id, _)| active_face.get(**id).copied().unwrap_or(true))
+                .map(|(_, t)| *t)
+                .collect();
+            solid.active_triangles = Some(kept);
+        }
     }
 
     pub fn slot_of(&self, component: i32) -> Option<usize> {

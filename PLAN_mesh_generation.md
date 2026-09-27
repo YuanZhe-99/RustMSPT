@@ -1580,6 +1580,15 @@ cell's boundary without being a trace point of that face, where no Steiner point
   applies the band to facet vertices only and `tol` to every other node. Gated a6a `[V9]` FAIL →
   **PASS** (on-surface 99.924 → 99.922), a3 97.11 → 97.15, a8 98.448 → 98.455 (its `[V9]` nodes 57
   → 61), a1/a6b unchanged; R-P2 byte-identical.
+  **Buried faces out of S8, 2026-09-27.** Sizing M-2.2's class on a8 (`rim_worst` in the CSV)
+  showed it bimodal - 728 of 850 declined cells have their rim point ≥ 0.1 edge from the face trace,
+  so trace and fragment disagree about topology, not tolerance. a8 is the only self-intersecting
+  case and S8 read the classifier's full triangle list, buried faces included, which S7 already
+  drops. `PointClassifier::restrict_to_active` after S6 removes them from S8's traces and clips:
+  gated a8 on-surface 98.455 → **98.796**, tets −5.8 %, link-polygon refusals 733 → 263, thin-tet
+  438 → 171; default path and every other case byte-identical; R-P2 byte-identical on a8. The
+  hull classes (863, 494) and a8's 61 `[V9]` nodes are unmoved, so buried faces were not their
+  cause - they remain M-2.2's to explain.
 - **M-2.2. Boundary consistency: a facet vertex on the cell's boundary is a trace point.** The
   "hull carries a node the boundary has never heard of" class (a8 1,200 cells, 38.3 % of its
   stranded area) is the residue of record §6.43, which took it from 72 % of the population by making
@@ -2170,7 +2179,7 @@ without the stated fallback.
 | M-1.8 | Resolution as background × maximum level, given; per-input levels; the reference cases at their own resolution (R-E4, S-54, §6.2 item 18) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** (R9) — M-1.9's set, nine cases unchanged; reference-case contacts before/after | ◐ ladder, per-input levels, `run_reference.py` mapping landed; the §2.3 table on the three reference cases, both paths, open |
 | M-1.9 | Focus-region render harness: intersection curves, sharp edges/corners, thin regions, transitions, from the input; before/after diffs (R9) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — the contact sheets, and the two known defects they must show | ◐ input-vs-output comparison harness landed (R9); thin-region and transition views, runner call open |
 | M-2.0 | J1 fingerprint mismatch is a hard error; fingerprint = constraint entity ids (MG-06) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ● landed `9b9c1a2` |
-| M-2.1 | Facet recovery by Steiner points on the constraint — gate | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — cutaway renders at a3's cube edges and an a8 strut junction, before/after | ◐ facet band (`3198276`), Steiner with weld guard and rollback (`691aaed`), lexicographic boundary recovery (`a718767`), the composite 2-3 + removal near-duplicate adoption (gated `[V2]` PASS on all nine) and the facet-vertex-only band (gated a6a `[V9]` PASS) landed on the gated path; GO gate unmet on a8 (edge class 1,835 → 1,462); gated a8 98.445 % against 99.134 % on the old lattice |
+| M-2.1 | Facet recovery by Steiner points on the constraint — gate | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — cutaway renders at a3's cube edges and an a8 strut junction, before/after | ◐ facet band (`3198276`), Steiner with weld guard and rollback (`691aaed`), lexicographic boundary recovery (`a718767`), the composite 2-3 + removal near-duplicate adoption (gated `[V2]` PASS on all nine) the facet-vertex-only band (gated a6a `[V9]` PASS) and buried faces out of S8 (gated a8 98.80 %, −5.8 % tets) landed on the gated path; GO gate unmet on a8 (edge class 1,835 → 1,462); gated a8 98.445 % against 99.134 % on the old lattice |
 | M-2.2 | Boundary consistency: facet vertices on the cell boundary are trace points | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ next after a8 analysis |
 | M-2.3 | Delete the whole-cell fan | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ blocked by M-2.1/M-2.2 |
 | M-2.4 | Retire `contact_chamfered_by` | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ○ |
