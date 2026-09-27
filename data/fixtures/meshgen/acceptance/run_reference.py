@@ -99,6 +99,7 @@ def reference_inputs(case):
     correction, Appendix D.2)."""
     corners = counts = None
     levels = []
+    by_stem = {}
     for f in sorted(glob.glob(os.path.join(case, "nurbs", "*.nurbs"))):
         lines = open(f, errors="replace").read().splitlines()
         for i, line in enumerate(lines):
@@ -108,10 +109,11 @@ def reference_inputs(case):
                 counts = [int(v) for v in lines[i + 1].split(",")]
             if line.startswith("*SAMR_LEVEL"):
                 levels.append(int(lines[i + 1].strip()))
+                by_stem.setdefault(os.path.splitext(os.path.basename(f))[0], int(lines[i + 1].strip()))
     if corners is None or counts is None or not levels:
         return None
     return {"min": tuple(corners[:3]), "max": tuple(corners[3:6]), "counts": counts,
-            "levels": levels}
+            "levels": levels, "by_stem": by_stem}
 
 
 def reference_parameters(case):
@@ -160,10 +162,9 @@ def run_case(case):
     if not stls or not params:
         return {"case": name, "error": "no STLs, or the reference log lacks its parameters"}
 
-    # At the reference's own resolution (plan M-1.8 (h)): its background counts exactly and its
-    # deepest section level. Per-section levels are not applied yet (M-1.8 (c) is refused until
-    # the sizing sources carry their input), so a section the reference left at a shallower
-    # level is meshed at the deepest one - the direction that can only cost this mesher elements.
+    # At the reference's own resolution (plan M-1.8 (h)): its background counts exactly, the
+    # deepest section level globally, and each section's own level on its STL (particleN.stl is
+    # section particleN.nurbs).
     ref = reference_inputs(case)
     if ref is None:
         return {"case": name, "error": "the reference inputs lack *RVE_CORNERS / *NUM_ELEMENT / *SAMR_LEVEL"}
@@ -180,7 +181,15 @@ def run_case(case):
     with open(config, "w") as f:
         f.write(
             CONFIG.format(
-                inputs="\n".join(f"    - stl: {s}" for s in stls),
+                inputs="\n".join(
+                    f"    - stl: {s}"
+                    + (
+                        f"\n      max_level: {ref['by_stem'][os.path.splitext(os.path.basename(s))[0]]}"
+                        if os.path.splitext(os.path.basename(s))[0] in ref["by_stem"]
+                        else ""
+                    )
+                    for s in stls
+                ),
                 dmin=", ".join(f"{v}" for v in params["min"]),
                 dmax=", ".join(f"{v}" for v in params["max"]),
                 counts=", ".join(str(c) for c in ref["counts"]),

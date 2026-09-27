@@ -324,3 +324,12 @@ fn without_the_new_keys_the_fractions_resolve_unchanged() {
     assert!(r.ladder.is_none());
     assert_eq!((r.h_max_frac, r.h_min_frac), (0.05, 0.002));
 }
+
+#[test]
+fn an_input_level_below_the_global_one_is_accepted_and_recorded() {
+    let text = "meshgen:\n  inputs:\n    - stl: a.stl\n      max_level: 0\n    - stl: b.stl\n  domain: { min: [0.0, 0.0, 0.0], max: [1.0, 1.0, 1.0] }\n  output: { vtu: data/output/mesh.vtu }\n  sizing:\n    background: {cells: 16}\n    max_level: 2\n";
+    let conf: MeshGenConfig = serde_yaml::from_str(text).unwrap();
+    conf.meshgen.validate().unwrap();
+    let l = conf.meshgen.resolution().unwrap().ladder.unwrap();
+    assert_eq!(l.input_levels, vec![0, 2]);
+}

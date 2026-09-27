@@ -393,6 +393,10 @@ pub struct SizingOptions {
     /// 2^m`, anchored at `domain_min`, so the background and every finer level are exact
     /// halvings. `None` keeps the root on the domain's longest axis, as before the ladder.
     pub root_size: Option<f64>,
+    /// Per-component floor on the requested size, indexed by X (plan M-1.8 (c): an input's own
+    /// `max_level`). Empty means every component refines to `h_min`. A source several components
+    /// own takes the finest of their floors.
+    pub component_floor: Vec<f64>,
 }
 
 impl Default for SizingOptions {
@@ -414,6 +418,7 @@ impl Default for SizingOptions {
             max_level: SIZING_MAX_LEVEL,
             max_leaves: SIZING_MAX_LEAVES,
             root_size: None,
+            component_floor: Vec::new(),
         }
     }
 }
@@ -441,6 +446,30 @@ impl SizingOptions {
     //   model - which is exactly what the first run of this stage on `TestCaseIntersect1` did.
     pub fn lfs_floor(&self) -> f64 {
         self.eps.max(self.gap_cells * self.h_min)
+    }
+
+    // AI-FUNC-SUMMARY: The finest size any of these components may ask for (plan M-1.8 (c)): the smallest of their floors, `h_min` when none is set; returns f64; side effects: none.
+    pub fn floor_for(&self, components: &[i32]) -> f64 {
+        if self.component_floor.is_empty() {
+            return self.h_min;
+        }
+        components
+            .iter()
+            .filter_map(|x| usize::try_from(*x).ok().and_then(|x| self.component_floor.get(x)))
+            .copied()
+            .fold(f64::INFINITY, f64::min)
+            .max(self.h_min)
+            .min(self.h_max)
+    }
+
+    // AI-FUNC-SUMMARY: Clamp one proposed size into `[floor_for(components), h_max]`; returns f64; side effects: none.
+    pub fn clamp_h_for(&self, h: f64, components: &[i32]) -> f64 {
+        let h = self.clamp_h(h);
+        if self.component_floor.is_empty() {
+            h
+        } else {
+            h.max(self.floor_for(components))
+        }
     }
 
     // AI-FUNC-SUMMARY: Clamp one proposed size into `[h_min, h_max]`; returns f64; side effects: none.
@@ -610,9 +639,13 @@ pub fn curvature_sources(
             if h >= options.h_max {
                 return None;
             }
+            let owners = [
+                surface.source_component.get(left as usize).copied().unwrap_or(0),
+                surface.source_component.get(right as usize).copied().unwrap_or(0),
+            ];
             Some(SizingSource {
                 point: pa.add(pb).scale(0.5),
-                h: options.clamp_h(h),
+                h: options.clamp_h_for(h, &owners),
                 criterion: SizingCriterion::Curvature,
             })
         })
@@ -640,6 +673,20 @@ pub fn feature_sources(
     options: &SizingOptions,
 ) -> Vec<SizingSource> {
     let mut sources: Vec<SizingSource> = Vec::new();
+    // The components touching each vertex, for an input's own level (plan M-1.8 (c)).
+    let mut owners_of: BTreeMap<usize, Vec<i32>> = BTreeMap::new();
+    if !options.component_floor.is_empty() {
+        for (face, nodes) in surface.faces.iter().enumerate() {
+            let x = surface.source_component.get(face).copied().unwrap_or(0);
+            for v in nodes {
+                let list = owners_of.entry(*v).or_default();
+                if !list.contains(&x) {
+                    list.push(x);
+                }
+            }
+        }
+    }
+    let owners = |v: usize| -> Vec<i32> { owners_of.get(&v).cloned().unwrap_or_default() };
     // Shortest incident curve segment per node, for the corner rule.
     let mut shortest: BTreeMap<usize, f64> = BTreeMap::new();
     for curve in &features.curves {
@@ -680,7 +727,7 @@ pub fn feature_sources(
             }
             sources.push(SizingSource {
                 point: points[index],
-                h: options.clamp_h(h),
+                h: options.clamp_h_for(h, &owners(curve.vertices[index])),
                 criterion: SizingCriterion::Feature,
             });
         }
@@ -694,7 +741,7 @@ pub fn feature_sources(
         }
         sources.push(SizingSource {
             point: surface.vertices[*node],
-            h: options.clamp_h(*segment),
+            h: options.clamp_h_for(*segment, &owners(*node)),
             criterion: SizingCriterion::Corner,
         });
     }
@@ -737,10 +784,9 @@ pub fn curve_sources(arranged: &ArrangedSurface, options: &SizingOptions) -> Vec
         // Nothing to ask for: the ambient size already satisfies the rule.
         return sources;
     }
-    // The step at which a segment is sampled. Sampling only at the endpoints leaves
-    // the middle of a long segment coarse, and an arranged segment can be many times
-    // `h_max` long - a cube edge is often one segment end to end.
-    let step = target.max(f64::MIN_POSITIVE);
+    // The step at which a segment is sampled is the curve's own target (below): sampling only at
+    // the endpoints leaves the middle of a long segment coarse, and an arranged segment can be
+    // many times `h_max` long - a cube edge is often one segment end to end.
     for curve in &arranged.curves {
         // The domain box is not a feature the mesh conforms *to* - the lattice already
         // lies on it exactly - and refining along it would refine all twelve edges of
@@ -748,6 +794,8 @@ pub fn curve_sources(arranged: &ArrangedSurface, options: &SizingOptions) -> Vec
         if curve.kind == ArrangedCurveKind::Box {
             continue;
         }
+        let target = options.clamp_h_for(target, &curve.components);
+        let step = target.max(f64::MIN_POSITIVE);
         for window in curve.nodes.windows(2) {
             let a = arranged.vertices[window[0]];
             let b = arranged.vertices[window[1]];
@@ -910,7 +958,11 @@ pub fn gap_sources(
                 Some(pairing) => pairing.point.sub(sample.point),
                 None => sample.direction.scale(t),
             };
-            Some((options.clamp_h(h), sample.point, face, across))
+            let mut owners = vec![sample.component];
+            if let Some(pairing) = &sample.pairing {
+                owners.push(pairing.component);
+            }
+            Some((options.clamp_h_for(h, &owners), sample.point, face, across))
         })
         .collect();
 

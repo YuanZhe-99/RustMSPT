@@ -224,6 +224,8 @@ pub struct Ladder {
     /// Octree level of the background: the root is `h_bg * 2^m`.
     pub root_level: u32,
     pub root_frac: f64,
+    /// Each input's own level (plan M-1.8 (c)), in input order; the global level where unstated.
+    pub input_levels: Vec<u32>,
 }
 
 /// What the sizing stages read: the two bounds, and the ladder when one was stated.
@@ -471,14 +473,7 @@ impl MeshGenParams {
                         input.stl
                     ))
                 }
-                Some(_) => {
-                    return bad(format!(
-                        "meshgen.inputs[{}].max_level: per-input levels are validated but not yet \
-                         applied to that input's sizing sources (plan M-1.8 (c)); refusing rather \
-                         than ignoring it",
-                        input.stl
-                    ))
-                }
+                Some(_) => {}
             }
         }
         let h_bg_frac = h_bg / diag;
@@ -494,6 +489,14 @@ impl MeshGenParams {
                 overhang,
                 root_level,
                 root_frac: h_bg_frac * (1u64 << root_level) as f64,
+                input_levels: self
+                    .inputs
+                    .iter()
+                    .map(|i| match i.max_level {
+                        Some(LevelSpec::Level(l)) => l,
+                        _ => level,
+                    })
+                    .collect(),
             }),
         })
     }

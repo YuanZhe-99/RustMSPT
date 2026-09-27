@@ -238,6 +238,35 @@ meshgen:
 
 Required fields: `inputs` (non-empty), `domain`, `output.vtu`.
 
+### Resolution as a background and a level (plan M-1.8)
+
+Instead of the two fractions, the resolution may be stated the way the reference tool states
+it - a **background lattice** and a **maximum refinement level** below it:
+
+```yaml
+  sizing:
+    background: {cells: [24, 24, 30]}   # or {cells: 20} (along the longest axis), {size: 0.0167}, {size_frac: 0.029}
+    max_level: 2                        # 0 is a uniform lattice
+```
+
+`MeshGenParams::resolution()` turns this into the bounds every sizing stage reads: `h_max = h_bg`,
+`h_min = h_bg / 2^L`, and the octree root `h_bg * 2^m` anchored at the domain minimum with
+`m = ceil(log2 max n_i)`, so any count is realised exactly (17, not 16 or 32) and the lattice
+fits a non-cubic domain with no overhang when its extents are multiples of `h_bg`. Cells are
+cubic: `cells: [nx, ny, nz]` takes `h_bg = max_i E_i / n_i` and is accepted only if every axis
+realises its count. With both new keys absent the pipeline is unchanged to the byte, and stating
+the ladder gives the same mesh as fractions equal to its `h_max`/`h_min`. `[S4/RES]` reports the
+realised ladder. Rejects: the fractions together with the ladder; one half of the ladder alone;
+`auto` (derived resolution, plan M-4.6); two background forms at once; an inconsistent triple
+(the message names the consistent triples on either side); `max_level > 12`; more than 31 index
+bits; the envelope rule on the realised finest edge; `inputs[].max_level` above the global level.
+
+`inputs[].max_level` caps how deep that input's own sizing sources may ask (curvature, feature
+and corner sources of its surface, locked curves, gap samples): input `i` is component
+`X = i + 1`, its floor is `h_bg / 2^L_i`, and a source several inputs own - an intersection
+curve, a gap between two of them - takes the finest of their floors. This is the reference
+tool's per-section `*SAMR_LEVEL`.
+
 ### Parse-time rejects (`MeshGenParams::validate`)
 
 The PLAN §6.3 rejects are enforced in code, not assumed. `validate()` returns

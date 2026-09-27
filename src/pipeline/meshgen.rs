@@ -144,6 +144,7 @@ fn compute_config_hash(p: &crate::config::meshgen::MeshGenParams) -> u64 {
         l.h_bg.to_bits().hash(&mut hasher);
         l.level.hash(&mut hasher);
         l.counts.hash(&mut hasher);
+        l.input_levels.hash(&mut hasher);
     }
     p.gaps.t_layer_factor.to_bits().hash(&mut hasher);
     p.gaps.t_sheet_factor.to_bits().hash(&mut hasher);
@@ -210,7 +211,7 @@ impl Pipeline for MeshGenPipeline {
             println!(
                 "[S4/RES] background given: h_bg = {:.6} ({:.6} of the diagonal), cells {:?}, overhang {:?}; \
                  max_level given: L = {} -> h_min = {:.6}; octree levels {} (background) .. {} (finest); \
-                 at least {} background leaves",
+                 at least {} background leaves; input levels {:?}",
                 l.h_bg,
                 l.h_bg_frac,
                 l.counts,
@@ -220,6 +221,7 @@ impl Pipeline for MeshGenPipeline {
                 l.root_level,
                 l.root_level + l.level,
                 est_leaves,
+                l.input_levels,
             );
         }
 
@@ -591,6 +593,13 @@ impl Pipeline for MeshGenPipeline {
             curve_cells: p.sizing.curve_cells,
             eps,
             root_size: resolution.ladder.as_ref().map(|l| l.root_frac),
+            // Plan M-1.8 (c): input i is component X = i + 1, and refines at most to its own level.
+            component_floor: match &resolution.ladder {
+                Some(l) if l.input_levels.iter().any(|x| *x != l.level) => std::iter::once(resolution.h_min_frac)
+                    .chain(l.input_levels.iter().map(|x| l.h_bg_frac / (1u64 << x) as f64))
+                    .collect(),
+                _ => Vec::new(),
+            },
             max_level: match &resolution.ladder {
                 Some(l) => l.root_level + l.level,
                 None => SizingOptions::default().max_level,
