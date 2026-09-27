@@ -1499,6 +1499,13 @@ cell's boundary without being a trace point of that face, where no Steiner point
   M-1.7: the default path's new `[V9]` FAILs (a3, a6a, a6b) and a8/a7b's residual gap to the
   pre-checkerboard gated numbers - to be re-measured on the HEAD matrix
   (`data/output/acceptance_head`) before being charged.
+  **HEAD matrix, gated, 2026-09-27 (`a718767`; `data/output/acceptance_head`)**, against the
+  pre-checkerboard build: on-surface a1 94.89 → 94.68, a3 95.06 → **97.08**, a4 98.76 → **99.43**,
+  a6a 99.919 → 99.924, a6b 99.952 → 99.893, a7a 99.738 → 99.766, a7b 99.983 → 99.778, a8
+  99.134 → **98.406**; tets fewer on seven of nine (a1 −14 %, a4 −17 %, a8 −8 %; a2 +19 %, a6b +5 %).
+  Section statuses equal to the pre-checkerboard gated column everywhere except `[V9]` on a7a
+  (FAIL → PASS). Open: a8's 0.73-point gap, a7b's 0.2 and a6b's 0.06, and the default path's new
+  `[V9]` FAILs on a3/a6a/a6b.
 - **M-2.2. Boundary consistency: a facet vertex on the cell's boundary is a trace point.** The
   "hull carries a node the boundary has never heard of" class (a8 1,200 cells, 38.3 % of its
   stranded area) is the residue of record §6.43, which took it from 72 % of the population by making
