@@ -1535,6 +1535,13 @@ cell's boundary without being a trace point of that face, where no Steiner point
   tets equal or fewer, R-P2 byte-identical (a3). The `[V9]` corners stay: the corner lies on a
   shared lattice face with no edge crossing, so neither the split nor the kernel has a cut to
   make there - the sub-cell body of record §6.14 in its corner form.
+  **Refuted alongside it: fanning a non-star piece from one of its own vertices.** Tried as the
+  fallback when `cdt_piece`'s kernel refuses (a3's refusals: hull edges refuse/do not help 55,
+  single-tet edge 54, link polygon 39, volume 16, no candidate 8 - boundary recovery was built for
+  a convex region). It meshes 105 more pieces on a3 and makes 4 overlapping tets there (`[V1]` and
+  `[V3]` FAIL), leaving the `[V9]` corners of a6a/a6b untouched. Reverted; `[JCT-CDT]` (print-only,
+  under `RUSTMSPT_JCT_DIAG`) kept. The corner cell (a3 53265) still takes the whole-cell fan, and
+  of its 16 tets the four touching the corner are all background.
 - **M-2.2. Boundary consistency: a facet vertex on the cell's boundary is a trace point.** The
   "hull carries a node the boundary has never heard of" class (a8 1,200 cells, 38.3 % of its
   stranded area) is the residue of record §6.43, which took it from 72 % of the population by making

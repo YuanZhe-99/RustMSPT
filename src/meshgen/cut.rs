@@ -9986,8 +9986,16 @@ fn cdt_piece(soup: &[[u32; 3]], nodes: &[Vec3]) -> Option<Vec<[u32; 4]>> {
         .iter()
         .map(|t| [local[&t[0]], local[&t[1]], local[&t[2]]])
         .collect();
-    let tets = crate::meshgen::cdt::constrained_tets(&points, &keys, &boundary, &[], longest * 1.0e-9)
-        .ok()?;
+    let tets =
+        match crate::meshgen::cdt::constrained_tets(&points, &keys, &boundary, &[], longest * 1.0e-9) {
+            Ok(tets) => tets,
+            Err(reason) => {
+                if std::env::var_os("RUSTMSPT_JCT_DIAG").is_some() {
+                    println!("[JCT-CDT] piece of {} triangles refused: {reason}", soup.len());
+                }
+                return None;
+            }
+        };
     let want = soup_volume(soup, nodes)?;
     let mut out: Vec<[u32; 4]> = Vec::with_capacity(tets.len());
     let mut total = 0.0;
