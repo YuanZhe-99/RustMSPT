@@ -1950,6 +1950,16 @@ compared lexicographically; the class is 0 on a1 and a3, on-surface a1 90.19 -> 
 96.39 -> 96.98 %, a6a and a8 unchanged. `RUSTMSPT_HULL_DIAG` (print-only) dumps a stalled cell's
 disagreeing faces and whether they are coplanar.
 
+A refused hull-edge removal is retried as a composite move: a 2-3 flip on an interior face of the
+edge's fan, then the removal. On the checkerboard lattice the dominant stall was a strictly convex
+planar quad on a cell face whose hull diagonal carries a fan of three or four tets (a6a: all of
+~1,900 dumped refusals); the four-point link has no split with the diagonal's ends strictly on
+both sides, and the 2-3 flip alone never changes the hull so the search never takes it. Link
+polygon refusals a1 18 -> 12, a3 30 -> 24, a6a 56 -> 6, a8 1,024 -> 733; on-surface a1 +0.12,
+a3 +0.11, a8 +0.04 points, a6a unchanged. The freed cells mostly stop at "a tet is thinner than
+the node quantum" (a8 186 -> 438, a6a 11 -> 61). `RUSTMSPT_HULL_DIAG` also prints `[HULL-QUAD]`
+(convexity and fan size) for a two-face disagreement.
+
 ### Welded sheet cuts (G6-5)
 
 A sheet has no inside, so §6's sides cannot come from S6 - it refuses to classify one,

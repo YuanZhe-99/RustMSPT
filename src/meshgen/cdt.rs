@@ -2037,9 +2037,33 @@ fn recover_boundary(
             let next = match remove_edge(&tets, points, *edge) {
                 Ok(next) => next,
                 Err(reason) => {
-                    refused += 1;
-                    why = Some(reason);
-                    continue;
+                    // **A refused removal may be one enabling flip away.** A convex planar quad on
+                    // a cell face whose hull diagonal carries a fan of three tets has a four-point
+                    // link that no triangulation splits with the diagonal's ends strictly on both
+                    // sides - on a6a every one of 1,900 such refusals was a strictly convex quad
+                    // with a fan of three or four. A 2-3 flip on an interior face of the fan
+                    // shrinks it without touching the hull, which is why the search never takes it
+                    // alone; followed by the removal it is a composite move that does lower the
+                    // measure. Faces in key order, first success taken.
+                    let mut composite = None;
+                    for (face, count) in carried.iter() {
+                        if *count != 2 || !face.contains(&edge[0]) || !face.contains(&edge[1]) {
+                            continue;
+                        }
+                        let Some(flipped) = flip_two_three(&tets, points, *face) else { continue };
+                        if let Ok(removed) = remove_edge(&flipped, points, *edge) {
+                            composite = Some(removed);
+                            break;
+                        }
+                    }
+                    match composite {
+                        Some(next) => next,
+                        None => {
+                            refused += 1;
+                            why = Some(reason);
+                            continue;
+                        }
+                    }
                 }
             };
             let after = wrong(&next);
@@ -2086,7 +2110,7 @@ fn recover_boundary(
             let wanted = frozen.difference(&hull).count();
             // Print-only: the stalled disagreement - its size, its node set, and whether every
             // disagreeing face lies in one plane (a flat boundary region split two ways) or not.
-            if refused == 0 && unhelpful > 0 && std::env::var_os("RUSTMSPT_HULL_DIAG").is_some() {
+            if std::env::var_os("RUSTMSPT_HULL_DIAG").is_some() {
                 let faces: Vec<[u32; 3]> = hull
                     .difference(frozen)
                     .chain(frozen.difference(&hull))
@@ -2112,9 +2136,41 @@ fn recover_boundary(
                     .fold(0.0f64, f64::max);
                 let ex: Vec<[u32; 3]> = hull.difference(frozen).copied().collect();
                 let wa: Vec<[u32; 3]> = frozen.difference(&hull).copied().collect();
+                if ex.len() == 2 && wa.len() == 2 {
+                    let shared = |f: &[[u32; 3]]| -> Vec<u32> {
+                        f[0].iter().copied().filter(|x| f[1].contains(x)).collect()
+                    };
+                    let (cd, ab) = (shared(&ex), shared(&wa));
+                    if cd.len() == 2 && ab.len() == 2 {
+                        let q = |i: u32| points[i as usize];
+                        let lift = q(cd[0]).add(n.scale(1.0 / nl));
+                        let side = |p: u32, l0: u32, l1: u32| {
+                            let l = q(l0);
+                            let m = q(l1);
+                            let up = l.add(n.scale(1.0 / nl));
+                            let _ = lift;
+                            crate::meshgen::predicates::orient3d_filtered(l, m, up, q(p)).0
+                        };
+                        let fan = tets.iter().filter(|t| t.contains(&cd[0]) && t.contains(&cd[1])).count();
+                        let len = |x: u32, y: u32| {
+                            let d = q(y).sub(q(x));
+                            d.dot(d).sqrt()
+                        };
+                        eprintln!(
+                            "[HULL-QUAD] a,b vs cd: {} {} | c,d vs ab: {} {} | fan {} | |cd| {:.3e} |ab| {:.3e}",
+                            side(ab[0], cd[0], cd[1]),
+                            side(ab[1], cd[0], cd[1]),
+                            side(cd[0], ab[0], ab[1]),
+                            side(cd[1], ab[0], ab[1]),
+                            fan,
+                            len(cd[0], cd[1]),
+                            len(ab[0], ab[1])
+                        );
+                    }
+                }
                 eprintln!(
-                    "[HULL-DIAG] extra {} wanted {} nodes {} off-plane/span {:.3e} unhelpful {} extra {:?} wanted {:?}",
-                    extra, wanted, nodes.len(), off / span.max(1e-300), unhelpful, ex, wa
+                    "[HULL-DIAG] extra {} wanted {} nodes {} off-plane/span {:.3e} refused {} unhelpful {} why {:?} extra {:?} wanted {:?}",
+                    extra, wanted, nodes.len(), off / span.max(1e-300), refused, unhelpful, why, ex, wa
                 );
             }
             return Err(if refused == 0 && unhelpful == 0 {
