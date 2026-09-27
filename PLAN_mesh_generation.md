@@ -1615,6 +1615,14 @@ cell's boundary without being a trace point of that face, where no Steiner point
   863 → 940); a3 +0.04, a6a flat. Not strictly better, so reverted. The finding stands: the fragment
   side must see one facet per input *plane*, not per input triangle, and the next attempt should
   explain why the merged cells that still decline moved to the hull class before changing the rule.
+  **`[V9]` PASS on all nine, both paths, 2026-09-28.** The last gated `[V9]` nodes (a3 7, a6b 2, a8
+  61) were nodes within `eps` of a locked curve but not on it - a3's 45610 is a facet-split-fan node
+  0.28 `eps` outside the cube, beside a sub-envelope sliver - which `curve_mesh_edges` declared as
+  carrying the curve because it tested at `eps`. It now declares only edges on the curve within
+  `DUPLICATE_NODE_FRAC`. The check is unchanged; the claim it tests became true. Meshes byte-
+  identical (`data/output/acceptance_m28`), carried curves a3 90 → 94, a8 392 → 376; the default
+  path's a6a/a6b/a7a `[V9]` pass too. **M-3.1's FAIL rule now holds**: both paths fail exactly
+  `[V6]` on a3 and `[V13]`, and the gated path's `[V13]` is better on every case.
 - **M-2.2. Boundary consistency: a facet vertex on the cell's boundary is a trace point.** The
   "hull carries a node the boundary has never heard of" class (a8 1,200 cells, 38.3 % of its
   stranded area) is the residue of record §6.43, which took it from 72 % of the population by making
@@ -2210,7 +2218,7 @@ without the stated fallback.
 | M-2.3 | Delete the whole-cell fan | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ blocked by M-2.1/M-2.2 |
 | M-2.4 | Retire `contact_chamfered_by` | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ○ |
 | M-2.5 | P3 residual audit | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — the same cutaways | ○ |
-| M-3.1 | The control | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ |
+| M-3.1 | The control | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ◐ FAIL rule holds on the matrix (`acceptance_m28`): both paths fail only a3 `[V6]` and `[V13]`, gated `[V13]` better everywhere; element (M-1.4) and time (M-1.3) budgets not yet stated |
 | M-3.2 | Delete the five handles | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ○ |
 | M-3.3 | Refactor `cut_lattice`, tests for the trace and the junction module | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ |
 | M-4.0a | One X per connected closed component; the source map (MG-04) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ |

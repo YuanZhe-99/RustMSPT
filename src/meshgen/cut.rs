@@ -4291,7 +4291,8 @@ pub fn cut_lattice(
     mesh.constraint_ref = snapped.constraint_ref.clone();
     mesh.constraint_ref.resize(mesh.nodes.len(), -1i32);
     mesh.curves = options.locked_curves.clone();
-    mesh.curve_edges = curve_mesh_edges(&mesh.tets, &mesh.nodes, &mesh.curves, options.eps);
+    mesh.curve_edges =
+        curve_mesh_edges(&mesh.tets, &mesh.nodes, &mesh.curves, DUPLICATE_NODE_FRAC);
     if !mesh.curves.is_empty() {
         let carried: BTreeSet<u32> = mesh.curve_edges.iter().map(|(curve, _)| *curve).collect();
         println!(

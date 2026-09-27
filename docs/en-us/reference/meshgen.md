@@ -2016,6 +2016,13 @@ Gated: a3 97.11 -> 98.51 %, a6a 99.924 -> 99.953 % at 37 % fewer tets, a6b -10 %
 99.47 % (the path M-3 retires). Two consequences handled in S8: a cap whose carrying tet is flat is
 tagged as the surviving faces in its plane, and `refresh_split_interfaces` follows the edge repair.
 
+A mesh edge is declared to carry a locked curve (`curve_mesh_edges`) only when its endpoints and
+midpoint lie on the curve within `[V2]`'s duplicate bound (`DUPLICATE_NODE_FRAC`), not within
+`eps`. With `eps`, a node 0.28 `eps` off an intersection curve - a fan apex beside a sub-envelope
+sliver of the other body - was claimed to carry it, and `[V9]` rightly failed on the missing
+component. Carried-curve counts barely move (a3 90 -> 94, a8 392 -> 376) and the meshes are
+byte-identical; `[V9]` now PASSes on all nine cases on both paths.
+
 ### Welded sheet cuts (G6-5)
 
 A sheet has no inside, so §6's sides cannot come from S6 - it refuses to classify one,
