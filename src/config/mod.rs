@@ -85,6 +85,7 @@ pub use meshgen::{
     CoincidencePolicy, DeterminismMode, FemProfile, InputKind, MeshGenConfig, MeshGenDomain,
     MeshGenEnvelope, MeshGenGaps, MeshGenInput, MeshGenMaterials, MeshGenOutput, MeshGenParams,
     MeshGenRepair, MeshGenSizing, MeshGenThin, RepairLevel, SnapshotMode, UnmappedPolicy,
+    BackgroundForm, BackgroundSpec, CellCounts, Ladder, LevelSpec, Resolution, RESOLUTION_MAX_LEVEL,
 };
 pub use optimization::{OptimizationConfig, OptimizationParams, TargetConfig};
 pub use packing::{PackingConfig, PackingFilters, PackingParams};

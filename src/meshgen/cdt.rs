@@ -2319,7 +2319,7 @@ fn soup_defect(soup: &[[u32; 3]]) -> &'static str {
     }
 }
 
-fn orient_soup(soup: &[[u32; 3]]) -> Option<Vec<[u32; 3]>> {
+pub(crate) fn orient_soup(soup: &[[u32; 3]]) -> Option<Vec<[u32; 3]>> {
     if soup.is_empty() {
         return None;
     }
@@ -2802,24 +2802,45 @@ pub fn facet_split_fan(
                     centre = centre.add(points[*node as usize]);
                 }
                 let centre = centre.scale(1.0 / nodes.len() as f64);
+                // **A fan is valid only if the apex sees every face of the piece from the same
+                // side** (plan MG-15). `piece` is consistently wound, so over a star-shaped piece
+                // every face takes the same orientation sign against the apex. A face of the other
+                // sign is one the apex sees from behind: its fan tet is inverted, and swapping two
+                // of its nodes - which this loop used to do - makes it positive and lays it over
+                // its neighbours. That was every one of the gated path's folded faces (a1 952, a3
+                // 1,382, a8 1,766). The piece-volume test below cannot see it: it sums the piece's
+                // own enclosed volume, not the fan's.
+                // Only the centre. Fanning from one of the piece's own corners instead was tried
+                // (2026-09-26): a sign test over the faces away from the corner is not sufficient
+                // at a reflex corner, and it brought back 12 folded faces and an inverted tet on
+                // a3. A piece its centre does not see whole is declined, and the cell takes the
+                // whole-cell fan, which is always valid (a lattice cell is convex).
+                let signs: Vec<i8> = piece
+                    .iter()
+                    .map(|t| {
+                        crate::meshgen::predicates::orient3d_filtered(
+                            points[t[0] as usize],
+                            points[t[1] as usize],
+                            points[t[2] as usize],
+                            centre,
+                        )
+                        .0
+                    })
+                    .collect();
+                if signs.iter().any(|s| *s == 0) {
+                    note_split("a fan tet is degenerate");
+                    return None;
+                }
+                if signs.iter().any(|s| *s != signs[0]) {
+                    note_split("a piece is not star-shaped from its centre - its fan would fold");
+                    return None;
+                }
                 let apex = points.len() as u32;
                 points.push(centre);
                 for t in piece {
                     let mut piece_tet = [t[0], t[1], t[2], apex];
-                    match crate::meshgen::predicates::orient3d_filtered(
-                        points[piece_tet[0] as usize],
-                        points[piece_tet[1] as usize],
-                        points[piece_tet[2] as usize],
-                        points[piece_tet[3] as usize],
-                    )
-                    .0
-                    {
-                        0 => {
-                            note_split("a fan tet is degenerate");
-                            return None;
-                        }
-                        s if s < 0 => piece_tet.swap(0, 1),
-                        _ => {}
+                    if signs[0] < 0 {
+                        piece_tet.swap(0, 1);
                     }
                     tets.push(piece_tet);
                     regions.push(region as u32);
@@ -2828,9 +2849,9 @@ pub fn facet_split_fan(
         }
         summed += soup_volume(piece, points);
     }
-    // The pieces must partition the cell: neither overlapping nor leaving a hole. This is also the
-    // test that catches a piece the centroid does not see all of - a non-convex piece whose fan
-    // folds over itself sums to more than it occupies.
+    // The pieces must partition the cell: neither overlapping nor leaving a hole. (It does NOT
+    // catch a fan that folds - `soup_volume` measures the piece, not the fan; the star-shape test
+    // above does that.)
     if (summed - whole).abs() > whole.max(summed) * 1.0e-9 {
         note_split("the pieces do not partition the cell");
         return None;

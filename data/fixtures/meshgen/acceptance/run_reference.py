@@ -42,8 +42,8 @@ CONFIG = """meshgen:
     min: [{dmin}]
     max: [{dmax}]
   sizing:
-    h_max_frac: {h_max_frac:.8f}
-    h_min_frac: {h_min_frac:.8f}
+    background: {{cells: [{counts}]}}
+    max_level: {level}
     chord_error_frac: 0.2
     feature_angle_deg: 45.0
     grading: 2.0
@@ -89,6 +89,29 @@ def discover(root):
         ):
             out.append(case)
     return out
+
+
+def reference_inputs(case):
+    """The reference tool's own INPUTS (plan M-1.8 (h)): `*RVE_CORNERS`, `*NUM_ELEMENT` and every
+    section's `*SAMR_LEVEL`, from the case's `nurbs/*.nurbs`. The log's summary numbers are not the
+    inputs: its `Base Mesh Element size` is the background cell's face diagonal (sqrt 2 x the
+    edge), and its first `SAMR levels:` line is one section's level, not the run's (plan §2.3's
+    correction, Appendix D.2)."""
+    corners = counts = None
+    levels = []
+    for f in sorted(glob.glob(os.path.join(case, "nurbs", "*.nurbs"))):
+        lines = open(f, errors="replace").read().splitlines()
+        for i, line in enumerate(lines):
+            if line.startswith("*RVE_CORNERS") and corners is None:
+                corners = [float(v) for v in lines[i + 1].split(",")]
+            if line.startswith("*NUM_ELEMENT") and counts is None:
+                counts = [int(v) for v in lines[i + 1].split(",")]
+            if line.startswith("*SAMR_LEVEL"):
+                levels.append(int(lines[i + 1].strip()))
+    if corners is None or counts is None or not levels:
+        return None
+    return {"min": tuple(corners[:3]), "max": tuple(corners[3:6]), "counts": counts,
+            "levels": levels}
 
 
 def reference_parameters(case):
@@ -137,18 +160,19 @@ def run_case(case):
     if not stls or not params:
         return {"case": name, "error": "no STLs, or the reference log lacks its parameters"}
 
+    # At the reference's own resolution (plan M-1.8 (h)): its background counts exactly and its
+    # deepest section level. Per-section levels are not applied yet (M-1.8 (c) is refused until
+    # the sizing sources carry their input), so a section the reference left at a shallower
+    # level is meshed at the deepest one - the direction that can only cost this mesher elements.
+    ref = reference_inputs(case)
+    if ref is None:
+        return {"case": name, "error": "the reference inputs lack *RVE_CORNERS / *NUM_ELEMENT / *SAMR_LEVEL"}
+    params["min"], params["max"] = ref["min"], ref["max"]
     span = [params["max"][i] - params["min"][i] for i in range(3)]
     diagonal = sum(s * s for s in span) ** 0.5
-    # The reference's finest cell: its base cell halved once per refinement level.
-    #
-    # A case the reference meshed at `SAMR levels: 0` never refined at all, and this mesher
-    # cannot be asked for that - its config requires `h_min < h_max` - so the closest legal
-    # setting is one level. That biases the comparison *against* this mesher (it is allowed
-    # to refine where the reference was not), which is the safe direction for any claim that
-    # it emits fewer elements. The row is flagged so the asymmetry is never read as parity.
-    h_max = params["base_cell"]
-    levels = max(params["levels"], 1)
-    h_min = params["base_cell"] / (2**levels)
+    levels = max(ref["levels"])
+    h_max = max(span[i] / ref["counts"][i] for i in range(3))
+    h_min = h_max / (2**levels)
 
     work = os.path.join(WORK, name)
     os.makedirs(work, exist_ok=True)
@@ -159,8 +183,8 @@ def run_case(case):
                 inputs="\n".join(f"    - stl: {s}" for s in stls),
                 dmin=", ".join(f"{v}" for v in params["min"]),
                 dmax=", ".join(f"{v}" for v in params["max"]),
-                h_max_frac=h_max / diagonal,
-                h_min_frac=h_min / diagonal,
+                counts=", ".join(str(c) for c in ref["counts"]),
+                level=levels,
                 out=os.path.join(work, "mesh.vtu"),
             )
         )
@@ -176,7 +200,7 @@ def run_case(case):
     print(
         f"[{name}] {len(stls)} surfaces, domain diagonal {diagonal:.4f}, "
         f"h_max {h_max:.5g}, h_min {h_min:.5g} "
-        f"(reference {params['levels']} refinement level(s), asked for {levels})",
+        f"(reference background {ref['counts']}, section levels {ref['levels']}; asked for level {levels})",
         file=sys.stderr,
     )
     sys.stderr.flush()

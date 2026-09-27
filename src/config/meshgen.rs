@@ -87,6 +87,10 @@ pub struct MeshGenInput {
     pub priority: Option<i64>,
     #[serde(default)]
     pub kind: InputKind,
+    /// This input's own refinement cap below the background (plan M-1.8 (c)); must not exceed
+    /// `sizing.max_level`.
+    #[serde(default)]
+    pub max_level: Option<LevelSpec>,
 }
 
 // AI-FUNC-SUMMARY: Axis-aligned generation domain; every axis must satisfy min < max (checked by validate()); side effects: none.
@@ -104,21 +108,130 @@ pub struct MeshGenDomain {
 //   realised as the Lipschitz constant `grading - 1`), and `gap_cells` is how many elements must
 //   span a gap that stays volumetric.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(from = "MeshGenSizingRaw")]
 pub struct MeshGenSizing {
-    #[serde(default = "default_h_max_frac")]
     pub h_max_frac: f64,
-    #[serde(default = "default_h_min_frac")]
     pub h_min_frac: f64,
-    #[serde(default = "default_chord_error_frac")]
     pub chord_error_frac: f64,
-    #[serde(default = "default_feature_angle_deg")]
     pub feature_angle_deg: f64,
-    #[serde(default = "default_grading")]
     pub grading: f64,
-    #[serde(default = "default_gap_cells")]
     pub gap_cells: f64,
-    #[serde(default = "default_curve_cells")]
     pub curve_cells: f64,
+    /// The background lattice (plan M-1.8, R-E4): `{cells: n}`, `{cells: [nx, ny, nz]}`,
+    /// `{size: model units}`, `{size_frac: of the diagonal}`, or `auto` (M-4.6).
+    pub background: Option<BackgroundSpec>,
+    /// The number of refinement levels below the background, or `auto` (M-4.6).
+    pub max_level: Option<LevelSpec>,
+    /// Whether `h_max_frac` or `h_min_frac` was written in the config (not defaulted): the
+    /// fractions and the ladder are mutually exclusive, and only an explicit key can conflict.
+    pub fractions_given: bool,
+}
+
+/// The YAML form of `meshgen.sizing`; `MeshGenSizing` is built from it so an omitted fraction
+/// can be told apart from a defaulted one.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MeshGenSizingRaw {
+    #[serde(default)]
+    h_max_frac: Option<f64>,
+    #[serde(default)]
+    h_min_frac: Option<f64>,
+    #[serde(default = "default_chord_error_frac")]
+    chord_error_frac: f64,
+    #[serde(default = "default_feature_angle_deg")]
+    feature_angle_deg: f64,
+    #[serde(default = "default_grading")]
+    grading: f64,
+    #[serde(default = "default_gap_cells")]
+    gap_cells: f64,
+    #[serde(default = "default_curve_cells")]
+    curve_cells: f64,
+    #[serde(default)]
+    background: Option<BackgroundSpec>,
+    #[serde(default)]
+    max_level: Option<LevelSpec>,
+}
+
+impl From<MeshGenSizingRaw> for MeshGenSizing {
+    // AI-FUNC-SUMMARY: Fill defaults and remember whether a fraction was written; returns MeshGenSizing; side effects: none.
+    fn from(r: MeshGenSizingRaw) -> Self {
+        MeshGenSizing {
+            fractions_given: r.h_max_frac.is_some() || r.h_min_frac.is_some(),
+            h_max_frac: r.h_max_frac.unwrap_or_else(default_h_max_frac),
+            h_min_frac: r.h_min_frac.unwrap_or_else(default_h_min_frac),
+            chord_error_frac: r.chord_error_frac,
+            feature_angle_deg: r.feature_angle_deg,
+            grading: r.grading,
+            gap_cells: r.gap_cells,
+            curve_cells: r.curve_cells,
+            background: r.background,
+            max_level: r.max_level,
+        }
+    }
+}
+
+// AI-FUNC-SUMMARY: `sizing.background` as written: `auto` or one explicit form; side effects: none.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum BackgroundSpec {
+    Auto(String),
+    Given(BackgroundForm),
+}
+
+// AI-FUNC-SUMMARY: The explicit background forms; exactly one field must be set (validated); side effects: none.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BackgroundForm {
+    #[serde(default)]
+    pub cells: Option<CellCounts>,
+    #[serde(default)]
+    pub size: Option<f64>,
+    #[serde(default)]
+    pub size_frac: Option<f64>,
+}
+
+// AI-FUNC-SUMMARY: `cells: n` (along the longest axis) or `cells: [nx, ny, nz]`; side effects: none.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum CellCounts {
+    Longest(u32),
+    PerAxis([u32; 3]),
+}
+
+// AI-FUNC-SUMMARY: `sizing.max_level` / `inputs[].max_level` as written: a level or `auto`; side effects: none.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum LevelSpec {
+    Level(u32),
+    Auto(String),
+}
+
+/// The largest refinement depth below the background (plan M-1.8 (a)); the octree's own
+/// `SIZING_MAX_LEVEL` restated as a cap on `L`.
+pub const RESOLUTION_MAX_LEVEL: u32 = 12;
+
+// AI-FUNC-SUMMARY:
+// Purpose: The resolution ladder a config states (plan M-1.8): background edge, level, realised counts, the octree root and levels.
+// Notes: Lengths `*_frac` are in the normalized frame (the domain diagonal is 1), which is the
+//   frame every sizing quantity lives in; `h_bg` is in model units.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ladder {
+    pub h_bg: f64,
+    pub h_bg_frac: f64,
+    pub level: u32,
+    pub counts: [u32; 3],
+    pub overhang: [f64; 3],
+    /// Octree level of the background: the root is `h_bg * 2^m`.
+    pub root_level: u32,
+    pub root_frac: f64,
+}
+
+/// What the sizing stages read: the two bounds, and the ladder when one was stated.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Resolution {
+    pub h_max_frac: f64,
+    pub h_min_frac: f64,
+    pub ladder: Option<Ladder>,
 }
 
 // AI-FUNC-SUMMARY:
@@ -269,6 +382,123 @@ impl MeshGenInput {
 
 impl MeshGenParams {
     // AI-FUNC-SUMMARY:
+    // Purpose: Resolve the stated resolution (plan M-1.8): the two fractions, or the background-and-level ladder, into the bounds every sizing stage reads.
+    // Returns: Resolution, or InvalidConfig naming the conflict (both forms given, one half of the ladder alone, `auto` before M-4.6, an inconsistent triple, a level past the cap or the index width, an input level above the global one).
+    // Side effects: None.
+    // Notes: `cells: [nx, ny, nz]` takes `h_bg = max_i E_i / n_i` and is accepted iff every axis
+    //   realises its count; the reject names the consistent triples on either side. Counts use a
+    //   relative tolerance of 1e-9 so `0.6 / 0.05` is 12, not 13. The root is `h_bg * 2^m` with
+    //   `m = ceil(log2 max n_i)`, anchored at the domain minimum; `h_min = h_bg / 2^L` is exact.
+    pub fn resolution(&self) -> Result<Resolution> {
+        let bad = |m: String| Err(RustMsptError::InvalidConfig(m));
+        let sz = &self.sizing;
+        let auto_msg = "derived resolution (`auto`) lands with plan M-4.6; state both \
+            meshgen.sizing.background and meshgen.sizing.max_level";
+        let (background, level) = match (&sz.background, &sz.max_level) {
+            (None, None) => {
+                if self.inputs.iter().any(|i| i.max_level.is_some()) {
+                    return bad("meshgen.inputs[].max_level needs meshgen.sizing.background and \
+                        meshgen.sizing.max_level"
+                        .to_string());
+                }
+                return Ok(Resolution {
+                    h_max_frac: sz.h_max_frac,
+                    h_min_frac: sz.h_min_frac,
+                    ladder: None,
+                });
+            }
+            (Some(BackgroundSpec::Auto(_)), _) | (_, Some(LevelSpec::Auto(_))) => {
+                return bad(auto_msg.to_string())
+            }
+            (Some(BackgroundSpec::Given(b)), Some(LevelSpec::Level(l))) => (b, *l),
+            _ => return bad(format!("meshgen.sizing: only one of background / max_level is given; {auto_msg}")),
+        };
+        if sz.fractions_given {
+            return bad("meshgen.sizing: h_max_frac/h_min_frac and background/max_level are two \
+                ways of stating one resolution; give one"
+                .to_string());
+        }
+        let extent: Vec<f64> = (0..3).map(|a| self.domain.max[a] - self.domain.min[a]).collect();
+        let diag = extent.iter().map(|e| e * e).sum::<f64>().sqrt();
+        let longest = extent.iter().cloned().fold(0.0, f64::max);
+        let given = [background.cells.is_some(), background.size.is_some(), background.size_frac.is_some()];
+        if given.iter().filter(|g| **g).count() != 1 {
+            return bad("meshgen.sizing.background takes exactly one of cells, size, size_frac".to_string());
+        }
+        let count = |e: f64, h: f64| ((e / h) * (1.0 - 1e-9)).ceil().max(1.0) as u32;
+        let h_bg = match (&background.cells, background.size, background.size_frac) {
+            (Some(CellCounts::Longest(n)), _, _) if *n > 0 => longest / *n as f64,
+            (Some(CellCounts::PerAxis(n)), _, _) if n.iter().all(|v| *v > 0) => {
+                let h = (0..3).map(|a| extent[a] / n[a] as f64).fold(0.0, f64::max);
+                let realised: Vec<u32> = (0..3).map(|a| count(extent[a], h)).collect();
+                if realised != n.to_vec() {
+                    let h_fine = (0..3).map(|a| extent[a] / n[a] as f64).fold(f64::INFINITY, f64::min);
+                    let fine: Vec<u32> = (0..3).map(|a| count(extent[a], h_fine)).collect();
+                    return bad(format!(
+                        "meshgen.sizing.background cells {n:?} cannot all be realised by one cubic cell on \
+                         a domain of extent {extent:?}; the consistent triples on either side are {fine:?} \
+                         (size {h_fine}) and {realised:?} (size {h})"
+                    ));
+                }
+                h
+            }
+            (_, Some(size), _) if size > 0.0 => size,
+            (_, _, Some(frac)) if frac > 0.0 => frac * diag,
+            _ => return bad("meshgen.sizing.background must be positive".to_string()),
+        };
+        if level > RESOLUTION_MAX_LEVEL {
+            return bad(format!(
+                "meshgen.sizing.max_level {level} exceeds the cap {RESOLUTION_MAX_LEVEL}"
+            ));
+        }
+        let counts = [count(extent[0], h_bg), count(extent[1], h_bg), count(extent[2], h_bg)];
+        let largest = *counts.iter().max().unwrap_or(&1);
+        let root_level = (largest as f64).log2().ceil().max(0.0) as u32;
+        if root_level + level + 1 > 31 {
+            return bad(format!(
+                "meshgen.sizing: a background of {largest} cells refined {level} levels needs {} index \
+                 bits; the lattice has 31",
+                root_level + level + 1
+            ));
+        }
+        for input in &self.inputs {
+            match &input.max_level {
+                None => {}
+                Some(LevelSpec::Auto(_)) => return bad(auto_msg.to_string()),
+                Some(LevelSpec::Level(l)) if *l > level => {
+                    return bad(format!(
+                        "meshgen.inputs[{}].max_level {l} exceeds meshgen.sizing.max_level {level}",
+                        input.stl
+                    ))
+                }
+                Some(_) => {
+                    return bad(format!(
+                        "meshgen.inputs[{}].max_level: per-input levels are validated but not yet \
+                         applied to that input's sizing sources (plan M-1.8 (c)); refusing rather \
+                         than ignoring it",
+                        input.stl
+                    ))
+                }
+            }
+        }
+        let h_bg_frac = h_bg / diag;
+        let overhang = [0, 1, 2].map(|a| counts[a] as f64 * h_bg - extent[a]);
+        Ok(Resolution {
+            h_max_frac: h_bg_frac,
+            h_min_frac: h_bg_frac / (1u64 << level) as f64,
+            ladder: Some(Ladder {
+                h_bg,
+                h_bg_frac,
+                level,
+                counts,
+                overhang,
+                root_level,
+                root_frac: h_bg_frac * (1u64 << root_level) as f64,
+            }),
+        })
+    }
+
+    // AI-FUNC-SUMMARY:
     // Purpose: Enforce the parse-time rejects frozen in PLAN_mesh_generation §6.3.
     // Returns: Ok(()) or InvalidConfig naming the violated rule.
     // Side effects: None.
@@ -295,7 +525,10 @@ impl MeshGenParams {
                 )));
             }
         }
-        if self.sizing.h_min_frac <= 0.0 || self.sizing.h_min_frac >= self.sizing.h_max_frac {
+        let resolution = self.resolution()?;
+        if resolution.ladder.is_none()
+            && (self.sizing.h_min_frac <= 0.0 || self.sizing.h_min_frac >= self.sizing.h_max_frac)
+        {
             return Err(RustMsptError::InvalidConfig(format!(
                 "meshgen.sizing requires 0 < h_min_frac ({}) < h_max_frac ({})",
                 self.sizing.h_min_frac, self.sizing.h_max_frac
@@ -354,7 +587,7 @@ impl MeshGenParams {
                 "meshgen.gaps.t_sheet_factor must be positive".to_string(),
             ));
         }
-        let eps_cap = 0.5 * self.gaps.t_sheet_factor * self.sizing.h_min_frac;
+        let eps_cap = 0.5 * self.gaps.t_sheet_factor * resolution.h_min_frac;
         if self.envelope.eps_frac <= 0.0 || self.envelope.eps_frac >= eps_cap {
             return Err(RustMsptError::InvalidConfig(format!(
                 "meshgen.envelope.eps_frac ({}) must be in (0, 0.5 * t_sheet_factor * h_min_frac = {eps_cap}) \
@@ -550,6 +783,9 @@ impl Default for MeshGenSizing {
             grading: default_grading(),
             gap_cells: default_gap_cells(),
             curve_cells: default_curve_cells(),
+            background: None,
+            max_level: None,
+            fractions_given: false,
         }
     }
 }

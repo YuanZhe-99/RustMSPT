@@ -372,6 +372,7 @@ fn run_cli() -> anyhow::Result<()> {
                     stl: input.to_string_lossy().to_string(),
                     priority: None,
                     kind: rustmspt::config::meshgen::InputKind::default(),
+                    max_level: None,
                 }];
             }
             if let Some(output) = output {

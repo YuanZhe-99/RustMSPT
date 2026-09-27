@@ -246,3 +246,81 @@ fn pipeline_rejects_missing_input_stl() {
     let err = MeshGenPipeline { config: conf }.run().unwrap_err();
     assert!(err.to_string().contains("failed to read STL"), "{}", err);
 }
+
+// --- plan M-1.8: resolution as a background and a maximum level --------------------------
+
+fn ladder(fragment: &str, zmax: f64) -> Result<rustmspt::config::meshgen::Resolution, String> {
+    let text = format!(
+        "meshgen:\n  inputs:\n    - stl: data/input/particles.stl\n  domain: {{ min: [0.0, 0.0, 0.0], max: [1.0, 1.0, {zmax}] }}\n  output: {{ vtu: data/output/mesh.vtu }}\n  sizing:\n{fragment}\n"
+    );
+    let conf: MeshGenConfig = serde_yaml::from_str(&text).map_err(|e| e.to_string())?;
+    conf.meshgen.validate().map_err(|e| e.to_string())?;
+    conf.meshgen.resolution().map_err(|e| e.to_string())
+}
+
+#[test]
+fn a_consistent_background_triple_is_realised_exactly() {
+    let r = ladder("    background: {cells: [20, 20, 12]}\n    max_level: 1", 0.6).unwrap();
+    let l = r.ladder.unwrap();
+    assert_eq!(l.counts, [20, 20, 12]);
+    assert!(l.overhang.iter().all(|o| o.abs() < 1e-12), "{:?}", l.overhang);
+    assert_eq!(l.level, 1);
+    assert_eq!(l.root_level, 5, "20 cells need a 32-cell root");
+    assert!((l.h_bg - 0.05).abs() < 1e-15);
+    assert!((r.h_min_frac * 2.0 - r.h_max_frac).abs() < 1e-15);
+}
+
+#[test]
+fn an_inconsistent_triple_is_rejected_naming_both_neighbours() {
+    let e = ladder("    background: {cells: [20, 20, 10]}\n    max_level: 1", 0.6).unwrap_err();
+    assert!(e.contains("[20, 20, 12]") && e.contains("[17, 17, 10]"), "{e}");
+}
+
+#[test]
+fn level_zero_is_a_uniform_lattice_and_is_legal() {
+    let r = ladder("    background: {cells: 20}\n    max_level: 0", 1.0).unwrap();
+    assert_eq!(r.h_max_frac, r.h_min_frac);
+    assert_eq!(r.ladder.unwrap().counts, [20, 20, 20]);
+}
+
+#[test]
+fn seventeen_cells_are_not_rounded_to_a_power_of_two() {
+    let l = ladder("    background: {cells: 17}\n    max_level: 2", 1.0).unwrap().ladder.unwrap();
+    assert_eq!(l.counts, [17, 17, 17]);
+    assert_eq!(l.root_level, 5);
+    assert!((l.h_bg - 1.0 / 17.0).abs() < 1e-15);
+}
+
+#[test]
+fn the_ladder_rejects_what_it_cannot_honour() {
+    // both forms of one resolution
+    let e = ladder("    h_max_frac: 0.05\n    background: {cells: 20}\n    max_level: 1", 1.0).unwrap_err();
+    assert!(e.contains("give one"), "{e}");
+    // one half only, and `auto`, before M-4.6
+    assert!(ladder("    background: {cells: 20}", 1.0).unwrap_err().contains("M-4.6"));
+    assert!(ladder("    background: auto\n    max_level: 2", 1.0).unwrap_err().contains("M-4.6"));
+    assert!(ladder("    background: {cells: 20}\n    max_level: auto", 1.0).unwrap_err().contains("M-4.6"));
+    // the level cap
+    assert!(ladder("    background: {cells: 20}\n    max_level: 13", 1.0).unwrap_err().contains("cap"));
+    // two background forms at once
+    assert!(ladder("    background: {cells: 20, size: 0.05}\n    max_level: 1", 1.0).unwrap_err().contains("exactly one"));
+    // the envelope rule, on the realised finest edge: eps_frac must stay under 0.5 * 0.2 * h_min
+    let text = "meshgen:\n  inputs:\n    - stl: data/input/particles.stl\n  domain: { min: [0.0, 0.0, 0.0], max: [1.0, 1.0, 1.0] }\n  output: { vtu: data/output/mesh.vtu }\n  sizing:\n    background: {cells: 20}\n    max_level: 12\n";
+    let conf: MeshGenConfig = serde_yaml::from_str(text).unwrap();
+    assert!(conf.meshgen.validate().unwrap_err().to_string().contains("eps_frac"));
+}
+
+#[test]
+fn an_input_level_above_the_global_one_is_rejected() {
+    let text = "meshgen:\n  inputs:\n    - stl: data/input/particles.stl\n      max_level: 3\n  domain: { min: [0.0, 0.0, 0.0], max: [1.0, 1.0, 1.0] }\n  output: { vtu: data/output/mesh.vtu }\n  sizing:\n    background: {cells: 20}\n    max_level: 2\n";
+    let conf: MeshGenConfig = serde_yaml::from_str(text).unwrap();
+    assert!(conf.meshgen.validate().unwrap_err().to_string().contains("exceeds"));
+}
+
+#[test]
+fn without_the_new_keys_the_fractions_resolve_unchanged() {
+    let p = valid_minimal();
+    let r = p.resolution().unwrap();
+    assert!(r.ladder.is_none());
+    assert_eq!((r.h_max_frac, r.h_min_frac), (0.05, 0.002));
+}

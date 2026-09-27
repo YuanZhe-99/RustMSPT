@@ -1,5 +1,5 @@
 use super::Pipeline;
-use crate::config::meshgen::{FemProfile as ConfigFemProfile, InputKind, MeshGenConfig};
+use crate::config::meshgen::{FemProfile as ConfigFemProfile, InputKind, MeshGenConfig, Resolution};
 use crate::error::{Result, RustMsptError};
 use crate::io::stl::load_stl;
 use crate::io::vtu::VtuEncoding;
@@ -139,6 +139,12 @@ fn compute_config_hash(p: &crate::config::meshgen::MeshGenParams) -> u64 {
     p.sizing.grading.to_bits().hash(&mut hasher);
     p.sizing.gap_cells.to_bits().hash(&mut hasher);
     p.sizing.curve_cells.to_bits().hash(&mut hasher);
+    // The ladder enters the hash only when stated, so a config without it hashes as before.
+    if let Ok(Resolution { ladder: Some(l), .. }) = p.resolution() {
+        l.h_bg.to_bits().hash(&mut hasher);
+        l.level.hash(&mut hasher);
+        l.counts.hash(&mut hasher);
+    }
     p.gaps.t_layer_factor.to_bits().hash(&mut hasher);
     p.gaps.t_sheet_factor.to_bits().hash(&mut hasher);
     p.gaps.confidence_min.to_bits().hash(&mut hasher);
@@ -198,6 +204,24 @@ impl Pipeline for MeshGenPipeline {
     fn run(&self) -> Result<()> {
         let p = &self.config.meshgen;
         p.validate()?;
+        let resolution = p.resolution()?;
+        if let Some(l) = &resolution.ladder {
+            let est_leaves: u64 = l.counts.iter().map(|c| *c as u64).product();
+            println!(
+                "[S4/RES] background given: h_bg = {:.6} ({:.6} of the diagonal), cells {:?}, overhang {:?}; \
+                 max_level given: L = {} -> h_min = {:.6}; octree levels {} (background) .. {} (finest); \
+                 at least {} background leaves",
+                l.h_bg,
+                l.h_bg_frac,
+                l.counts,
+                l.overhang.map(|o| (o * 1e9).round() / 1e9),
+                l.level,
+                l.h_bg / (1u64 << l.level) as f64,
+                l.root_level,
+                l.root_level + l.level,
+                est_leaves,
+            );
+        }
 
         let mut meshes: Vec<Mesh> = Vec::with_capacity(p.inputs.len());
         for input in &p.inputs {
@@ -452,7 +476,7 @@ impl Pipeline for MeshGenPipeline {
             domain_min,
             domain_max,
             eps,
-            h_bootstrap: p.sizing.h_max_frac,
+            h_bootstrap: resolution.h_max_frac,
             t_layer_factor: p.gaps.t_layer_factor,
             t_sheet_factor: p.gaps.t_sheet_factor,
             confidence_min: p.gaps.confidence_min,
@@ -558,14 +582,19 @@ impl Pipeline for MeshGenPipeline {
         let sizing_options = SizingOptions {
             domain_min,
             domain_max,
-            h_max: p.sizing.h_max_frac,
-            h_min: p.sizing.h_min_frac,
+            h_max: resolution.h_max_frac,
+            h_min: resolution.h_min_frac,
             chord_error_frac: p.sizing.chord_error_frac,
             feature_angle_deg: p.sizing.feature_angle_deg,
             grading: p.sizing.grading,
             gap_cells: p.sizing.gap_cells,
             curve_cells: p.sizing.curve_cells,
             eps,
+            root_size: resolution.ladder.as_ref().map(|l| l.root_frac),
+            max_level: match &resolution.ladder {
+                Some(l) => l.root_level + l.level,
+                None => SizingOptions::default().max_level,
+            },
             ..Default::default()
         };
         // The chord rules read the *input* tessellation (`cs`/`fs`); the curve rule reads
@@ -596,8 +625,8 @@ impl Pipeline for MeshGenPipeline {
         let coupling_options = CouplingOptions {
             tau_sheet: p.gaps.t_sheet_factor,
             tau_layer: p.gaps.t_layer_factor,
-            h_max: p.sizing.h_max_frac,
-            h_min: p.sizing.h_min_frac,
+            h_max: resolution.h_max_frac,
+            h_min: resolution.h_min_frac,
             eps,
             ..Default::default()
         };

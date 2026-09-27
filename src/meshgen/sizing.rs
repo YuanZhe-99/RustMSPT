@@ -389,6 +389,10 @@ pub struct SizingOptions {
     pub lfs_max_sources: usize,
     pub max_level: u32,
     pub max_leaves: usize,
+    /// The octree root's side when a background-and-level ladder is stated (plan M-1.8): `h_bg *
+    /// 2^m`, anchored at `domain_min`, so the background and every finer level are exact
+    /// halvings. `None` keeps the root on the domain's longest axis, as before the ladder.
+    pub root_size: Option<f64>,
 }
 
 impl Default for SizingOptions {
@@ -409,6 +413,7 @@ impl Default for SizingOptions {
             lfs_max_sources: 2_000_000,
             max_level: SIZING_MAX_LEVEL,
             max_leaves: SIZING_MAX_LEAVES,
+            root_size: None,
         }
     }
 }
@@ -1415,7 +1420,15 @@ impl SizingField {
 //   gave 216 hanging nodes and 8 non-manifold edges; this gives zero.
 pub fn build_sizing_field(lookup: &SizingLookup, options: &SizingOptions) -> SizingField {
     let extent = options.domain_max.sub(options.domain_min);
-    let root_size = extent.x.max(extent.y).max(extent.z).max(f64::MIN_POSITIVE);
+    let root_size = options
+        .root_size
+        .unwrap_or_else(|| extent.x.max(extent.y).max(extent.z).max(f64::MIN_POSITIVE));
+    // Under a stated ladder the background fits the domain exactly on an axis whose extent is a
+    // multiple of `h_bg`, so a cell whose minimum lies within rounding of `domain_max` touches the
+    // box face only and must be dropped - on raw floats `12 * size` one ulp below `domain_max`
+    // would keep a thirteenth layer. The legacy root never meets an exact fit on a shorter axis,
+    // and keeps its raw comparison so its output is unchanged to the byte.
+    let touch = if options.root_size.is_some() { 1e-9 * root_size } else { 0.0 };
     let mut max_level = 0u32;
     while max_level < options.max_level
         && root_size / (1u64 << max_level) as f64 > options.h_min
@@ -1452,9 +1465,9 @@ pub fn build_sizing_field(lookup: &SizingLookup, options: &SizingOptions) -> Siz
                     && (max.x <= options.domain_min.x
                     || max.y <= options.domain_min.y
                     || max.z <= options.domain_min.z
-                    || min.x >= options.domain_max.x
-                    || min.y >= options.domain_max.y
-                    || min.z >= options.domain_max.z)
+                    || min.x >= options.domain_max.x - touch
+                    || min.y >= options.domain_max.y - touch
+                    || min.z >= options.domain_max.z - touch)
                 {
                     return None;
                 }

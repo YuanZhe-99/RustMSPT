@@ -9159,7 +9159,7 @@ fn split_escalated_cell(
     // valid; dropping the tet costs conformity, which is not recoverable downstream.
     if !pieces.iter().all(|piece| fan_is_sound(piece, nodes)) {
         if std::env::var_os("RUSTMSPT_JCT_DIAG").is_some() {
-            println!("[JCT-DIAG] cell {index}: a piece does not fan without a flat tet");
+            println!("[JCT-DIAG] cell {index}: a piece does not fan without a flat or folded tet");
         }
         return None;
     }
@@ -9648,15 +9648,32 @@ fn fan_is_simple(cap: &[[u32; 3]], nodes: &[Vec3]) -> bool {
 // Notes: The exact predicate, not a tolerance. `orient_positively` drops a fan tet on `orient3d == 0`
 //   and nothing else, so this asks precisely the question that drop asks - a tolerance here would
 //   either accept a piece that still loses a tet or decline pieces that fan perfectly well.
+// Plan MG-15: non-degenerate is not enough. The piece is wound consistently first, and every face
+//   must then take the same orientation sign against the centre - the centre sees the whole piece
+//   from inside. A face of the other sign gives an inverted fan tet, which `orient_positively`
+//   silently turns positive and lays over its neighbours: every one of the default path's folded
+//   faces (a3 466, a8 8,928) was such a tet. A soup that will not wind consistently is not closed
+//   and does not fan either.
 fn fan_is_sound(soup: &[[u32; 3]], nodes: &[Vec3]) -> bool {
     let centre = polygon_soup_centroid(soup, nodes);
-    soup.iter().all(|triangle| {
-        orient3d(
+    let Some(oriented) = crate::meshgen::cdt::orient_soup(soup) else {
+        return false;
+    };
+    let mut first = 0.0f64;
+    oriented.iter().all(|triangle| {
+        let side = orient3d(
             nodes[triangle[0] as usize],
             nodes[triangle[1] as usize],
             nodes[triangle[2] as usize],
             centre,
-        ) != 0.0
+        );
+        if side == 0.0 {
+            return false;
+        }
+        if first == 0.0 {
+            first = side;
+        }
+        (side > 0.0) == (first > 0.0)
     })
 }
 
