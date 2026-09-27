@@ -1919,22 +1919,45 @@ fn recover_boundary(
         }
         carried
     };
-    let wrong = |tets: &[[u32; 4]]| -> usize {
+    // **Progress is (wrong faces, wrong hull edges), compared lexicographically.** Two
+    // triangulations of one planar hexagon on a cell face differ in four faces, and going from one
+    // to the other takes two or three diagonal flips during which the count of wrong FACES does not
+    // move - so a search accepting only a lower face count stalls on every such cell (all 54 of
+    // a1's "none brought the hull closer" on the checkerboard lattice: 6 coplanar nodes, 4 extra
+    // against 4 wanted). A flip that replaces a diagonal the boundary does not have with one it
+    // does lowers the second count while holding the first, and the pair still strictly decreases,
+    // so the loop still terminates.
+    let mut frozen_edge_set: std::collections::BTreeSet<[u32; 2]> =
+        std::collections::BTreeSet::new();
+    for face in frozen {
+        for slot in 0..3 {
+            let (x, y) = (face[slot], face[(slot + 1) % 3]);
+            frozen_edge_set.insert(if x <= y { [x, y] } else { [y, x] });
+        }
+    }
+    let wrong = |tets: &[[u32; 4]]| -> (usize, usize) {
         let carried = faces_of(tets);
         let hull: std::collections::BTreeSet<[u32; 3]> = carried
             .iter()
             .filter(|(_, n)| **n == 1)
             .map(|(face, _)| *face)
             .collect();
-        hull.symmetric_difference(frozen).count()
+        let mut edges: std::collections::BTreeSet<[u32; 2]> = std::collections::BTreeSet::new();
+        for face in &hull {
+            for slot in 0..3 {
+                let (x, y) = (face[slot], face[(slot + 1) % 3]);
+                edges.insert(if x <= y { [x, y] } else { [y, x] });
+            }
+        }
+        let wrong_edges = edges.difference(&frozen_edge_set).count();
+        (hull.symmetric_difference(frozen).count(), wrong_edges)
     };
     let mut tets = tets.to_vec();
     let mut mismatch = wrong(&tets);
-    // Every step strictly reduces the number of hull faces that disagree with the frozen boundary,
-    // so the budget is a bound on a decreasing quantity rather than a guess at how long a `loop`
-    // might run.
-    for _round in 0..mismatch.max(1) * 8 {
-        if mismatch == 0 {
+    // Every step strictly reduces the pair above, so the budget is a bound on a decreasing
+    // quantity rather than a guess at how long a `loop` might run.
+    for _round in 0..(mismatch.0 + mismatch.1).max(1) * 8 {
+        if mismatch.0 == 0 {
             return Ok(tets);
         }
         let carried = faces_of(&tets);
@@ -2061,7 +2084,39 @@ fn recover_boundary(
             // the recovery never got started and the fault is upstream of it.
             let extra = hull.difference(frozen).count();
             let wanted = frozen.difference(&hull).count();
-            let _ = (extra, wanted);
+            // Print-only: the stalled disagreement - its size, its node set, and whether every
+            // disagreeing face lies in one plane (a flat boundary region split two ways) or not.
+            if refused == 0 && unhelpful > 0 && std::env::var_os("RUSTMSPT_HULL_DIAG").is_some() {
+                let faces: Vec<[u32; 3]> = hull
+                    .difference(frozen)
+                    .chain(frozen.difference(&hull))
+                    .copied()
+                    .collect();
+                let mut nodes: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+                for f in &faces {
+                    nodes.extend(f.iter().copied());
+                }
+                let p0 = points[faces[0][0] as usize];
+                let n = points[faces[0][1] as usize]
+                    .sub(p0)
+                    .cross(points[faces[0][2] as usize].sub(p0));
+                let nl = n.dot(n).sqrt();
+                let span = nodes
+                    .iter()
+                    .map(|v| points[*v as usize].sub(p0))
+                    .map(|d| d.dot(d).sqrt())
+                    .fold(0.0f64, f64::max);
+                let off = nodes
+                    .iter()
+                    .map(|v| (n.dot(points[*v as usize].sub(p0)) / nl).abs())
+                    .fold(0.0f64, f64::max);
+                let ex: Vec<[u32; 3]> = hull.difference(frozen).copied().collect();
+                let wa: Vec<[u32; 3]> = frozen.difference(&hull).copied().collect();
+                eprintln!(
+                    "[HULL-DIAG] extra {} wanted {} nodes {} off-plane/span {:.3e} unhelpful {} extra {:?} wanted {:?}",
+                    extra, wanted, nodes.len(), off / span.max(1e-300), unhelpful, ex, wa
+                );
+            }
             return Err(if refused == 0 && unhelpful == 0 {
                 "no hull edge is a candidate for removal at all"
             } else if refused > 0 && unhelpful == 0 {
@@ -2075,7 +2130,7 @@ fn recover_boundary(
             });
         }
     }
-    if mismatch == 0 {
+    if mismatch.0 == 0 {
         return Ok(tets);
     }
     Err("boundary recovery did not converge")

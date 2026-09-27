@@ -1941,6 +1941,15 @@ collinear triangles (+32 undeclared faces on A-3). `RUSTMSPT_FACET_DIAG` also pr
 facet edge, the nearest node to it - on A-3 only 14 of 1,370 have one within 1e-6 of the edge, so
 the edge class is genuine recovery, not a blocking near-collinear node.
 
+The checkerboard lattice (M-1.7) exposed one more stall in `recover_boundary`: a hexagon on one
+planar cell face triangulated two ways differs in four faces, and getting from one to the other
+takes two or three diagonal flips that leave the wrong-face count unchanged, so a search accepting
+only a lower face count stopped (a1's "every hull edge removed cleanly and none brought the hull
+closer", 32 cells, 64 % of its stranded area). Progress is now (wrong faces, wrong hull edges)
+compared lexicographically; the class is 0 on a1 and a3, on-surface a1 90.19 -> 94.68 %, a3
+96.39 -> 96.98 %, a6a and a8 unchanged. `RUSTMSPT_HULL_DIAG` (print-only) dumps a stalled cell's
+disagreeing faces and whether they are coplanar.
+
 ### Welded sheet cuts (G6-5)
 
 A sheet has no inside, so §6's sides cannot come from S6 - it refuses to classify one,

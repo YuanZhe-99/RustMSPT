@@ -692,6 +692,9 @@ When inspecting code:
 - **A refutation that ran through an artefact is not a refutation.** M-2.1's Steiner pass was recorded NO-GO because the cells it freed fell into "interior not covered" - a class that turned out an hour later to be mostly a planarity artefact. Re-measured on top of the fix, with the two defects its own failure named (accept only a newly created node; roll back on refusal), it measured strictly better on all three cases. When a verdict depended on a number that has since been corrected, re-run the verdict.
 - **A pass that edits its inputs in place must either succeed or leave no trace.** The fallback after a refused Steiner pass saw the pass's midpoints and fanned caps through them - collinear triangles, 32 undeclared faces. Snapshot on entry, restore on every refusal path.
 
+- **A search that accepts only strictly-better moves stalls wherever the target is several neutral moves away.** Two triangulations of one planar hexagon differ in four faces and need two or three flips during which the wrong-face count holds, so `recover_boundary` stopped on every such cell - which the 5-tet checkerboard produces on cell faces the 6-tet lattice did not. A secondary measure that the intermediate moves do lower (wrong hull *edges*), compared lexicographically, keeps termination and removes the stall. When a refusal is "every candidate is legal and none helps", look for a finer measure before a new move.
+- **A lattice change that cuts elements can raise the cost of every fallback.** The checkerboard kept a1's decline count almost flat and multiplied the off-surface area each decline strands by 2.6x, because its central tet is a third of the cube. Compare the stranded *area*, not the decline count, when a lattice or cell template changes.
+
 ## Reporting to the owner (standing rule, set 2026-08-16)
 
 Every substantial reply ends with a status block covering four things, in this order. It is not

@@ -1484,6 +1484,21 @@ cell's boundary without being a trace point of that face, where no Steiner point
   deleted (M-2.3 stays blocked). A missing facet edge on a3 has a node within 1e-6 of it in only
   14 of 1,370 cases (`RUSTMSPT_FACET_DIAG`), so the edge class is genuine recovery; a8's 1,454
   is the next dump.
+  **M-1.7's cost, measured 2026-09-27, and one part of it repaid.** The two full matrices (pre-
+  checkerboard build `b61c1fc`, checkerboard build `d0c6985`+M-1.7) differ by the checkerboard
+  alone (M-1.8 was measured byte-neutral). Elements fall 5-17 % on both paths, but gated
+  on-surface falls a1 94.89 → 84.34, a3 95.06 → 93.77, a8 99.13 → 97.80 %, a7b 99.98 → 99.78 %,
+  and the default path gains `[V9]` FAILs on a3/a6a/a6b. On a1 the decline count barely moves
+  (67 → 93) while the area each decline strands grows 2.6× - a 5-tet cube's central tet is a third
+  of the cube, so a fanned cell carries more surface - plus one new class, "every hull edge removed
+  cleanly and none brought the hull closer" (32 cells, all a planar hexagon on a cell face
+  triangulated two ways, needing flips that hold the wrong-face count). `recover_boundary` now
+  measures progress as (wrong faces, wrong hull edges) lexicographically: the class is 0, a1
+  gated **94.68 %** (with the facet band and Steiner: 84.34 → 90.19 → 94.68), a3 **96.98 %** (above
+  the pre-checkerboard 95.06), a8 98.41 %, a6a unchanged; R-P2 byte-identical. Still open from
+  M-1.7: the default path's new `[V9]` FAILs (a3, a6a, a6b) and a8/a7b's residual gap to the
+  pre-checkerboard gated numbers - to be re-measured on the HEAD matrix
+  (`data/output/acceptance_head`) before being charged.
 - **M-2.2. Boundary consistency: a facet vertex on the cell's boundary is a trace point.** The
   "hull carries a node the boundary has never heard of" class (a8 1,200 cells, 38.3 % of its
   stranded area) is the residue of record §6.43, which took it from 72 % of the population by making
