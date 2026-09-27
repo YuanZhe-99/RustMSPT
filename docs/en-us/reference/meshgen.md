@@ -1984,6 +1984,11 @@ on-surface 94.96 -> 94.90 %, every other case unchanged.
 a6a/a6b's remaining `[V9]` node is a different case - a whole-cell fan's centroid apex that lands
 on the limb's edge by symmetry in a cell whose limb chords lie along walk edges.
 
+On the gated path a surface-fragment vertex that is off every cell-face plane was interned as a
+new node even when it is the same point as a node the cell already has (a6b's limb corner, 1.7e-7
+from trace node 52349). It now takes any existing arena node within `[V2]`'s duplicate bound
+(`DUPLICATE_NODE_FRAC`): gated duplicates a6b 1 -> 0, a8 11 -> 0, on-surface unchanged.
+
 ### Welded sheet cuts (G6-5)
 
 A sheet has no inside, so §6's sides cannot come from S6 - it refuses to classify one,

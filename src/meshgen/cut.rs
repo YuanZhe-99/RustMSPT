@@ -8207,7 +8207,26 @@ fn plc_attempt(
                             }
                             id
                         }
-                        _ => arena.intern(*p),
+                        // **Off every face plane is not off every node.** A fragment vertex that
+                        // is the same point as a node the cell already has - a6b's limb corner
+                        // (0.5817, 0.3117, 0.3117), 1.7e-7 from trace node 52349 and so not within
+                        // `edge * 1e-6` of any face plane - was interned a second time and shipped
+                        // as a `[V2]` duplicate. Anything within `[V2]`'s own duplicate bound of an
+                        // existing node takes that node.
+                        _ => {
+                            let mut nearest: Option<(f64, u32)> = None;
+                            for (id, q) in arena.points.iter().enumerate() {
+                                let d = q.sub(*p);
+                                let d = d.dot(d);
+                                if nearest.is_none_or(|(b, _)| d < b) {
+                                    nearest = Some((d, id as u32));
+                                }
+                            }
+                            match nearest {
+                                Some((d, id)) if d <= DUPLICATE_NODE_FRAC * DUPLICATE_NODE_FRAC => id,
+                                _ => arena.intern(*p),
+                            }
+                        }
                     }
                 })
                 .collect();
