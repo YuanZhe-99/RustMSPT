@@ -985,7 +985,7 @@ exactly what M-1.7 changes.
   at stage 11; the §2.2 statuses re-measured under the trusted verifier, with every row that moved
   named — the spec change moves `[V13]` to FAIL on eight cases, and anything else that moves is a
   defect the old verifier hid. *Tier T2. Multimodal: no.*
-  **Status 2026-09-26 — landed, uncommitted.** (a)–(e) built, plus contracts D-18's verifier
+  **Status 2026-09-26 — landed (committed with M-1.1).** (a)–(e) built, plus contracts D-18's verifier
   half (on the delivered tets-only volume `[V7]`/`[V9]` skip and `[V6]`'s declaration rules
   report `V6.deferred`) and the `partition_id` sentinel (D-14's `−1` on non-tets). Contracts
   rev 1.3.1 records it (D-8..D-11, D-17 closed; D-22..D-25 new). 656 tests green; new tests pin
@@ -2081,54 +2081,58 @@ without the stated fallback.
 
 ## 11. Subtask rollup
 
-| ID | Subtask | Tier | Assignable models | Multimodal |
-|---|---|---|---|---|
-| M-0.1 | As-built spec revision (geometry 1.6, numerics 1.3, contracts 1.3) — text half landed 2026-09-23 | T3 / T2 | Kimi K3 Max / GPT 5.6 Sol Xhigh; GLM 5.2 Max / GPT 5.6 Sol Medium | no |
-| M-0.2 | Post-M-2/M-5 revision (geometry 1.8, numerics 1.4, contracts 1.4) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no |
-| M-1.0 | Verifier trust: MG-01 cap, MG-03 domain at stage 11, MG-08 contract validator, `[V13]` FAIL | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no |
-| M-1.1 | Matrix harness: both paths, logs kept, timing, census extended | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no |
-| M-1.2 | Byte-identity on the matrix | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no |
-| M-1.3 | Time budgets | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no |
-| M-1.4 | P2 baseline at equal fidelity | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no |
-| M-1.5 | The P3 criterion: containment in the effective surface's facets (MG-02) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no |
-| M-1.6 | Conditioning and identity: the one-ULP pairs under MG-11's constraints (was M-4.1) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no |
-| M-1.7 | The X-pattern lattice: the 5-tet parity checkerboard, Rule T5, geometry rev 1.7 (R-E5, D-9 decided, S-53) | T2 / T3 | GLM 5.2 Max / GPT 5.6 Sol Medium; Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — box-face wireframes beside the reference tool's own mesh, transition cutaways |
-| M-1.8 | Resolution as background × maximum level, given; per-input levels; the reference cases at their own resolution (R-E4, S-54, §6.2 item 18) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** (R9) — M-1.9's set, nine cases unchanged; reference-case contacts before/after |
-| M-1.9 | Focus-region render harness: intersection curves, sharp edges/corners, thin regions, transitions, from the input; before/after diffs (R9) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — the contact sheets, and the two known defects they must show |
-| M-2.0 | J1 fingerprint mismatch is a hard error; fingerprint = constraint entity ids (MG-06) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no |
-| M-2.1 | Facet recovery by Steiner points on the constraint — gate | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — cutaway renders at a3's cube edges and an a8 strut junction, before/after |
-| M-2.2 | Boundary consistency: facet vertices on the cell boundary are trace points | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no |
-| M-2.3 | Delete the whole-cell fan | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no |
-| M-2.4 | Retire `contact_chamfered_by` | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no |
-| M-2.5 | P3 residual audit | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — the same cutaways |
-| M-3.1 | The control | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no |
-| M-3.2 | Delete the five handles | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no |
-| M-3.3 | Refactor `cut_lattice`, tests for the trace and the junction module | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no |
-| M-4.0a | One X per connected closed component; the source map (MG-04) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no |
-| M-4.0b | Closure per component, no borrowed faces (MG-05) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no |
-| M-4.2 | T-junction loop: retire or trace upstream | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no |
-| M-4.3 | Thin fixtures exercise S8b; `[V7]` non-vacuous | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — limb and gap cross-sections |
-| M-4.4 | P1 campaign: A-3-ranked, A-4b, A-5, A-9, A-11 open sheet, A-12 non-cubic domain, A-13 defective input, real datasets, placement sweep | T2 (T1 runs) | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — one render per new fixture |
-| M-4.5 | Input decimation as S0 conditioning (D-1) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no |
-| M-4.6 | Resolution derived: the three `auto` combinations; D-10's options `thin_material`, `thin_gap`, `far_field`, every value; `curve_cells` re-measured; the fractions retired (G1, R-E4, R-E6) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no |
-| M-4.7 | A-10 forging fixture and the G4 gate: band, sheet and marked contact in one mesh | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — cross-section through the contact centre |
-| M-4.8 | `FaceTagOrientation` per member; one geometric side per contact face (MG-07) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no |
-| M-4.9 | The thin family A-17..A-20: tilted, irregular and non-uniform thin plates and gaps, orientation invariance (R-B3) | T2 / T3 | GLM 5.2 Max / GPT 5.6 Sol Medium; Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — cross-sections of every fixture, A-17's five orientations side by side |
-| M-5.1 | Quality census by arm and dimension; G4-3 post-snap | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no |
-| M-5.2 | Quality face triangulation in the J1 cache — gate | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no |
-| M-5.3 | Near-edge trace points, constrained to exact surface points (MG-11) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no |
-| M-5.4 | S9 interior improvement under P3 | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no |
-| M-6.1 | S10 as a stage; the partition flood fill built; no `s10_regions` | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no |
-| M-6.2 | The box as an S8 constraint, S11 trim before quality, INP, `[V10]`; `mesh` exits 0 (MG-13) | T3 / T2 | Kimi K3 Max / GPT 5.6 Sol Xhigh; GLM 5.2 Max / GPT 5.6 Sol Medium | no |
-| M-6.3 | `[V11]` compare mode | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no |
-| M-6.4 | Validation on exported meshes (GT-1..4, GT-6) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — cross-sections and reference side-by-sides |
-| M-6.5 | Performance envelope (GT-5) | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no |
-| M-6.6 | `output.interface: welded \| split` — the user's interface export (D-4), `split` as node-star sectoring (MG-14) | T3 / T2 | Kimi K3 Max / GPT 5.6 Sol Xhigh; GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — Feature Edges of the split export |
-| M-6.7 | `output.interface: cohesive` — sub-`t_sheet` gaps as a cohesive layer on both walls (D-8, §12.1); `SheetPairOffset`/`SheetThickness` retained at S8b | T3 / T2 | Kimi K3 Max / GPT 5.6 Sol Xhigh; GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — cross-section through the gap |
-| M-7 | Certificate G1 repaired (MG-09), then GK-1, GK-2, GK-3, GG-1 as B.10 | T3 / T2 | Kimi K3 Max / GPT 5.6 Sol Xhigh; GLM 5.2 Max / GPT 5.6 Sol Medium | no |
-| M-8.1 | English docs incl. the S8 algorithm page and `AGENTS.md` | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no |
-| M-8.2 | Chinese mirror | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no |
-| M-8.3 | This document's upkeep; the review file retired | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no |
+| ID | Subtask | Tier | Assignable models | Multimodal | Status (2026-09-27) |
+|---|---|---|---|---|---|
+| M-0.1 | As-built spec revision (geometry 1.6, numerics 1.3, contracts 1.3) — text half landed 2026-09-23 | T3 / T2 | Kimi K3 Max / GPT 5.6 Sol Xhigh; GLM 5.2 Max / GPT 5.6 Sol Medium | no | ◐ text half landed 2026-09-23; geometry rev 1.7 (M-1.7) recorded |
+| M-0.2 | Post-M-2/M-5 revision (geometry 1.8, numerics 1.4, contracts 1.4) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ waits on M-2/M-5 |
+| M-1.0 | Verifier trust: MG-01 cap, MG-03 domain at stage 11, MG-08 contract validator, `[V13]` FAIL | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ● landed 2026-09-26 |
+| M-1.1 | Matrix harness: both paths, logs kept, timing, census extended | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ◐ harness, both paths, logs, timing, `--focus` landed; reference cases and census extension open |
+| M-1.2 | Byte-identity on the matrix | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ◐ spot checks only: a1, a3 gated byte-identical at 1 thread; the committed hash table not built |
+| M-1.3 | Time budgets | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ◐ per-stage wall times collected on both paths; budgets not set |
+| M-1.4 | P2 baseline at equal fidelity | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ |
+| M-1.5 | The P3 criterion: containment in the effective surface's facets (MG-02) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ● landed 2026-09-26 (`cont%`/`cover%`) |
+| M-1.6 | Conditioning and identity: the one-ULP pairs under MG-11's constraints (was M-4.1) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ |
+| M-1.7 | The X-pattern lattice: the 5-tet parity checkerboard, Rule T5, geometry rev 1.7 (R-E5, D-9 decided, S-53) | T2 / T3 | GLM 5.2 Max / GPT 5.6 Sol Medium; Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — box-face wireframes beside the reference tool's own mesh, transition cutaways | ● landed `17e5a9d`; cost measured 2026-09-27 (gated a1/a3/a8 on-surface fell), a1/a3 repaid by `a718767`; open: a8 −0.73, a7b −0.2, a6b −0.06 pt, default-path `[V9]` a3/a6a/a6b |
+| M-1.8 | Resolution as background × maximum level, given; per-input levels; the reference cases at their own resolution (R-E4, S-54, §6.2 item 18) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** (R9) — M-1.9's set, nine cases unchanged; reference-case contacts before/after | ◐ ladder, per-input levels, `run_reference.py` mapping landed; the §2.3 table on the three reference cases, both paths, open |
+| M-1.9 | Focus-region render harness: intersection curves, sharp edges/corners, thin regions, transitions, from the input; before/after diffs (R9) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — the contact sheets, and the two known defects they must show | ◐ input-vs-output comparison harness landed (R9); thin-region and transition views, runner call open |
+| M-2.0 | J1 fingerprint mismatch is a hard error; fingerprint = constraint entity ids (MG-06) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ● landed `9b9c1a2` |
+| M-2.1 | Facet recovery by Steiner points on the constraint — gate | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — cutaway renders at a3's cube edges and an a8 strut junction, before/after | ◐ facet band (`3198276`) + Steiner with weld guard and rollback (`691aaed`) landed on the gated path; GO gate unmet on a8 (edge class 1,835 → 1,454) |
+| M-2.2 | Boundary consistency: facet vertices on the cell boundary are trace points | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ next after a8 analysis |
+| M-2.3 | Delete the whole-cell fan | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ blocked by M-2.1/M-2.2 |
+| M-2.4 | Retire `contact_chamfered_by` | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ○ |
+| M-2.5 | P3 residual audit | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — the same cutaways | ○ |
+| M-3.1 | The control | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ |
+| M-3.2 | Delete the five handles | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ○ |
+| M-3.3 | Refactor `cut_lattice`, tests for the trace and the junction module | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ |
+| M-4.0a | One X per connected closed component; the source map (MG-04) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ |
+| M-4.0b | Closure per component, no borrowed faces (MG-05) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ |
+| M-4.2 | T-junction loop: retire or trace upstream | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ |
+| M-4.3 | Thin fixtures exercise S8b; `[V7]` non-vacuous | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — limb and gap cross-sections | ○ |
+| M-4.4 | P1 campaign: A-3-ranked, A-4b, A-5, A-9, A-11 open sheet, A-12 non-cubic domain, A-13 defective input, real datasets, placement sweep | T2 (T1 runs) | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — one render per new fixture | ○ |
+| M-4.5 | Input decimation as S0 conditioning (D-1) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ |
+| M-4.6 | Resolution derived: the three `auto` combinations; D-10's options `thin_material`, `thin_gap`, `far_field`, every value; `curve_cells` re-measured; the fractions retired (G1, R-E4, R-E6) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ |
+| M-4.7 | A-10 forging fixture and the G4 gate: band, sheet and marked contact in one mesh | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — cross-section through the contact centre | ○ |
+| M-4.8 | `FaceTagOrientation` per member; one geometric side per contact face (MG-07) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ◐ `FaceTagOrientation` per member landed (`3198276`); one geometric side per contact face open |
+| M-4.9 | The thin family A-17..A-20: tilted, irregular and non-uniform thin plates and gaps, orientation invariance (R-B3) | T2 / T3 | GLM 5.2 Max / GPT 5.6 Sol Medium; Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — cross-sections of every fixture, A-17's five orientations side by side | ○ |
+| M-5.1 | Quality census by arm and dimension; G4-3 post-snap | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ |
+| M-5.2 | Quality face triangulation in the J1 cache — gate | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ |
+| M-5.3 | Near-edge trace points, constrained to exact surface points (MG-11) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ |
+| M-5.4 | S9 interior improvement under P3 | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ |
+| M-6.1 | S10 as a stage; the partition flood fill built; no `s10_regions` | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ |
+| M-6.2 | The box as an S8 constraint, S11 trim before quality, INP, `[V10]`; `mesh` exits 0 (MG-13) | T3 / T2 | Kimi K3 Max / GPT 5.6 Sol Xhigh; GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ |
+| M-6.3 | `[V11]` compare mode | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ |
+| M-6.4 | Validation on exported meshes (GT-1..4, GT-6) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — cross-sections and reference side-by-sides | ○ |
+| M-6.5 | Performance envelope (GT-5) | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ○ |
+| M-6.6 | `output.interface: welded \| split` — the user's interface export (D-4), `split` as node-star sectoring (MG-14) | T3 / T2 | Kimi K3 Max / GPT 5.6 Sol Xhigh; GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — Feature Edges of the split export | ○ |
+| M-6.7 | `output.interface: cohesive` — sub-`t_sheet` gaps as a cohesive layer on both walls (D-8, §12.1); `SheetPairOffset`/`SheetThickness` retained at S8b | T3 / T2 | Kimi K3 Max / GPT 5.6 Sol Xhigh; GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — cross-section through the gap | ○ |
+| M-7 | Certificate G1 repaired (MG-09), then GK-1, GK-2, GK-3, GG-1 as B.10 | T3 / T2 | Kimi K3 Max / GPT 5.6 Sol Xhigh; GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ |
+| M-8.1 | English docs incl. the S8 algorithm page and `AGENTS.md` | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ |
+| M-8.2 | Chinese mirror | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ○ |
+| M-8.3 | This document's upkeep; the review file retired | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ○ |
+
+Status legend: ● landed and accepted, ◐ partly landed (what is open is named), ○ not started.
+Outside the rollup: **MG-15** (overlapping fan tets) fixed `b61c1fc`; `[V3]` folded faces 0 on
+all nine, both paths.
 
 Multimodal capability is required only for M-1.7, M-2.1, M-2.5, M-4.3, M-4.4, M-4.7, M-4.9,
 M-6.4, M-6.6 and M-6.7; every other subtask is completable from text, documentation, logs and
