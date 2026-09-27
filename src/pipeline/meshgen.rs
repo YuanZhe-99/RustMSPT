@@ -1356,6 +1356,11 @@ impl Pipeline for MeshGenPipeline {
                 ..Default::default()
             },
         );
+        // Invariant J1 (plan M-2.0): a shared face its two owners triangulate differently is a
+        // crack; no s08 is written for such a mesh.
+        if let Some(failure) = &cut.j1_failure {
+            return Err(RustMsptError::InvalidMesh(format!("S8: {failure}")));
+        }
         clock = stage_time("S8", clock);
         println!(
             "[S8/G6-2] cut: {} of {} cell(s) cut ({} A / {} B / {} C / {} D; {} by a welded sheet), {} cut node(s), {} -> {} tets, {} interface face(s)",

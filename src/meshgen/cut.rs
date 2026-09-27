@@ -201,6 +201,10 @@ pub struct LockedCurve {
 /// The result of S8.
 #[derive(Clone, Debug)]
 pub struct CutMesh {
+    /// Invariant J1 broken (plan M-2.0, MG-06): the first shared face two owners disagreed about -
+    /// its key, both constraint sets or both triangulations. The pipeline refuses the mesh when
+    /// this is set; a face whose two owners triangulate it differently is a crack.
+    pub j1_failure: Option<String>,
     /// S7's nodes followed by the cut nodes, in that order - a node index below
     /// `n_snapped` still means the same node it did in S5.
     pub nodes: Vec<Vec3>,
@@ -464,7 +468,7 @@ pub struct FaceCutState {
 #[allow(clippy::too_many_arguments)]
 fn check_face_cache(
     cache: &mut crate::meshgen::facecache::FaceTriCache,
-    conflicts: &mut usize,
+    conflicts: &mut (usize, Option<String>),
     loop_nodes: &[u32],
     n_parent_nodes: u32,
     keys: &[NodeKey],
@@ -493,6 +497,19 @@ fn check_face_cache(
         .unwrap_or_default();
     fingerprint.sort_unstable();
     fingerprint.dedup();
+    // **The constraint entities themselves (plan M-2.0, §7.3):** the trace points the face's walk
+    // carries beyond its three corners, as node ids, after a separator. Components alone let two
+    // owners that disagree about the *same* component's trace share a fingerprint, so the
+    // mismatch was never seen.
+    fingerprint.push(i64::MIN + 1);
+    let mut traced: Vec<i64> = loop_nodes
+        .iter()
+        .filter(|node| !corners.contains(node))
+        .map(|node| *node as i64)
+        .collect();
+    traced.sort_unstable();
+    traced.dedup();
+    fingerprint.extend(traced);
     // P-3.3's constraint set. A crease-fanned face is triangulated from a point no component's
     // chords name, so the components alone no longer describe what the face is constrained by;
     // without this a cell that fanned and a cell that took §5.2's table would present the same
@@ -541,18 +558,35 @@ fn check_face_cache(
     };
     let key = crate::meshgen::facecache::face_key(corners, keys);
     let owned = canonical(mine);
+    // §7.3's hard error (plan M-2.0): the two owners disagree about what crosses the face they
+    // share, or about how it is triangulated. The first one is recorded with both sides and the
+    // pipeline refuses the mesh; it used to be counted while both owners kept their own triangles,
+    // which is the crack J1 exists to prevent.
+    let fingerprint_copy = fingerprint.clone();
     match cache.get_or_insert(key, fingerprint, || owned.clone()) {
         Ok(cached) => {
             if cached != owned.as_slice() {
-                *conflicts += 1;
+                conflicts.0 += 1;
+                conflicts.1.get_or_insert_with(|| {
+                    format!(
+                        "invariant J1: shared face {:?} (corners {corners:?}) is triangulated two ways - \
+                         cached {cached:?}, this owner {owned:?}",
+                        key
+                    )
+                });
                 return None;
             }
             Some(cached.to_vec())
         }
-        // §7.3's hard error: the two cells disagree about what crosses the face they share.
-        // Counted rather than raised, because the caller falls back to its own triangles.
-        Err(_) => {
-            *conflicts += 1;
+        Err(mismatch) => {
+            conflicts.0 += 1;
+            conflicts.1.get_or_insert_with(|| {
+                format!(
+                    "invariant J1: shared face {:?} (corners {corners:?}) has two constraint sets - \
+                     cached {:?}, this owner {:?}",
+                    mismatch.face, mismatch.cached, fingerprint_copy
+                )
+            });
             None
         }
     }
@@ -1510,6 +1544,7 @@ pub fn cut_lattice(
     // nothing - because that is what says which computation has to be made common.
     let mut trace_faces: BTreeMap<u32, BTreeSet<[u32; 3]>> = BTreeMap::new();
     let mut mesh = CutMesh {
+        j1_failure: None,
         n_lattice_nodes: nodes.len() as u32,
         nodes,
         tets: Vec::new(),
@@ -3252,7 +3287,7 @@ pub fn cut_lattice(
         }
     }
     let mut face_cache = crate::meshgen::facecache::FaceTriCache::new();
-    let mut face_cache_conflicts = 0usize;
+    let mut face_cache_conflicts: (usize, Option<String>) = (0, None);
     // P-3.3's census, print-only: how many faces a locked curve pierces are nevertheless
     // *expressible*, i.e. take §5.2's table and get a straight chord drawn across the kink.
     // That is the crease damage's face-level signature, and its size decides whether the
@@ -5497,9 +5532,10 @@ pub fn cut_lattice(
              {} conflict(s) - a conflict is two cells disagreeing on a face they share (J1)",
             face_cache.len(),
             face_cache.hits,
-            face_cache_conflicts
+            face_cache_conflicts.0
         ));
     }
+    mesh.j1_failure = face_cache_conflicts.1;
     if !crease_faces.is_empty() {
         mesh.warnings.push(format!(
             "[CREASE-FACE] {} face(s) a locked curve pierces, of which {} are expressible \
@@ -9884,4 +9920,73 @@ fn fan_volume(soup: &[[u32; 3]], centre: Vec3, nodes: &[Vec3]) -> f64 {
             a.dot(b.cross(c)).abs() / 6.0
         })
         .sum()
+}
+
+#[cfg(test)]
+mod j1_tests {
+    use super::*;
+
+    fn setup() -> (Vec<Vec3>, Vec<NodeKey>) {
+        // a face (0, 1, 2) with two trace points 3 and 4 on its edges, and a spare node 5
+        let points = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.5, 0.0, 0.0),
+            Vec3::new(0.0, 0.5, 0.0),
+            Vec3::new(0.5, 0.5, 0.0),
+        ];
+        let keys = points
+            .iter()
+            .map(|p| crate::meshgen::predicates::node_key(*p, 1e-9))
+            .collect();
+        (points, keys)
+    }
+
+    /// Plan M-2.0 (MG-06): two owners of one face that disagree about its constraints are a hard
+    /// error - recorded with both sides - not a counter.
+    #[test]
+    fn a_constraint_mismatch_on_a_shared_face_is_recorded_as_a_j1_failure() {
+        let (points, keys) = setup();
+        let mut cache = crate::meshgen::facecache::FaceTriCache::new();
+        let mut conflicts: (usize, Option<String>) = (0, None);
+        let first = [[0u32, 3, 4], [3, 1, 4], [4, 1, 2]];
+        let got = check_face_cache(&mut cache, &mut conflicts, &[0, 3, 1, 2, 4], 3, &keys, &points, None, false, &first);
+        assert!(got.is_some() && conflicts.1.is_none());
+        // the second owner walks the same face with only one of the trace points
+        let second = [[0u32, 3, 2], [3, 1, 2]];
+        let got = check_face_cache(&mut cache, &mut conflicts, &[0, 3, 1, 2], 3, &keys, &points, None, false, &second);
+        assert!(got.is_none());
+        let failure = conflicts.1.expect("a J1 failure must be recorded");
+        assert!(failure.contains("constraint sets"), "{failure}");
+    }
+
+    #[test]
+    fn a_triangulation_mismatch_on_a_shared_face_is_recorded_as_a_j1_failure() {
+        let (points, keys) = setup();
+        let mut cache = crate::meshgen::facecache::FaceTriCache::new();
+        let mut conflicts: (usize, Option<String>) = (0, None);
+        let walk = [0u32, 3, 1, 2, 4];
+        let one = [[0u32, 3, 4], [3, 1, 4], [4, 1, 2]];
+        let other = [[0u32, 3, 4], [3, 1, 2], [3, 2, 4]];
+        check_face_cache(&mut cache, &mut conflicts, &walk, 3, &keys, &points, None, false, &one);
+        assert!(check_face_cache(&mut cache, &mut conflicts, &walk, 3, &keys, &points, None, false, &other).is_none());
+        assert!(conflicts.1.expect("recorded").contains("triangulated two ways"));
+    }
+
+    /// The second owner walks the face the other way round; that is the same face and the same
+    /// triangles, and must hit the cache, not report a conflict.
+    #[test]
+    fn a_shared_face_reached_with_reversed_winding_still_hits() {
+        let (points, keys) = setup();
+        let mut cache = crate::meshgen::facecache::FaceTriCache::new();
+        let mut conflicts: (usize, Option<String>) = (0, None);
+        let one = [[0u32, 3, 4], [3, 1, 4], [4, 1, 2]];
+        let reversed: Vec<[u32; 3]> = one.iter().map(|t| [t[0], t[2], t[1]]).collect();
+        check_face_cache(&mut cache, &mut conflicts, &[0, 3, 1, 2, 4], 3, &keys, &points, None, false, &one);
+        let got = check_face_cache(&mut cache, &mut conflicts, &[4, 2, 1, 3, 0], 3, &keys, &points, None, false, &reversed);
+        assert!(got.is_some(), "{:?}", conflicts.1);
+        assert_eq!(conflicts.0, 0);
+        assert_eq!(cache.hits, 1);
+    }
 }

@@ -1014,7 +1014,14 @@ exactly what M-1.7 changes.
   fold face is a spoke of a fan from an interned apex, i.e. two adjacent base triangles seen from
   the apex fold back to the same side: the piece is not star-shaped from its apex. Consistent
   with the hypothesis; the per-tet proof (orientation before `orient_positively`) is M-2's first
-  measurement. Owner: **M-2** — no fan may emit a tet the fan's precondition does
+  measurement. **Fixed 2026-09-26 (`b61c1fc`), ahead of M-2 because every later `[V3]`
+  acceptance depended on it:** both fans now wind the piece consistently and require every face to
+  take one orientation sign against the centre, declining the split otherwise (the whole-cell fan
+  of a convex lattice cell is always valid). a3: 466 → 0 folded faces (default), 1,382 → 0
+  (gated). The cost is where the gated path now declines: a3's containment 97.16 → 94.77 %. A
+  fan from one of the piece's own corners was tried and refuted (12 folds, an inverted tet).
+  Recovering the declined pieces without a fan - a constrained tetrahedralisation of a non-star
+  piece - is **M-2**'s — no fan may emit a tet the fan's precondition does
   not support, and M-3 cannot read "not worse" on `[V3]` until both paths are at zero.
 - **M-1.1. The matrix harness.** `run_acceptance.py` gains: a path selector that exists only until
   M-3 deletes it (the env var is passed through, never defaulted), retention of the mesher log and
@@ -1213,6 +1220,17 @@ exactly what M-1.7 changes.
   keeps its rows in Appendix D.1 for the record. *Tier T2 (the lattice) / T3 (geometry rev 1.7 and
   its verification). Multimodal: yes — the box-face wireframes set against the reference tool's
   own mesh, and the transition cutaways; the requirement is a visual one.*
+  **Status 2026-09-26 — landed (`17e5a9d`).** `CHECKERBOARD` and Rule T5 (`case_plain`) in
+  `lattice.rs`, `CellTemplate::Plain`, budget `5·N_plain + 48·N_fan`; geometry rev 1.7 (§2.2–§2.4,
+  §3.4–§3.7, §14 [12], D-44). T1's tests pass unedited; four new unit tests and a uniform-block
+  symmetry test; the quality gate reads plain `54.736°`, fan `45.000°` pre-snap exactly as (c)
+  predicted. **Visual acceptance (R9):** the box face of TestCaseIntersect1 at 17³ shows the same X
+  pattern as the reference tool's own `test_mesh_final.vtu` where the old lattice drew one
+  diagonal direction everywhere, and a z = 0.5 cutaway through a3's refined region shows the X on
+  both levels and across the transition with no T-junction (`data/output/m17/front3.png`,
+  `cut2.png`). R-P2: a1's s05/s08 are identical at 1 and 8 threads. Reference case 1 at its own
+  resolution: 153,636 → 131,396 tets (0.43× → 0.37× the reference), corner share 93.07 → 95.24 %.
+  The nine-case matrix on both paths is being re-run against M-1.8's row.
 - **M-1.8. Resolution as a background and a maximum level — the ladder, given (R-E4, the owner's
   requirement of 2026-09-25; S-54; §6.2 item 18).** Today the bounds are two fractions of the
   domain diagonal, `sizing.h_max_frac` and `sizing.h_min_frac` (`src/config/meshgen.rs:106–122`),
@@ -1306,6 +1324,22 @@ exactly what M-1.7 changes.
   updated in the same change. *Tier T2. Multimodal: yes (R9) — M-1.9's set on the nine cases,
   unchanged with the keys absent; on the reference cases, the particle-contact curves before and
   after the ladder moves.*
+  **Status 2026-09-26 — landed (`b61c1fc`, `d0c6985`).** `sizing.background` / `sizing.max_level`
+  / `inputs[].max_level` in `config/meshgen.rs` (`MeshGenParams::resolution`), the root at
+  `h_bg·2^m` (`SizingOptions::root_size`) with a touch tolerance only under the ladder, per-input
+  floors (`SizingOptions::component_floor`, input `i` = component `i + 1`, a shared source takes
+  the finest floor), `[S4/RES]`. Verified: with the keys absent a3's s05 is byte-identical apart
+  from `ConfigHash`; stating a3's realised ladder (`cells: 16`, `L = 2`) gives the same mesh as
+  fractions equal to its `h_max`/`h_min` — the difference from the legacy fractions is entirely
+  the two consumers that read `h_min` (`lfs_floor`, 51,407 → 76,560 LFS sources) and `h_max`
+  (the curve target), which (d) anticipates; `[20, 20, 12]` on a 1×1×0.6 box tiles with zero
+  overhang, `[20, 20, 10]` is rejected naming `[20, 20, 12]` and `[17, 17, 10]`, 17³ at `L = 2`
+  and a uniform `L = 0` build, all with no leak, no hanging node, no node outside the box and the
+  box filled (their only `[V3]` finding was MG-15, since fixed); a cube at level 0 beside a sphere
+  at level 2 cuts a3's leaves 13,070 → 12,342 with the intersection curve still at level 2.
+  `run_reference.py` reads `*RVE_CORNERS`/`*NUM_ELEMENT`/`*SAMR_LEVEL` and maps each section's
+  level onto its `particleN.stl`. Eight negative/positive config tests. Open: the §2.3 table on all
+  three reference cases, both paths.
 - **M-1.9. The focus-region render harness (R9, the owner's instruction of 2026-09-26).**
   `data/fixtures/meshgen/acceptance/render_focus.py`, run on a case's output directory: reads the
   s02 arranged snapshot's curve cells (`CurveKind` 0 sharp, 2 intersection; box curves skipped),
@@ -1372,6 +1406,15 @@ cell's boundary without being a trace point of that face, where no Steiner point
   triangle set — makes `cut_lattice` return `Err` and no `s08` is written; a shared face reached with
   reversed winding still hits; the matrix is unchanged to the byte. Lands before M-2.1, which relies
   on J1 being enforced. *Tier T2. Multimodal: no.*
+  **Status 2026-09-26 — landed.** `check_face_cache` records the first mismatch - constraint sets
+  or triangle sets - with the face key, the corners and both sides in `CutMesh::j1_failure`, and the
+  pipeline refuses the mesh before `s08` is written. The fingerprint now carries the face's traced
+  nodes (every walk node beyond its three corners) after the component set. Three unit tests
+  (`cut::j1_tests`): a constraint mismatch and a triangulation mismatch are recorded; the same
+  face walked in reverse still hits. On a3 and a6a, both paths, the strengthened fingerprint
+  still reports 0 conflicts (3,463 / 79 / 2,267 / 437 shared faces). Deviation from the text: the
+  failure is a field the pipeline turns into `Err`, not `cut_lattice`'s return type, so its eight
+  call sites keep their signature.
 - **M-2.1. Facet recovery by Steiner points on the constraint — prototype gate.** In
   `constrained_tets`, after edge removal stalls: (a) a facet edge that is not an edge of the
   tetrahedralisation and lies **strictly inside the cell** is split at its exact midpoint
