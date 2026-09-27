@@ -3351,10 +3351,65 @@ pub fn cut_lattice(
                     regions,
                     caps,
                 } => {
-                    // Tagged before the tets are pushed, so the recorded index is this cell's
-                    // first - the same convention §7.6's path uses.
+                    // Tagged against this cell's first tet - the same convention §7.6's path uses.
+                    // **A cap is tagged as the faces the cell actually emits.** A cap triangle
+                    // with a node exactly on one of its edges is split there by the tets, and the
+                    // unsplit triangle then belongs to no element: a3's `(7467, 24483, 36381)`,
+                    // with 36380 on the edge 7467-36381 once S2 stopped moving constructed points
+                    // off their facets - four `[V12]` side_elems failures, because the tet that
+                    // carried it was flat and `orient_positively` drops it below. Only surviving
+                    // tets count, and such a cap is replaced by their faces lying in its plane and
+                    // inside it.
+                    let first_tet = mesh.tets.len();
+                    let mut emitted_faces: BTreeSet<[u32; 3]> = BTreeSet::new();
+                    for tet in tets.iter().filter(|t| orient_positively(**t, &mesh.nodes).is_some()) {
+                        for slots in [[0usize, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]] {
+                            let mut f = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+                            f.sort_unstable();
+                            emitted_faces.insert(f);
+                        }
+                    }
                     for (triangle, component) in caps {
-                        pending_interfaces.push((mesh.tets.len(), triangle, component));
+                        let mut key = triangle;
+                        key.sort_unstable();
+                        if emitted_faces.contains(&key) {
+                            pending_interfaces.push((first_tet, triangle, component));
+                            continue;
+                        }
+                        if std::env::var_os("RUSTMSPT_CUT_DIAG").is_some() {
+                            eprintln!("[CAP-REPLACED] cell {index} cap {:?}", triangle);
+                        }
+                        let [a, b, c] = [
+                            mesh.nodes[triangle[0] as usize],
+                            mesh.nodes[triangle[1] as usize],
+                            mesh.nodes[triangle[2] as usize],
+                        ];
+                        let normal = b.sub(a).cross(c.sub(a));
+                        let area2 = normal.dot(normal);
+                        if area2 <= 0.0 {
+                            continue;
+                        }
+                        let scale = area2.sqrt();
+                        for f in &emitted_faces {
+                            let p = [
+                                mesh.nodes[f[0] as usize],
+                                mesh.nodes[f[1] as usize],
+                                mesh.nodes[f[2] as usize],
+                            ];
+                            let flat = p.iter().all(|q| {
+                                (normal.dot(q.sub(a)) / scale).abs() <= scale.sqrt() * 1.0e-9
+                            });
+                            if !flat {
+                                continue;
+                            }
+                            let centre = p[0].add(p[1]).add(p[2]).scale(1.0 / 3.0);
+                            let inside = [(a, b), (b, c), (c, a)].iter().all(|(u, v)| {
+                                normal.dot(v.sub(*u).cross(centre.sub(*u))) >= 0.0
+                            });
+                            if inside {
+                                pending_interfaces.push((first_tet, *f, component));
+                            }
+                        }
                     }
                     // **§7.5: one classification per sub-region, not per tet.** A region is a
                     // connected run of tets no constraint face separates, so every tet in it holds
@@ -5632,6 +5687,7 @@ pub fn cut_lattice(
         mesh.warnings
             .push(format!("{tag} {count} cell(s) {text}"));
     }
+    refresh_split_interfaces(&mut mesh);
     mesh
 }
 
@@ -6881,6 +6937,108 @@ pub fn collapsed_sheet_rim(
         })
         .map(|(edge, _)| edge)
         .collect()
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Keep the interface list true to the tets after a repair split an edge an interface face lies on.
+// Inputs: the cut mesh (tets, records, nodes, interfaces).
+// Returns: None.
+// Side effects: replaces each interface face no tet carries any more by its two halves at the node
+//   now on one of its edges, with side elements recomputed as `derive_interface` does; drops a
+//   face that cannot be so replaced, counting it under `RUSTMSPT_CUT_DIAG`.
+// Notes: The hanging-node repair splits every tet around an edge `(a, b)` at a node `q` on it, and
+//   refuses only when the face holding `q` is tagged - but another tagged face containing the same
+//   edge is split too. a3's `(7467, 24483, 36381)` became `(7467, 36380, 24483)` and
+//   `(36380, 36381, 24483)` while the interface list kept the original: four `[V12]` side_elems
+//   failures once S2 stopped moving constructed points off their facets.
+fn refresh_split_interfaces(mesh: &mut CutMesh) {
+    let mut carriers: BTreeMap<[u32; 3], SmallVec<[u32; 2]>> = BTreeMap::new();
+    let mut touching: BTreeMap<u32, SmallVec<[u32; 8]>> = BTreeMap::new();
+    for (at, tet) in mesh.tets.iter().enumerate() {
+        for node in tet {
+            touching.entry(*node).or_default().push(at as u32);
+        }
+        for slots in [[0usize, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]] {
+            let mut f = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+            f.sort_unstable();
+            carriers.entry(f).or_default().push(at as u32);
+        }
+    }
+    let key = |f: [u32; 3]| {
+        let mut k = f;
+        k.sort_unstable();
+        k
+    };
+    if mesh.interfaces.iter().all(|face| carriers.contains_key(&key(face.nodes))) {
+        return;
+    }
+    let side_elems = |face: [u32; 3], component: i32| -> Option<[i32; 2]> {
+        let owners = carriers.get(&key(face))?;
+        let (mut inside, mut outside) = (-1i32, -1i32);
+        for at in owners {
+            if mesh.records[*at as usize].side_of(component) == Side::Inside {
+                inside = *at as i32;
+            } else {
+                outside = *at as i32;
+            }
+        }
+        (inside >= 0 && outside >= 0).then_some([inside, outside])
+    };
+    let mut out: Vec<InterfaceFace> = Vec::with_capacity(mesh.interfaces.len());
+    let (mut replaced, mut lost) = (0usize, 0usize);
+    for face in &mesh.interfaces {
+        if carriers.contains_key(&key(face.nodes)) {
+            out.push(face.clone());
+            continue;
+        }
+        let n = face.nodes;
+        let mut done = false;
+        'edges: for slot in 0..3 {
+            let (a, b, c) = (n[slot], n[(slot + 1) % 3], n[(slot + 2) % 3]);
+            let mut candidates: BTreeSet<u32> = BTreeSet::new();
+            for at in touching.get(&c).map(|v| v.as_slice()).unwrap_or(&[]) {
+                let tet = mesh.tets[*at as usize];
+                if tet.contains(&a) || tet.contains(&b) {
+                    for x in tet {
+                        if x != a && x != b && x != c {
+                            candidates.insert(x);
+                        }
+                    }
+                }
+            }
+            for q in candidates {
+                let halves = [[a, q, c], [q, b, c]];
+                if face.kind != FACE_TAG_INTERFACE
+                    || !halves.iter().all(|h| carriers.contains_key(&key(*h)))
+                {
+                    continue;
+                }
+                let sides: Option<Vec<[i32; 2]>> =
+                    halves.iter().map(|h| side_elems(*h, face.component)).collect();
+                let Some(sides) = sides else { continue };
+                for (h, se) in halves.iter().zip(sides) {
+                    let mut nodes = *h;
+                    nodes.sort_by_key(|x| face.nodes.iter().position(|y| y == x).unwrap_or(3));
+                    out.push(InterfaceFace {
+                        nodes,
+                        component: face.component,
+                        kind: face.kind,
+                        side_elems: se,
+                    });
+                }
+                replaced += 1;
+                done = true;
+                break 'edges;
+            }
+        }
+        if !done {
+            lost += 1;
+        }
+    }
+    if std::env::var_os("RUSTMSPT_CUT_DIAG").is_some() {
+        println!("[G6-3] {replaced} interface face(s) re-split after the edge repair, {lost} dropped");
+    }
+    mesh.interfaces = out;
 }
 
 fn derive_interface(

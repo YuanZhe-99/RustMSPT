@@ -3545,15 +3545,20 @@ fn build_registry_and_nodes(
             .entry(node_key(point, weld_step))
             .or_insert(point);
     }
-    for proposal in proposals.values() {
-        let key = node_key(proposal.point, weld_step);
-        node_points.entry(key).or_insert_with(|| {
-            Vec3::new(
-                key.0 as f64 * weld_step,
-                key.1 as f64 * weld_step,
-                key.2 as f64 * weld_step,
-            )
-        });
+    // **The key is identity, not geometry** (numerics rev 1.3 §1.5, plan M-1.6 / MG-11). A
+    // constructed point used to take its key's grid coordinates, `key * weld_step`, which moves it
+    // off its own input facet by up to half a step: a3's cube face x = 0.5 (a lattice plane) is
+    // 0.5/sqrt(3) normalized, and its intersection-curve vertices came back at 0.5000084271289835 -
+    // a face no longer planar, crossed by its own lattice plane at a grazing angle, and every
+    // sliver, `[V9]` corner and `[V6]` step that follows. Each group of proposals sharing a key now
+    // takes the constructed point of its first member in canonical provenance order: identity is
+    // unchanged, the choice is a function of the provenances, and no point leaves its facet.
+    let mut groups_for_points: Vec<(&(i64, i64, i64), &Vec<IsectProv>)> =
+        proposal_groups.iter().map(|(key, aliases)| (key, aliases)).collect();
+    groups_for_points.sort_by(|left, right| left.0.cmp(right.0));
+    for (key, aliases) in groups_for_points {
+        let point = proposals[&aliases[0]].point;
+        node_points.entry(*key).or_insert(point);
     }
     let node_ids: BTreeMap<(i64, i64, i64), usize> = node_points
         .keys()

@@ -701,6 +701,8 @@ When inspecting code:
 
 - **When one stage learns a face is not a boundary, every stage that reads the geometry must learn it too.** S6 marked a8's buried faces inactive and S7 honoured it, while S8 read the classifier's full triangle list for its face traces and fragment clips - and cut cells along walls with the same material on both sides, for a whole plan phase. `restrict_to_active` fixed it in one line at the pipeline and bought gated a8 +0.34 points at 5.8 % fewer elements. When a mask exists, grep every consumer of the unmasked data.
 
+- **An identity key must never become a coordinate.** S2's registry keyed constructed points on a 1e-5 grid - correct for identity - and then *placed* them at `key * weld_step`, moving every intersection-curve vertex off its own facet. a3's cube face on a lattice plane came back 8.4e-6 off it, a6a's contacts grew fake 8e-6 gaps the sizing field chased: fixing that one assignment took gated a6a to 37 % fewer elements and a3 up 1.3 points. The plan's MG-11 had written the exact number (0.5000084271289835) as a refutation of a rule nobody meant to build - it was already built, one stage later. When a recorded "this would be wrong" number shows up in real output, look for the code that already does it.
+
 ## Reporting to the owner (standing rule, set 2026-08-16)
 
 Every substantial reply ends with a status block covering four things, in this order. It is not

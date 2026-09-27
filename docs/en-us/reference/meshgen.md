@@ -172,6 +172,7 @@ the shape. `s08_cut` is the first snapshot that fits the input.
 | `pierces_shared_by_an_edge` | `src/meshgen/cut.rs:9672` | The pierce entries two faces sharing an edge both report within `[V2]`'s duplicate-node bound (`DUPLICATE_NODE_FRAC`, 1e-6 of the diagonal); `curve_pierce_points` (now taking that bound) drops them for both faces, because such a point is on the edge and interning it per face made coincident hubs - a3\'s cube corner, 2.4e-8 off a checkerboard face diagonal, gave 17 duplicate nodes (`[V2]`) and the `[V9]` corners. A genuine near-edge pierce is reported by one face and kept. |
 | `face_on_facet_plane` | `src/meshgen/cdt.rs:4166` | Whether a mesh face lies on a constraint facet: every vertex a facet vertex within the facet's band, or any other node within `tol`. The band covers only the facet's own snapped vertices; extending it to other nodes counted a sliver lying along a bent facet as covering it (a8 cell 507267 read 1.416 coverage). Used by the coverage check, `regions_by_constraint` and interface attribution. |
 | `PointClassifier::restrict_to_active` | `src/meshgen/classify.rs:679` | After S6, makes `triangles_of` return only faces that bound material (S6's `active_face`), while the inside test keeps every face. S8's face traces and fragment clips no longer cut along faces buried in a self-intersecting component's own union: gated a8 on-surface 98.455 -> 98.796 %, tets -5.8 %, link-polygon refusals 733 -> 263. |
+| `refresh_split_interfaces` | `src/meshgen/cut.rs:6954` | After the hanging-node repair, replaces an interface face no tet carries any more by its two halves at the node now on one of its edges, side elements recomputed; the repair splits every tet around an edge, including another tagged face on it (a3: 4 `[V12]` side_elems failures). |
 | `facet_plane` | `src/meshgen/cdt.rs:3988` | A §7.4 constraint facet's unit normal, offset and the band within which a face lies ON it: the facet's own deviation from its plane (its rim is snapped to the face traces, §6.43) plus `tol`. Used by the facet-coverage check, `regions_by_constraint` and the gated path's interface attribution; before it, a facet bent by its snap had none of its own faces counted and 90 % of A-3's "interior is not covered" refusals were this artefact. |
 | `constrained_tets_with_steiner` | `src/meshgen/cdt.rs:3283` | Plan M-2.1 on the gated path: `constrained_tets`, then up to three rounds of Steiner points on the constraint - (a) the midpoint of each facet edge the tetrahedralisation lacks, unless both ends lie in one cell face plane (J1), accepted only when `intern` creates a NEW node; (b) facet-plane crossings of mesh edges inside the facet. On refusal the facets and the arena are restored, so the facet-split fan sees exactly what it would have without the pass. Edge class 114 -> 49 (A-3), 25 -> 2 (A-6a), 1,835 -> 1,454 (A-8). |
 | `NodeArena::truncate` | `src/meshgen/cdt.rs:115` | Drop every node interned after the first `len` (points, keys and key index); the Steiner pass's rollback. |
@@ -2003,6 +2004,17 @@ face - so a8's cells were cut along walls with the same material on both sides. 
 calls `restrict_to_active` after S6; the inside test is unchanged. Gated a8 on-surface 98.455 ->
 98.796 %, tets 1,466,500 -> 1,381,443, link-polygon refusals 733 -> 263, thin-tet 438 -> 171; the
 default path and every non-self-intersecting case are byte-identical.
+
+**S2 keeps constructed points on their facets (plan M-1.6).** `build_registry_and_nodes` gave a
+constructed intersection point its key's grid coordinates (`key * weld_step`), moving it off its
+own facet by up to half a step: a3's cube face x = 0.5 (a lattice plane) came back with
+intersection-curve vertices at 0.5000084271289835, and the limb/cube contacts of a6a/a6b carried
+8e-6-thin fake gaps the sizing field refined toward. The key is now identity only; each group of
+proposals sharing a key takes its first member's constructed point in canonical provenance order.
+Gated: a3 97.11 -> 98.51 %, a6a 99.924 -> 99.953 % at 37 % fewer tets, a6b -10 % tets, a8 98.445 ->
+98.894 % at -7.8 % tets; a2's element count unchanged. Default a3 95.09 -> 93.77 %, a6a 99.61 ->
+99.47 % (the path M-3 retires). Two consequences handled in S8: a cap whose carrying tet is flat is
+tagged as the surviving faces in its plane, and `refresh_split_interfaces` follows the edge repair.
 
 ### Welded sheet cuts (G6-5)
 

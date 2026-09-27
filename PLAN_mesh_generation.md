@@ -1127,6 +1127,20 @@ exactly what M-1.7 changes.
   to motion within the vertex's own facet plane. Not a knob. *Acceptance:* `[V2]` PASS on all twelve
   on the one path; `[V3]` and `[V13]` unchanged beyond `1e-5` relative; a2's element count unchanged
   (alignment preserved); every moved or merged point in the run report. *Tier T3. Multimodal: no.*
+  **Status 2026-09-27 — the root cause landed in S2, not S0.** a3's gated `[V9]` nodes sat at x =
+  0.5000084271289835 - the number (ii) above uses to refute quantisation at S0. It was already
+  happening one stage later: `build_registry_and_nodes` placed a constructed intersection point at
+  its key's grid coordinates, so every such point left its own facet by up to half a step
+  (criteria 1 and 2 above). The key is now identity only; a key group takes its first member's
+  constructed point in canonical provenance order. Full matrix (`data/output/acceptance_m27`),
+  gated: a3 97.11 → **98.51**, a6a 99.924 → **99.953** at **−37 % tets**, a6b 99.893 → 99.904 at
+  −10 %, a8 98.445 → **98.894** at −7.8 %, the rest equal; default: a3 95.09 → 93.77, a6a 99.61 →
+  99.47, a8 91.70 → 91.87. a2's element count unchanged (alignment preserved); `[V2]` PASS on all
+  nine, both paths; R-P2 held on a3. Two S8 consequences fixed with it: a cap whose carrying tet is
+  flat is tagged as the surviving faces in its plane, and `refresh_split_interfaces` re-splits an
+  interface face after the edge repair (a3 `[V12]`). Still open for M-1.6: the "every moved or
+  merged point reported" clause and the default path's a3/a6a regression (not pursued - M-3 retires
+  that path).
 - **M-1.7. The X-pattern lattice: the 5-tet parity checkerboard (R-E5, the owner's requirement of
   2026-09-25; D-9, decided the same day; S-53).** Every plain leaf instantiates geometry §2.2's
   table with the same `v0–v7` main diagonal (`lattice.rs:54–61`, applied with no reference to the
@@ -2176,7 +2190,7 @@ without the stated fallback.
 
 ## 11. Subtask rollup
 
-| ID | Subtask | Tier | Assignable models | Multimodal | Status (2026-09-27) |
+| ID | Subtask | Tier | Assignable models | Multimodal | Status (2026-09-28) |
 |---|---|---|---|---|---|
 | M-0.1 | As-built spec revision (geometry 1.6, numerics 1.3, contracts 1.3) — text half landed 2026-09-23 | T3 / T2 | Kimi K3 Max / GPT 5.6 Sol Xhigh; GLM 5.2 Max / GPT 5.6 Sol Medium | no | ◐ text half landed 2026-09-23; geometry rev 1.7 (M-1.7) recorded |
 | M-0.2 | Post-M-2/M-5 revision (geometry 1.8, numerics 1.4, contracts 1.4) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ waits on M-2/M-5 |
@@ -2186,7 +2200,7 @@ without the stated fallback.
 | M-1.3 | Time budgets | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ◐ per-stage wall times collected on both paths; budgets not set |
 | M-1.4 | P2 baseline at equal fidelity | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ |
 | M-1.5 | The P3 criterion: containment in the effective surface's facets (MG-02) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ● landed 2026-09-26 (`cont%`/`cover%`) |
-| M-1.6 | Conditioning and identity: the one-ULP pairs under MG-11's constraints (was M-4.1) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ |
+| M-1.6 | Conditioning and identity: the one-ULP pairs under MG-11's constraints (was M-4.1) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ◐ S2 keeps constructed points on their facets (gated a3 98.51 %, a6a −37 % tets); `[V2]` PASS all nine both paths; move/merge report and default-path a3 regression open |
 | M-1.7 | The X-pattern lattice: the 5-tet parity checkerboard, Rule T5, geometry rev 1.7 (R-E5, D-9 decided, S-53) | T2 / T3 | GLM 5.2 Max / GPT 5.6 Sol Medium; Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — box-face wireframes beside the reference tool's own mesh, transition cutaways | ● landed `17e5a9d`; cost measured 2026-09-27 (gated a1/a3/a8 on-surface fell), a1/a3 repaid by `a718767`; open: a8 −0.69, a7b −0.2, a6b −0.06 pt gated; default-path `[V9]` a3 closed (`pierces_shared_by_an_edge`, `[V2]` 17 → 0), a6a/a6b open (whole-cell fan apex on the limb edge; M-2.3) |
 | M-1.8 | Resolution as background × maximum level, given; per-input levels; the reference cases at their own resolution (R-E4, S-54, §6.2 item 18) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** (R9) — M-1.9's set, nine cases unchanged; reference-case contacts before/after | ◐ ladder, per-input levels, `run_reference.py` mapping landed; the §2.3 table on the three reference cases, both paths, open |
 | M-1.9 | Focus-region render harness: intersection curves, sharp edges/corners, thin regions, transitions, from the input; before/after diffs (R9) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — the contact sheets, and the two known defects they must show | ◐ input-vs-output comparison harness landed (R9); thin-region and transition views, runner call open |
