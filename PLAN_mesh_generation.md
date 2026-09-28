@@ -1685,7 +1685,7 @@ cell's boundary without being a trace point of that face, where no Steiner point
   tets); R-P2 held (a1, a4). Measured residue: on reference case 1, 379 of the 416 refused facets
   still have flat tets present at the facet check (`RUSTMSPT_FACET_DIAG` → `flat N`) - the next
   step, since removing them is what the "interior not covered" class now needs.
-  **Session end 2026-09-28: see `HANDOFF.md` at the repo root for the state and next steps.**
+  **Session end 2026-09-28: the state and next steps are in a separate handoff note kept outside git.**
 - **M-2.2. Boundary consistency: a facet vertex on the cell's boundary is a trace point.** The
   "hull carries a node the boundary has never heard of" class (a8 1,200 cells, 38.3 % of its
   stranded area) is the residue of record §6.43, which took it from 72 % of the population by making
@@ -2269,7 +2269,7 @@ without the stated fallback.
 
 ## 11. Subtask rollup
 
-| ID | Subtask | Tier | Assignable models | Multimodal | Status (2026-09-28, session end — see HANDOFF.md) |
+| ID | Subtask | Tier | Assignable models | Multimodal | Status (2026-09-28, session end) |
 |---|---|---|---|---|---|
 | M-0.1 | As-built spec revision (geometry 1.6, numerics 1.3, contracts 1.3) — text half landed 2026-09-23 | T3 / T2 | Kimi K3 Max / GPT 5.6 Sol Xhigh; GLM 5.2 Max / GPT 5.6 Sol Medium | no | ◐ text half landed 2026-09-23; geometry rev 1.7 (M-1.7) recorded |
 | M-0.2 | Post-M-2/M-5 revision (geometry 1.8, numerics 1.4, contracts 1.4) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ waits on M-2/M-5 |
