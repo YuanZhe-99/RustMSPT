@@ -1669,6 +1669,14 @@ cell's boundary without being a trace point of that face, where no Steiner point
   the hull edge's whole fan from a link vertex with the quad's other diagonal as the new hull: inert
   - a3 cell 3303's fan region is star-shaped from no link vertex, and the ones on the same cell face
   are coplanar with other hull faces there. Neither kept.
+  **Flat tets double-covering a facet, 2026-09-28.** Reference case 1's largest refusal ("interior
+  not covered", 45.6 % of its stranded area) dumped (`RUSTMSPT_PLC_CELL=1154`): facet [23, 8, 7, 26]
+  read `covered/want` 2.000 exactly, because M-2.1's Steiner midpoint 26 lies on edge 7–23 that the
+  Delaunay kept whole, leaving tets of volume 1e-22 and 8e-24 whose faces cover the facet twice.
+  `remove_flat_quad_tets` splits every tet around such an edge at the point (and 2-2-flips a flat
+  quad's pyramid to the other diagonal), guarded by hull, orientation and volume. Reference case 1
+  interior class 124 → 84, on-surface 93.67 → **94.94** (default 95.25); gated a1 94.80 → **95.91**
+  with `[V5]` WARN → PASS, a3 98.52 → **98.72**; the rest unchanged; R-P2 held.
 - **M-2.2. Boundary consistency: a facet vertex on the cell's boundary is a trace point.** The
   "hull carries a node the boundary has never heard of" class (a8 1,200 cells, 38.3 % of its
   stranded area) is the residue of record §6.43, which took it from 72 % of the population by making
@@ -2272,7 +2280,7 @@ without the stated fallback.
 | M-2.3 | Delete the whole-cell fan | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ blocked by M-2.1/M-2.2 |
 | M-2.4 | Retire `contact_chamfered_by` | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ◐ counted (a6a 895, a6b 2,396 gated); blocked: the limb's contact strip is thinner than a lattice face, so the faces it declares are genuine rim chamfer |
 | M-2.5 | P3 residual audit | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — the same cutaways | ○ |
-| M-3.1 | The control | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ◐ nine matrix cases: FAIL sets equal, gated `[V13]` better everywhere; M-1.3/M-1.4 landed; open on the reference cases: gated case 3 `[V9]` (one whole-cell-fan node) and case 1 `[V13]` (93.67 against 95.25 %) |
+| M-3.1 | The control | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ◐ nine matrix cases: FAIL sets equal, gated `[V13]` better everywhere; M-1.3/M-1.4 landed; open on the reference cases: gated case 3 `[V9]` (one whole-cell-fan node) and case 1 `[V13]` (94.94 against 95.25 %, after the flat-tet fix) |
 | M-3.2 | Delete the five handles | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ○ |
 | M-3.3 | Refactor `cut_lattice`, tests for the trace and the junction module | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ |
 | M-4.0a | One X per connected closed component; the source map (MG-04) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ |

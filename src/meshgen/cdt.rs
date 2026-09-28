@@ -3314,6 +3314,173 @@ fn recover_facet_edges(
 }
 
 // AI-FUNC-SUMMARY:
+// Purpose: Remove flat tets whose four vertices are coplanar, by flipping one side's two neighbours
+//   to the flat tet's other diagonal and deleting it.
+// Inputs: the tets, the points, and the relative thinness bound.
+// Returns: the tets with every such flat tet removed where the flip is valid.
+// Side effects: None.
+// Notes: A flat tet (a, b, c, d) has two faces on each side of its plane, one side's pair using
+//   diagonal ac and the other's bd. If the two tets across one pair share their apex u, they form a
+//   pyramid over the quad, and a 2-2 flip retriangulates it with the other diagonal; the flat tet's
+//   faces on that side then coincide with its faces on the other, and it is deleted. Valid exactly
+//   when both new tets are strictly positively oriented and the pyramid's volume is preserved.
+fn remove_flat_quad_tets(tets: &[[u32; 4]], points: &[Vec3], height: f64) -> Vec<[u32; 4]> {
+    let volume = |t: &[u32; 4]| {
+        crate::meshgen::predicates::tet_signed_volume(
+            points[t[0] as usize],
+            points[t[1] as usize],
+            points[t[2] as usize],
+            points[t[3] as usize],
+        )
+    };
+    let longest = |t: &[u32; 4]| {
+        let mut l = 0.0f64;
+        for a in 0..4 {
+            for b in a + 1..4 {
+                let d = points[t[b] as usize].sub(points[t[a] as usize]);
+                l = l.max(d.dot(d).sqrt());
+            }
+        }
+        l
+    };
+    let flat = |t: &[u32; 4]| {
+        let l = longest(t);
+        volume(t).abs() <= l * l * height
+    };
+    let mut tets = tets.to_vec();
+    let mut skip: std::collections::BTreeSet<[u32; 4]> = std::collections::BTreeSet::new();
+    for _round in 0..tets.len() {
+        let Some(at) = tets.iter().position(|t| flat(t) && !skip.contains(t)) else { break };
+        let f = tets[at];
+        let mut face_of: BTreeMap<[u32; 3], Vec<usize>> = BTreeMap::new();
+        for (i, t) in tets.iter().enumerate() {
+            for face in tet_faces(*t) {
+                let mut k = face;
+                k.sort_unstable();
+                face_of.entry(k).or_default().push(i);
+            }
+        }
+        let neighbour = |face: [u32; 3]| -> Option<usize> {
+            let mut k = face;
+            k.sort_unstable();
+            face_of.get(&k)?.iter().copied().find(|i| *i != at)
+        };
+        let mut done = false;
+        // **A vertex on an opposite edge: split the edge's ring.** A Steiner midpoint inserted on a
+        // facet edge that the Delaunay kept whole leaves flat tets holding the midpoint on that
+        // edge (reference case 1, cell 1154: node 26 on edge 7-23, tets of volume 1e-22 and 8e-24,
+        // the facet read covered twice). Every tet around the edge that lacks the point is split
+        // there, the flat ones that hold it are dropped, and the result must preserve volume with
+        // every new tet strictly oriented.
+        'collinear: for (pa, pb) in [(0usize, 1usize), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)] {
+            let (a, b) = (f[pa], f[pb]);
+            for v in f.iter().copied().filter(|v| *v != a && *v != b) {
+                let (pa_, pb_, pv) = (points[a as usize], points[b as usize], points[v as usize]);
+                let along = pb_.sub(pa_);
+                let len2 = along.dot(along);
+                if len2 <= 0.0 {
+                    continue;
+                }
+                let t = pv.sub(pa_).dot(along) / len2;
+                let off = pv.sub(pa_).sub(along.scale(t));
+                if !(t > 1.0e-9 && t < 1.0 - 1.0e-9 && off.dot(off) <= len2 * height * height) {
+                    continue;
+                }
+                let ring: Vec<usize> = (0..tets.len())
+                    .filter(|i| tets[*i].contains(&a) && tets[*i].contains(&b))
+                    .collect();
+                let mut before = 0.0;
+                let mut after = 0.0;
+                let mut pieces: Vec<[u32; 4]> = Vec::new();
+                let mut ok = true;
+                for i in &ring {
+                    let t0 = tets[*i];
+                    before += volume(&t0).abs();
+                    if t0.contains(&v) {
+                        continue;
+                    }
+                    let first: [u32; 4] = t0.map(|x| if x == b { v } else { x });
+                    let second: [u32; 4] = t0.map(|x| if x == a { v } else { x });
+                    for piece in [first, second] {
+                        let pv_ = volume(&piece);
+                        let l = longest(&piece);
+                        if pv_.abs() <= l * l * height || (pv_ > 0.0) != (volume(&t0) > 0.0) {
+                            ok = false;
+                        }
+                        after += pv_.abs();
+                        pieces.push(piece);
+                    }
+                }
+                if !ok || (after - before).abs() > before.max(f64::MIN_POSITIVE) * 1.0e-9 {
+                    continue;
+                }
+                let mut next: Vec<[u32; 4]> = tets
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| !ring.contains(i))
+                    .map(|(_, t)| *t)
+                    .collect();
+                next.extend(pieces);
+                tets = next;
+                done = true;
+                break 'collinear;
+            }
+        }
+        if done {
+            continue;
+        }
+        // The two diagonals of the quad are the two vertex pairs not sharing a flat-tet face...
+        // every pair of f's vertices is an edge; try each split of f into two faces sharing an edge.
+        'pairs: for (p, q) in [(0usize, 1usize), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)] {
+            let (x, y) = (f[p], f[q]);
+            let others: Vec<u32> = f.iter().copied().filter(|v| *v != x && *v != y).collect();
+            let (m, n) = (others[0], others[1]);
+            // Faces (x, y, m) and (x, y, n) on one side share edge xy.
+            let (Some(t1), Some(t2)) = (neighbour([x, y, m]), neighbour([x, y, n])) else { continue };
+            if t1 == t2 {
+                continue;
+            }
+            let apex = |t: usize, face: [u32; 3]| tets[t].iter().copied().find(|v| !face.contains(v));
+            let (Some(u1), Some(u2)) = (apex(t1, [x, y, m]), apex(t2, [x, y, n])) else { continue };
+            if u1 != u2 {
+                continue;
+            }
+            // Pyramid over the quad with apex u: retriangulate with diagonal mn.
+            let before = volume(&tets[t1]).abs() + volume(&tets[t2]).abs();
+            let new1 = [m, n, x, u1];
+            let new2 = [m, n, y, u1];
+            let (v1, v2) = (volume(&new1), volume(&new2));
+            let (l1, l2) = (longest(&new1), longest(&new2));
+            if v1.abs() <= l1 * l1 * height || v2.abs() <= l2 * l2 * height {
+                continue;
+            }
+            if (v1.abs() + v2.abs() - before).abs() > before.max(f64::MIN_POSITIVE) * 1.0e-9 {
+                continue;
+            }
+            let orient = |t: [u32; 4], like: [u32; 4]| {
+                if (volume(&t) > 0.0) != (volume(&like) > 0.0) { [t[0], t[2], t[1], t[3]] } else { t }
+            };
+            let (o1, o2) = (orient(new1, tets[t1]), orient(new2, tets[t2]));
+            let mut next: Vec<[u32; 4]> = tets
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != at && *i != t1 && *i != t2)
+                .map(|(_, t)| *t)
+                .collect();
+            next.push(o1);
+            next.push(o2);
+            tets = next;
+            done = true;
+            break 'pairs;
+        }
+        if !done {
+            skip.insert(f);
+        }
+    }
+    tets
+}
+
+// AI-FUNC-SUMMARY:
 // Purpose: Remove tets thinner than a bound by edge removal, without touching protected edges.
 // Inputs: the tets, the points, the thinness bound as a height, and the edges that must not go.
 // Returns: the tets with as many thin ones removed as edge removal can manage.
@@ -3733,6 +3900,22 @@ fn constrained_tets_detailed(
     // failure would have made the second one unmeasurable: on a8 only 24 of 4,377 cells reach the
     // facet test if the boundary test can return early, so "facet recovery is never needed" would
     // have been a statement about 24 cells dressed up as one about the population.
+    // **A flat tet on a quad facet covers the facet twice.** Its four vertices are the quad's, so its
+    // faces are BOTH triangulations of it, and the facet reads `covered/want` 2.000 exactly -
+    // reference case 1's largest refusal class. The neighbours on one side use one diagonal and the
+    // neighbours on the other the other; flipping one side's pair to the other diagonal makes the
+    // flat tet's two sides coincide, and it is then removed. Hull unchanged by construction; kept
+    // only when every new tet orients and the volume is preserved.
+    {
+        let flattened = remove_flat_quad_tets(&tets, points, tol);
+        if flattened.len() < tets.len() {
+            let after = hull_of(&faces_of(&flattened));
+            if after == outer {
+                tets = flattened;
+                carried = faces_of(&tets);
+            }
+        }
+    }
     let boundary_ok = outer == frozen;
     // **Which KIND of mismatch, because they need different cures.** The cell's region is a convex
     // tet, so `delaunay_tets` puts on its hull exactly the points that lie on the tet's surface. If
@@ -3805,6 +3988,19 @@ fn constrained_tets_detailed(
             }
             let area2 = p[1].sub(p[0]).cross(p[2].sub(p[0]));
             covered += area2.dot(normal).abs() * 0.5;
+            if DIAG_CELL.with(|c| c.get()) {
+                let owners: Vec<(usize, f64)> = tets
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, t)| face.iter().all(|v| t.contains(v)))
+                    .map(|(i, t)| {
+                        (i, crate::meshgen::predicates::tet_signed_volume(
+                            points[t[0] as usize], points[t[1] as usize],
+                            points[t[2] as usize], points[t[3] as usize]))
+                    })
+                    .collect();
+                eprintln!("[COVER] facet {:?} face {:?} area {:.3e} owners {:?}", facet, face, area2.dot(normal).abs() * 0.5, owners);
+            }
         }
         if (covered - want_area).abs() > want_area * 1.0e-9 {
             facets_ok = false;
@@ -3918,7 +4114,8 @@ fn constrained_tets_detailed(
                         }
                     }
                     eprintln!(
-                        "[FACET-DIAG] n {} dev/tol {:.3e} covered/want {:.6} crossing {} reflex {}",
+                        "[FACET-DIAG] {:?} n {} dev/tol {:.3e} covered/want {:.6} crossing {} reflex {}",
+                        facet,
                         facet.len(),
                         dev / tol,
                         covered / want_area,
