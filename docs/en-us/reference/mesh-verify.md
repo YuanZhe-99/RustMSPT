@@ -192,7 +192,7 @@ Scripts under `data/fixtures/meshgen/acceptance/` (all read a finished work dire
 Print-only diagnostics used with them (they change what is printed, never what is meshed):
 `RUSTMSPT_CUT_DIAG`, `RUSTMSPT_JCT_DIAG`, `RUSTMSPT_PLC_DIAG`, `RUSTMSPT_PLC_CSV=<path>` (per-cell
 §7.4 census), `RUSTMSPT_PLC_CELL=<lattice index>` (turns the cdt facet/hull/flat-tet dumps on for one
-cell), `RUSTMSPT_FACET_DIAG`, `RUSTMSPT_HULL_DIAG`, `RUSTMSPT_THIN_DIAG`, `RUSTMSPT_TIME_STAGES`.
+cell), `RUSTMSPT_FACET_DIAG`, `RUSTMSPT_FLAT_DIAG`, `RUSTMSPT_HULL_DIAG`, `RUSTMSPT_THIN_DIAG`, `RUSTMSPT_TIME_STAGES`.
 
 ## Fixture suite
 

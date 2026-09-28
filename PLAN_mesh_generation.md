@@ -1685,7 +1685,26 @@ cell's boundary without being a trace point of that face, where no Steiner point
   tets); R-P2 held (a1, a4). Measured residue: on reference case 1, 379 of the 416 refused facets
   still have flat tets present at the facet check (`RUSTMSPT_FACET_DIAG` → `flat N`) - the next
   step, since removing them is what the "interior not covered" class now needs.
-  **Session end 2026-09-28: the state and next steps are in a separate handoff note kept outside git.**
+  **Baseline re-established on a new machine, 2026-09-28** (`data/output/acceptance_base`, build of
+  `111b674`): the nine cases on both paths reproduce the previous session's on-surface shares to the
+  last printed digit and the same FAIL sets; the three reference cases likewise (gated 94.956 /
+  97.121 / 99.577 %, default 95.248 / 96.097 / 96.831 %, gated tets 0.96× / 0.74× / 1.34×);
+  `cargo test --release` 677 passed. The private handoff note is retired: this document is the only
+  progress record from here on.
+  **Flat tets removed by edge removal, 2026-09-28 (landed).** `RUSTMSPT_FLAT_DIAG` (print-only)
+  classified the flat tets `remove_flat_quad_tets` skipped on reference case 1: interior ones with
+  four distinct neighbour apexes, and ones lying on a cell-face quad whose interior neighbours take
+  the other diagonal with two different apexes. A fourth move removes one of the flat tet's edges
+  that is neither a hull nor a facet edge (`remove_edge`), kept only when the cell's flat count
+  strictly falls; the caller accepts the pass by flat count instead of tet count (a ring split or an
+  edge removal can add tets, and the old `len() <` guard discarded them). Reference case 1 refused
+  facets 406 → 226, gated on-surface 94.956 → **95.346 %** (default 95.248: **M-3.1's case-1 `[V13]`
+  gap is closed**), case 2 97.121 → 97.439, case 3 99.577 → 99.618; gated a1 95.911 → **96.882 %**
+  (no clusters ≥ 10 % left; visually four yellow patches on the sphere gone), the other eight cases
+  equal, the default path unchanged everywhere, FAIL sets unchanged, R-P2 byte-identical (a1, a3),
+  677 tests pass (`data/output/acceptance_m21e`). Residue: the cell-face class - removing the
+  interior diagonal finds no valid link triangulation or makes another flat tet, because other
+  boundary points of the same cell face are coplanar with the ring.
 - **M-2.2. Boundary consistency: a facet vertex on the cell's boundary is a trace point.** The
   "hull carries a node the boundary has never heard of" class (a8 1,200 cells, 38.3 % of its
   stranded area) is the residue of record §6.43, which took it from 72 % of the population by making
@@ -2269,7 +2288,7 @@ without the stated fallback.
 
 ## 11. Subtask rollup
 
-| ID | Subtask | Tier | Assignable models | Multimodal | Status (2026-09-28, session end) |
+| ID | Subtask | Tier | Assignable models | Multimodal | Status (2026-09-28) |
 |---|---|---|---|---|---|
 | M-0.1 | As-built spec revision (geometry 1.6, numerics 1.3, contracts 1.3) — text half landed 2026-09-23 | T3 / T2 | Kimi K3 Max / GPT 5.6 Sol Xhigh; GLM 5.2 Max / GPT 5.6 Sol Medium | no | ◐ text half landed 2026-09-23; geometry rev 1.7 (M-1.7) recorded |
 | M-0.2 | Post-M-2/M-5 revision (geometry 1.8, numerics 1.4, contracts 1.4) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ waits on M-2/M-5 |
@@ -2284,12 +2303,12 @@ without the stated fallback.
 | M-1.8 | Resolution as background × maximum level, given; per-input levels; the reference cases at their own resolution (R-E4, S-54, §6.2 item 18) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** (R9) — M-1.9's set, nine cases unchanged; reference-case contacts before/after | ● ladder, per-input levels and the reference cases on both paths at their own resolution (gated 0.96× / 0.74× / 1.34× the reference's tets) |
 | M-1.9 | Focus-region render harness: intersection curves, sharp edges/corners, thin regions, transitions, from the input; before/after diffs (R9) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — the contact sheets, and the two known defects they must show | ◐ input-vs-output comparison harness landed (R9); thin-region and transition views, runner call open |
 | M-2.0 | J1 fingerprint mismatch is a hard error; fingerprint = constraint entity ids (MG-06) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ● landed `9b9c1a2` |
-| M-2.1 | Facet recovery by Steiner points on the constraint — gate | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — cutaway renders at a3's cube edges and an a8 strut junction, before/after | ◐ facet band (`3198276`), Steiner with weld guard and rollback (`691aaed`), lexicographic boundary recovery (`a718767`), flat-tet removal (edge split / pyramid flip / cavity re-cone, `cad6440`+), the composite 2-3 + removal, near-duplicate adoption (gated `[V2]` PASS on all nine) the facet-vertex-only band (gated a6a `[V9]` PASS) and buried faces out of S8 (gated a8 98.80 %, −5.8 % tets) landed on the gated path; GO gate unmet on a8 (edge class 1,835 → 1,462); gated a8 98.445 % against 99.134 % on the old lattice |
+| M-2.1 | Facet recovery by Steiner points on the constraint — gate | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — cutaway renders at a3's cube edges and an a8 strut junction, before/after | ◐ flat-tet edge removal (reference case 1 406 → 226 refused facets, gated 95.346 %, a1 96.882 %); facet band (`3198276`), Steiner with weld guard and rollback (`691aaed`), lexicographic boundary recovery (`a718767`), flat-tet removal (edge split / pyramid flip / cavity re-cone, `cad6440`+), the composite 2-3 + removal, near-duplicate adoption (gated `[V2]` PASS on all nine) the facet-vertex-only band (gated a6a `[V9]` PASS) and buried faces out of S8 (gated a8 98.80 %, −5.8 % tets) landed on the gated path; GO gate unmet on a8 (edge class 1,835 → 1,462); gated a8 98.445 % against 99.134 % on the old lattice |
 | M-2.2 | Boundary consistency: facet vertices on the cell boundary are trace points | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ next after a8 analysis |
 | M-2.3 | Delete the whole-cell fan | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ blocked by M-2.1/M-2.2 |
 | M-2.4 | Retire `contact_chamfered_by` | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ◐ counted (a6a 895, a6b 2,396 gated); blocked: the limb's contact strip is thinner than a lattice face, so the faces it declares are genuine rim chamfer |
 | M-2.5 | P3 residual audit | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — the same cutaways | ○ |
-| M-3.1 | The control | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ◐ nine matrix cases: FAIL sets equal, gated `[V13]` better everywhere; M-1.3/M-1.4 landed; open on the reference cases: gated case 3 `[V9]` (one whole-cell-fan node) and case 1 `[V13]` (94.96 against 95.25 %) |
+| M-3.1 | The control | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ◐ nine matrix cases: FAIL sets equal, gated `[V13]` better everywhere; M-1.3/M-1.4 landed; case 1 `[V13]` closed 2026-09-28 (95.346 against 95.248 %); open: gated reference case 3 `[V9]` (one whole-cell-fan node) |
 | M-3.2 | Delete the five handles | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ○ |
 | M-3.3 | Refactor `cut_lattice`, tests for the trace and the junction module | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ |
 | M-4.0a | One X per connected closed component; the source map (MG-04) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ |

@@ -173,7 +173,7 @@ the shape. `s08_cut` is the first snapshot that fits the input.
 | `face_on_facet_plane` | `src/meshgen/cdt.rs:4462` | Whether a mesh face lies on a constraint facet: every vertex a facet vertex within the facet's band, or any other node within `tol`. The band covers only the facet's own snapped vertices; extending it to other nodes counted a sliver lying along a bent facet as covering it (a8 cell 507267 read 1.416 coverage). Used by the coverage check, `regions_by_constraint` and interface attribution. |
 | `PointClassifier::restrict_to_active` | `src/meshgen/classify.rs:679` | After S6, makes `triangles_of` return only faces that bound material (S6's `active_face`), while the inside test keeps every face. S8's face traces and fragment clips no longer cut along faces buried in a self-intersecting component's own union: gated a8 on-surface 98.455 -> 98.796 %, tets -5.8 %, link-polygon refusals 733 -> 263. |
 | `refresh_split_interfaces` | `src/meshgen/cut.rs:6975` | After the hanging-node repair, replaces an interface face no tet carries any more by its two halves at the node now on one of its edges, side elements recomputed; the repair splits every tet around an edge, including another tagged face on it (a3: 4 `[V12]` side_elems failures). |
-| `remove_flat_quad_tets` | `src/meshgen/cdt.rs:3327` | Removes flat tets from a constrained tetrahedralisation before the facet check: a vertex lying on an opposite edge splits every tet around that edge (a Steiner midpoint the Delaunay kept whole), and a flat quad tet is removed by 2-2-flipping one side\'s pyramid to the other diagonal; otherwise the flat tet and its face-neighbours are re-coned from one of their vertices with the cavity boundary kept (star test, no flat tet, volume). Such a tet makes a facet read covered twice. Reference case 1 interior class 124 -> 84, gated a1 94.80 -> 95.91 %, a3 +0.2 points. |
+| `remove_flat_quad_tets` | `src/meshgen/cdt.rs:3328` | Removes flat tets from a constrained tetrahedralisation before the facet check: a vertex lying on an opposite edge splits every tet around that edge (a Steiner midpoint the Delaunay kept whole), and a flat quad tet is removed by 2-2-flipping one side\'s pyramid to the other diagonal; otherwise the flat tet and its face-neighbours are re-coned from one of their vertices with the cavity boundary kept (star test, no flat tet, volume); failing all three, one of the flat tet's edges that neither the hull nor a facet uses is removed (`remove_edge`), kept only when the flat count falls. Such a tet makes a facet read covered twice. Reference case 1 interior class 124 -> 84, gated a1 94.80 -> 95.91 %, a3 +0.2 points; the edge-removal move: reference case 1 refused facets 406 -> 226, gated on-surface 94.956 -> 95.346 %, a1 95.911 -> 96.882 %. |
 | `facet_plane` | `src/meshgen/cdt.rs:4493` | A §7.4 constraint facet's unit normal, offset and the band within which a face lies ON it: the facet's own deviation from its plane (its rim is snapped to the face traces, §6.43) plus `tol`. Used by the facet-coverage check, `regions_by_constraint` and the gated path's interface attribution; before it, a facet bent by its snap had none of its own faces counted and 90 % of A-3's "interior is not covered" refusals were this artefact. |
 | `constrained_tets_with_steiner` | `src/meshgen/cdt.rs:3666` | Plan M-2.1 on the gated path: `constrained_tets`, then up to three rounds of Steiner points on the constraint - (a) the midpoint of each facet edge the tetrahedralisation lacks, unless both ends lie in one cell face plane (J1), accepted only when `intern` creates a NEW node; (b) facet-plane crossings of mesh edges inside the facet. On refusal the facets and the arena are restored, so the facet-split fan sees exactly what it would have without the pass. Edge class 114 -> 49 (A-3), 25 -> 2 (A-6a), 1,835 -> 1,454 (A-8). |
 | `NodeArena::truncate` | `src/meshgen/cdt.rs:126` | Drop every node interned after the first `len` (points, keys and key index); the Steiner pass's rollback. |
@@ -2036,6 +2036,21 @@ reference case 1 cell 1730's flat quad has four different neighbour apexes. Marg
 the "correct by construction" standard: reference case 1 interior class 84 -> 82, on-surface
 94.94 -> 94.96 %, the nine-case matrix unchanged. Most refused facets on that case still carry
 flat tets (`RUSTMSPT_FACET_DIAG` prints `flat N`, 379 of 416), which is the next step.
+
+That step, 2026-09-28: classifying the flat tets `remove_flat_quad_tets` skipped (`RUSTMSPT_FLAT_DIAG`,
+print-only, one `[FLAT-CLASS]` line per skip with its hull-face count, distinct neighbour apexes
+and what `remove_edge` answers for each of its edges) found two populations - flat tets deep in
+the cell with four different neighbour apexes, and flat tets lying on a quad of a cell face whose
+interior neighbours use the other diagonal with two different apexes. Both are an edge nothing
+needs, so a fourth move removes one of the flat tet's edges that is neither a hull edge nor a facet
+edge, kept only when the cell's flat count strictly falls; the caller now accepts the pass by flat
+count rather than by tet count, since this move and the ring split can add tets. Reference case 1:
+refused facets 406 -> 226 (flat-carrying 369 -> 177), gated on-surface 94.956 -> **95.346 %**
+(default 95.248), case 2 97.121 -> 97.439, case 3 99.577 -> 99.618; gated a1 95.911 -> **96.882 %**,
+the other eight cases and the whole default path unchanged; FAIL sets unchanged; R-P2 held. What is
+left is mostly the cell-face class: removing the interior diagonal either finds no valid link
+triangulation or creates another flat tet, because other boundary points of the same cell face are
+coplanar with the ring.
 
 ### Welded sheet cuts (G6-5)
 

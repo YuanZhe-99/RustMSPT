@@ -3314,17 +3314,23 @@ fn recover_facet_edges(
 }
 
 // AI-FUNC-SUMMARY:
-// Purpose: Remove flat tets whose four vertices are coplanar, by flipping one side's two neighbours
-//   to the flat tet's other diagonal and deleting it.
-// Inputs: the tets, the points, and the relative thinness bound.
-// Returns: the tets with every such flat tet removed where the flip is valid.
-// Side effects: None.
-// Notes: A flat tet (a, b, c, d) has two faces on each side of its plane, one side's pair using
-//   diagonal ac and the other's bd. If the two tets across one pair share their apex u, they form a
-//   pyramid over the quad, and a 2-2 flip retriangulates it with the other diagonal; the flat tet's
-//   faces on that side then coincide with its faces on the other, and it is deleted. Valid exactly
-//   when both new tets are strictly positively oriented and the pyramid's volume is preserved.
-fn remove_flat_quad_tets(tets: &[[u32; 4]], points: &[Vec3], height: f64) -> Vec<[u32; 4]> {
+// Purpose: Remove flat tets (four nearly coplanar vertices) from a tetrahedralisation, so a facet is not read as covered twice.
+// Inputs: the tets, the points, the relative thinness bound, and the edges that must not go (hull and facet edges).
+// Returns: the tets with as many flat tets removed as the four moves manage.
+// Side effects: None; prints `[FLAT-CLASS]` per skipped flat tet under `RUSTMSPT_FLAT_DIAG` (print-only).
+// Notes: Four moves, tried in order per flat tet: (1) a vertex on an opposite edge splits that
+//   edge's ring; (2) a flat quad whose one side's two neighbours share an apex is 2-2 flipped to the
+//   other diagonal; (3) the cavity of the flat tet and its face-neighbours is re-coned from one of
+//   its vertices, boundary kept; (4) one of the flat tet's unprotected edges - the diagonal neither
+//   the hull nor a facet uses - is removed with `remove_edge`, kept only when the flat count
+//   strictly falls. Every move preserves volume and orientation; (1) and (4) may raise the tet
+//   count, so the caller accepts the result by flat count, not by length.
+fn remove_flat_quad_tets(
+    tets: &[[u32; 4]],
+    points: &[Vec3],
+    height: f64,
+    protected: &std::collections::BTreeSet<[u32; 2]>,
+) -> Vec<[u32; 4]> {
     let volume = |t: &[u32; 4]| {
         crate::meshgen::predicates::tet_signed_volume(
             points[t[0] as usize],
@@ -3554,7 +3560,55 @@ fn remove_flat_quad_tets(tets: &[[u32; 4]], points: &[Vec3], height: f64) -> Vec
                 break 'apex;
             }
         }
+        // **Otherwise remove the wrong diagonal.** A flat tet lying on a quad of the cell face
+        // (two hull faces, the interior neighbours on the other diagonal with different apexes)
+        // or deep inside with four different apexes admits neither flip nor re-cone, but one of
+        // its edges - the diagonal the hull or the facet does not use - is an edge nothing needs.
+        // Removing it retriangulates its whole ring. Hull and facet edges are protected, so the
+        // hull cannot move; kept only when the number of flat tets strictly falls, which also
+        // bounds the loop.
         if !done {
+            let flat_count = tets.iter().filter(|t| flat(t)).count();
+            for (pa, pb) in [(0usize, 1usize), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)] {
+                let (x, y) = (f[pa], f[pb]);
+                let edge = if x <= y { [x, y] } else { [y, x] };
+                if protected.contains(&edge) {
+                    continue;
+                }
+                let Ok(next) = remove_edge(&tets, points, edge) else { continue };
+                if next.iter().filter(|t| flat(t)).count() < flat_count {
+                    tets = next;
+                    done = true;
+                    break;
+                }
+            }
+        }
+        if !done {
+            if diag_on("RUSTMSPT_FLAT_DIAG") {
+                let hull = tet_faces(f).iter().filter(|face| neighbour(**face).is_none()).count();
+                let apexes: std::collections::BTreeSet<u32> = tet_faces(f)
+                    .iter()
+                    .filter_map(|face| {
+                        neighbour(*face).and_then(|t| tets[t].iter().copied().find(|v| !face.contains(v)))
+                    })
+                    .collect();
+                let why: Vec<String> = [(0usize, 1usize), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)]
+                    .iter()
+                    .map(|(pa, pb)| {
+                        let (x, y) = (f[*pa], f[*pb]);
+                        let edge = if x <= y { [x, y] } else { [y, x] };
+                        if protected.contains(&edge) {
+                            "P".to_string()
+                        } else {
+                            match remove_edge(&tets, points, edge) {
+                                Err(e) => format!("E:{}", e),
+                                Ok(n) => format!("ok:{}", n.iter().filter(|t| flat(t)).count()),
+                            }
+                        }
+                    })
+                    .collect();
+                eprintln!("[FLAT-CLASS] hull {} distinct-apexes {} before {} edges {}", hull, apexes.len(), tets.iter().filter(|t| flat(t)).count(), why.join("|"));
+            }
             if DIAG_CELL.with(|c| c.get()) {
                 let info: Vec<String> = tet_faces(f)
                     .iter()
@@ -3999,8 +4053,31 @@ fn constrained_tets_detailed(
     // flat tet's two sides coincide, and it is then removed. Hull unchanged by construction; kept
     // only when every new tet orients and the volume is preserved.
     {
-        let flattened = remove_flat_quad_tets(&tets, points, tol);
-        if flattened.len() < tets.len() {
+        let mut protected = edges_of(&outer);
+        for facet in facets {
+            for slot in 0..facet.len() {
+                let (a, b) = (facet[slot], facet[(slot + 1) % facet.len()]);
+                protected.insert(if a <= b { [a, b] } else { [b, a] });
+            }
+        }
+        let flat_in = |set: &[[u32; 4]]| {
+            set.iter()
+                .filter(|t| {
+                    let p = [points[t[0] as usize], points[t[1] as usize], points[t[2] as usize], points[t[3] as usize]];
+                    let v = crate::meshgen::predicates::tet_signed_volume(p[0], p[1], p[2], p[3]).abs();
+                    let mut l = 0.0f64;
+                    for a in 0..4 {
+                        for b in a + 1..4 {
+                            let d = p[b].sub(p[a]);
+                            l = l.max(d.dot(d).sqrt());
+                        }
+                    }
+                    v <= l * l * tol
+                })
+                .count()
+        };
+        let flattened = remove_flat_quad_tets(&tets, points, tol, &protected);
+        if flat_in(&flattened) < flat_in(&tets) {
             let after = hull_of(&faces_of(&flattened));
             if after == outer {
                 tets = flattened;
