@@ -3416,11 +3416,29 @@ pub fn cut_lattice(
                     // the same material; sampling each one over again would spend classifier
                     // queries to re-derive that, and would disagree with itself wherever a
                     // centroid lands on the surface.
-                    let mut region_record: BTreeMap<u32, OwnershipRecord> = BTreeMap::new();
-                    for (tet, region) in tets.iter().zip(regions.iter()) {
-                        if region_record.contains_key(region) {
-                            continue;
+                    // Sampled at each region's LARGEST tet, not its first: a region's first tet
+                    // can be a sliver along a facet whose centroid lies within rounding of the
+                    // surface on the wrong side, and one bad sample labels the whole region -
+                    // reference case 1's cell 17271 lost component 2 around an intersection-curve
+                    // node that way (`[V9]`). Ties by index keep it deterministic.
+                    let mut sample: BTreeMap<u32, (f64, usize)> = BTreeMap::new();
+                    for (at, (tet, region)) in tets.iter().zip(regions.iter()).enumerate() {
+                        let p = [
+                            mesh.nodes[tet[0] as usize],
+                            mesh.nodes[tet[1] as usize],
+                            mesh.nodes[tet[2] as usize],
+                            mesh.nodes[tet[3] as usize],
+                        ];
+                        let v = p[1].sub(p[0]).cross(p[2].sub(p[0])).dot(p[3].sub(p[0])).abs();
+                        let entry = sample.entry(*region).or_insert((v, at));
+                        if v > entry.0 {
+                            *entry = (v, at);
                         }
+                    }
+                    let mut region_record: BTreeMap<u32, OwnershipRecord> = BTreeMap::new();
+                    for (region, (_, at)) in &sample {
+                        let tet = &tets[*at];
+                        let region = region;
                         let record = seed_record(
                             parent_record,
                             *tet,
@@ -6941,12 +6959,14 @@ pub fn collapsed_sheet_rim(
 }
 
 // AI-FUNC-SUMMARY:
-// Purpose: Keep the interface list true to the tets after a repair split an edge an interface face lies on.
+// Purpose: Keep the interface list true to the tets after the hanging-node repair changed them.
 // Inputs: the cut mesh (tets, records, nodes, interfaces).
 // Returns: None.
 // Side effects: replaces each interface face no tet carries any more by its two halves at the node
-//   now on one of its edges, with side elements recomputed as `derive_interface` does; drops a
-//   face that cannot be so replaced, counting it under `RUSTMSPT_CUT_DIAG`.
+//   now on one of its edges, with side elements recomputed as `derive_interface` does; re-derives
+//   the side elements of a face still present whose recorded elements no longer hold it (the repair
+//   overwrites tets in place); drops a face that cannot be so replaced, counting it under
+//   `RUSTMSPT_CUT_DIAG`.
 // Notes: The hanging-node repair splits every tet around an edge `(a, b)` at a node `q` on it, and
 //   refuses only when the face holding `q` is tagged - but another tagged face containing the same
 //   edge is split too. a3's `(7467, 24483, 36381)` became `(7467, 36380, 24483)` and
@@ -6970,7 +6990,19 @@ fn refresh_split_interfaces(mesh: &mut CutMesh) {
         k.sort_unstable();
         k
     };
-    if mesh.interfaces.iter().all(|face| carriers.contains_key(&key(face.nodes))) {
+    let holds = |elem: i32, nodes: &[u32; 3]| {
+        elem >= 0
+            && (elem as usize) < mesh.tets.len()
+            && nodes.iter().all(|n| mesh.tets[elem as usize].contains(n))
+    };
+    let stale = |face: &InterfaceFace| {
+        !carriers.contains_key(&key(face.nodes))
+            || face
+                .side_elems
+                .iter()
+                .any(|e| *e >= 0 && !holds(*e, &face.nodes))
+    };
+    if !mesh.interfaces.iter().any(stale) {
         return;
     }
     let side_elems = |face: [u32; 3], component: i32| -> Option<[i32; 2]> {
@@ -6987,8 +7019,23 @@ fn refresh_split_interfaces(mesh: &mut CutMesh) {
     };
     let mut out: Vec<InterfaceFace> = Vec::with_capacity(mesh.interfaces.len());
     let (mut replaced, mut lost) = (0usize, 0usize);
+    let mut resided = 0usize;
     for face in &mesh.interfaces {
         if carriers.contains_key(&key(face.nodes)) {
+            // Present, but the repair may have overwritten a recorded side element in place:
+            // `mesh.tets[at] = piece` keeps the index and changes the tet (reference case 2's
+            // face (20187, 84324, 106996) named 53053, which no longer holds it).
+            if face.side_elems.iter().any(|e| *e >= 0 && !holds(*e, &face.nodes))
+                && face.kind == FACE_TAG_INTERFACE
+            {
+                if let Some(se) = side_elems(face.nodes, face.component) {
+                    let mut fixed = face.clone();
+                    fixed.side_elems = se;
+                    out.push(fixed);
+                    resided += 1;
+                    continue;
+                }
+            }
             out.push(face.clone());
             continue;
         }
@@ -7037,7 +7084,9 @@ fn refresh_split_interfaces(mesh: &mut CutMesh) {
         }
     }
     if std::env::var_os("RUSTMSPT_CUT_DIAG").is_some() {
-        println!("[G6-3] {replaced} interface face(s) re-split after the edge repair, {lost} dropped");
+        println!(
+            "[G6-3] {replaced} interface face(s) re-split after the edge repair, {resided} re-sided, {lost} dropped"
+        );
     }
     mesh.interfaces = out;
 }

@@ -2023,6 +2023,12 @@ sliver of the other body - was claimed to carry it, and `[V9]` rightly failed on
 component. Carried-curve counts barely move (a3 90 -> 94, a8 392 -> 376) and the meshes are
 byte-identical; `[V9]` now PASSes on all nine cases on both paths.
 
+Two gated-path fixes found on the reference dataset: `refresh_split_interfaces` also re-derives the
+side elements of an interface face whose recorded elements the hanging-node repair overwrote in
+place (reference case 2 `[V12]`), and §7.4 labels each constraint-separated region from its
+largest tet rather than its first, whose centroid can sit on the wrong side of a facet when it is
+a sliver (reference case 1 `[V9]`: component 2 missing around an intersection-curve node).
+
 ### Welded sheet cuts (G6-5)
 
 A sheet has no inside, so §6's sides cannot come from S6 - it refuses to classify one,

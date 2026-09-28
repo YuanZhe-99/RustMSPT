@@ -1380,6 +1380,20 @@ exactly what M-1.7 changes.
   `run_reference.py` reads `*RVE_CORNERS`/`*NUM_ELEMENT`/`*SAMR_LEVEL` and maps each section's
   level onto its `particleN.stl`. Eight negative/positive config tests. Open: the §2.3 table on all
   three reference cases, both paths.
+  **Status 2026-09-28 — the reference cases at their own resolution, both paths.** `run_reference.py`
+  at `b9aefe5` (`data/output/reference_m30`), each case at the reference run's background and
+  per-section levels:
+
+  | case | reference tets | default tets (ratio) | default on % | gated tets (ratio) | gated on % |
+  |---|---|---|---|---|---|
+  | TestCaseIntersect1 | 354,372 | 131,410 (0.37×) | 95.248 | 341,696 (0.96×) | 93.673 |
+  | TestCaseIntersect2 | 730,199 | 275,226 (0.38×) | 96.097 | 541,025 (0.74×) | 96.538 |
+  | TestCaseIntersect3 | 1,167,239 | 1,094,214 (0.94×) | 96.831 | 1,565,171 (1.34×) | 99.549 |
+
+  FAIL sets after this session's two follow-up fixes: default {V6, V13} / {V6, V13} / {V13}; gated
+  {V6, V13} / {V6, V13} / {V9, V13}. Gated case 3's one `[V9]` node sits on the domain face in two
+  whole-cell-fanned cells (M-2.3's fallback), and gated case 1's on-surface share is 1.6 points
+  *below* the default path's - the one case where M-3.1's `[V13]` clause fails.
 - **M-1.9. The focus-region render harness (R9, the owner's instruction of 2026-09-26).**
   `data/fixtures/meshgen/acceptance/render_focus.py`, run on a case's output directory: reads the
   s02 arranged snapshot's curve cells (`CurveKind` 0 sharp, 2 intersection; box curves skipped),
@@ -2250,7 +2264,7 @@ without the stated fallback.
 | M-1.5 | The P3 criterion: containment in the effective surface's facets (MG-02) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ● landed 2026-09-26 (`cont%`/`cover%`) |
 | M-1.6 | Conditioning and identity: the one-ULP pairs under MG-11's constraints (was M-4.1) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ◐ S2 keeps constructed points on their facets (gated a3 98.51 %, a6a −37 % tets); `[V2]` PASS all nine both paths; move/merge report and default-path a3 regression open |
 | M-1.7 | The X-pattern lattice: the 5-tet parity checkerboard, Rule T5, geometry rev 1.7 (R-E5, D-9 decided, S-53) | T2 / T3 | GLM 5.2 Max / GPT 5.6 Sol Medium; Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — box-face wireframes beside the reference tool's own mesh, transition cutaways | ● landed `17e5a9d`; cost measured 2026-09-27 (gated a1/a3/a8 on-surface fell), a1/a3 repaid by `a718767`; open: a8 −0.69, a7b −0.2, a6b −0.06 pt gated; default-path `[V9]` a3 closed (`pierces_shared_by_an_edge`, `[V2]` 17 → 0), a6a/a6b open (whole-cell fan apex on the limb edge; M-2.3) |
-| M-1.8 | Resolution as background × maximum level, given; per-input levels; the reference cases at their own resolution (R-E4, S-54, §6.2 item 18) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** (R9) — M-1.9's set, nine cases unchanged; reference-case contacts before/after | ◐ ladder, per-input levels, `run_reference.py` mapping landed; the §2.3 table on the three reference cases, both paths, open |
+| M-1.8 | Resolution as background × maximum level, given; per-input levels; the reference cases at their own resolution (R-E4, S-54, §6.2 item 18) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** (R9) — M-1.9's set, nine cases unchanged; reference-case contacts before/after | ● ladder, per-input levels and the reference cases on both paths at their own resolution (gated 0.96× / 0.74× / 1.34× the reference's tets) |
 | M-1.9 | Focus-region render harness: intersection curves, sharp edges/corners, thin regions, transitions, from the input; before/after diffs (R9) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — the contact sheets, and the two known defects they must show | ◐ input-vs-output comparison harness landed (R9); thin-region and transition views, runner call open |
 | M-2.0 | J1 fingerprint mismatch is a hard error; fingerprint = constraint entity ids (MG-06) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ● landed `9b9c1a2` |
 | M-2.1 | Facet recovery by Steiner points on the constraint — gate | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — cutaway renders at a3's cube edges and an a8 strut junction, before/after | ◐ facet band (`3198276`), Steiner with weld guard and rollback (`691aaed`), lexicographic boundary recovery (`a718767`), the composite 2-3 + removal near-duplicate adoption (gated `[V2]` PASS on all nine) the facet-vertex-only band (gated a6a `[V9]` PASS) and buried faces out of S8 (gated a8 98.80 %, −5.8 % tets) landed on the gated path; GO gate unmet on a8 (edge class 1,835 → 1,462); gated a8 98.445 % against 99.134 % on the old lattice |
@@ -2258,7 +2272,7 @@ without the stated fallback.
 | M-2.3 | Delete the whole-cell fan | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ blocked by M-2.1/M-2.2 |
 | M-2.4 | Retire `contact_chamfered_by` | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ◐ counted (a6a 895, a6b 2,396 gated); blocked: the limb's contact strip is thinner than a lattice face, so the faces it declares are genuine rim chamfer |
 | M-2.5 | P3 residual audit | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — the same cutaways | ○ |
-| M-3.1 | The control | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ◐ FAIL rule holds on the matrix (`acceptance_m28`): both paths fail only a3 `[V6]` and `[V13]`, gated `[V13]` better everywhere; element (M-1.4) and time (M-1.3) budgets not yet stated |
+| M-3.1 | The control | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ◐ nine matrix cases: FAIL sets equal, gated `[V13]` better everywhere; M-1.3/M-1.4 landed; open on the reference cases: gated case 3 `[V9]` (one whole-cell-fan node) and case 1 `[V13]` (93.67 against 95.25 %) |
 | M-3.2 | Delete the five handles | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ○ |
 | M-3.3 | Refactor `cut_lattice`, tests for the trace and the junction module | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ |
 | M-4.0a | One X per connected closed component; the source map (MG-04) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ |
