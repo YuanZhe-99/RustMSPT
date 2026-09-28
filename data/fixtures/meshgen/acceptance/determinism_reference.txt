@@ -1,0 +1,7 @@
+# R-P2, reference cases: default worker count against RAYON_NUM_THREADS=1 (sha256 prefix of the contract document, run-naming lines excluded)
+gated TestCaseIntersect1 same 7a88d6f99325131e 7a88d6f99325131e
+gated TestCaseIntersect2 same 76ab846d7ce2f8e6 76ab846d7ce2f8e6
+gated TestCaseIntersect3 same 38b53f4a7b0cd15f 38b53f4a7b0cd15f
+default TestCaseIntersect1 same f9d7ef0530dc1f1c f9d7ef0530dc1f1c
+default TestCaseIntersect2 same ff45be14e3bd0426 ff45be14e3bd0426
+default TestCaseIntersect3 same f9fdff21fc49adfd f9fdff21fc49adfd

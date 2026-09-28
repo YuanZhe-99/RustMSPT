@@ -1047,8 +1047,8 @@ exactly what M-1.7 changes.
   re-runs each case's own config at `RAYON_NUM_THREADS=1` under the runner's environment and
   compares SHA-256 of the delivered volume and the contract document, excluding only the lines that
   name the run (config hash, output paths). On the `acceptance_m28` matrix: 9 / 9 byte-identical on
-  both paths, tables in `determinism_gated.txt` / `determinism_default.txt`. Open: the three
-  reference cases.
+  both paths, tables in `determinism_gated.txt` / `determinism_default.txt`; the three reference
+  cases, both paths, identical as well (`determinism_reference.txt`). M-1.2 done.
 - **M-1.3. Time budgets.** Per-case wall time at `0a8eb1c` on both paths becomes the budget line
   in §2.6; a phase that exceeds a case's budget by more than 25 % states why and gets the owner's
   decision before landing. The number 25 % is a reporting threshold, not a mesh setting.
@@ -2258,7 +2258,7 @@ without the stated fallback.
 | M-0.2 | Post-M-2/M-5 revision (geometry 1.8, numerics 1.4, contracts 1.4) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ waits on M-2/M-5 |
 | M-1.0 | Verifier trust: MG-01 cap, MG-03 domain at stage 11, MG-08 contract validator, `[V13]` FAIL | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ● landed 2026-09-26 |
 | M-1.1 | Matrix harness: both paths, logs kept, timing, census extended | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ◐ harness, both paths, logs, timing, `--focus` landed; reference cases and census extension open |
-| M-1.2 | Byte-identity on the matrix | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ◐ `check_determinism.py` + `determinism_{gated,default}.txt` committed: all nine acceptance cases, both paths, delivered and contract files byte-identical at 1 thread vs default (`8854559`); the three reference cases not yet run |
+| M-1.2 | Byte-identity on the matrix | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ● all twelve cases, both paths, byte-identical at 1 thread vs default: nine via `check_determinism.py` (`determinism_{gated,default}.txt`), three reference cases in `determinism_reference.txt` (`1fa74df`) |
 | M-1.3 | Time budgets | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ● budget line recorded (`b9aefe5`, host stated): gated a3 16.6 s, a4 83.8 s, a8 125.1 s; reference cases pending |
 | M-1.4 | P2 baseline at equal fidelity | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ● table + sweep committed: default meets gated fidelity only on a1 (3.8× the tets) and a7a (4.7×); elsewhere never, within the leaf budget / 2 GB |
 | M-1.5 | The P3 criterion: containment in the effective surface's facets (MG-02) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ● landed 2026-09-26 (`cont%`/`cover%`) |
