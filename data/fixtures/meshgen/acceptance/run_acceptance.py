@@ -30,6 +30,8 @@ inherited from the shell. Each path writes to `data/output/acceptance/<path>/`, 
 mesher's and the verifier's logs per case, so the two paths no longer overwrite each other.
 Stage wall times (`RUSTMSPT_TIME_STAGES`) are parsed from the mesher log into a timing table.
 `--focus` renders the input-versus-output comparison (render_focus.py, plan R9) after each case.
+`--jobs N` (default 3) is how many cases may be verified and rendered at once while the next
+case meshes; meshing itself stays serial. `--jobs 1` runs everything strictly in sequence.
 
 With no arguments it runs all nine. `RUSTMSPT_CUT_DIAG` is set for every run so the
 `parent_cell` array is present - it is what turns element counts into per-lattice-cell
@@ -250,6 +252,10 @@ def run(case, stls, overrides):
     # s08 cut snapshot, which is the mesh these gates are measured on.
     if not os.path.exists(contract):
         return {"case": case, "error": [(mesh.stderr or mesh.stdout).strip()[-200:]]}
+    return lambda: verify_case(case, stls, env, wall, stages, contract, delivered)
+
+
+def verify_case(case, stls, env, wall, stages, contract, delivered):
     js = os.path.join(WORK, case + ".json")
     vcfg = os.path.join(WORK, case + "_verify.yaml")
     with open(vcfg, "w") as f:
@@ -384,10 +390,21 @@ def main():
         del argv[at : at + 2]
     cases = [c for c in CASES if not argv or c[0] in argv]
 
-    rows = []
-    for case, stls, overrides in cases:
-        r = run(case, stls, overrides)
-        rows.append(r)
+    # Meshing is serial - the mesher already uses every core - but `mesh-verify` and the focus
+    # renders are single-threaded, and waiting for them left seven cores idle for most of a
+    # matrix. So each case's verification is handed to a small pool as soon as its mesh is on
+    # disk and overlaps the next case's meshing. Rows are collected in case order, so the tables
+    # are unchanged; `wall_s` is the mesher's own time and can read a little high under the
+    # overlap. `--jobs 1` restores the fully serial run.
+    jobs = 3
+    if "--jobs" in argv:
+        at = argv.index("--jobs")
+        jobs = max(1, int(argv[at + 1]))
+        del argv[at : at + 2]
+        cases = [c for c in CASES if not argv or c[0] in argv]
+
+    def finish(case, pending):
+        r = pending() if callable(pending) else pending
         if focus and "error" not in r:
             subprocess.run(
                 ["uv", "run", os.path.join(HERE, "render_focus.py"), WORK, case],
@@ -395,6 +412,18 @@ def main():
             )
         print(f"[{case}] done", file=sys.stderr)
         sys.stderr.flush()
+        return r
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    futures = []
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        for case, stls, overrides in cases:
+            pending = run(case, stls, overrides)
+            futures.append(pool.submit(finish, case, pending))
+            if jobs == 1:
+                futures[-1].result()
+    rows = [f.result() for f in futures]
 
     table(
         rows,

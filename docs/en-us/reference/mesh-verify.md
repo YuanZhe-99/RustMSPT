@@ -182,9 +182,9 @@ Scripts under `data/fixtures/meshgen/acceptance/` (all read a finished work dire
 
 | Script | What it answers |
 |---|---|
-| `run_acceptance.py --path default\|gated [--focus]` | The nine-case matrix on one S8 path: P3 table (`cont%`, `cover%`, `on%`), P2 table, check statuses, per-stage timing; `--focus` runs `render_focus.py` per case. `RUSTMSPT_ACCEPTANCE_WORK` redirects the work directory. |
+| `run_acceptance.py --path default\|gated [--focus] [--jobs N]` | The nine-case matrix on one S8 path: P3 table (`cont%`, `cover%`, `on%`), P2 table, check statuses, per-stage timing; `--focus` runs `render_focus.py` per case. Meshing is serial; each case's single-threaded `mesh-verify` and renders overlap the next case's meshing on up to `N` workers (default 3, `--jobs 1` fully serial). `RUSTMSPT_ACCEPTANCE_WORK` redirects the work directory. |
 | `render_focus.py <work> <case>` | Input STL beside the output material boundary, same camera, output coloured by deviation; defects clustered, ranked and rendered head-on / oblique (R9). |
-| `run_reference.py` | The three reference cases at the reference tool's own background and per-section levels; element ratio and P3. Path follows `RUSTMSPT_PLC_PASS` in the environment. |
+| `run_reference.py` | The three reference cases at the reference tool's own background and per-section levels; element ratio and P3. Path follows `RUSTMSPT_PLC_PASS` in the environment. Each case's `mesh-verify` overlaps the next case's meshing. |
 | `check_determinism.py <work> --path P [--out table]` | R-P2 on the matrix: each case re-meshed at `RAYON_NUM_THREADS=1`, delivered and contract files compared by SHA-256 with run-naming lines excluded. Tables: `determinism_{gated,default,reference}.txt`. |
 | `p2_equal_fidelity.py <work> [--out table]` | M-1.4: the default path's element count at the `h` that reaches the gated path's on-surface share (halving `h_max_frac`, `h_min_frac`, `eps_frac` together), stopping at the sizing leaf budget or 2 GB. Table: `p2_equal_fidelity.md`. |
 | `node_dump.py <contract.vtu> <node>` | One node's coordinates, `constraint_kind`, `node_origin` and every incident tet with region set, provenance, `parent_cell`, `escalation_reason`, `plc_path` (the last three need `RUSTMSPT_CUT_DIAG=1` when meshing). |

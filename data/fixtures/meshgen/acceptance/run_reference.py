@@ -219,7 +219,10 @@ def run_case(case):
     )
     if not os.path.exists(vtu):
         return {"case": name, "error": (mesh.stderr or mesh.stdout).strip()[-300:]}
+    return lambda: verify_case(case, name, work, vtu, js, stls, env, params, levels, h_max, h_min)
 
+
+def verify_case(case, name, work, vtu, js, stls, env, params, levels, h_max, h_min):
     vcfg = os.path.join(work, "verify.yaml")
     with open(vcfg, "w") as f:
         f.write(f"mesh_verify:\n  input: {vtu}\n  json: {js}\n  surfaces:\n")
@@ -272,7 +275,18 @@ def main():
             "set RUSTMSPT_REFERENCE_DATASET, or pass case directories as arguments"
         )
     os.makedirs(WORK, exist_ok=True)
-    rows = [run_case(c) for c in cases]
+    # Meshing stays serial (the mesher uses every core); the single-threaded `mesh-verify` of one
+    # case overlaps the next case's meshing. Rows keep case order.
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futures = []
+        for c in cases:
+            pending = run_case(c)
+            futures.append(pool.submit(pending) if callable(pending) else None)
+            if not callable(pending):
+                futures[-1] = pending
+        rows = [f if isinstance(f, dict) else f.result() for f in futures]
 
     print()
     print("P2 - element count at matched resolution (R2)")
