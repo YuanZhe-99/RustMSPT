@@ -703,6 +703,9 @@ When inspecting code:
 
 - **An identity key must never become a coordinate.** S2's registry keyed constructed points on a 1e-5 grid - correct for identity - and then *placed* them at `key * weld_step`, moving every intersection-curve vertex off its own facet. a3's cube face on a lattice plane came back 8.4e-6 off it, a6a's contacts grew fake 8e-6 gaps the sizing field chased: fixing that one assignment took gated a6a to 37 % fewer elements and a3 up 1.3 points. The plan's MG-11 had written the exact number (0.5000084271289835) as a refutation of a rule nobody meant to build - it was already built, one stage later. When a recorded "this would be wrong" number shows up in real output, look for the code that already does it.
 
+- **A coverage number that reads exactly 2.000 is a flat tet, not a missing face.** Reference case 1's largest refusal ("a facet's interior is not covered") was facets covered *twice*: a Steiner midpoint on an edge the Delaunay kept whole, or a flat quad, leaves zero-volume tets whose faces are both triangulations of the facet. `remove_flat_quad_tets` (edge split, pyramid flip, cavity re-cone) took a1 up 1.1 points. When a refusal says "not covered", print the coverage ratio before assuming a hole.
+- **A measuring script can be silently capped by the thing it measures.** The first M-1.4 sweep reported identical meshes at h/2, h/4, h/8 for a4 because the sizing field's 1 M-leaf budget stopped refinement with only a WARN, and three cases produced no mesh because `eps_frac` was not scaled with `h`. Make the script detect and name every cap it can hit.
+
 ## Reporting to the owner (standing rule, set 2026-08-16)
 
 Every substantial reply ends with a status block covering four things, in this order. It is not

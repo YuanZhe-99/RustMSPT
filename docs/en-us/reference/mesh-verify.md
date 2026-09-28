@@ -175,6 +175,25 @@ The annotated VTU carries `aspect_ratio`, `radius_ratio`, `min_dihedral_deg`,
 `scaled_jacobian` and `verify_flags`, which `mesh-render` can colour by or filter
 on (`{ kind: array_range, array: aspect_ratio, min: 10.0, max: 1.0e30 }`).
 
+## Acceptance tooling
+
+Scripts under `data/fixtures/meshgen/acceptance/` (all read a finished work directory and honour
+`RUSTMSPT_BIN`):
+
+| Script | What it answers |
+|---|---|
+| `run_acceptance.py --path default\|gated [--focus]` | The nine-case matrix on one S8 path: P3 table (`cont%`, `cover%`, `on%`), P2 table, check statuses, per-stage timing; `--focus` runs `render_focus.py` per case. `RUSTMSPT_ACCEPTANCE_WORK` redirects the work directory. |
+| `render_focus.py <work> <case>` | Input STL beside the output material boundary, same camera, output coloured by deviation; defects clustered, ranked and rendered head-on / oblique (R9). |
+| `run_reference.py` | The three reference cases at the reference tool's own background and per-section levels; element ratio and P3. Path follows `RUSTMSPT_PLC_PASS` in the environment. |
+| `check_determinism.py <work> --path P [--out table]` | R-P2 on the matrix: each case re-meshed at `RAYON_NUM_THREADS=1`, delivered and contract files compared by SHA-256 with run-naming lines excluded. Tables: `determinism_{gated,default,reference}.txt`. |
+| `p2_equal_fidelity.py <work> [--out table]` | M-1.4: the default path's element count at the `h` that reaches the gated path's on-surface share (halving `h_max_frac`, `h_min_frac`, `eps_frac` together), stopping at the sizing leaf budget or 2 GB. Table: `p2_equal_fidelity.md`. |
+| `node_dump.py <contract.vtu> <node>` | One node's coordinates, `constraint_kind`, `node_origin` and every incident tet with region set, provenance, `parent_cell`, `escalation_reason`, `plc_path` (the last three need `RUSTMSPT_CUT_DIAG=1` when meshing). |
+
+Print-only diagnostics used with them (they change what is printed, never what is meshed):
+`RUSTMSPT_CUT_DIAG`, `RUSTMSPT_JCT_DIAG`, `RUSTMSPT_PLC_DIAG`, `RUSTMSPT_PLC_CSV=<path>` (per-cell
+§7.4 census), `RUSTMSPT_PLC_CELL=<lattice index>` (turns the cdt facet/hull/flat-tet dumps on for one
+cell), `RUSTMSPT_FACET_DIAG`, `RUSTMSPT_HULL_DIAG`, `RUSTMSPT_THIN_DIAG`, `RUSTMSPT_TIME_STAGES`.
+
 ## Fixture suite
 
 `data/fixtures/meshgen/` holds the eleven hand-written fixtures frozen in

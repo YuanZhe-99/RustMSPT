@@ -1677,6 +1677,15 @@ cell's boundary without being a trace point of that face, where no Steiner point
   quad's pyramid to the other diagonal), guarded by hull, orientation and volume. Reference case 1
   interior class 124 → 84, on-surface 93.67 → **94.94** (default 95.25); gated a1 94.80 → **95.91**
   with `[V5]` WARN → PASS, a3 98.52 → **98.72**; the rest unchanged; R-P2 held.
+  **Cavity re-cone for flat tets, 2026-09-28 (landed, marginal).** When neither the edge split nor
+  the pyramid flip applies (reference case 1 cell 1730: a flat quad whose four face-neighbours have
+  four different apexes), the flat tet and its face-neighbours are re-coned from one of their
+  vertices, cavity boundary kept, guarded by the star test, no flat tet and volume. Reference case 1
+  84 → 82 refusals, 94.94 → 94.96 %; the nine cases unchanged on-surface (a4/a8 a few dozen fewer
+  tets); R-P2 held (a1, a4). Measured residue: on reference case 1, 379 of the 416 refused facets
+  still have flat tets present at the facet check (`RUSTMSPT_FACET_DIAG` → `flat N`) - the next
+  step, since removing them is what the "interior not covered" class now needs.
+  **Session end 2026-09-28: see `HANDOFF.md` at the repo root for the state and next steps.**
 - **M-2.2. Boundary consistency: a facet vertex on the cell's boundary is a trace point.** The
   "hull carries a node the boundary has never heard of" class (a8 1,200 cells, 38.3 % of its
   stranded area) is the residue of record §6.43, which took it from 72 % of the population by making
@@ -2260,7 +2269,7 @@ without the stated fallback.
 
 ## 11. Subtask rollup
 
-| ID | Subtask | Tier | Assignable models | Multimodal | Status (2026-09-28) |
+| ID | Subtask | Tier | Assignable models | Multimodal | Status (2026-09-28, session end — see HANDOFF.md) |
 |---|---|---|---|---|---|
 | M-0.1 | As-built spec revision (geometry 1.6, numerics 1.3, contracts 1.3) — text half landed 2026-09-23 | T3 / T2 | Kimi K3 Max / GPT 5.6 Sol Xhigh; GLM 5.2 Max / GPT 5.6 Sol Medium | no | ◐ text half landed 2026-09-23; geometry rev 1.7 (M-1.7) recorded |
 | M-0.2 | Post-M-2/M-5 revision (geometry 1.8, numerics 1.4, contracts 1.4) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ waits on M-2/M-5 |
@@ -2275,12 +2284,12 @@ without the stated fallback.
 | M-1.8 | Resolution as background × maximum level, given; per-input levels; the reference cases at their own resolution (R-E4, S-54, §6.2 item 18) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** (R9) — M-1.9's set, nine cases unchanged; reference-case contacts before/after | ● ladder, per-input levels and the reference cases on both paths at their own resolution (gated 0.96× / 0.74× / 1.34× the reference's tets) |
 | M-1.9 | Focus-region render harness: intersection curves, sharp edges/corners, thin regions, transitions, from the input; before/after diffs (R9) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — the contact sheets, and the two known defects they must show | ◐ input-vs-output comparison harness landed (R9); thin-region and transition views, runner call open |
 | M-2.0 | J1 fingerprint mismatch is a hard error; fingerprint = constraint entity ids (MG-06) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ● landed `9b9c1a2` |
-| M-2.1 | Facet recovery by Steiner points on the constraint — gate | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — cutaway renders at a3's cube edges and an a8 strut junction, before/after | ◐ facet band (`3198276`), Steiner with weld guard and rollback (`691aaed`), lexicographic boundary recovery (`a718767`), the composite 2-3 + removal near-duplicate adoption (gated `[V2]` PASS on all nine) the facet-vertex-only band (gated a6a `[V9]` PASS) and buried faces out of S8 (gated a8 98.80 %, −5.8 % tets) landed on the gated path; GO gate unmet on a8 (edge class 1,835 → 1,462); gated a8 98.445 % against 99.134 % on the old lattice |
+| M-2.1 | Facet recovery by Steiner points on the constraint — gate | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — cutaway renders at a3's cube edges and an a8 strut junction, before/after | ◐ facet band (`3198276`), Steiner with weld guard and rollback (`691aaed`), lexicographic boundary recovery (`a718767`), flat-tet removal (edge split / pyramid flip / cavity re-cone, `cad6440`+), the composite 2-3 + removal, near-duplicate adoption (gated `[V2]` PASS on all nine) the facet-vertex-only band (gated a6a `[V9]` PASS) and buried faces out of S8 (gated a8 98.80 %, −5.8 % tets) landed on the gated path; GO gate unmet on a8 (edge class 1,835 → 1,462); gated a8 98.445 % against 99.134 % on the old lattice |
 | M-2.2 | Boundary consistency: facet vertices on the cell boundary are trace points | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ next after a8 analysis |
 | M-2.3 | Delete the whole-cell fan | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ blocked by M-2.1/M-2.2 |
 | M-2.4 | Retire `contact_chamfered_by` | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ◐ counted (a6a 895, a6b 2,396 gated); blocked: the limb's contact strip is thinner than a lattice face, so the faces it declares are genuine rim chamfer |
 | M-2.5 | P3 residual audit | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — the same cutaways | ○ |
-| M-3.1 | The control | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ◐ nine matrix cases: FAIL sets equal, gated `[V13]` better everywhere; M-1.3/M-1.4 landed; open on the reference cases: gated case 3 `[V9]` (one whole-cell-fan node) and case 1 `[V13]` (94.94 against 95.25 %, after the flat-tet fix) |
+| M-3.1 | The control | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ◐ nine matrix cases: FAIL sets equal, gated `[V13]` better everywhere; M-1.3/M-1.4 landed; open on the reference cases: gated case 3 `[V9]` (one whole-cell-fan node) and case 1 `[V13]` (94.96 against 95.25 %) |
 | M-3.2 | Delete the five handles | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ○ |
 | M-3.3 | Refactor `cut_lattice`, tests for the trace and the junction module | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ |
 | M-4.0a | One X per connected closed component; the source map (MG-04) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ |

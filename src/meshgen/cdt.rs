@@ -3473,7 +3473,99 @@ fn remove_flat_quad_tets(tets: &[[u32; 4]], points: &[Vec3], height: f64) -> Vec
             done = true;
             break 'pairs;
         }
+        // **Otherwise re-cone the cavity.** A flat quad whose four face-neighbours all have
+        // different apexes admits no 2-2 flip (reference case 1 cell 1730: apexes 26, 0, 2, 15).
+        // The flat tet and its face-neighbours form a cavity whose boundary is kept exactly -
+        // so the cell's hull and everything outside are untouched - and whose interior is
+        // re-coned from one of its own vertices when that vertex sees every boundary face not
+        // holding it from the inner side, no new tet is flat, and the volume is preserved.
         if !done {
+            let mut cavity: Vec<usize> = vec![at];
+            for face in tet_faces(f) {
+                if let Some(n) = neighbour(face) {
+                    if !cavity.contains(&n) {
+                        cavity.push(n);
+                    }
+                }
+            }
+            let mut count: BTreeMap<[u32; 3], usize> = BTreeMap::new();
+            for i in &cavity {
+                for face in tet_faces(tets[*i]) {
+                    let mut k = face;
+                    k.sort_unstable();
+                    *count.entry(k).or_insert(0) += 1;
+                }
+            }
+            let mut boundary: Vec<([u32; 3], u32, bool)> = Vec::new();
+            let mut total = 0.0;
+            let mut verts: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+            for i in &cavity {
+                let t = tets[*i];
+                total += volume(&t).abs();
+                verts.extend(t.iter().copied());
+                for face in tet_faces(t) {
+                    let mut k = face;
+                    k.sort_unstable();
+                    if count[&k] != 1 {
+                        continue;
+                    }
+                    let Some(inner) = t.iter().copied().find(|v| !face.contains(v)) else { continue };
+                    boundary.push((face, inner, volume(&t) > 0.0));
+                }
+            }
+            let orient = |p: [u32; 4]| volume(&p);
+            'apex: for apex in verts {
+                let mut cone: Vec<[u32; 4]> = Vec::new();
+                for (face, inner, positive) in &boundary {
+                    if face.contains(&apex) {
+                        continue;
+                    }
+                    let want = orient([face[0], face[1], face[2], *inner]);
+                    let got = orient([face[0], face[1], face[2], apex]);
+                    if want == 0.0 || (want > 0.0) != (got > 0.0) || got == 0.0 {
+                        continue 'apex;
+                    }
+                    let mut piece = [face[0], face[1], face[2], apex];
+                    if (volume(&piece) > 0.0) != *positive {
+                        piece.swap(1, 2);
+                    }
+                    let l = longest(&piece);
+                    if volume(&piece).abs() <= l * l * height {
+                        continue 'apex;
+                    }
+                    cone.push(piece);
+                }
+                if cone.is_empty() {
+                    continue;
+                }
+                let got: f64 = cone.iter().map(|t| volume(t).abs()).sum();
+                if (got - total).abs() > total.max(f64::MIN_POSITIVE) * 1.0e-9 {
+                    continue;
+                }
+                let mut next: Vec<[u32; 4]> = tets
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| !cavity.contains(i))
+                    .map(|(_, t)| *t)
+                    .collect();
+                next.extend(cone);
+                tets = next;
+                done = true;
+                break 'apex;
+            }
+        }
+        if !done {
+            if DIAG_CELL.with(|c| c.get()) {
+                let info: Vec<String> = tet_faces(f)
+                    .iter()
+                    .map(|face| {
+                        let n = neighbour(*face);
+                        let apex = n.and_then(|t| tets[t].iter().copied().find(|v| !face.contains(v)));
+                        format!("{:?}->{:?}", face, apex)
+                    })
+                    .collect();
+                eprintln!("[FLAT-SKIP] {:?} {}", f, info.join(" "));
+            }
             skip.insert(f);
         }
     }
@@ -4114,13 +4206,20 @@ fn constrained_tets_detailed(
                         }
                     }
                     eprintln!(
-                        "[FACET-DIAG] {:?} n {} dev/tol {:.3e} covered/want {:.6} crossing {} reflex {}",
+                        "[FACET-DIAG] {:?} n {} dev/tol {:.3e} covered/want {:.6} crossing {} reflex {} flat {}",
                         facet,
                         facet.len(),
                         dev / tol,
                         covered / want_area,
                         crossing,
-                        reflex
+                        reflex,
+                        tets.iter().filter(|t| {
+                            let p = [points[t[0] as usize], points[t[1] as usize], points[t[2] as usize], points[t[3] as usize]];
+                            let v = crate::meshgen::predicates::tet_signed_volume(p[0], p[1], p[2], p[3]).abs();
+                            let mut l = 0.0f64;
+                            for a in 0..4 { for b in a + 1..4 { let d = p[b].sub(p[a]); l = l.max(d.dot(d).sqrt()); } }
+                            v <= l * l * tol
+                        }).count()
                     );
                 }
             }
