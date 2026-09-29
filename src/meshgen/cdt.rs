@@ -3778,6 +3778,9 @@ pub fn constrained_tets(
 //   thin-tet or uncovered-facet refusal, every flat tet with a hull face and all four vertices on one
 //   cell face (a Delaunay degeneracy of co-circular face nodes) gets a point strictly inside the cell,
 //   a quarter of its longest edge in from its centre toward the cell's, and the Delaunay is re-run.
+//   (d) On a hull-recovery refusal ("the link polygon has no valid triangulation", "neither the
+//   boundary nor the facets survive"), each current hull face not in the frozen boundary gets such a
+//   point, so the diagonal flip recovery could not make becomes a pyramid's 2-2 flip.
 //   None of the moves ever places a point on a cell face - a facet lying wholly in one is skipped - so
 //   the faces the neighbours share are untouched (Invariant J1).
 pub fn constrained_tets_with_steiner(
@@ -3828,7 +3831,94 @@ pub fn constrained_tets_with_steiner(
         let edge_class = reason == "a facet edge is not an edge of the tetrahedralisation";
         let interior_class = reason == "a facet's edges are all there but its interior is not covered";
         let thin_class = reason == "a tet is thinner than the node quantum";
-        if !edge_class && !interior_class && !thin_class {
+        let hull_class = reason == "the link polygon has no valid triangulation"
+            || reason == "neither the boundary nor the facets survive";
+        if !edge_class && !interior_class && !thin_class && !hull_class {
+            break;
+        }
+        // **(d) A hull diagonal the fan around it cannot give up.** Boundary recovery flips a
+        // cell-face quad to the frozen diagonal by removing the current one, and that fails when
+        // the tets around it admit no retriangulation of their link - the largest stranded class on
+        // every case (49-97 % of the off-surface area §7.4 declines). A point strictly inside the
+        // cell, a little in from the wrong hull face's centre, becomes the common apex over that
+        // quad, so the flip is a pyramid's 2-2 flip. Same placement rules as (c).
+        if hull_class {
+            let frozen: std::collections::BTreeSet<[u32; 3]> = boundary
+                .iter()
+                .map(|t| {
+                    let mut k = *t;
+                    k.sort_unstable();
+                    k
+                })
+                .collect();
+            let mut face_count: BTreeMap<[u32; 3], usize> = BTreeMap::new();
+            let mut used: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+            for t in &tets {
+                used.extend(t.iter().copied());
+                for face in tet_faces(*t) {
+                    let mut k = face;
+                    k.sort_unstable();
+                    *face_count.entry(k).or_insert(0) += 1;
+                }
+            }
+            let mut centre = Vec3::new(0.0, 0.0, 0.0);
+            for id in &used {
+                centre = centre.add(arena.points[*id as usize]);
+            }
+            centre = centre.scale(1.0 / used.len().max(1) as f64);
+            let mut points_to_add: Vec<Vec3> = Vec::new();
+            for (face, count) in &face_count {
+                if *count != 1 || frozen.contains(face) {
+                    continue;
+                }
+                let q = face.map(|id| arena.points[id as usize]);
+                let longest = [q[1].sub(q[0]), q[2].sub(q[1]), q[0].sub(q[2])]
+                    .iter()
+                    .map(|d| d.dot(*d).sqrt())
+                    .fold(0.0f64, f64::max);
+                let mid = q[0].add(q[1]).add(q[2]).scale(1.0 / 3.0);
+                let inward = centre.sub(mid);
+                let len = inward.dot(inward).sqrt();
+                if len <= 0.0 || longest <= 4.0 * tol {
+                    continue;
+                }
+                let x = mid.add(inward.scale((0.25 * longest).min(0.5 * len) / len));
+                if cell_planes.iter().any(|(n, o)| (n.dot(x) - o).abs() <= plane_tol.max(tol)) {
+                    continue;
+                }
+                let near_facet = facets.iter().any(|facet| {
+                    if facet.len() < 3 {
+                        return false;
+                    }
+                    let corner = |slot: usize| arena.points[facet[slot] as usize];
+                    let mut want = Vec3::new(0.0, 0.0, 0.0);
+                    for slot in 1..facet.len() - 1 {
+                        want = want.add(corner(slot).sub(corner(0)).cross(corner(slot + 1).sub(corner(0))));
+                    }
+                    let l = want.dot(want).sqrt();
+                    if l <= 0.0 {
+                        return false;
+                    }
+                    let normal = want.scale(1.0 / l);
+                    (normal.dot(x) - normal.dot(corner(0))).abs() <= 4.0 * tol
+                        && inside_polygon(x, facet, &arena.points, normal, tol)
+                });
+                if !near_facet {
+                    points_to_add.push(x);
+                }
+            }
+            let mut inserted = 0usize;
+            for x in points_to_add {
+                let before = arena.points.len();
+                arena.intern(x);
+                if arena.points.len() > before {
+                    inserted += 1;
+                }
+            }
+            if inserted > 0 {
+                note_split("steiner: interior points above hull faces recovery could not flip");
+                continue;
+            }
             break;
         }
         // **(c) A flat tet on a cell-face quad is a Delaunay degeneracy, not a constraint.** Four
