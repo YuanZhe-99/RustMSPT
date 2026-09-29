@@ -1743,6 +1743,22 @@ cell's boundary without being a trace point of that face, where no Steiner point
   recover: find why a7a/a7b's plates take +28 % (likely one point per
   wrong hull face where one per quad would do, or points inserted in cells whose refusal then stays
   unchanged), and let the point sit where it does not make slivers.
+  **Measure the fallback first, again: a kernel apex for a non-star piece, 2026-09-29.** Charging
+  the whole-cell fans' off-surface area to the facet-split fan's OWN refusal (`RUSTMSPT_SPLIT_DIAG`
+  folds it into the census reason) put one reason on top everywhere: "a piece is not star-shaped
+  from its centre" - all of a1's stranded area, ~75 % of a8's, 22 % of a3's. The centroid is one
+  apex; any point of the piece's kernel fans it validly, and for a point off the boundary "every face
+  takes one exact orientation sign" is exactly the kernel test, so the guard is unchanged and only the
+  apex moves: the centroid, then the midpoints to each vertex, then a 5x5x5 grid over the box, first
+  that passes. Gated (`data/output/acceptance_m21h`): a1 97.799 -> **100.000** and a7b 99.968 ->
+  **100.000**, both `[V13]` PASS; a8 99.833 -> 99.942, a4 99.911 -> 99.971, a3 99.644 -> 99.716,
+  a7a 99.962 -> 99.994, a6b 99.996 -> 99.999, a6a unchanged; reference cases 97.697 -> **99.597**,
+  98.956 -> **99.789**, 99.854 -> 99.939; `[V5]` WARN -> PASS on a4 and a7b; no status worse; elements
+  +0.0-0.8 %; default path unchanged; R-P2 byte-identical on a4/a8; 677 tests. Whole-cell fans: a1/a2/
+  a7a/a7b **0**, a3 110 -> 106, a4 19 -> 11, a6b 4 -> 2, a6a 5, a8 738 -> 630 - M-2.3's remaining
+  population. Refuted on the way (a parse error, recorded so it is not repeated): splitting facet
+  edges at collinear nodes is inert - the "node exactly on the missing edge" reading came from a
+  census column that had shifted, and the real nearest node is 0.05+ of an edge away.
 - **M-2.2. Boundary consistency: a facet vertex on the cell's boundary is a trace point.** The
   "hull carries a node the boundary has never heard of" class (a8 1,200 cells, 38.3 % of its
   stranded area) is the residue of record §6.43, which took it from 72 % of the population by making
@@ -2360,7 +2376,7 @@ without the stated fallback.
 | M-1.8 | Resolution as background × maximum level, given; per-input levels; the reference cases at their own resolution (R-E4, S-54, §6.2 item 18) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** (R9) — M-1.9's set, nine cases unchanged; reference-case contacts before/after | ● ladder, per-input levels and the reference cases on both paths at their own resolution (gated 0.96× / 0.74× / 1.34× the reference's tets) |
 | M-1.9 | Focus-region render harness: intersection curves, sharp edges/corners, thin regions, transitions, from the input; before/after diffs (R9) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — the contact sheets, and the two known defects they must show | ◐ input-vs-output comparison harness landed (R9); thin-region and transition views, runner call open |
 | M-2.0 | J1 fingerprint mismatch is a hard error; fingerprint = constraint entity ids (MG-06) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ● landed `9b9c1a2` |
-| M-2.1 | Facet recovery by Steiner points on the constraint — gate | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — cutaway renders at a3's cube edges and an a8 strut junction, before/after | ◐ move (d) landed on D-11 (a): link-polygon class removed, gated a8 99.779 %, a3 99.638 %, reference cases 97.697 / 98.944 / 99.795 %, at +1–8 % tets (a7a/a7b +28 %) and more slivers for M-5; zero-area face triangles split and interior Steiner points above flat cell-face quads (a8 99.124 %, reference case 3 `[V9]` closed); flat-tet edge removal (reference case 1 406 → 226 refused facets, a1 96.882 %); facet band (`3198276`), Steiner with weld guard and rollback (`691aaed`), lexicographic boundary recovery (`a718767`), flat-tet removal (edge split / pyramid flip / cavity re-cone, `cad6440`+), the composite 2-3 + removal, near-duplicate adoption (gated `[V2]` PASS on all nine) the facet-vertex-only band (gated a6a `[V9]` PASS) and buried faces out of S8 (gated a8 98.80 %, −5.8 % tets) landed on the gated path; GO gate unmet on a8 (edge class 1,835 → 1,462); gated a8 98.445 % against 99.134 % on the old lattice |
+| M-2.1 | Facet recovery by Steiner points on the constraint — gate | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — cutaway renders at a3's cube edges and an a8 strut junction, before/after | ◐ 2026-09-29: the facet-split fan's non-star refusal answered by a kernel apex - gated a1 **100.000** and a7b **100.000** (`[V13]` PASS), a8 99.942, a4 99.971, a3 99.716, reference cases 99.597 / 99.789 / 99.939 %; whole-cell fans 0 on a1/a2/a7a/a7b, left a3 106, a4 11, a6a 5, a6b 2, a8 630 (earlier: move (d) on D-11 (a), +1–8 % tets, slivers for M-5) |
 | M-2.2 | Boundary consistency: facet vertices on the cell boundary are trace points | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ● landed 2026-09-29: a rim vertex on a cell edge adopts the edge's K2 representative; hull classes 0 on a3/a4/a8; a4 99.911, a8 99.833, ref 3 99.854 |
 | M-2.3 | Delete the whole-cell fan | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ blocked by M-2.1/M-2.2 |
 | M-2.4 | Retire `contact_chamfered_by` | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ◐ counted (a6a 895, a6b 2,396 gated); blocked: the limb's contact strip is thinner than a lattice face, so the faces it declares are genuine rim chamfer |

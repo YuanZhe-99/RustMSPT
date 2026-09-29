@@ -164,7 +164,7 @@ cargo run --release -- mesh-verify \
 | `p2_equal_fidelity.py <work> [--out table]` | M-1.4：默认路径达到门控路径贴面比例所需 `h` 下的单元数（`h_max_frac`、`h_min_frac`、`eps_frac` 一起减半），在尺寸叶子预算或 2 GB 处停止。表格：`p2_equal_fidelity.md`。 |
 | `node_dump.py <contract.vtu> <node>` | 单个节点的坐标、`constraint_kind`、`node_origin`，以及所有相邻四面体的区域集、来源、`parent_cell`、`escalation_reason`、`plc_path`（后三者需要网格化时设置 `RUSTMSPT_CUT_DIAG=1`）。 |
 
-配合使用的仅打印诊断（只改变打印内容，从不改变网格）：`RUSTMSPT_CUT_DIAG`、`RUSTMSPT_JCT_DIAG`、`RUSTMSPT_PLC_DIAG`、`RUSTMSPT_PLC_CSV=<路径>`（§7.4 逐单元统计）、`RUSTMSPT_PLC_CELL=<点阵索引>`（为单个单元打开 cdt 小面/外壳/平坦四面体转储）、`RUSTMSPT_FACET_DIAG`、`RUSTMSPT_FLAT_DIAG`、`RUSTMSPT_HULL_DIAG`、`RUSTMSPT_TRACE_PROBE=x,y,z`（归一化坐标：经过该点的每个点阵面、其角点的 `constraint_kind`/`on_cut`、迹线弦与棱上交点）、`RUSTMSPT_THIN_DIAG`、`RUSTMSPT_TIME_STAGES`。
+配合使用的仅打印诊断（只改变打印内容，从不改变网格）：`RUSTMSPT_CUT_DIAG`、`RUSTMSPT_JCT_DIAG`、`RUSTMSPT_PLC_DIAG`、`RUSTMSPT_PLC_CSV=<路径>`（§7.4 逐单元统计）、`RUSTMSPT_PLC_CELL=<点阵索引>`（为单个单元打开 cdt 小面/外壳/平坦四面体转储）、`RUSTMSPT_FACET_DIAG`、`RUSTMSPT_FLAT_DIAG`、`RUSTMSPT_HULL_DIAG`、`RUSTMSPT_SPLIT_DIAG`（搁浅面积统计同时给出小面分割扇形拒绝的原因）、`RUSTMSPT_TRACE_PROBE=x,y,z`（归一化坐标：经过该点的每个点阵面、其角点的 `constraint_kind`/`on_cut`、迹线弦与棱上交点）、`RUSTMSPT_THIN_DIAG`、`RUSTMSPT_TIME_STAGES`。
 
 ## 夹具套件
 

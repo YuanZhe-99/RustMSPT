@@ -101,6 +101,9 @@ thread_local! {
     /// Print-only: set while `plc_attempt` works on the cell named by `RUSTMSPT_PLC_CELL`, so the
     /// facet and hull diagnostics can be read for one cell instead of for every cell.
     pub static DIAG_CELL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Print-only: the Steiner round `constrained_tets_with_steiner` is in, and whether it is the
+    /// last one, or `(-1, false)` outside it - so a census can read the refusal that stood.
+    pub static DIAG_ROUND: std::cell::Cell<(i32, bool)> = const { std::cell::Cell::new((-1, false)) };
 }
 
 // AI-FUNC-SUMMARY: Whether a print-only cdt diagnostic named by `var` is on for the current cell; returns bool; side effects: none.
@@ -2433,7 +2436,14 @@ pub fn note_split_public(reason: &'static str) {
     note_split(reason);
 }
 
+thread_local! {
+    /// Print-only: the last `note_split` reason on this thread, so a caller can name why the
+    /// facet-split fan declined one particular cell (`RUSTMSPT_SPLIT_DIAG`).
+    pub static LAST_SPLIT: std::cell::Cell<&'static str> = const { std::cell::Cell::new("") };
+}
+
 fn note_split(reason: &'static str) {
+    LAST_SPLIT.with(|c| c.set(reason));
     if *SPLIT_FAN_DIAG.get_or_init(|| std::env::var_os("RUSTMSPT_PLC_DIAG").is_some()) {
         let mut guard = SPLIT_FAN_WHY.lock().unwrap_or_else(|e| e.into_inner());
         *guard.get_or_insert_with(BTreeMap::new).entry(reason).or_insert(0) += 1;
@@ -2639,6 +2649,19 @@ fn conform_cap_rim(
     out
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: The fallback when §7.4 declines a cell: split its frozen boundary soup by each
+//   component's cap into closed pieces and tetrahedralise each piece, so the interface stays on
+//   the surface and the cell stays conforming.
+// Inputs: the cell's boundary triangles, one cap per component, node and triangle side oracles,
+//   the node table (grown by fan apexes), the node keys, and the tolerance.
+// Returns: the tets and a piece index per tet, or None - the caller then fans the whole cell.
+// Side effects: pushes fan apexes onto `points`; records outcomes via `note_split`.
+// Notes: A piece is filled by the constrained kernel with no facet first; otherwise it is fanned
+//   from an apex that sees every face with one exact orientation sign - the centroid, or, when the
+//   piece is not star-shaped from it, the first kernel point among the midpoints to its vertices
+//   and a 5x5x5 grid over its box (plan M-2.1 residue, 2026-09-29). The pieces' volumes must sum to
+//   the cell's.
 pub fn facet_split_fan(
     boundary: &[[u32; 3]],
     caps: &[Vec<[u32; 3]>],
@@ -2986,11 +3009,66 @@ pub fn facet_split_fan(
                 }
             }
             None => {
-                let mut centre = Vec3::new(0.0, 0.0, 0.0);
+                let mut centroid = Vec3::new(0.0, 0.0, 0.0);
                 for node in &nodes {
-                    centre = centre.add(points[*node as usize]);
+                    centroid = centroid.add(points[*node as usize]);
                 }
-                let centre = centre.scale(1.0 / nodes.len() as f64);
+                let centroid = centroid.scale(1.0 / nodes.len() as f64);
+                // **The centre is one candidate apex, not the only one** (plan M-2.1 residue,
+                // 2026-09-29). Any point strictly inside the piece's kernel fans it validly, and
+                // for a point off the boundary "every face takes the same exact orientation sign"
+                // IS the kernel test - so the guard below is unchanged and only the apex moves.
+                // A non-star centroid was the fallback's largest refusal (a1 all of its stranded
+                // area, a8 three quarters). Candidates in a fixed order, first that passes wins:
+                // the centroid, the midpoints from it to each vertex, then a grid over the box.
+                let sign_of = |apex: Vec3| -> Vec<i8> {
+                    piece
+                        .iter()
+                        .map(|t| {
+                            crate::meshgen::predicates::orient3d_filtered(
+                                points[t[0] as usize],
+                                points[t[1] as usize],
+                                points[t[2] as usize],
+                                apex,
+                            )
+                            .0
+                        })
+                        .collect()
+                };
+                let sees_all = |signs: &[i8]| {
+                    !signs.is_empty()
+                        && signs[0] != 0
+                        && signs.iter().all(|s| *s == signs[0])
+                };
+                let mut centre = centroid;
+                if !sees_all(&sign_of(centroid)) {
+                    let mut candidates: Vec<Vec3> = nodes
+                        .iter()
+                        .map(|n| centroid.add(points[*n as usize]).scale(0.5))
+                        .collect();
+                    let (mut lo, mut hi) = (centroid, centroid);
+                    for n in &nodes {
+                        let q = points[*n as usize];
+                        lo = Vec3::new(lo.x.min(q.x), lo.y.min(q.y), lo.z.min(q.z));
+                        hi = Vec3::new(hi.x.max(q.x), hi.y.max(q.y), hi.z.max(q.z));
+                    }
+                    for i in 1..6 {
+                        for j in 1..6 {
+                            for k in 1..6 {
+                                let f = |a: f64, b: f64, s: usize| a + (b - a) * s as f64 / 6.0;
+                                candidates.push(Vec3::new(
+                                    f(lo.x, hi.x, i),
+                                    f(lo.y, hi.y, j),
+                                    f(lo.z, hi.z, k),
+                                ));
+                            }
+                        }
+                    }
+                    if let Some(found) = candidates.into_iter().find(|c| sees_all(&sign_of(*c))) {
+                        note_split("a non-star piece was fanned from a kernel point, not its centre");
+                        centre = found;
+                    }
+                }
                 // **A fan is valid only if the apex sees every face of the piece from the same
                 // side** (plan MG-15). `piece` is consistently wound, so over a star-shaped piece
                 // every face takes the same orientation sign against the apex. A face of the other
@@ -3810,8 +3888,10 @@ pub fn constrained_tets_with_steiner(
         }
     }
     for round in 0..=rounds {
+        DIAG_ROUND.with(|c| c.set((round as i32, round == rounds)));
         let outcome =
             constrained_tets_detailed(&arena.points, &arena.keys, boundary, facets, tol);
+        DIAG_ROUND.with(|c| c.set((-1, false)));
         let (reason, tets) = match outcome {
             Ok(tets) => {
                 if round > 0 {
@@ -4532,8 +4612,16 @@ fn constrained_tets_detailed(
                                 }
                             })
                         });
+                        let frozen_edge = frozen.iter().any(|f| f.contains(&x) && f.contains(&y));
+                        let hull_edge = outer.iter().any(|f| f.contains(&x) && f.contains(&y));
                         eprintln!(
-                            "[EDGE-DIAG] facet n {} bend/len {:.3e} nearest node off/len {:.3e} at t {:.3} joined {} crossed-by-mesh-edge {}",
+                            "[EDGE-DIAG] round {:?} node-in-facet {:?} ends-on-boundary {} {} frozen-edge {} hull-edge {} facet n {} bend/len {:.3e} nearest node off/len {:.3e} at t {:.3} joined {} crossed-by-mesh-edge {}",
+                            DIAG_ROUND.with(|c| c.get()),
+                            facet.iter().position(|v| *v == best.1).map(|at| (at, slot, facet.len())),
+                            frozen_nodes.contains(&x),
+                            frozen_nodes.contains(&y),
+                            frozen_edge,
+                            hull_edge,
                             facet.len(),
                             bend / len2.sqrt(),
                             best.0,

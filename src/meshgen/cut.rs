@@ -8333,6 +8333,16 @@ struct PlcCell {
     fanned: Option<&'static str>,
 }
 
+// AI-FUNC-SUMMARY: Print-only (`RUSTMSPT_SPLIT_DIAG`): intern "<§7.4 reason> | split: <fan reason>" as a static string; returns it; side effects: grows a process-wide set of the few distinct pairs.
+fn split_diag_reason(reason: &'static str, why: &'static str) -> &'static str {
+    static SEEN: std::sync::Mutex<BTreeMap<(&'static str, &'static str), &'static str>> =
+        std::sync::Mutex::new(BTreeMap::new());
+    let mut guard = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    guard
+        .entry((reason, why))
+        .or_insert_with(|| Box::leak(format!("{reason} | split: {why}").into_boxed_str()))
+}
+
 thread_local! {
     /// Print-only: the lattice cell `plc_attempt` is working on, for `hull_diag`'s lines.
     static HULL_CELL: std::cell::Cell<usize> = const { std::cell::Cell::new(usize::MAX) };
@@ -8825,6 +8835,7 @@ fn plc_attempt(
                 uncertain.set(here);
                 Some(inside)
             };
+            crate::meshgen::cdt::LAST_SPLIT.with(|c| c.set(""));
             let split = crate::meshgen::cdt::facet_split_fan(
                 &boundary_local,
                 &caps,
@@ -8834,6 +8845,7 @@ fn plc_attempt(
                 &arena.keys,
                 tol,
             );
+            let split_why = Some(crate::meshgen::cdt::LAST_SPLIT.with(|c| c.get()));
             match split {
                 Some((tets, regions)) => (tets, regions, Some(reason)),
                 None => {
@@ -8842,6 +8854,12 @@ fn plc_attempt(
                     } else {
                         "refused with at least one cap triangle removed for lying in a cell face"
                     });
+                    // Print-only: fold the split's own refusal into the reason, so the stranded-area
+                    // census ranks whole-cell fans by why the FALLBACK declined as well.
+                    if std::env::var_os("RUSTMSPT_SPLIT_DIAG").is_some() {
+                        let why = split_why.unwrap_or("");
+                        return Err(split_diag_reason(reason, why));
+                    }
                     return Err(reason);
                 }
             }
