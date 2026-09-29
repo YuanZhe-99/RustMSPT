@@ -2649,6 +2649,13 @@ fn conform_cap_rim(
     out
 }
 
+// AI-FUNC-SUMMARY: A triangle's node ids in ascending order, as an orientation-free key; returns [u32; 3]; side effects: none.
+fn sorted_tri(t: [u32; 3]) -> [u32; 3] {
+    let mut k = t;
+    k.sort_unstable();
+    k
+}
+
 // AI-FUNC-SUMMARY:
 // Purpose: The fallback when §7.4 declines a cell: split its frozen boundary soup by each
 //   component's cap into closed pieces and tetrahedralise each piece, so the interface stays on
@@ -2662,7 +2669,9 @@ fn conform_cap_rim(
 //   piece is not star-shaped from it, the first kernel point among the midpoints to its vertices
 //   and a 5x5x5 grid over its box (plan M-2.1 residue, 2026-09-29). The pieces' volumes must sum to
 //   the cell's. A cell no cap separates is one piece when no cap triangle is left at all - the
-//   surface lies in the cell's own faces (owner decision D-12); otherwise it is refused.
+//   surface lies in the cell's own faces (owner decision D-12); otherwise it is refused. A
+//   boundary triangle placed by its centroid because every corner is on the surface is moved to
+//   another piece when that leaves both closed (D-13).
 pub fn facet_split_fan(
     boundary: &[[u32; 3]],
     caps: &[Vec<[u32; 3]>],
@@ -2750,6 +2759,10 @@ pub fn facet_split_fan(
     let caps = &caps;
     let mut pieces: Vec<(Vec<[u32; 3]>, Vec<(usize, bool)>)> =
         vec![(boundary.to_vec(), Vec::new())];
+    // Boundary triangles whose side came from their own centroid because every corner is on the
+    // surface - the one placement that is a coin toss when the triangle lies IN the surface.
+    let mut placed_on_surface: std::collections::BTreeSet<[u32; 3]> =
+        std::collections::BTreeSet::new();
     for (group, cap) in caps.iter().enumerate() {
         if cap.is_empty() {
             continue;
@@ -2799,8 +2812,14 @@ pub fn facet_split_fan(
                     // The rim and the boundary are not the same spelling of the same line often
                     // enough for the runs to be the separator the argument needs.
                     None => match side_of_face(group, *triangle) {
-                        Some(true) => above.push(*triangle),
-                        Some(false) => below.push(*triangle),
+                        Some(true) => {
+                            placed_on_surface.insert(sorted_tri(*triangle));
+                            above.push(*triangle)
+                        }
+                        Some(false) => {
+                            placed_on_surface.insert(sorted_tri(*triangle));
+                            below.push(*triangle)
+                        }
                         None => {
                             refused = Some("a boundary triangle lies wholly on the surface");
                             break;
@@ -2879,6 +2898,62 @@ pub fn facet_split_fan(
             soup
         })
         .collect();
+    // **A triangle lying IN the surface has no side, so its placement may be wrong - move it to
+    // where it closes a piece.** A facet bent over a cell edge has part of itself in a cell face;
+    // that part coincides with a boundary triangle whose corners are all on the surface, and the
+    // centroid test that places it is asking about a point on the surface. On a4 it put the
+    // triangle below, leaving the piece above open along two edges and the piece below carrying
+    // it as an appendix (plan M-2.3, 2026-09-29). A move is kept only when it leaves BOTH pieces
+    // closed; triangles are visited in key order.
+    if pieces.len() > 1 && !placed_on_surface.is_empty() {
+        let open_edges = |soup: &[[u32; 3]]| -> usize {
+            let mut uses: BTreeMap<[u32; 2], usize> = BTreeMap::new();
+            for t in soup {
+                for slot in 0..3 {
+                    let (a, b) = (t[slot], t[(slot + 1) % 3]);
+                    *uses.entry(if a <= b { [a, b] } else { [b, a] }).or_insert(0) += 1;
+                }
+            }
+            uses.values().filter(|n| **n % 2 == 1).count()
+        };
+        for key in &placed_on_surface {
+            let Some(from) = pieces
+                .iter()
+                .position(|p| p.iter().any(|t| sorted_tri(*t) == *key))
+            else {
+                continue;
+            };
+            let at = pieces[from].iter().position(|t| sorted_tri(*t) == *key).unwrap_or(0);
+            let before_from = open_edges(&pieces[from]);
+            if before_from == 0 {
+                continue;
+            }
+            let mut without = pieces[from].clone();
+            let moved = without.remove(at);
+            let after_from = open_edges(&without);
+            let mut best: Option<(usize, usize)> = None;
+            for to in 0..pieces.len() {
+                if to == from || pieces[to].iter().any(|t| sorted_tri(*t) == *key) {
+                    continue;
+                }
+                let mut with = pieces[to].clone();
+                with.push(moved);
+                let gain = (before_from + open_edges(&pieces[to]))
+                    .saturating_sub(after_from + open_edges(&with));
+                if after_from == 0
+                    && open_edges(&with) == 0
+                    && best.is_none_or(|(_, g)| gain > g)
+                {
+                    best = Some((to, gain));
+                }
+            }
+            if let Some((to, _)) = best {
+                pieces[from] = without;
+                pieces[to].push(moved);
+                note_split("a triangle lying in the surface was moved to the piece it closes");
+            }
+        }
+    }
     pieces.retain(|piece| !piece.is_empty());
     if pieces.is_empty() {
         note_split("no surface separates the cell into two pieces");
@@ -2948,6 +3023,24 @@ pub fn facet_split_fan(
                 }
                 if of_cell > 0 {
                     note_split("    the open edge is one the CELL's triangulation carries");
+                }
+                if DIAG_CELL.with(|c| c.get()) {
+                    for (edge, count) in &uses {
+                        if *count == 1 {
+                            eprintln!(
+                                "[OPEN-EDGE] {:?} cell-edge {} at {:?} {:?}",
+                                edge,
+                                cell_edges.contains(edge),
+                                points[edge[0] as usize],
+                                points[edge[1] as usize]
+                            );
+                        }
+                    }
+                    for (group, cap) in caps.iter().enumerate() {
+                        eprintln!("[OPEN-CAP] group {group} {:?}", cap);
+                    }
+                    eprintln!("[OPEN-PIECE] {:?}", piece);
+                    eprintln!("[OPEN-BOUNDARY] {:?}", boundary);
                 }
                 if of_cap > 0 {
                     note_split("    the open edge is one only the CAP carries");

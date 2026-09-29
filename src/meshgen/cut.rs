@@ -8880,6 +8880,7 @@ fn plc_attempt(
                     // census ranks whole-cell fans by why the FALLBACK declined as well.
                     if std::env::var_os("RUSTMSPT_SPLIT_DIAG").is_some() {
                         let why = split_why.unwrap_or("");
+                        eprintln!("[SPLIT-FAIL] cell {} {reason} | {why}", HULL_CELL.with(|c| c.get()));
                         return Err(split_diag_reason(reason, why));
                     }
                     return Err(reason);
