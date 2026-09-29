@@ -8490,6 +8490,7 @@ fn hull_diag(
 //   it conforming with a neighbour that did take §7.4. That is why the boundary comes back too.
 //   A facet rim vertex on a cell EDGE adopts the nearest boundary node on that edge the cut marks
 //   on-surface for its component (plan M-2.2) - the edge's own crossing, however far S7 moved it.
+#[allow(clippy::too_many_arguments)]
 fn plc_attempt(
     tet: [u32; 4],
     boundary: &[[u32; 3]],
