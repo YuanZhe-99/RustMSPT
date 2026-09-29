@@ -1113,7 +1113,10 @@ pub fn delaunay_tets(points: &[Vec3], keys: &[NodeKey]) -> Option<Vec<[u32; 4]>>
 // Returns: the triangles as index triples wound with the face's normal, or the named reason it
 //   refused - the refusal rate per reason is what aims the next piece of work, so it is data.
 // Side effects: None — it adds no points.
-// Notes: **In 2D a constrained Delaunay triangulation always exists without Steiner points**, which
+// Notes: A triangle of no area (height under 1e-9 of its longest edge, a point collinear with an edge
+//   inside the face) is split with its neighbour across the long edge before the result is returned,
+//   so no frozen boundary carries one.
+//   **In 2D a constrained Delaunay triangulation always exists without Steiner points**, which
 //   is why this half of §7.4 has no refusal case worth designing around while the 3D half does. A
 //   segment is recovered by flipping the edges that cross it (Anglada): pop a crossing edge, flip
 //   it if its quad is convex and push it back if not, and the loop terminates because every flip
@@ -1436,6 +1439,63 @@ pub fn constrained_face_triangulation(
                 return Err("the flip loop did not terminate");
             }
         }
+    }
+
+    // --- no triangle of no area ---
+    //
+    // **A point collinear with an edge INSIDE the face is split into it, not joined to it.** The rim
+    // case is handled at insertion (`rim_of`), but a trace runs across the face as well: three trace
+    // points on one chord, the middle one a rounding error off the line, and Bowyer-Watson joins it
+    // to the outer two as a triangle of area 1e-17 x longest^2. Both cells then freeze that
+    // triangle into their boundary, every tet on it is flat, §7.4 declines both and the whole-cell
+    // fan leaves the curve node there without its body (reference case 3's `[V9]` node, face x = 0).
+    // Such a triangle `(a, b, c)` with `b` on `ac` is removed with its neighbour `(a, c, d)` across
+    // the long edge, which becomes `(a, b, d)` and `(b, c, d)` - the 2D ring split. The bound is the
+    // one the segment split above already uses to call a point ON a segment (1e-9 of its length),
+    // and the result is still a function of the face alone (J1). A degenerate triangle on the rim has
+    // no neighbour and is left for the check below.
+    let degenerate = |t: [u32; 3]| -> Option<(u32, u32, u32)> {
+        let [p, q, r] = t.map(|id| points[id as usize]);
+        let n = q.sub(p).cross(r.sub(p));
+        let lengths = [(q.sub(p), 2usize), (r.sub(q), 0usize), (p.sub(r), 1usize)];
+        let (long, apex) = lengths
+            .iter()
+            .map(|(d, apex)| (d.dot(*d), *apex))
+            .fold((0.0f64, 0usize), |best, x| if x.0 > best.0 { x } else { best });
+        if long <= 0.0 || n.dot(n).sqrt() > long * 1.0e-9 {
+            return None;
+        }
+        Some((t[(apex + 1) % 3], t[apex], t[(apex + 2) % 3]))
+    };
+    for _round in 0..tris.len() {
+        let Some((at, (a, b, c))) = tris
+            .iter()
+            .enumerate()
+            .find_map(|(at, t)| degenerate(*t).map(|abc| (at, abc)))
+        else {
+            break;
+        };
+        let Some(other) = (0..tris.len()).find(|o| {
+            *o != at && tris[*o].contains(&a) && tris[*o].contains(&c)
+        }) else {
+            break;
+        };
+        let Some(d) = tris[other].iter().copied().find(|v| *v != a && *v != c) else { break };
+        let first = [a, b, d];
+        let second = [b, c, d];
+        let area = |t: [u32; 3]| {
+            let [p, q, r] = t.map(|id| points[id as usize]);
+            let n = q.sub(p).cross(r.sub(p));
+            n.dot(n).sqrt()
+        };
+        if area(first) <= 0.0 || area(second) <= 0.0 || degenerate(first).is_some() || degenerate(second).is_some() {
+            break;
+        }
+        let (hi, lo) = (at.max(other), at.min(other));
+        tris.remove(hi);
+        tris.remove(lo);
+        tris.push(first);
+        tris.push(second);
     }
 
     // --- wind every triangle with the face ---
@@ -3714,9 +3774,12 @@ pub fn constrained_tets(
 //   midpoint - accepted only when `intern` creates a NEW node, since a welded existing node is
 //   not on the edge and bends the facet (a6a's `[V6]` regression) - and the midpoint is inserted into every facet
 //   carrying that edge. (b) A facet whose edges are present but whose interior a mesh edge crosses
-//   receives that edge's intersection with the facet plane, when it lies inside the facet. Neither
-//   move ever places a point on a cell face - a facet lying wholly in one is skipped - so the faces
-//   the neighbours share are untouched (Invariant J1).
+//   receives that edge's intersection with the facet plane, when it lies inside the facet. (c) On a
+//   thin-tet or uncovered-facet refusal, every flat tet with a hull face and all four vertices on one
+//   cell face (a Delaunay degeneracy of co-circular face nodes) gets a point strictly inside the cell,
+//   a quarter of its longest edge in from its centre toward the cell's, and the Delaunay is re-run.
+//   None of the moves ever places a point on a cell face - a facet lying wholly in one is skipped - so
+//   the faces the neighbours share are untouched (Invariant J1).
 pub fn constrained_tets_with_steiner(
     arena: &mut NodeArena,
     boundary: &[[u32; 3]],
@@ -3733,6 +3796,16 @@ pub fn constrained_tets_with_steiner(
     // undeclared material-boundary faces. So the pass either succeeds or leaves no trace.
     let entry_facets = facets.clone();
     let entry_nodes = arena.points.len();
+    if DIAG_CELL.with(|c| c.get()) {
+        for tri in boundary {
+            let [a, b, c] = tri.map(|id| arena.points[id as usize]);
+            let area = b.sub(a).cross(c.sub(a)).dot(b.sub(a).cross(c.sub(a))).sqrt() * 0.5;
+            let l = [b.sub(a), c.sub(b), a.sub(c)].iter().map(|d| d.dot(*d).sqrt()).fold(0.0f64, f64::max);
+            if area <= l * l * 1.0e-9 {
+                eprintln!("[BOUNDARY-DEGENERATE] {:?} area/longest^2 {:.3e} pts {:?} {:?} {:?}", tri, area / (l * l), a, b, c);
+            }
+        }
+    }
     for round in 0..=rounds {
         let outcome =
             constrained_tets_detailed(&arena.points, &arena.keys, boundary, facets, tol);
@@ -3746,13 +3819,123 @@ pub fn constrained_tets_with_steiner(
             Err(failure) => failure,
         };
         last = reason;
+        if DIAG_CELL.with(|c| c.get()) {
+            eprintln!("[STEINER] round {} refused: {}", round, reason);
+        }
         if round == rounds || tets.is_empty() {
             break;
         }
         let edge_class = reason == "a facet edge is not an edge of the tetrahedralisation";
         let interior_class = reason == "a facet's edges are all there but its interior is not covered";
-        if !edge_class && !interior_class {
+        let thin_class = reason == "a tet is thinner than the node quantum";
+        if !edge_class && !interior_class && !thin_class {
             break;
+        }
+        // **(c) A flat tet on a cell-face quad is a Delaunay degeneracy, not a constraint.** Four
+        // co-circular nodes on a cell face (the lattice makes them common) give the Delaunay a
+        // zero-volume tet lying on the quad; once the hull is recovered to the frozen diagonal the
+        // interior keeps the other one, and when the two neighbours' apexes differ no flip, re-cone
+        // or edge removal can take it out (`[FLAT-CLASS] hull 2`, reference case 3's `[V9]` node).
+        // A point strictly inside the cell, a little in from the quad's centre, breaks the
+        // co-circularity where it matters and the Delaunay is re-run. Never on a cell face (J1),
+        // never within `tol` of a facet's plane inside the facet.
+        if thin_class || interior_class {
+            let mut face_count: BTreeMap<[u32; 3], usize> = BTreeMap::new();
+            for t in &tets {
+                for face in tet_faces(*t) {
+                    let mut k = face;
+                    k.sort_unstable();
+                    *face_count.entry(k).or_insert(0) += 1;
+                }
+            }
+            let mut centre = Vec3::new(0.0, 0.0, 0.0);
+            let mut used: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+            for t in &tets {
+                used.extend(t.iter().copied());
+            }
+            for id in &used {
+                centre = centre.add(arena.points[*id as usize]);
+            }
+            centre = centre.scale(1.0 / used.len().max(1) as f64);
+            let mut points_to_add: Vec<Vec3> = Vec::new();
+            for t in &tets {
+                let q = t.map(|id| arena.points[id as usize]);
+                let volume = crate::meshgen::predicates::tet_signed_volume(q[0], q[1], q[2], q[3]).abs();
+                let mut longest = 0.0f64;
+                let mut shortest = f64::INFINITY;
+                for a in 0..4 {
+                    for b in a + 1..4 {
+                        let d = q[b].sub(q[a]).dot(q[b].sub(q[a])).sqrt();
+                        longest = longest.max(d);
+                        shortest = shortest.min(d);
+                    }
+                }
+                if volume > longest * longest * tol {
+                    continue;
+                }
+                let hull = tet_faces(*t)
+                    .iter()
+                    .filter(|face| {
+                        let mut k = **face;
+                        k.sort_unstable();
+                        face_count.get(&k) == Some(&1)
+                    })
+                    .count();
+                if hull < 1
+                    || !cell_planes.iter().any(|(normal, offset)| {
+                        t.iter().all(|id| (normal.dot(arena.points[*id as usize]) - offset).abs() <= plane_tol)
+                    })
+                {
+                    continue;
+                }
+                let mid = q[0].add(q[1]).add(q[2]).add(q[3]).scale(0.25);
+                let inward = centre.sub(mid);
+                let len = inward.dot(inward).sqrt();
+                if len <= 0.0 || shortest <= 4.0 * tol {
+                    continue;
+                }
+                let x = mid.add(inward.scale((0.25 * longest).min(0.5 * len) / len));
+                if cell_planes.iter().any(|(n, o)| (n.dot(x) - o).abs() <= plane_tol.max(tol)) {
+                    continue;
+                }
+                let near_facet = facets.iter().any(|facet| {
+                    if facet.len() < 3 {
+                        return false;
+                    }
+                    let corner = |slot: usize| arena.points[facet[slot] as usize];
+                    let mut want = Vec3::new(0.0, 0.0, 0.0);
+                    for slot in 1..facet.len() - 1 {
+                        want = want.add(corner(slot).sub(corner(0)).cross(corner(slot + 1).sub(corner(0))));
+                    }
+                    let l = want.dot(want).sqrt();
+                    if l <= 0.0 {
+                        return false;
+                    }
+                    let normal = want.scale(1.0 / l);
+                    (normal.dot(x) - normal.dot(corner(0))).abs() <= 4.0 * tol
+                        && inside_polygon(x, facet, &arena.points, normal, tol)
+                });
+                if near_facet {
+                    continue;
+                }
+                if DIAG_CELL.with(|c| c.get()) { eprintln!("[STEINER-C] add {:?}", x); }
+                points_to_add.push(x);
+            }
+            let mut inserted = 0usize;
+            for x in points_to_add {
+                let before = arena.points.len();
+                arena.intern(x);
+                if arena.points.len() > before {
+                    inserted += 1;
+                }
+            }
+            if inserted > 0 {
+                note_split("steiner: interior points above flat cell-face quads");
+                continue;
+            }
+            if thin_class {
+                break;
+            }
         }
         let on_one_cell_face = |ids: &[u32], points: &[Vec3]| {
             cell_planes.iter().any(|(normal, offset)| {
@@ -4077,6 +4260,14 @@ fn constrained_tets_detailed(
                 .count()
         };
         let flattened = remove_flat_quad_tets(&tets, points, tol, &protected);
+        if DIAG_CELL.with(|c| c.get()) {
+            eprintln!(
+                "[FLAT-STAGE] flat {} -> {} hull kept {}",
+                flat_in(&tets),
+                flat_in(&flattened),
+                hull_of(&faces_of(&flattened)) == outer
+            );
+        }
         if flat_in(&flattened) < flat_in(&tets) {
             let after = hull_of(&faces_of(&flattened));
             if after == outer {
