@@ -8795,10 +8795,10 @@ fn plc_attempt(
                     slots
                         .iter()
                         .flat_map(|slot| {
-                            let facet = &facets[*slot];
-                            (1..facet.len().saturating_sub(1))
-                                .map(|at| [facet[0], facet[at], facet[at + 1]])
-                                .collect::<Vec<[u32; 3]>>()
+                            crate::meshgen::cdt::fan_facet_without_slivers(
+                                &facets[*slot],
+                                &arena.points,
+                            )
                         })
                         .filter(|t| !on_cell_face(t))
                         .collect()

@@ -2649,6 +2649,47 @@ fn conform_cap_rim(
     out
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Triangulate a facet ring as a fan from the vertex whose fan's thinnest triangle is the
+//   least thin, so a vertex lying on or near the segment between two others is not coned into a
+//   sliver.
+// Inputs: the facet's vertex ring and the node table.
+// Returns: the fan triangles (ties go to the earliest apex in ring order).
+// Side effects: None.
+// Notes: Thinness is twice the area over the longest edge squared. Where two surfaces meet, a
+//   facet can carry a vertex on the intersection line between two of its others (a3 cell 17931:
+//   19, 25, 12, all on both surfaces), and the fan from the first vertex then puts a sliver in
+//   the cap that lies along that line, has no side of the other surface, and is separated from
+//   its partner - leaving the piece open along 12-19.
+pub fn fan_facet_without_slivers(facet: &[u32], points: &[Vec3]) -> Vec<[u32; 3]> {
+    let n = facet.len();
+    if n < 3 {
+        return Vec::new();
+    }
+    let thinness = |t: [u32; 3]| {
+        let [a, b, c] = t.map(|id| points[id as usize]);
+        let cross = b.sub(a).cross(c.sub(a));
+        let longest = [b.sub(a), c.sub(b), a.sub(c)]
+            .iter()
+            .map(|d| d.dot(*d))
+            .fold(0.0f64, f64::max);
+        if longest > 0.0 { cross.dot(cross).sqrt() / longest } else { 0.0 }
+    };
+    let fan_from = |start: usize| -> Vec<[u32; 3]> {
+        (1..n - 1)
+            .map(|k| [facet[start], facet[(start + k) % n], facet[(start + k + 1) % n]])
+            .collect()
+    };
+    let mut best = (f64::NEG_INFINITY, 0usize);
+    for start in 0..n {
+        let worst = fan_from(start).iter().map(|t| thinness(*t)).fold(f64::INFINITY, f64::min);
+        if worst > best.0 {
+            best = (worst, start);
+        }
+    }
+    fan_from(best.1)
+}
+
 // AI-FUNC-SUMMARY: A triangle's node ids in ascending order, as an orientation-free key; returns [u32; 3]; side effects: none.
 fn sorted_tri(t: [u32; 3]) -> [u32; 3] {
     let mut k = t;
@@ -2671,7 +2712,8 @@ fn sorted_tri(t: [u32; 3]) -> [u32; 3] {
 //   the cell's. A cell no cap separates is one piece when no cap triangle is left at all - the
 //   surface lies in the cell's own faces (owner decision D-12); otherwise it is refused. A
 //   boundary triangle placed by its centroid because every corner is on the surface is moved to
-//   another piece when that leaves both closed (D-13).
+//   another piece when that leaves both closed (D-13). The caller builds each cap with
+//   `fan_facet_without_slivers`.
 pub fn facet_split_fan(
     boundary: &[[u32; 3]],
     caps: &[Vec<[u32; 3]>],

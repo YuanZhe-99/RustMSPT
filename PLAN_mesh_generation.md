@@ -1784,6 +1784,18 @@ cell's boundary without being a trace point of that face, where no Steiner point
   micro-slivers a4 0 -> 4 (2.2e-12) and a8 3 -> 56 (+1.1e-10), every one a tet of 1e-13-1e-11 whose
   centroid is ~1e-5 inside the body, i.e. inside `eps`; a4 `[V5]` PASS -> WARN. Owner decision D-13
   (a), with the standing rule recorded in §12.
+  **Cap facets fanned from the least-thin apex, 2026-09-29.** Next refusal: "the open edge is one
+  only the CAP carries" (a3 11, a8 3, a6a 2, a6b 1). a3 cell 17931: component 1's facet
+  [19, 25, 12, 5] carries 25 within rounding of the line 19-12 - all three are on both surfaces,
+  i.e. on the intersection line - and the cap's fan from the first vertex made the sliver
+  [19, 25, 12], which lies along that line, has no side of component 0 and was separated from
+  [19, 12, 5], leaving the piece open along 12-19. A zero-area test does not see it (it is thin, not
+  flat); fanning each facet from the apex that maximises its thinnest triangle does. Gated
+  (`data/output/acceptance_m23d`): a3 99.850 -> **99.896**, `[V6]` adjacency 47 -> **23**, whole-cell
+  fans 21 -> 12, misattributed 7 -> 4; a8 99.942 -> 99.945, fans 39 -> 33, misattributed 56 -> 26;
+  a4 misattributed 4 -> 5 (a sliver 6e-5 from the cube face, inside `eps`; landed under D-13's
+  standing rule); reference cases 99.641 / 99.851 / 99.942 -> 99.814 / 99.893 / 99.950 %; tets within
+  +-0.08 %; statuses, default path and R-P2 unchanged; 677 tests.
 - **M-2.2. Boundary consistency: a facet vertex on the cell's boundary is a trace point.** The
   "hull carries a node the boundary has never heard of" class (a8 1,200 cells, 38.3 % of its
   stranded area) is the residue of record §6.43, which took it from 72 % of the population by making
@@ -2403,7 +2415,7 @@ without the stated fallback.
 | M-2.0 | J1 fingerprint mismatch is a hard error; fingerprint = constraint entity ids (MG-06) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ● landed `9b9c1a2` |
 | M-2.1 | Facet recovery by Steiner points on the constraint — gate | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — cutaway renders at a3's cube edges and an a8 strut junction, before/after | ◐ 2026-09-29: the facet-split fan's non-star refusal answered by a kernel apex - gated a1 **100.000** and a7b **100.000** (`[V13]` PASS), a8 99.942, a4 99.971, a3 99.716, reference cases 99.597 / 99.789 / 99.939 %; whole-cell fans 0 on a1/a2/a7a/a7b, and after D-12 (one piece where no cap is left) a3 23, a4 11, a6a 4, a6b 1, a8 96 (earlier: move (d) on D-11 (a), +1–8 % tets, slivers for M-5) |
 | M-2.2 | Boundary consistency: facet vertices on the cell boundary are trace points | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ● landed 2026-09-29: a rim vertex on a cell edge adopts the edge's K2 representative; hull classes 0 on a3/a4/a8; a4 99.911, a8 99.833, ref 3 99.854 |
-| M-2.3 | Delete the whole-cell fan | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ blocked by M-2.1's residue: whole-cell fans after D-13 a3 21, a6a 5, a6b 2, a8 39 (0 on a1/a2/a4/a7a/a7b) |
+| M-2.3 | Delete the whole-cell fan | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ blocked by M-2.1's residue: whole-cell fans a3 12, a6a 4, a6b 2, a8 33 (0 on a1/a2/a4/a7a/a7b) |
 | M-2.4 | Retire `contact_chamfered_by` | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ◐ counted (a6a 895, a6b 2,396 gated); blocked: the limb's contact strip is thinner than a lattice face, so the faces it declares are genuine rim chamfer |
 | M-2.5 | P3 residual audit | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — the same cutaways | ○ |
 | M-3.1 | The control | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ● all twelve cases 2026-09-28: gated FAIL sets equal the default's, gated `[V13]` better wherever the default is below 1.0 (reference cases 95.733 / 97.794 / 99.692 against 95.248 / 96.097 / 96.831 %), elements +0.1–0.9 % over the previous gated build, time within this host's baseline |
