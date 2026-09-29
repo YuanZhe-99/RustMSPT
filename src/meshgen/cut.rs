@@ -4781,10 +4781,38 @@ pub fn cut_lattice(
             let mut on_area = [0.0f64; 5];
             let mut off_area = [0.0f64; 5];
             let mut faces_by_path = [0usize; 5];
-            for (face, at) in &sides {
-                if at.len() != 2 || inside_set(at[0]) == inside_set(at[1]) {
-                    continue;
-                }
+            // The material-boundary faces in key order, then each one's worst corner distance to
+            // the nearest input triangle computed in parallel - a scan of every input triangle per
+            // corner, and most of the gated S8's print-only cost on a8 - and read back in the same
+            // order, so the sums below are the serial ones.
+            let boundary_faces: Vec<(&[u32; 3], &SmallVec<[usize; 2]>)> = sides
+                .iter()
+                .filter(|(_, at)| at.len() == 2 && inside_set(at[0]) != inside_set(at[1]))
+                .collect();
+            let worsts: Vec<f64> = boundary_faces
+                .par_iter()
+                .map(|(face, _)| {
+                    let mut worst = 0.0f64;
+                    for node in face.iter() {
+                        let q = mesh.nodes[*node as usize];
+                        let mut best = f64::INFINITY;
+                        for component in &all_components {
+                            let Some(slot) = classifier.slot_of(*component) else { continue };
+                            for tri in classifier.triangles_of(slot) {
+                                best = best.min(
+                                    crate::meshgen::verify::point_triangle_dist2(
+                                        q, tri[0], tri[1], tri[2],
+                                    )
+                                    .sqrt(),
+                                );
+                            }
+                        }
+                        worst = worst.max(best);
+                    }
+                    worst
+                })
+                .collect();
+            for ((face, at), worst) in boundary_faces.iter().zip(worsts) {
                 let p = [
                     mesh.nodes[face[0] as usize],
                     mesh.nodes[face[1] as usize],
@@ -4796,23 +4824,6 @@ pub fn cut_lattice(
                 for slot in 0..3 {
                     let d = p[(slot + 1) % 3].sub(p[slot]);
                     longest = longest.max(d.dot(d).sqrt());
-                }
-                // The worst corner's distance to the nearest input triangle, over every component.
-                let mut worst = 0.0f64;
-                for q in &p {
-                    let mut best = f64::INFINITY;
-                    for component in &all_components {
-                        let Some(slot) = classifier.slot_of(*component) else { continue };
-                        for tri in classifier.triangles_of(slot) {
-                            best = best.min(
-                                crate::meshgen::verify::point_triangle_dist2(
-                                    *q, tri[0], tri[1], tri[2],
-                                )
-                                .sqrt(),
-                            );
-                        }
-                    }
-                    worst = worst.max(best);
                 }
                 let parent = mesh.parent_of.get(at[0]).copied().unwrap_or(0) as usize;
                 let path = path_of.get(parent).copied().unwrap_or(4).min(4) as usize;
