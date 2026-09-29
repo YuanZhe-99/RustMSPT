@@ -1754,6 +1754,25 @@ cell's boundary without being a trace point of that face, where no Steiner point
   CSV, `RUSTMSPT_PLC_CSV`) before either is built.
   *Acceptance:* the two hull classes fall to 0 on a8 with `[V3]` held; the census names any
   residue. *Tier T3. Multimodal: no.*
+  **Landed 2026-09-29 - it was neither resolution: the vertex is on a cell EDGE and the edge had
+  already decided.** `RUSTMSPT_HULL_DIAG` put every intruding vertex on two face planes at once, on a
+  boundary edge, 0.03-0.5 of an edge from any boundary node (a4 all of them; a8 most, plus
+  coplanar-facet cases). Dumping a4 cell 436445 (`RUSTMSPT_TRACE_PROBE`): the edge lies in the cube
+  face on a lattice plane, S7 snapped endpoint 104408 onto that face 2.5e-4 past the cube's
+  perpendicular face, and invariant K2 promoted the edge's crossing to it - so the faces and every
+  cell around the edge carry the crossing at 104408, while the fragment clip puts it at the raw
+  intersection 0.028 edge away and `weld` refused the match. Neither the plan's "intern as a trace
+  point" (it would contradict K2's decision on the edge, in six cells) nor "weld within `q`" (the
+  gap is ~250 `q`) was right. `plc_attempt` now gives a rim vertex on a cell edge the nearest
+  boundary node on that edge the cut marks on-surface for its component - crossing nodes plus
+  `on_cut` parents - with no distance bound, because it is K2's decision read, not a tolerance.
+  Result (`data/output/acceptance_m22a`): both hull classes **0** on a3, a4 and a8 (a8's
+  coplanar-facet vertices went with them); gated on-surface a4 99.774 -> **99.911**, a8 99.779 ->
+  **99.833**, a3 99.638 -> 99.644, reference cases 97.697 / 98.944 -> 98.956 / 99.795 -> **99.854**,
+  the other six cases unchanged to the digit; elements down slightly (a8 -818); every check status
+  unchanged on all twelve; default path unchanged; R-P2 byte-identical on a4/a8; 677 tests. Residue
+  now: a8 facet-edge 51 % / thin-tet 27 % / interior 18 %, a4 interior 75 %, a3 interior 69 % -
+  all facet or thin classes, none hull.
 - **M-2.3. Delete the whole-cell centroid fan (R1).** When M-2.1 reports 0 on the matrix, the arm is
   removed: a cell neither §7.4 nor the facet-split fan can mesh is `Err` naming the cell, with the
   per-cell dump `RUSTMSPT_PLC_DUMP` already writes. Not "kept for safety": a fallback that abandons
@@ -2342,7 +2361,7 @@ without the stated fallback.
 | M-1.9 | Focus-region render harness: intersection curves, sharp edges/corners, thin regions, transitions, from the input; before/after diffs (R9) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — the contact sheets, and the two known defects they must show | ◐ input-vs-output comparison harness landed (R9); thin-region and transition views, runner call open |
 | M-2.0 | J1 fingerprint mismatch is a hard error; fingerprint = constraint entity ids (MG-06) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ● landed `9b9c1a2` |
 | M-2.1 | Facet recovery by Steiner points on the constraint — gate | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — cutaway renders at a3's cube edges and an a8 strut junction, before/after | ◐ move (d) landed on D-11 (a): link-polygon class removed, gated a8 99.779 %, a3 99.638 %, reference cases 97.697 / 98.944 / 99.795 %, at +1–8 % tets (a7a/a7b +28 %) and more slivers for M-5; zero-area face triangles split and interior Steiner points above flat cell-face quads (a8 99.124 %, reference case 3 `[V9]` closed); flat-tet edge removal (reference case 1 406 → 226 refused facets, a1 96.882 %); facet band (`3198276`), Steiner with weld guard and rollback (`691aaed`), lexicographic boundary recovery (`a718767`), flat-tet removal (edge split / pyramid flip / cavity re-cone, `cad6440`+), the composite 2-3 + removal, near-duplicate adoption (gated `[V2]` PASS on all nine) the facet-vertex-only band (gated a6a `[V9]` PASS) and buried faces out of S8 (gated a8 98.80 %, −5.8 % tets) landed on the gated path; GO gate unmet on a8 (edge class 1,835 → 1,462); gated a8 98.445 % against 99.134 % on the old lattice |
-| M-2.2 | Boundary consistency: facet vertices on the cell boundary are trace points | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ next after a8 analysis |
+| M-2.2 | Boundary consistency: facet vertices on the cell boundary are trace points | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ● landed 2026-09-29: a rim vertex on a cell edge adopts the edge's K2 representative; hull classes 0 on a3/a4/a8; a4 99.911, a8 99.833, ref 3 99.854 |
 | M-2.3 | Delete the whole-cell fan | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ blocked by M-2.1/M-2.2 |
 | M-2.4 | Retire `contact_chamfered_by` | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ◐ counted (a6a 895, a6b 2,396 gated); blocked: the limb's contact strip is thinner than a lattice face, so the faces it declares are genuine rim chamfer |
 | M-2.5 | P3 residual audit | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — the same cutaways | ○ |

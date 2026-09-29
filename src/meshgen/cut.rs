@@ -1694,6 +1694,39 @@ pub fn cut_lattice(
                         }
                     }
                 }
+                if let Some(probe) = std::env::var("RUSTMSPT_TRACE_PROBE").ok().and_then(|v| {
+                    let c: Vec<f64> = v.split(',').filter_map(|x| x.parse().ok()).collect();
+                    (c.len() == 3).then(|| Vec3::new(c[0], c[1], c[2]))
+                }) {
+                    let n = geometry[1].sub(geometry[0]).cross(geometry[2].sub(geometry[0]));
+                    let nl = n.dot(n).sqrt();
+                    let off = (probe.sub(geometry[0]).dot(n) / nl).abs();
+                    let near = (0..3).all(|k| {
+                        let a = geometry[k];
+                        let b = geometry[(k + 1) % 3];
+                        let c = geometry[(k + 2) % 3];
+                        let e = b.sub(a);
+                        let side = e.cross(probe.sub(a)).dot(n);
+                        let other = e.cross(c.sub(a)).dot(n);
+                        side * other >= -1.0e-12 * nl * nl
+                    });
+                    if off <= 1.0e-9 && near {
+                        let kinds: Vec<(u32, u8, bool)> = raw
+                            .iter()
+                            .map(|v| {
+                                (
+                                    *v,
+                                    snapped.constraint_kind.get(*v as usize).copied().unwrap_or(9),
+                                    on_cut.keys().any(|(node, _)| *node == *v),
+                                )
+                            })
+                            .collect();
+                        eprintln!(
+                            "[TRACE-PROBE] face {:?} corners {:?} kinds(id,kind,on_cut) {:?} chords {:?} edge_nodes {:?}",
+                            raw, geometry, kinds, chords, on_face
+                        );
+                    }
+                }
                 if !chords.is_empty() {
                     chords_of.insert(face, chords);
                 }
@@ -2624,6 +2657,15 @@ pub fn cut_lattice(
             .zip(excluded.par_iter())
             .map(|(tet, out)| (!out).then(|| cell_boundary(tet)).flatten())
             .collect();
+        // Which (node, component) pairs the cut already puts ON that component's surface: every
+        // crossing node, and every parent node S7 snapped onto it (invariant K2's promotions).
+        // `plc_attempt` adopts these where a facet's rim meets a cell edge (plan M-2.2).
+        let mut on_surface: BTreeSet<(u32, i32)> = on_cut.keys().copied().collect();
+        for map in [&cut_index, &second_index] {
+            for ((_, component), node) in map.iter() {
+                on_surface.insert((*node, *component));
+            }
+        }
         // Print-only: `RUSTMSPT_PLC_CELL=<lattice index>` turns the cdt diagnostics on for one cell.
         let focus_cell: Option<usize> =
             std::env::var("RUSTMSPT_PLC_CELL").ok().and_then(|v| v.parse().ok());
@@ -2636,6 +2678,7 @@ pub fn cut_lattice(
                 boundary.as_ref().map(|boundary| {
                     let focus = focus_cell == Some(index);
                     crate::meshgen::cdt::DIAG_CELL.with(|c| c.set(focus));
+                    HULL_CELL.with(|c| c.set(index));
                     if focus {
                         eprintln!("[PLC-CELL] {index}: corners {:?}", tet);
                     }
@@ -2647,6 +2690,7 @@ pub fn cut_lattice(
                         classifier,
                         tol,
                         options.eps,
+                        &on_surface,
                     );
                     crate::meshgen::cdt::DIAG_CELL.with(|c| c.set(false));
                     outcome
@@ -8289,10 +8333,152 @@ struct PlcCell {
     fanned: Option<&'static str>,
 }
 
+thread_local! {
+    /// Print-only: the lattice cell `plc_attempt` is working on, for `hull_diag`'s lines.
+    static HULL_CELL: std::cell::Cell<usize> = const { std::cell::Cell::new(usize::MAX) };
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Print-only census (`RUSTMSPT_HULL_DIAG`) of the fragment vertices a declined §7.4 cell
+//   interned ON one of its own face planes - the candidates for "the hull carries a node the
+//   boundary has never heard of" (plan M-2.2).
+// Inputs: the refusal, the arena points, where the seed and the rim vertices end, the cell's face
+//   planes, its local boundary, its facets with their components, and its shortest edge.
+// Returns: None.
+// Side effects: one `[HULL-DIAG]` line per such vertex on stderr.
+#[allow(clippy::too_many_arguments)]
+fn hull_diag(
+    reason: &str,
+    points: &[Vec3],
+    seed_len: usize,
+    rim_end: usize,
+    planes: &[(Vec3, f64)],
+    boundary: &[[u32; 3]],
+    facets: &[Vec<u32>],
+    facet_of: &[i32],
+    edge: f64,
+) {
+    for id in seed_len..rim_end {
+        let p = points[id];
+        for (slot, (normal, offset)) in planes.iter().enumerate() {
+            let d = normal.dot(p) - offset;
+            if d.abs() > edge * 1.0e-6 {
+                continue;
+            }
+            let on = |n: u32| (normal.dot(points[n as usize]) - offset).abs() <= edge * 1.0e-6;
+            let mut node_best = f64::INFINITY;
+            for n in 0..seed_len as u32 {
+                if on(n) {
+                    let v = points[n as usize].sub(p);
+                    node_best = node_best.min(v.dot(v).sqrt());
+                }
+            }
+            let mut seg_best = (f64::INFINITY, 0.0f64);
+            for t in boundary {
+                if !t.iter().all(|n| on(*n)) {
+                    continue;
+                }
+                for k in 0..3 {
+                    let (a, b) = (points[t[k] as usize], points[t[(k + 1) % 3] as usize]);
+                    let ab = b.sub(a);
+                    let len2 = ab.dot(ab);
+                    if len2 <= 0.0 {
+                        continue;
+                    }
+                    let s = (p.sub(a).dot(ab) / len2).clamp(0.0, 1.0);
+                    let q = a.add(ab.scale(s));
+                    let v = q.sub(p);
+                    let dist = v.dot(v).sqrt();
+                    if dist < seg_best.0 {
+                        seg_best = (dist, s);
+                    }
+                }
+            }
+            let holders: Vec<usize> = facets
+                .iter()
+                .enumerate()
+                .filter(|(_, f)| f.contains(&(id as u32)))
+                .map(|(k, _)| k)
+                .collect();
+            let normal_of = |f: &Vec<u32>| {
+                let c = |k: usize| points[f[k] as usize];
+                let mut n = Vec3::new(0.0, 0.0, 0.0);
+                for k in 1..f.len() - 1 {
+                    n = n.add(c(k).sub(c(0)).cross(c(k + 1).sub(c(0))));
+                }
+                let l = n.dot(n).sqrt();
+                if l > 0.0 { n.scale(1.0 / l) } else { n }
+            };
+            let mut coplanar_pair = false;
+            for a in 0..holders.len() {
+                for b in a + 1..holders.len() {
+                    let (fa, fb) = (holders[a], holders[b]);
+                    if facet_of[fa] == facet_of[fb]
+                        && normal_of(&facets[fa]).cross(normal_of(&facets[fb])).dot(
+                            normal_of(&facets[fa]).cross(normal_of(&facets[fb])),
+                        ) < 1.0e-12
+                    {
+                        coplanar_pair = true;
+                    }
+                }
+            }
+            let comps: std::collections::BTreeSet<i32> =
+                holders.iter().map(|k| facet_of[*k]).collect();
+            let mut on_edge = String::new();
+            for (other, (n2, o2)) in planes.iter().enumerate() {
+                if other <= slot || (n2.dot(p) - o2).abs() > edge * 1.0e-6 {
+                    continue;
+                }
+                let both = |n: u32| {
+                    on(n) && (n2.dot(points[n as usize]) - o2).abs() <= edge * 1.0e-6
+                };
+                let line: Vec<u32> = (0..seed_len as u32).filter(|n| both(*n)).collect();
+                let mut ts: Vec<f64> = Vec::new();
+                if let (Some(a), Some(b)) = (line.first(), line.last()) {
+                    let (a, b) = (points[*a as usize], points[*b as usize]);
+                    let ab = b.sub(a);
+                    let l2 = ab.dot(ab);
+                    for n in &line {
+                        ts.push(points[*n as usize].sub(a).dot(ab) / l2);
+                    }
+                    ts.push(-9.0);
+                    ts.push(p.sub(a).dot(ab) / l2);
+                }
+                on_edge = format!(" edge_nodes={} ts={:.3?}", line.len(), ts);
+            }
+            let in_face = holders
+                .iter()
+                .filter(|k| {
+                    planes.iter().any(|(n, o)| {
+                        facets[**k]
+                            .iter()
+                            .all(|v| (n.dot(points[*v as usize]) - o).abs() <= edge * 1.0e-6)
+                    })
+                })
+                .count();
+            eprintln!(
+                "[HULL-DIAG] cell={} reason={reason:?} plane={slot} d/edge={:.2e} node/edge={:.3e} seg/edge={:.3e} seg_t={:.3} facets={} comps={} coplanar_pair={} in_face={}{} p={:?}",
+                HULL_CELL.with(|c| c.get()),
+                d / edge,
+                node_best / edge,
+                seg_best.0 / edge,
+                seg_best.1,
+                holders.len(),
+                comps.len(),
+                coplanar_pair,
+                in_face,
+                on_edge,
+                (p.x, p.y, p.z)
+            );
+        }
+    }
+}
+
 // AI-FUNC-SUMMARY:
 // Purpose: Mesh one cell by `SPEC_meshgen_geometry.md` §7.2/§7.4 against a boundary it is given.
 // Inputs: the cell's tet, its boundary triangulation in global ids, the node table, the components
-//   and classifier, and a tolerance.
+//   and classifier, the ordering quantum and weld tolerance, and the (node, component) pairs the
+//   cut already puts on a surface (crossing nodes and invariant K2's snapped parents).
 // Returns: the meshed cell, or the named reason it declined.
 // Side effects: None - it interns into a LOCAL arena, so a decline leaves no node behind.
 // Notes: **The boundary is an input, not something this derives.** It is built once per face from
@@ -8302,6 +8488,8 @@ struct PlcCell {
 //
 //   A decline is not a failure of the cell: the caller fans it over this same boundary, which keeps
 //   it conforming with a neighbour that did take §7.4. That is why the boundary comes back too.
+//   A facet rim vertex on a cell EDGE adopts the nearest boundary node on that edge the cut marks
+//   on-surface for its component (plan M-2.2) - the edge's own crossing, however far S7 moved it.
 fn plc_attempt(
     tet: [u32; 4],
     boundary: &[[u32; 3]],
@@ -8313,6 +8501,7 @@ fn plc_attempt(
     // `quantum`, which is the *ordering* quantum a millionth of its size - the pair §6.35 found
     // being used for each other's job, so each is now named for what it is.
     weld: f64,
+    on_surface: &BTreeSet<(u32, i32)>,
 ) -> Result<PlcCell, &'static str> {
     let corners = [
         nodes[tet[0] as usize],
@@ -8412,6 +8601,45 @@ fn plc_attempt(
                         }
                         best
                     };
+                    // **On a cell EDGE, the edge has already decided where the crossing is.** A rim
+                    // vertex on two face planes lies on a lattice edge, and every cell around that
+                    // edge reads its crossing from the cut: a node the cut interned there, or - by
+                    // invariant K2 - an endpoint S7 snapped onto the surface, to which the crossing
+                    // was promoted. The raw intersection can sit a tenth of an element from that
+                    // representative (a4's cube face on a lattice plane: 0.03-0.16 of an edge), so
+                    // the `weld` bound below refuses it and the hull gains a node no neighbour has
+                    // (plan M-2.2). Adopting the edge's own representative is a function of the edge
+                    // and the component, so it needs no distance bound: it is K2's decision, read.
+                    let on_planes: Vec<usize> = planes
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, (normal, offset))| {
+                            (normal.dot(*p) - offset).abs() <= edge * 1.0e-6
+                        })
+                        .map(|(slot, _)| slot)
+                        .collect();
+                    let found = match found {
+                        Some((d, id)) if d <= weld => Some((d, id)),
+                        _ if on_planes.len() >= 2 => {
+                            let (a, b) = (on_planes[0], on_planes[1]);
+                            let mut best: Option<(f64, u32)> = None;
+                            for id in &on_plane[a] {
+                                if !on_plane[b].contains(id)
+                                    || !on_surface.contains(&(seed[*id as usize], *component))
+                                {
+                                    continue;
+                                }
+                                let d = arena.points[*id as usize].sub(*p);
+                                let d = d.dot(d).sqrt();
+                                if best.is_none_or(|(bd, bid)| d < bd || (d == bd && *id < bid)) {
+                                    best = Some((d, *id));
+                                }
+                            }
+                            // Reported as within `weld` so the arm below takes it.
+                            best.map(|(_, id)| (0.0, id)).or(found)
+                        }
+                        other => other,
+                    };
                     match found {
                         // **Bounded by `quantum`, because that is exactly how far the face moved
                         // its own points.** The two constructions do not disagree by rounding: the
@@ -8491,6 +8719,7 @@ fn plc_attempt(
     // Every guard inside the split declines rather than guesses, and a decline still reaches the
     // caller's own fan.
     // Plan M-2.1: facet recovery by Steiner points on the constraint, never on a cell face.
+    let rim_end = arena.points.len();
     let outcome = crate::meshgen::cdt::constrained_tets_with_steiner(
         &mut arena,
         &boundary_local,
@@ -8500,6 +8729,11 @@ fn plc_attempt(
         edge * 1.0e-6,
         3,
     );
+    if std::env::var_os("RUSTMSPT_HULL_DIAG").is_some() {
+        if let Err(reason) = &outcome {
+            hull_diag(reason, &arena.points, seed.len(), rim_end, &planes, &boundary_local, &facets, &facet_of, edge);
+        }
+    }
     let (tets, regions, fanned) = match outcome {
         Ok(tets) => {
             let regions =
