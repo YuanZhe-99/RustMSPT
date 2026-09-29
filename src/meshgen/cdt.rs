@@ -2713,7 +2713,8 @@ fn sorted_tri(t: [u32; 3]) -> [u32; 3] {
 //   surface lies in the cell's own faces (owner decision D-12); otherwise it is refused. A
 //   boundary triangle placed by its centroid because every corner is on the surface is moved to
 //   another piece when that leaves both closed (D-13). The caller builds each cap with
-//   `fan_facet_without_slivers`.
+//   `fan_facet_without_slivers`. A piece closed in several disjoint shells becomes one piece per
+//   shell.
 pub fn facet_split_fan(
     boundary: &[[u32; 3]],
     caps: &[Vec<[u32; 3]>],
@@ -2835,6 +2836,16 @@ pub fn facet_split_fan(
                     }
                 }
                 if refused.is_some() {
+                    if DIAG_CELL.with(|c| c.get()) {
+                        eprintln!(
+                            "[STRADDLE] group {group} triangle {:?} sides {:?} at {:?} cap {:?} in-piece-history {:?}",
+                            triangle,
+                            triangle.map(|n| side_of(group, n)),
+                            triangle.map(|n| points[n as usize]),
+                            caps[group],
+                            history
+                        );
+                    }
                     break;
                 }
                 match side {
@@ -3025,6 +3036,26 @@ pub fn facet_split_fan(
     let mut tets: Vec<[u32; 4]> = Vec::new();
     let mut regions: Vec<u32> = Vec::new();
     let mut summed = 0.0;
+    // **A piece closed in more than one shell is several pieces.** A cut can leave one side of a
+    // cell as two disjoint solids that share no edge (a8: 6 cells refused as "closed but in more
+    // than one shell"). Each shell that closes on its own becomes its own piece with its own region,
+    // so the caller samples each for its material; a shell NESTED in another would double-count
+    // volume and is still refused by the partition check below.
+    let pieces: Vec<Vec<[u32; 3]>> = pieces
+        .into_iter()
+        .flat_map(|piece| {
+            if orient_soup(&piece).is_some() {
+                return vec![piece];
+            }
+            let shells = crate::meshgen::junction::split_soup_components(&piece);
+            if shells.len() > 1 && shells.iter().all(|shell| orient_soup(shell).is_some()) {
+                note_split("a piece closed in several shells was split into them");
+                shells.into_iter().map(|shell| shell.to_vec()).collect()
+            } else {
+                vec![piece]
+            }
+        })
+        .collect();
     for (region, piece) in pieces.iter().enumerate() {
         // Closed and consistently wound, or the cap did not cover the cross-section and the piece
         // is not a body. Both questions are the one walk.

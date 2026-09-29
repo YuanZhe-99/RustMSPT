@@ -2132,6 +2132,12 @@ each facet from the apex that maximises its thinnest triangle (`fan_facet_withou
 a3 99.850 -> 99.896 %, `[V6]` adjacency 47 -> 23, whole-cell fans 21 -> 12, misattributed 7 -> 4;
 a8 fans 39 -> 33 and misattributed 56 -> 26; a4 one more sub-`eps` sliver (standing rule D-13).
 
+A cut can leave one side of a cell as two disjoint closed solids; the piece was refused as "closed
+but in more than one shell". `facet_split_fan` now makes each shell its own piece and region when
+every shell closes on its own (a nested shell still fails the partition check): a8 whole-cell
+fans 33 -> 27, on-surface 99.945 -> 99.956 %, every other case identical. `[STRADDLE]` (print-only,
+focused cell) names a boundary triangle that straddles a cap's surface.
+
 ### Welded sheet cuts (G6-5)
 
 A sheet has no inside, so §6's sides cannot come from S6 - it refuses to classify one,
