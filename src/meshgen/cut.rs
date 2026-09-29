@@ -8858,7 +8858,18 @@ fn plc_attempt(
             );
             let split_why = Some(crate::meshgen::cdt::LAST_SPLIT.with(|c| c.get()));
             match split {
-                Some((tets, regions)) => (tets, regions, Some(reason)),
+                Some((tets, regions)) => {
+                    if std::env::var_os("RUSTMSPT_SPLIT_DIAG").is_some()
+                        && regions.iter().all(|r| *r == regions[0])
+                    {
+                        eprintln!(
+                            "[ONE-PIECE] cell {} corners {:?}",
+                            HULL_CELL.with(|c| c.get()),
+                            corners
+                        );
+                    }
+                    (tets, regions, Some(reason))
+                }
                 None => {
                     crate::meshgen::cdt::note_split_public(if dropped == 0 {
                         "refused with NO cap triangle removed for lying in a cell face"

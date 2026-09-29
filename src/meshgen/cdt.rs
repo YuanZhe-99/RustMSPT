@@ -2661,7 +2661,8 @@ fn conform_cap_rim(
 //   from an apex that sees every face with one exact orientation sign - the centroid, or, when the
 //   piece is not star-shaped from it, the first kernel point among the midpoints to its vertices
 //   and a 5x5x5 grid over its box (plan M-2.1 residue, 2026-09-29). The pieces' volumes must sum to
-//   the cell's.
+//   the cell's. A cell no cap separates is one piece when no cap triangle is left at all - the
+//   surface lies in the cell's own faces (owner decision D-12); otherwise it is refused.
 pub fn facet_split_fan(
     boundary: &[[u32; 3]],
     caps: &[Vec<[u32; 3]>],
@@ -2840,9 +2841,24 @@ pub fn facet_split_fan(
         }
         pieces = next;
     }
-    if pieces.len() < 2 {
+    // **One piece is a cell, not a refusal** - when the surface lies in the cell's own faces, the
+    // cell holds one material (on a8 most of 534 "no surface separates" declines). Declining sent it
+    // to the whole-cell fan, which seeds every fan tet on its own; one piece is filled or fanned
+    // below like any other and takes one label (plan M-2.3's population, 2026-09-29).
+    if pieces.is_empty() {
         note_split("no surface separates the cell into two pieces");
         return None;
+    }
+    // Only when no cap is left at all: every triangle the surface offered lay in one of the cell's
+    // own faces and was dropped, so nothing of it is inside. A cap that IS inside and still
+    // separates nothing is a surface passing through the cell, and one label there is wrong - it
+    // cost a8 a misattributed cell when this accepted any single piece.
+    if pieces.len() == 1 {
+        if caps.iter().any(|cap| !cap.is_empty()) {
+            note_split("no surface separates the cell into two pieces");
+            return None;
+        }
+        note_split("one piece: every cap lay in a cell face");
     }
     // A triangle carried twice by one piece is an edge carried four times, which `orient_soup`
     // cannot walk and the volume double-counts. It arises where a cap lies on an earlier cut and is
@@ -2864,7 +2880,7 @@ pub fn facet_split_fan(
         })
         .collect();
     pieces.retain(|piece| !piece.is_empty());
-    if pieces.len() < 2 {
+    if pieces.is_empty() {
         note_split("no surface separates the cell into two pieces");
         return None;
     }
