@@ -821,8 +821,11 @@ pub fn verify(doc: &VtuDoc, gates: &VerifyGates) -> VerifyReport {
 //   stage parsed from the filename, for the [V12] StageIndex cross-check).
 // Inputs: the loaded document, the configured gates, and the options.
 // Returns: VerifyReport with one section per catalog entry, in contract order.
-// Side effects: None.
-// Notes: `verify` delegates here with default options for backward compatibility.
+// Side effects: None; with `RUSTMSPT_TIME_STAGES` set, prints `[VERIFY-TIME]` per check.
+// Notes: `verify` delegates here with default options for backward compatibility. `[V1]`-`[V3]`
+//   run together, then every later check as its own rayon task; the sections are assembled in
+//   contract order and each check is a pure function of the view, so the report is byte-identical
+//   to a serial run.
 pub fn verify_with_options(
     doc: &VtuDoc,
     gates: &VerifyGates,
@@ -845,48 +848,122 @@ pub fn verify_with_options(
     const ON_CONTRACT: &str = "the delivered tets-only volume carries no tagged faces or curve \
         cells; this check reads them and runs on the `_contract.vtu` beside it (contracts D-18)";
 
-    let quality: Vec<TetQuality> = view
-        .tets
-        .iter()
-        .map(|&c| tet_quality(view.tet_points(c)))
-        .collect();
+    let quality: Vec<TetQuality> = {
+        use rayon::prelude::*;
+        view.tets.par_iter().map(|&c| tet_quality(view.tet_points(c))).collect()
+    };
     let mut fidelity: Vec<FaceFidelity> = Vec::new();
 
-    let mut sections = vec![check_v1(&view, &quality, cap), check_v2(&view, gates, cap)];
-    let (v3, face_owners) = check_v3(&view, gates, cap, stage_index, options.delivered);
-    sections.push(v3);
-    sections.push(check_v4(&view, &quality, gates, cap));
-    sections.push(check_v5(&view, &options.surfaces, gates, cap));
-    sections.push(check_v6(&view, &face_owners, surface_stage, stage_index, primary_volume, cap));
-    if primary_volume {
-        sections.push(VerifySection::skipped("V7", "Sheets & thin", ON_CONTRACT));
-        sections.push(check_v8(&view, &face_owners, gates, cap));
-    } else if surface_stage {
-        sections.push(VerifySection::skipped(
-            "V7",
-            "Sheets & thin",
-            "surface-stage snapshots s00-s03 do not contain the volume cells required by V7",
-        ));
-        sections.push(VerifySection::skipped(
-            "V8",
-            "Partitions",
-            "surface-stage snapshots s00-s03 do not contain partitions required by V8",
-        ));
-    } else {
-        sections.push(check_v7(&view, &face_owners, cap));
-        sections.push(check_v8(&view, &face_owners, gates, cap));
+    // **Every check is a pure function of the same read-only view, so they run at once.**
+    // `mesh-verify` was single-threaded and dominated an acceptance matrix's wall time; the
+    // checks after `[V3]` (whose face-owner map several of them read) are independent, so each
+    // runs as its own rayon task and the sections are assembled in their fixed order afterwards.
+    // Nothing a check computes depends on another's result or on scheduling, so the report is
+    // byte-identical to the serial one.
+    let timing = std::env::var_os("RUSTMSPT_TIME_STAGES").is_some();
+    let timed = |name: &str, run: &dyn Fn() -> VerifySection| -> VerifySection {
+        let start = std::time::Instant::now();
+        let out = run();
+        if timing {
+            eprintln!("[VERIFY-TIME] {name} {:.2}s", start.elapsed().as_secs_f64());
+        }
+        out
+    };
+    let start = std::time::Instant::now();
+    let ((v1, v2), (v3, face_owners)) = rayon::join(
+        || {
+            rayon::join(
+                || timed("V1", &|| check_v1(&view, &quality, cap)),
+                || timed("V2", &|| check_v2(&view, gates, cap)),
+            )
+        },
+        || check_v3(&view, gates, cap, stage_index, options.delivered),
+    );
+    if timing {
+        eprintln!("[VERIFY-TIME] V1-V3 {:.2}s", start.elapsed().as_secs_f64());
     }
-    if primary_volume {
-        sections.push(VerifySection::skipped("V9", "Junctions", ON_CONTRACT));
-    } else if surface_stage {
-        sections.push(VerifySection::skipped(
-            "V9",
-            "Junctions",
-            "surface-stage snapshots s00-s03 carry no volume cells, so there are no junction edges to check",
-        ));
-    } else {
-        sections.push(check_v9(&view, &face_owners, gates, cap));
+    let face_owners = &face_owners;
+    let mut slots: [Option<VerifySection>; 9] = Default::default();
+    let mut v13_fidelity: Vec<FaceFidelity> = Vec::new();
+    {
+        let [s4, s5, s6, s7, s8, s9, s12, s13, _] = &mut slots;
+        let v13_fidelity = &mut v13_fidelity;
+        rayon::scope(|scope| {
+            scope.spawn(|_| *s4 = Some(timed("V4", &|| check_v4(&view, &quality, gates, cap))));
+            scope.spawn(|_| {
+                *s5 = Some(timed("V5", &|| check_v5(&view, &options.surfaces, gates, cap)))
+            });
+            scope.spawn(|_| {
+                *s6 = Some(timed("V6", &|| {
+                    check_v6(&view, face_owners, surface_stage, stage_index, primary_volume, cap)
+                }))
+            });
+            scope.spawn(|_| {
+                *s7 = Some(if primary_volume {
+                    VerifySection::skipped("V7", "Sheets & thin", ON_CONTRACT)
+                } else if surface_stage {
+                    VerifySection::skipped(
+                        "V7",
+                        "Sheets & thin",
+                        "surface-stage snapshots s00-s03 do not contain the volume cells required by V7",
+                    )
+                } else {
+                    timed("V7", &|| check_v7(&view, face_owners, cap))
+                })
+            });
+            scope.spawn(|_| {
+                *s8 = Some(if surface_stage && !primary_volume {
+                    VerifySection::skipped(
+                        "V8",
+                        "Partitions",
+                        "surface-stage snapshots s00-s03 do not contain partitions required by V8",
+                    )
+                } else {
+                    timed("V8", &|| check_v8(&view, face_owners, gates, cap))
+                })
+            });
+            scope.spawn(|_| {
+                *s9 = Some(if primary_volume {
+                    VerifySection::skipped("V9", "Junctions", ON_CONTRACT)
+                } else if surface_stage {
+                    VerifySection::skipped(
+                        "V9",
+                        "Junctions",
+                        "surface-stage snapshots s00-s03 carry no volume cells, so there are no junction edges to check",
+                    )
+                } else {
+                    timed("V9", &|| check_v9(&view, face_owners, gates, cap))
+                })
+            });
+            scope.spawn(|_| *s12 = Some(timed("V12", &|| check_v12(&view, cap, &options))));
+            scope.spawn(|_| {
+                *s13 = Some(if surface_stage {
+                    VerifySection::skipped(
+                        "V13",
+                        "Interface fidelity",
+                        "surface-stage snapshots s00-s03 carry no volume cells, so they have no material \
+                         boundary to measure",
+                    )
+                } else {
+                    let start = std::time::Instant::now();
+                    let out = check_v13(&view, face_owners, &options.surfaces, gates, cap, v13_fidelity);
+                    if timing {
+                        eprintln!("[VERIFY-TIME] V13 {:.2}s", start.elapsed().as_secs_f64());
+                    }
+                    out
+                })
+            });
+        });
     }
+    fidelity.extend(v13_fidelity);
+    let take = |slot: &mut Option<VerifySection>| slot.take().expect("every check slot is filled");
+    let mut sections = vec![v1, v2, v3];
+    sections.push(take(&mut slots[0]));
+    sections.push(take(&mut slots[1]));
+    sections.push(take(&mut slots[2]));
+    sections.push(take(&mut slots[3]));
+    sections.push(take(&mut slots[4]));
+    sections.push(take(&mut slots[5]));
     sections.push(VerifySection::skipped(
         "V10",
         "Export completeness",
@@ -897,16 +974,10 @@ pub fn verify_with_options(
         "Compare mode",
         "lands with GK-3; use `mesh-verify --compare a.vtu b.vtu`",
     ));
-    sections.push(check_v12(&view, cap, &options));
-    if surface_stage {
-        sections.push(VerifySection::skipped(
-            "V13",
-            "Interface fidelity",
-            "surface-stage snapshots s00-s03 carry no volume cells, so they have no material \
-             boundary to measure",
-        ));
-    } else {
-        sections.push(check_v13(&view, &face_owners, &options.surfaces, gates, cap, &mut fidelity));
+    sections.push(take(&mut slots[6]));
+    sections.push(take(&mut slots[7]));
+    if timing {
+        eprintln!("[VERIFY-TIME] total {:.2}s", start.elapsed().as_secs_f64());
     }
 
     let (mut fail, mut warn, mut info) = (0, 0, 0);
@@ -1091,6 +1162,8 @@ fn check_v3(
     // content of Theorem T1 - still apply and are still FAIL.
     let pre_cut = matches!(stage_index, Some(5..=7));
     let mut s = VerifySection::new("V3", "Conformity");
+    let v3_timing = std::env::var_os("RUSTMSPT_TIME_STAGES").is_some();
+    let mut v3_clock = std::time::Instant::now();
     let mut owners: HashMap<[i64; 3], Vec<usize>> = HashMap::new();
     for &c in &view.tets {
         let n = view.doc.cell(c).to_vec();
@@ -1158,6 +1231,10 @@ fn check_v3(
     let strict_box = !relaxable && view.domain.is_some();
     if strict_box {
         strict_domain_box(view, plane_tol, cap, &mut s);
+    }
+    if v3_timing {
+        eprintln!("[VERIFY-TIME] V3 owners+box {:.2}s", v3_clock.elapsed().as_secs_f64());
+        v3_clock = std::time::Instant::now();
     }
     let (mut multi, mut leaks, mut boundary) = (0usize, 0usize, 0usize);
     let mut interface_cracks = 0usize;
@@ -1236,6 +1313,10 @@ fn check_v3(
     // elements then overlap, and neither `[V1]` (one tet at a time) nor the face-count rules
     // above (combinatorics only) can see it. A-3 at `0a8eb1c` carries 466 such faces, every
     // one between two junction pieces, and its tets sum to 1 + 3.4e-6 of the unit box.
+    if v3_timing {
+        eprintln!("[VERIFY-TIME] V3 face scan {:.2}s", v3_clock.elapsed().as_secs_f64());
+        v3_clock = std::time::Instant::now();
+    }
     let mut folded = 0usize;
     let mut fold_keys: Vec<&[i64; 3]> = owners.keys().filter(|k| owners[*k].len() == 2).collect();
     fold_keys.sort_unstable();
@@ -1269,6 +1350,10 @@ fn check_v3(
     }
     s.metric("folded_faces", folded as f64);
 
+    if v3_timing {
+        eprintln!("[VERIFY-TIME] V3 folded {:.2}s", v3_clock.elapsed().as_secs_f64());
+        v3_clock = std::time::Instant::now();
+    }
     // hanging nodes: a node lying on a face triangle it is not a vertex of
     let tol = gates.hanging_tol_frac * view.diag;
     let hanging = hanging_nodes(view, &owners, tol);
@@ -1286,42 +1371,59 @@ fn check_v3(
         s.push(item, cap);
     }
 
+    if v3_timing {
+        eprintln!("[VERIFY-TIME] V3 hanging {:.2}s", v3_clock.elapsed().as_secs_f64());
+        v3_clock = std::time::Instant::now();
+    }
     // non-manifold edges: around an interior edge the incident face count must equal
     // the incident tet count; a boundary edge has exactly one more face than tets
-    let mut edge_tets: HashMap<(i64, i64), usize> = HashMap::new();
-    let mut edge_faces: HashMap<(i64, i64), std::collections::HashSet<[i64; 3]>> = HashMap::new();
+    // Built as sorted vectors rather than a map of sets: every (edge, tet) and (edge, face)
+    // incidence is listed, sorted in parallel and run-length counted. The counts, and the
+    // ascending edge order the findings are reported in, are the map's exactly.
+    use rayon::prelude::*;
+    let mut edge_tet: Vec<(i64, i64)> = Vec::with_capacity(view.tets.len() * 6);
+    let mut edge_face: Vec<((i64, i64), [i64; 3])> = Vec::with_capacity(view.tets.len() * 12);
     for &c in &view.tets {
         let n = view.doc.cell(c).to_vec();
         for i in 0..4 {
             for j in (i + 1)..4 {
-                let e = (n[i].min(n[j]), n[i].max(n[j]));
-                *edge_tets.entry(e).or_insert(0) += 1;
+                edge_tet.push((n[i].min(n[j]), n[i].max(n[j])));
             }
         }
         for f in TET_FACES.iter() {
             let k = face_key(n[f[0]], n[f[1]], n[f[2]]);
             for i in 0..3 {
                 for j in (i + 1)..3 {
-                    let e = (k[i].min(k[j]), k[i].max(k[j]));
-                    edge_faces.entry(e).or_default().insert(k);
+                    edge_face.push(((k[i].min(k[j]), k[i].max(k[j])), k));
                 }
             }
         }
     }
+    edge_tet.par_sort_unstable();
+    edge_face.par_sort_unstable();
+    edge_face.dedup();
     let mut nonmanifold = 0usize;
-    let mut edges: Vec<&(i64, i64)> = edge_tets.keys().collect();
-    edges.sort_unstable();
-    for e in edges {
-        let nt = edge_tets[e];
-        let nf = edge_faces.get(e).map(|s| s.len()).unwrap_or(0);
-        let bnd = edge_faces
-            .get(e)
-            .map(|fs| {
-                fs.iter()
-                    .filter(|k| owners.get(*k).map(|v| v.len()) == Some(1))
-                    .count()
-            })
-            .unwrap_or(0);
+    let mut at_face = 0usize;
+    let mut at_tet = 0usize;
+    while at_tet < edge_tet.len() {
+        let e = edge_tet[at_tet];
+        let mut nt = 0usize;
+        while at_tet < edge_tet.len() && edge_tet[at_tet] == e {
+            nt += 1;
+            at_tet += 1;
+        }
+        while at_face < edge_face.len() && edge_face[at_face].0 < e {
+            at_face += 1;
+        }
+        let (mut nf, mut bnd) = (0usize, 0usize);
+        while at_face < edge_face.len() && edge_face[at_face].0 == e {
+            nf += 1;
+            if owners.get(&edge_face[at_face].1).map(|v| v.len()) == Some(1) {
+                bnd += 1;
+            }
+            at_face += 1;
+        }
+        let e = &e;
         let expected = if bnd == 0 { nt } else { nt + 1 };
         if nf != expected {
             nonmanifold += 1;
@@ -1511,8 +1613,12 @@ fn hanging_nodes(
 
     let mut keys: Vec<&[i64; 3]> = owners.keys().collect();
     keys.sort_unstable();
-    let mut out = Vec::new();
-    for k in keys {
+    // Each face is searched on its own; collected per face in key order and flattened, so the
+    // list is the serial one on any thread count.
+    use rayon::prelude::*;
+    let per_face: Vec<Vec<(i64, [i64; 3])>> = keys.par_iter().map(|k| {
+        let k = *k;
+        let mut out = Vec::new();
         let (a, b, c) = (
             view.doc.points[k[0] as usize],
             view.doc.points[k[1] as usize],
@@ -1559,8 +1665,9 @@ fn hanging_nodes(
                 out.push((p, *k));
             }
         }
-    }
-    out
+        out
+    }).collect();
+    per_face.into_iter().flatten().collect()
 }
 
 // AI-FUNC-SUMMARY: [V4] Quality — aspect ratio, dihedral, scaled Jacobian distributions and gates; returns VerifySection; side effects: none.
@@ -2895,6 +3002,9 @@ pub struct SurfaceComponent {
 struct TriIndex {
     tris: Vec<[Vec3; 3]>,
     normals: Vec<Vec3>,
+    /// The triangles' own bounding box (empty set -> the unit box), for `contains`' early reject.
+    lo: Vec3,
+    hi: Vec3,
     origin: Vec3,
     cell: f64,
     dims: [i64; 3],
@@ -2993,6 +3103,8 @@ impl TriIndex {
         let mut index = TriIndex {
             tris,
             normals,
+            lo,
+            hi,
             origin: lo,
             cell,
             dims,
@@ -3239,6 +3351,8 @@ fn check_v5(
         .iter()
         .map(|c| TriIndex::build(c.tris.clone()))
         .collect();
+    let v5_timing = std::env::var_os("RUSTMSPT_TIME_STAGES").is_some();
+    let mut v5_clock = std::time::Instant::now();
     let all: Vec<[Vec3; 3]> = surfaces.iter().flat_map(|c| c.tris.clone()).collect();
     let input = TriIndex::build(all.clone());
     let diag = view.diag.max(f64::MIN_POSITIVE);
@@ -3252,6 +3366,10 @@ fn check_v5(
     // well-fitted node in a fine region look identical to a badly-fitted one in a coarse
     // region. Normalising by the diagonal understated a 3x-refined region by exactly the
     // refinement factor.
+    if v5_timing {
+        eprintln!("[VERIFY-TIME] V5 index build {:.2}s", v5_clock.elapsed().as_secs_f64());
+        v5_clock = std::time::Instant::now();
+    }
     let mut edge_sum: std::collections::BTreeMap<u32, (f64, usize)> = std::collections::BTreeMap::new();
     for f in &interface {
         for k in 0..3 {
@@ -3345,9 +3463,17 @@ fn check_v5(
             ]
         })
         .collect();
+    if v5_timing {
+        eprintln!("[VERIFY-TIME] V5 edge+normal {:.2}s", v5_clock.elapsed().as_secs_f64());
+        v5_clock = std::time::Instant::now();
+    }
     let mesh_index = TriIndex::build(mesh_tris);
     let mut lost_max = 0.0f64;
     let mut overridden = 0usize;
+    if v5_timing {
+        eprintln!("[VERIFY-TIME] V5 mesh index {:.2}s", v5_clock.elapsed().as_secs_f64());
+        v5_clock = std::time::Instant::now();
+    }
     let mut lost_items: Vec<(f64, Vec3)> = Vec::new();
     for (index, component) in surfaces.iter().enumerate() {
         for tri in &component.tris {
@@ -3385,6 +3511,10 @@ fn check_v5(
     //
     // A body a *higher-priority* body contains is supposed to have no volume (R-A3/R-A4),
     // so it is masked here exactly as the reverse-distance direction masks it.
+    if v5_timing {
+        eprintln!("[VERIFY-TIME] V5 lost {:.2}s", v5_clock.elapsed().as_secs_f64());
+        v5_clock = std::time::Instant::now();
+    }
     let set_offsets = field_i64(view.doc, "RegionSetOffsets");
     let set_components = field_i64(view.doc, "RegionSetComponents");
     let region_key = cell_i64(view.doc, "region_key").unwrap_or_default();
@@ -3586,13 +3716,49 @@ fn check_v5(
     let mut worst_overattributed: Vec<(f64, Vec3, i32)> = Vec::new();
     // The worst offenders, so the finding names places rather than a number. Ranked by the
     // cell's own volume: the biggest misattributed element is the one worth looking at.
+    // Whether each tet's centroid is inside each closed component, computed once and in parallel:
+    // the three scans below all ask it, and it is most of `[V5]`'s time on a large mesh. Indexed
+    // by tet slot and collected in order, so it is the same table on any thread count.
+    if v5_timing {
+        eprintln!("[VERIFY-TIME] V5 volumes {:.2}s", v5_clock.elapsed().as_secs_f64());
+        v5_clock = std::time::Instant::now();
+    }
+    let centroid_inside: Vec<Vec<bool>> = {
+        use rayon::prelude::*;
+        surfaces
+            .iter()
+            .enumerate()
+            .map(|(index, component)| {
+                if !component.closed {
+                    return Vec::new();
+                }
+                view.tets
+                    .par_iter()
+                    .map(|&c| {
+                        let n = view.doc.cell(c);
+                        if n.len() != 4 {
+                            return false;
+                        }
+                        let p: Vec<Vec3> =
+                            n.iter().map(|i| view.doc.points[*i as usize]).collect();
+                        let centroid = p[0].add(p[1]).add(p[2]).add(p[3]).scale(0.25);
+                        per_component[index].contains(centroid)
+                    })
+                    .collect()
+            })
+            .collect()
+    };
+    if v5_timing {
+        eprintln!("[VERIFY-TIME] V5 centroid table {:.2}s", v5_clock.elapsed().as_secs_f64());
+        v5_clock = std::time::Instant::now();
+    }
     let mut worst_misattributed: Vec<(f64, Vec3, i32)> = Vec::new();
     for (index, component) in surfaces.iter().enumerate() {
         if !component.closed {
             continue;
         }
         let x = index as i32 + 1;
-        for &c in &view.tets {
+        for (slot, &c) in view.tets.iter().enumerate() {
             let n = view.doc.cell(c);
             if n.len() != 4 {
                 continue;
@@ -3608,7 +3774,7 @@ fn check_v5(
             };
             let p: Vec<Vec3> = n.iter().map(|i| view.doc.points[*i as usize]).collect();
             let centroid = p[0].add(p[1]).add(p[2]).add(p[3]).scale(0.25);
-            let inside = per_component[index].contains(centroid);
+            let inside = centroid_inside[index][slot];
             if named {
                 // Carries the component, centroid strictly outside it: material the mesh added.
                 if !inside {
@@ -3685,19 +3851,17 @@ fn check_v5(
                 if !component.closed {
                     continue;
                 }
-                for &c in &view.tets {
+                for (slot, &c) in view.tets.iter().enumerate() {
                     let n = view.doc.cell(c);
                     if n.len() != 4 {
                         continue;
                     }
-                    let p: Vec<Vec3> = n.iter().map(|i| view.doc.points[*i as usize]).collect();
-                    let centroid = p[0].add(p[1]).add(p[2]).add(p[3]).scale(0.25);
                     let key = (
                         parent.get(c).copied().unwrap_or(-1),
                         region_key.get(c).copied().unwrap_or(-1) as i64,
                     );
                     let entry = group_has_inside.entry(key).or_insert(false);
-                    *entry = *entry || per_component[index].contains(centroid);
+                    *entry = *entry || centroid_inside[index][slot];
                 }
             }
             for (volume, centroid, _) in &worst_overattributed {
@@ -3710,7 +3874,7 @@ fn check_v5(
                     continue;
                 }
                 let x = index as i32 + 1;
-                for &c in &view.tets {
+                for (slot, &c) in view.tets.iter().enumerate() {
                     let n = view.doc.cell(c);
                     if n.len() != 4 {
                         continue;
@@ -3728,8 +3892,7 @@ fn check_v5(
                         continue;
                     }
                     let p: Vec<Vec3> = n.iter().map(|i| view.doc.points[*i as usize]).collect();
-                    let centroid = p[0].add(p[1]).add(p[2]).add(p[3]).scale(0.25);
-                    if per_component[index].contains(centroid) {
+                    if centroid_inside[index][slot] {
                         continue;
                     }
                     let group = (
@@ -3749,6 +3912,10 @@ fn check_v5(
             }
         }
     }
+    if v5_timing {
+        eprintln!("[VERIFY-TIME] V5 misattr {:.2}s", v5_clock.elapsed().as_secs_f64());
+        v5_clock = std::time::Instant::now();
+    }
     // **The mechanism, tested directly (P-4.4).** A-8's parent cell 98213 is a single unsplit
     // tet, all four nodes lattice, labelled component 1 — while two of those nodes sit 0.219 h and
     // 0.583 h OUTSIDE the surface and the other two were snapped onto it by S7. A cell whose nodes
@@ -3761,6 +3928,26 @@ fn check_v5(
     // one node in it. Counting cells that carry a component on no such evidence sizes the defect
     // without assuming the mechanism — a cell with a node strictly inside is legitimately claimed
     // however its boundary is drawn.
+    // Per NODE, not per tet corner: a node is a corner of some twenty tets, and the scan below
+    // asked the point-in-solid question once for each of them. Computed once, in parallel,
+    // indexed by node - the same table on any thread count.
+    let node_inside: Vec<Vec<bool>> = {
+        use rayon::prelude::*;
+        surfaces
+            .iter()
+            .enumerate()
+            .map(|(index, component)| {
+                if !component.closed {
+                    return Vec::new();
+                }
+                view.doc
+                    .points
+                    .par_iter()
+                    .map(|q| per_component[index].contains(*q))
+                    .collect()
+            })
+            .collect()
+    };
     let mut claimed_without_evidence = 0usize;
     let mut claimed_without_evidence_volume = 0.0f64;
     for (index, component) in surfaces.iter().enumerate() {
@@ -3785,10 +3972,10 @@ fn check_v5(
             if !named {
                 continue;
             }
-            let p: Vec<Vec3> = n.iter().map(|i| view.doc.points[*i as usize]).collect();
-            if p.iter().any(|q| per_component[index].contains(*q)) {
+            if n.iter().any(|i| node_inside[index][*i as usize]) {
                 continue;
             }
+            let p: Vec<Vec3> = n.iter().map(|i| view.doc.points[*i as usize]).collect();
             claimed_without_evidence += 1;
             claimed_without_evidence_volume += p[1]
                 .sub(p[0])
@@ -3983,6 +4170,20 @@ impl TriIndex {
         // Solid angle per triangle by Van Oosterom-Strackee, summed and normalised. A
         // point inside k overlapping shells has winding k, so the test is `>= 0.5`
         // rather than `== 1`, which is exactly what makes a union measurable.
+        // A point strictly outside the triangles' bounding box is outside their convex hull, so
+        // the whole surface lies in an open half-space not containing it and subtends less than
+        // 2*pi: |winding| < 0.5 and the answer is `false` exactly, for an open surface too. The
+        // sum below would say the same after visiting every triangle; this says it first.
+        if self.tris.is_empty()
+            || p.x < self.lo.x
+            || p.y < self.lo.y
+            || p.z < self.lo.z
+            || p.x > self.hi.x
+            || p.y > self.hi.y
+            || p.z > self.hi.z
+        {
+            return false;
+        }
         let mut total = 0.0f64;
         for tri in &self.tris {
             let a = tri[0].sub(p);
@@ -4041,26 +4242,31 @@ fn expected_volume(
     }
     let span = hi.sub(lo);
     const N: usize = 48;
-    let mut inside_me = 0usize;
-    let mut inside_and_free = 0usize;
-    for i in 0..N {
-        for j in 0..N {
-            for k in 0..N {
-                let p = Vec3::new(
-                    lo.x + span.x * (i as f64 + 0.5) / N as f64,
-                    lo.y + span.y * (j as f64 + 0.5) / N as f64,
-                    lo.z + span.z * (k as f64 + 0.5) / N as f64,
-                );
-                if !indices[index].contains(p) {
-                    continue;
-                }
-                inside_me += 1;
-                if !rivals.iter().any(|r| indices[*r].contains(p)) {
-                    inside_and_free += 1;
+    // Integer counts per slab, summed: the same totals on any thread count.
+    use rayon::prelude::*;
+    let (inside_me, inside_and_free) = (0..N)
+        .into_par_iter()
+        .map(|i| {
+            let (mut me_n, mut free_n) = (0usize, 0usize);
+            for j in 0..N {
+                for k in 0..N {
+                    let p = Vec3::new(
+                        lo.x + span.x * (i as f64 + 0.5) / N as f64,
+                        lo.y + span.y * (j as f64 + 0.5) / N as f64,
+                        lo.z + span.z * (k as f64 + 0.5) / N as f64,
+                    );
+                    if !indices[index].contains(p) {
+                        continue;
+                    }
+                    me_n += 1;
+                    if !rivals.iter().any(|r| indices[*r].contains(p)) {
+                        free_n += 1;
+                    }
                 }
             }
-        }
-    }
+            (me_n, free_n)
+        })
+        .reduce(|| (0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
     if inside_me == 0 {
         return raw;
     }
@@ -4104,21 +4310,26 @@ fn sampled_volume(index: &TriIndex, tris: &[[Vec3; 3]]) -> f64 {
             .iter()
             .map(|s| TriIndex::build(s.iter().map(|t| tris[*t]).collect()))
             .collect();
-        let mut inside = 0usize;
-        for i in 0..N {
-            for j in 0..N {
-                for k in 0..N {
-                    let p = Vec3::new(
-                        lo.x + span.x * (i as f64 + 0.5) / N as f64,
-                        lo.y + span.y * (j as f64 + 0.5) / N as f64,
-                        lo.z + span.z * (k as f64 + 0.5) / N as f64,
-                    );
-                    if own.contains(p) && !earlier.iter().any(|e| e.contains(p)) {
-                        inside += 1;
+        use rayon::prelude::*;
+        let inside: usize = (0..N)
+            .into_par_iter()
+            .map(|i| {
+                let mut n = 0usize;
+                for j in 0..N {
+                    for k in 0..N {
+                        let p = Vec3::new(
+                            lo.x + span.x * (i as f64 + 0.5) / N as f64,
+                            lo.y + span.y * (j as f64 + 0.5) / N as f64,
+                            lo.z + span.z * (k as f64 + 0.5) / N as f64,
+                        );
+                        if own.contains(p) && !earlier.iter().any(|e| e.contains(p)) {
+                            n += 1;
+                        }
                     }
                 }
-            }
-        }
+                n
+            })
+            .sum();
         volume += span.x * span.y * span.z * inside as f64 / (N * N * N) as f64;
     }
     let _ = index;

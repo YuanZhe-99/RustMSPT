@@ -182,7 +182,7 @@ Scripts under `data/fixtures/meshgen/acceptance/` (all read a finished work dire
 
 | Script | What it answers |
 |---|---|
-| `run_acceptance.py --path default\|gated [--focus] [--jobs N]` | The nine-case matrix on one S8 path: P3 table (`cont%`, `cover%`, `on%`), P2 table, check statuses, per-stage timing; `--focus` runs `render_focus.py` per case. Meshing is serial; each case's single-threaded `mesh-verify` and renders overlap the next case's meshing on up to `N` workers (default 3, `--jobs 1` fully serial). `RUSTMSPT_ACCEPTANCE_WORK` redirects the work directory. |
+| `run_acceptance.py --path default\|gated [--focus] [--jobs N]` | The nine-case matrix on one S8 path: P3 table (`cont%`, `cover%`, `on%`), P2 table, check statuses, per-stage timing; `--focus` runs `render_focus.py` per case. Meshing is serial; each case's `mesh-verify` and renders overlap the next case's meshing on up to `N` workers (default 3, `--jobs 1` fully serial). `RUSTMSPT_ACCEPTANCE_WORK` redirects the work directory. |
 | `render_focus.py <work> <case>` | Input STL beside the output material boundary, same camera, output coloured by deviation; defects clustered, ranked and rendered head-on / oblique (R9). |
 | `run_reference.py` | The three reference cases at the reference tool's own background and per-section levels; element ratio and P3. Path follows `RUSTMSPT_PLC_PASS` in the environment. Each case's `mesh-verify` overlaps the next case's meshing. |
 | `check_determinism.py <work> --path P [--out table]` | R-P2 on the matrix: each case re-meshed at `RAYON_NUM_THREADS=1`, delivered and contract files compared by SHA-256 with run-naming lines excluded. Tables: `determinism_{gated,default,reference}.txt`. |
@@ -192,7 +192,7 @@ Scripts under `data/fixtures/meshgen/acceptance/` (all read a finished work dire
 Print-only diagnostics used with them (they change what is printed, never what is meshed):
 `RUSTMSPT_CUT_DIAG`, `RUSTMSPT_JCT_DIAG`, `RUSTMSPT_PLC_DIAG`, `RUSTMSPT_PLC_CSV=<path>` (per-cell
 §7.4 census), `RUSTMSPT_PLC_CELL=<lattice index>` (turns the cdt facet/hull/flat-tet dumps on for one
-cell), `RUSTMSPT_FACET_DIAG`, `RUSTMSPT_FLAT_DIAG`, `RUSTMSPT_HULL_DIAG`, `RUSTMSPT_SPLIT_DIAG` (the stranded-area census also names why the facet-split fan declined), `RUSTMSPT_TRACE_PROBE=x,y,z` (normalized frame: every lattice face through the point, its corners' `constraint_kind`/`on_cut`, trace chords and edge crossings), `RUSTMSPT_THIN_DIAG`, `RUSTMSPT_TIME_STAGES`.
+cell), `RUSTMSPT_FACET_DIAG`, `RUSTMSPT_FLAT_DIAG`, `RUSTMSPT_HULL_DIAG`, `RUSTMSPT_SPLIT_DIAG` (the stranded-area census also names why the facet-split fan declined), `RUSTMSPT_TRACE_PROBE=x,y,z` (normalized frame: every lattice face through the point, its corners' `constraint_kind`/`on_cut`, trace chords and edge crossings), `RUSTMSPT_THIN_DIAG`, `RUSTMSPT_TIME_STAGES` (for `mesh-verify` it prints `[VERIFY-TIME]` per check; the checks run in parallel and the report is byte-identical to a serial run).
 
 ## Fixture suite
 

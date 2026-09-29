@@ -157,14 +157,14 @@ cargo run --release -- mesh-verify \
 
 | 脚本 | 回答的问题 |
 |---|---|
-| `run_acceptance.py --path default\|gated [--focus] [--jobs N]` | 在一条 S8 路径上跑九个算例的矩阵：P3 表（`cont%`、`cover%`、`on%`）、P2 表、检查状态、各阶段耗时；`--focus` 为每个算例运行 `render_focus.py`。网格生成串行执行；每个算例单线程的 `mesh-verify` 与渲染在最多 `N` 个工作线程上与下一个算例的网格生成重叠（默认 3，`--jobs 1` 完全串行）。`RUSTMSPT_ACCEPTANCE_WORK` 可改工作目录。 |
+| `run_acceptance.py --path default\|gated [--focus] [--jobs N]` | 在一条 S8 路径上跑九个算例的矩阵：P3 表（`cont%`、`cover%`、`on%`）、P2 表、检查状态、各阶段耗时；`--focus` 为每个算例运行 `render_focus.py`。网格生成串行执行；每个算例的 `mesh-verify` 与渲染在最多 `N` 个工作线程上与下一个算例的网格生成重叠（默认 3，`--jobs 1` 完全串行）。`RUSTMSPT_ACCEPTANCE_WORK` 可改工作目录。 |
 | `render_focus.py <work> <case>` | 同一相机下输入 STL 与输出材料边界并排，输出按偏离着色；缺陷聚类、排序并以正视/斜视渲染（R9）。 |
 | `run_reference.py` | 三个参考算例，按参考工具自身的背景网格与分段层级运行；报告单元比与 P3。路径跟随环境中的 `RUSTMSPT_PLC_PASS`。每个算例的 `mesh-verify` 与下一个算例的网格生成重叠。 |
 | `check_determinism.py <work> --path P [--out table]` | 矩阵上的 R-P2：每个算例在 `RAYON_NUM_THREADS=1` 下重跑，按 SHA-256 比较交付文件与契约文件（排除标识运行的行）。表格：`determinism_{gated,default,reference}.txt`。 |
 | `p2_equal_fidelity.py <work> [--out table]` | M-1.4：默认路径达到门控路径贴面比例所需 `h` 下的单元数（`h_max_frac`、`h_min_frac`、`eps_frac` 一起减半），在尺寸叶子预算或 2 GB 处停止。表格：`p2_equal_fidelity.md`。 |
 | `node_dump.py <contract.vtu> <node>` | 单个节点的坐标、`constraint_kind`、`node_origin`，以及所有相邻四面体的区域集、来源、`parent_cell`、`escalation_reason`、`plc_path`（后三者需要网格化时设置 `RUSTMSPT_CUT_DIAG=1`）。 |
 
-配合使用的仅打印诊断（只改变打印内容，从不改变网格）：`RUSTMSPT_CUT_DIAG`、`RUSTMSPT_JCT_DIAG`、`RUSTMSPT_PLC_DIAG`、`RUSTMSPT_PLC_CSV=<路径>`（§7.4 逐单元统计）、`RUSTMSPT_PLC_CELL=<点阵索引>`（为单个单元打开 cdt 小面/外壳/平坦四面体转储）、`RUSTMSPT_FACET_DIAG`、`RUSTMSPT_FLAT_DIAG`、`RUSTMSPT_HULL_DIAG`、`RUSTMSPT_SPLIT_DIAG`（搁浅面积统计同时给出小面分割扇形拒绝的原因）、`RUSTMSPT_TRACE_PROBE=x,y,z`（归一化坐标：经过该点的每个点阵面、其角点的 `constraint_kind`/`on_cut`、迹线弦与棱上交点）、`RUSTMSPT_THIN_DIAG`、`RUSTMSPT_TIME_STAGES`。
+配合使用的仅打印诊断（只改变打印内容，从不改变网格）：`RUSTMSPT_CUT_DIAG`、`RUSTMSPT_JCT_DIAG`、`RUSTMSPT_PLC_DIAG`、`RUSTMSPT_PLC_CSV=<路径>`（§7.4 逐单元统计）、`RUSTMSPT_PLC_CELL=<点阵索引>`（为单个单元打开 cdt 小面/外壳/平坦四面体转储）、`RUSTMSPT_FACET_DIAG`、`RUSTMSPT_FLAT_DIAG`、`RUSTMSPT_HULL_DIAG`、`RUSTMSPT_SPLIT_DIAG`（搁浅面积统计同时给出小面分割扇形拒绝的原因）、`RUSTMSPT_TRACE_PROBE=x,y,z`（归一化坐标：经过该点的每个点阵面、其角点的 `constraint_kind`/`on_cut`、迹线弦与棱上交点）、`RUSTMSPT_THIN_DIAG`、`RUSTMSPT_TIME_STAGES`（对 `mesh-verify` 会逐项检查打印 `[VERIFY-TIME]`；各项检查并行运行，报告与串行运行逐字节一致）。
 
 ## 夹具套件
 
