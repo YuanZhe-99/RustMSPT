@@ -2840,7 +2840,8 @@ fn sorted_tri(t: [u32; 3]) -> [u32; 3] {
 //   boundary triangle placed by its centroid because every corner is on the surface is moved to
 //   another piece when that leaves both closed (D-13). The caller builds each cap with
 //   `fan_facet_without_slivers`. A piece closed in several disjoint shells, or pinched along an
-//   edge into sectors (`manifold_components`), becomes one piece per shell or sector.
+//   edge into sectors (`manifold_components`), becomes one piece per shell or sector; a piece that
+//   does not close sheds triangles another piece also carries (flaps) when that closes it.
 pub fn facet_split_fan(
     boundary: &[[u32; 3]],
     caps: &[Vec<[u32; 3]>],
@@ -3130,6 +3131,60 @@ pub fn facet_split_fan(
                 pieces[from] = without;
                 pieces[to].push(moved);
                 note_split("a triangle lying in the surface was moved to the piece it closes");
+            }
+        }
+    }
+    // **A flap is a copy of a triangle the other side carries.** A cap is shared by both sides of
+    // its own cut, and where two components meet one of its triangles can land in a piece it
+    // does not bound, open along two edges (a3 cell 97751: [20, 14, 5], whose node 5 has all its
+    // boundary triangles in the other piece). For a piece that does not close, a triangle that
+    // another piece also carries is removed while that lowers the open-edge count; the piece is
+    // kept so only if it ends closed, and restored otherwise.
+    if pieces.len() > 1 {
+        let open_edges = |soup: &[[u32; 3]]| -> usize {
+            let mut uses: BTreeMap<[u32; 2], usize> = BTreeMap::new();
+            for t in soup {
+                for slot in 0..3 {
+                    let (a, b) = (t[slot], t[(slot + 1) % 3]);
+                    *uses.entry(if a <= b { [a, b] } else { [b, a] }).or_insert(0) += 1;
+                }
+            }
+            uses.values().filter(|n| **n % 2 == 1).count()
+        };
+        for at in 0..pieces.len() {
+            if open_edges(&pieces[at]) == 0 {
+                continue;
+            }
+            let elsewhere: std::collections::BTreeSet<[u32; 3]> = pieces
+                .iter()
+                .enumerate()
+                .filter(|(other, _)| *other != at)
+                .flat_map(|(_, p)| p.iter().map(|t| sorted_tri(*t)))
+                .collect();
+            let mut trial = pieces[at].clone();
+            loop {
+                let open = open_edges(&trial);
+                if open == 0 {
+                    break;
+                }
+                let mut best: Option<(usize, usize)> = None;
+                for (slot, t) in trial.iter().enumerate() {
+                    if !elsewhere.contains(&sorted_tri(*t)) {
+                        continue;
+                    }
+                    let mut without = trial.clone();
+                    without.remove(slot);
+                    let after = open_edges(&without);
+                    if after < open && best.is_none_or(|(_, b)| after < b) {
+                        best = Some((slot, after));
+                    }
+                }
+                let Some((slot, _)) = best else { break };
+                trial.remove(slot);
+            }
+            if open_edges(&trial) == 0 && trial.len() < pieces[at].len() && !trial.is_empty() {
+                pieces[at] = trial;
+                note_split("a flap carried by another piece was removed");
             }
         }
     }
