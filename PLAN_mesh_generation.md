@@ -1937,7 +1937,19 @@ cell's boundary without being a trace point of that face, where no Steiner point
   whole and keeps a shedding that lowers open edges, and D-13 moves and shedding alternate for
   three rounds. Reference case 2 whole-cell fans 11 -> **10**, 99.966 -> 99.968, elements +58,
   everything else identical, R-P2 byte-identical, 677 tests (`data/output/acceptance_m25f`).
-  **Standing: 2 / 10 / 5 = 17.**
+  **Standing: 2 / 10 / 5 = 17.** The "not star-shaped" class (7 of the 17) is non-convex pieces the
+  constrained kernel also refuses ("a boundary node is not on the hull", "the link polygon has no
+  valid triangulation"). **Refuted, 2026-09-30: greedy ear peeling from the piece's own nodes.** A
+  lenient version took reference case 2 10 -> 9 and passed the matrix
+  (`data/output/acceptance_m25g`: 99.968 -> 99.973, nine cases byte-identical) - but its ear test
+  cannot see a new face overlapping a coplanar boundary face, and on a plain triangulated cube it
+  peels ten tets and leaves a whole shell, so that gain came from the final volume check catching
+  everything else. With complete coplanar-overlap checks it stops on a U prism and reference case 2
+  goes back to 10; with a remnant fanned from its kernel it still stops (a twisted-prism remnant is
+  reached first, then a non-star one). Not landed; the lenient code and its tests are kept at
+  `data/output/patches/m25_peel_ears_lenient_with_tests.rs.txt`. This class needs a real
+  tetrahedraliser for a non-convex piece - the hull tetrahedralised with the piece boundary as
+  constraints and the outside carved off, or Steiner points - which is a capability, not a rule.
   **Where M-2.1/M-2.3 stand at the end of 2026-09-29 (session pause).** Whole-cell fans, the arm
   M-2.3 deletes: **0 on a1, a2, a4, a7a, a7b**; a3 **4**, a6a **4**, a6b **2**, a8 **17** (from a3 110,
   a4 19, a6a 5, a6b 4, a8 738 this morning). Every change landed today was strictly better or taken
