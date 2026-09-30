@@ -2842,7 +2842,9 @@ fn sorted_tri(t: [u32; 3]) -> [u32; 3] {
 //   edge-connected patch; a piece made only of triangles other pieces carry is dropped. The caller builds each cap with
 //   `fan_facet_without_slivers`. A piece closed in several disjoint shells, or pinched along an
 //   edge into sectors (`manifold_components`), becomes one piece per shell or sector; a piece that
-//   does not close sheds triangles another piece also carries (flaps) when that closes it. A node
+//   does not close sheds triangles another piece also carries (flaps), singly or as an
+//   edge-connected run, when that lowers its open edges; moves and shedding alternate for three
+//   rounds. A node
 //   a cap passes through takes no side of that cap's surface, and a cap triangle two facets offer
 //   after rim conforming is kept once (plan M-2.1, 2026-09-30).
 pub fn facet_split_fan(
@@ -3099,6 +3101,10 @@ pub fn facet_split_fan(
             soup
         })
         .collect();
+    // The moves and the shedding below feed each other - a piece may close only once a sheet is
+    // shed from it and then a triangle moved into it (reference case 2, cell 44176) - so they
+    // run in alternation, a bounded number of rounds.
+    for _round in 0..3 {
     // **A triangle lying IN the surface has no side, so its placement may be wrong - move it to
     // where it closes a piece.** A facet bent over a cell edge has part of itself in a cell face;
     // that part coincides with a boundary triangle whose corners are all on the surface, and the
@@ -3306,14 +3312,74 @@ pub fn facet_split_fan(
                         best = Some((slot, after));
                     }
                 }
-                let Some((slot, _)) = best else { break };
-                trial.remove(slot);
+                if let Some((slot, _)) = best {
+                    trial.remove(slot);
+                    continue;
+                }
+                // No single triangle helps: a SHEET another piece carries (reference case 2,
+                // cell 44176 - five triangles where two components' caps coincide) opens more
+                // edges when its middle goes first. Offer each edge-connected run of carried
+                // triangles whole.
+                let carried: Vec<usize> = (0..trial.len())
+                    .filter(|slot| elsewhere.contains(&sorted_tri(trial[*slot])))
+                    .collect();
+                let mut run_of: Vec<usize> = (0..carried.len()).collect();
+                fn root(run_of: &mut [usize], mut x: usize) -> usize {
+                    while run_of[x] != x {
+                        run_of[x] = run_of[run_of[x]];
+                        x = run_of[x];
+                    }
+                    x
+                }
+                for a in 0..carried.len() {
+                    for b in a + 1..carried.len() {
+                        let (ta, tb) = (trial[carried[a]], trial[carried[b]]);
+                        if ta.iter().filter(|n| tb.contains(n)).count() >= 2 {
+                            let (ra, rb) = (root(&mut run_of, a), root(&mut run_of, b));
+                            if ra != rb {
+                                run_of[ra.max(rb)] = ra.min(rb);
+                            }
+                        }
+                    }
+                }
+                let mut runs: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+                for slot in 0..carried.len() {
+                    let r = root(&mut run_of, slot);
+                    runs.entry(r).or_default().push(carried[slot]);
+                }
+                let mut best_run: Option<(Vec<usize>, usize)> = None;
+                for run in runs.values().filter(|run| run.len() >= 2) {
+                    let without: Vec<[u32; 3]> = trial
+                        .iter()
+                        .enumerate()
+                        .filter(|(slot, _)| !run.contains(slot))
+                        .map(|(_, t)| *t)
+                        .collect();
+                    let after = open_edges(&without);
+                    if after < open && best_run.as_ref().is_none_or(|(_, b)| after < *b) {
+                        best_run = Some((run.clone(), after));
+                    }
+                }
+                let Some((run, _)) = best_run else { break };
+                trial = trial
+                    .iter()
+                    .enumerate()
+                    .filter(|(slot, _)| !run.contains(slot))
+                    .map(|(_, t)| *t)
+                    .collect();
             }
-            if open_edges(&trial) == 0 && trial.len() < pieces[at].len() && !trial.is_empty() {
+            // Kept when the piece closes, or - so a later move can finish it - when the shedding
+            // at least lowered its open edges using only triangles other pieces carry.
+            let before = open_edges(&pieces[at]);
+            if trial.len() < pieces[at].len()
+                && !trial.is_empty()
+                && (open_edges(&trial) == 0 || open_edges(&trial) < before)
+            {
                 pieces[at] = trial;
                 note_split("a flap carried by another piece was removed");
             }
         }
+    }
     }
     pieces.retain(|piece| !piece.is_empty());
     if pieces.is_empty() {

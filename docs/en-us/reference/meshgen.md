@@ -2237,6 +2237,16 @@ place. Reference case 3 whole-cell fans 9 -> 5, elements +15, every metric and c
 identical (`data/output/acceptance_m25e`). Refuted a second time: dropping cap triangles an
 earlier component's cap used (reference cases 1 / 2: 2 / 11 -> 5 / 20).
 
+Where two components' caps coincide over a run of triangles, that run can land in THREE pieces:
+the two it bounds and one where it is a sheet hanging off the rest (reference case 2, cell 107807;
+44176 is the same shape). Flap shedding removed one triangle at a time and only while each step
+closed edges, and removing the middle of a sheet first opens more; it now also offers each
+edge-connected run of carried triangles whole, and keeps a shedding that lowers the open-edge count
+even when the piece is not yet closed, so that D-13 can then move the boundary triangle the piece
+still lacks. Moves and shedding therefore run in alternation, three rounds. Reference case 2
+whole-cell fans 11 -> 10, on-surface 99.966 -> 99.968 %, elements +58; everything else identical
+(`data/output/acceptance_m25f`).
+
 ### Welded sheet cuts (G6-5)
 
 A sheet has no inside, so §6's sides cannot come from S6 - it refuses to classify one,
