@@ -1830,6 +1830,21 @@ cell's boundary without being a trace point of that face, where no Steiner point
   but turns `[V9]` PASS -> FAIL on a6a and a6b: the collapsed facet lies along the limb's rim curve,
   and it is what labels the curve nodes. Reverted; the facet has to stay as a constraint on the
   curve, not be skipped.
+  **Where M-2.1/M-2.3 stand at the end of 2026-09-29 (session pause).** Whole-cell fans, the arm
+  M-2.3 deletes: **0 on a1, a2, a4, a7a, a7b**; a3 **4**, a6a **4**, a6b **2**, a8 **17** (from a3 110,
+  a4 19, a6a 5, a6b 4, a8 738 this morning). Every change landed today was strictly better or taken
+  under D-12/D-13; `[V1]`/`[V3]`/`[V9]` clean throughout, R-P2 byte-identical, 677 tests. Remaining
+  classes, by the facet-split fan's own refusal (`RUSTMSPT_SPLIT_DIAG`, `[SPLIT-FAIL]`):
+  a8 13 "a boundary triangle straddles the surface with no node on it", all one mechanism not yet
+  found - cell 29842 has three coplanar overlapping facets of one component ([7, 1, 6, 5, 0],
+  [1, 6, 8] inside [7, 4, 8, 6, 1], which shares [7, 1, 6] with the first), but leaving contained
+  facets out of the cap and keeping duplicate cap triangles once measured **exactly inert** alone
+  AND together (patch `data/output/patches/m23_overlap_caps.patch`), so the straddle is not that
+  overlap; next step is to print the classifier's side for node 5 against each of the three
+  facets' planes, not to try another cap rule. a8 3 and a3 4 "the open edge is one the CELL's
+  triangulation carries" (a3 3 of them "neither the boundary nor the facets survive" at the
+  kernel); a6a/a6b 4 "a facet has no area" - the collapsed facet lies on the limb's rim curve and
+  must stay (skipping it fails `[V9]`); a6a 2 and a8 1 "open edge only the CAP carries".
 - **M-2.2. Boundary consistency: a facet vertex on the cell's boundary is a trace point.** The
   "hull carries a node the boundary has never heard of" class (a8 1,200 cells, 38.3 % of its
   stranded area) is the residue of record §6.43, which took it from 72 % of the population by making
@@ -2437,7 +2452,7 @@ without the stated fallback.
 | M-0.1 | As-built spec revision (geometry 1.6, numerics 1.3, contracts 1.3) — text half landed 2026-09-23 | T3 / T2 | Kimi K3 Max / GPT 5.6 Sol Xhigh; GLM 5.2 Max / GPT 5.6 Sol Medium | no | ◐ text half landed 2026-09-23; geometry rev 1.7 (M-1.7) recorded |
 | M-0.2 | Post-M-2/M-5 revision (geometry 1.8, numerics 1.4, contracts 1.4) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ waits on M-2/M-5 |
 | M-1.0 | Verifier trust: MG-01 cap, MG-03 domain at stage 11, MG-08 contract validator, `[V13]` FAIL | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ● landed 2026-09-26 |
-| M-1.1 | Matrix harness: both paths, logs kept, timing, census extended | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ◐ harness, both paths, logs, timing, `--focus` landed; single-threaded `mesh-verify` overlapped with the next case's meshing (`--jobs`, 2026-09-28); reference cases and census extension open |
+| M-1.1 | Matrix harness: both paths, logs kept, timing, census extended | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ◐ harness, both paths, logs, timing, `--focus` landed; `mesh-verify` now parallel and byte-identical (reference case 3 939 s -> 69 s, a8 51 s -> 16 s, 2026-09-29), still overlapped with the next case's meshing (`--jobs`); print-only S8 census parallel (a8 S8 166 -> 146 s) |
 | M-1.2 | Byte-identity on the matrix | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ● all twelve cases, both paths, byte-identical at 1 thread vs default: nine via `check_determinism.py` (`determinism_{gated,default}.txt`), three reference cases in `determinism_reference.txt` (`1fa74df`) |
 | M-1.3 | Time budgets | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ● budget line recorded (`b9aefe5`, host stated): gated a3 16.6 s, a4 83.8 s, a8 125.1 s; reference cases pending |
 | M-1.4 | P2 baseline at equal fidelity | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ● table + sweep committed: default meets gated fidelity only on a1 (3.8× the tets) and a7a (4.7×); elsewhere never, within the leaf budget / 2 GB |
@@ -2452,7 +2467,7 @@ without the stated fallback.
 | M-2.3 | Delete the whole-cell fan | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ blocked by M-2.1's residue: whole-cell fans a3 4, a6a 4, a6b 2, a8 17 (0 on a1/a2/a4/a7a/a7b) |
 | M-2.4 | Retire `contact_chamfered_by` | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ◐ counted (a6a 895, a6b 2,396 gated); blocked: the limb's contact strip is thinner than a lattice face, so the faces it declares are genuine rim chamfer |
 | M-2.5 | P3 residual audit | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — the same cutaways | ○ |
-| M-3.1 | The control | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ● all twelve cases 2026-09-28: gated FAIL sets equal the default's, gated `[V13]` better wherever the default is below 1.0 (reference cases 95.733 / 97.794 / 99.692 against 95.248 / 96.097 / 96.831 %), elements +0.1–0.9 % over the previous gated build, time within this host's baseline |
+| M-3.1 | The control | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ● all twelve cases, re-held 2026-09-29 after every M-2 step: gated FAIL sets equal the default's, gated `[V13]` better everywhere (gated a1/a2/a7b 100.000 PASS, a4 100.000, a3 99.927, a8 99.971; reference cases 99.936 / 99.935 / 99.958 % against the default's 95.248 / 96.097 / 96.831 %) |
 | M-3.2 | Delete the five handles | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ○ |
 | M-3.3 | Refactor `cut_lattice`, tests for the trace and the junction module | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ |
 | M-4.0a | One X per connected closed component; the source map (MG-04) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ |
@@ -2465,7 +2480,7 @@ without the stated fallback.
 | M-4.7 | A-10 forging fixture and the G4 gate: band, sheet and marked contact in one mesh | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — cross-section through the contact centre | ○ |
 | M-4.8 | `FaceTagOrientation` per member; one geometric side per contact face (MG-07) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ◐ `FaceTagOrientation` per member landed (`3198276`); one geometric side per contact face open |
 | M-4.9 | The thin family A-17..A-20: tilted, irregular and non-uniform thin plates and gaps, orientation invariance (R-B3) | T2 / T3 | GLM 5.2 Max / GPT 5.6 Sol Medium; Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — cross-sections of every fixture, A-17's five orientations side by side | ○ |
-| M-5.1 | Quality census by arm and dimension; G4-3 post-snap | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ — inherits D-11's cost: move (d)'s interior points (+1–8 % tets, a7a/a7b +28 %, a8 sub-floor share 4.1 → 5.4 %) |
+| M-5.1 | Quality census by arm and dimension; G4-3 post-snap | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ — inherits D-11's cost (move (d): +1–8 % tets, a7a/a7b +28 %, more slivers) and D-12/D-13's sub-`eps` misattributed slivers (a4 5, a8 26 cells) |
 | M-5.2 | Quality face triangulation in the J1 cache — gate | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ |
 | M-5.3 | Near-edge trace points, constrained to exact surface points (MG-11) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ |
 | M-5.4 | S9 interior improvement under P3 | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ |
