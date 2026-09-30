@@ -8516,7 +8516,9 @@ fn hull_diag(
 //   The facet-split fan's side oracle reads the same record: a node the cut put on a component's
 //   surface has no side of it. A component whose facets here all lie in one plane, share no vertex
 //   with another component's facet, and have every vertex on their common outline is capped by
-//   that outline (`coplanar_cap_outline`) instead of facet by facet (plan M-2.1, 2026-09-30).
+//   that outline (`coplanar_cap_outline`) instead of facet by facet (plan M-2.1, 2026-09-30). A
+//   facet the rim matching leaves without area, or with fewer than three distinct vertices, is
+//   skipped and the nodes it interned are rolled back.
 #[allow(clippy::too_many_arguments)]
 fn plc_attempt(
     tet: [u32; 4],
@@ -8610,6 +8612,7 @@ fn plc_attempt(
             classifier.triangles_of(slot),
             edge * 1.0e-6,
         ) {
+            let interned_before = arena.points.len();
             let ids: Vec<u32> = facet
                 .iter()
                 .map(|p| {
@@ -8727,6 +8730,18 @@ fn plc_attempt(
             distinct.sort_unstable();
             distinct.dedup();
             if distinct.len() < 3 {
+                arena.truncate(interned_before);
+                continue;
+            }
+            // **A facet the rim matching left without area is a line, and a line is not a
+            // fragment.** Matching its rim vertices to boundary nodes can fold it onto a segment
+            // along a curve (a6a/a6b: the limb's rim), which no tetrahedralisation can carry as a
+            // facet. It is skipped AND leaves no trace: a node it interned stays out of the cell,
+            // because a vertex on a curve with no material of that body beside it is exactly what
+            // `[V9]`'s curve-node clause fails on - which is how the first skip, without the
+            // rollback, was refuted (a6b node 51389 on the limb's curve 14 with N_ID [0]).
+            if crate::meshgen::cdt::facet_plane(&ids, &arena.points, 0.0).is_none() {
+                arena.truncate(interned_before);
                 continue;
             }
             facets.push(ids);

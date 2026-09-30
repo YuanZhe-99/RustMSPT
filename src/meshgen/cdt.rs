@@ -2838,7 +2838,8 @@ fn sorted_tri(t: [u32; 3]) -> [u32; 3] {
 //   the cell's. A cell no cap separates is one piece when no cap triangle is left at all - the
 //   surface lies in the cell's own faces (owner decision D-12); otherwise it is refused. A
 //   boundary triangle placed by its centroid because every corner is on the surface is moved to
-//   another piece when that leaves both closed (D-13). The caller builds each cap with
+//   another piece when that closes the other and lowers its own open edges (D-13); a piece made
+//   only of triangles other pieces carry is dropped. The caller builds each cap with
 //   `fan_facet_without_slivers`. A piece closed in several disjoint shells, or pinched along an
 //   edge into sectors (`manifold_components`), becomes one piece per shell or sector; a piece that
 //   does not close sheds triangles another piece also carries (flaps) when that closes it. A node
@@ -3103,8 +3104,10 @@ pub fn facet_split_fan(
     // that part coincides with a boundary triangle whose corners are all on the surface, and the
     // centroid test that places it is asking about a point on the surface. On a4 it put the
     // triangle below, leaving the piece above open along two edges and the piece below carrying
-    // it as an appendix (plan M-2.3, 2026-09-29). A move is kept only when it leaves BOTH pieces
-    // closed; triangles are visited in key order.
+    // it as an appendix (plan M-2.3, 2026-09-29). A move is kept when it closes the piece it goes
+    // to and lowers the open-edge count of the piece it leaves; the flap shedding below finishes
+    // that piece, and the partition check still decides (a3's four cells where a triangle both
+    // components' caps share left a fin: 2026-09-30). Triangles are visited in key order.
     if pieces.len() > 1 && !placed_on_surface.is_empty() {
         let open_edges = |soup: &[[u32; 3]]| -> usize {
             let mut uses: BTreeMap<[u32; 2], usize> = BTreeMap::new();
@@ -3140,7 +3143,7 @@ pub fn facet_split_fan(
                 with.push(moved);
                 let gain = (before_from + open_edges(&pieces[to]))
                     .saturating_sub(after_from + open_edges(&with));
-                if after_from == 0
+                if after_from < before_from
                     && open_edges(&with) == 0
                     && best.is_none_or(|(_, g)| gain > g)
                 {
@@ -3181,6 +3184,14 @@ pub fn facet_split_fan(
                 .filter(|(other, _)| *other != at)
                 .flat_map(|(_, p)| p.iter().map(|t| sorted_tri(*t)))
                 .collect();
+            // A piece made only of triangles other pieces carry bounds no volume: it is a sheet of
+            // cap left where two components' caps coincide (a6a's contact plane, cells 29954 and
+            // 49391 - a "piece" of one or three shared cap triangles). It is dropped.
+            if pieces[at].iter().all(|t| elsewhere.contains(&sorted_tri(*t))) {
+                pieces[at].clear();
+                note_split("a piece made only of triangles other pieces carry was dropped");
+                continue;
+            }
             let mut trial = pieces[at].clone();
             loop {
                 let open = open_edges(&trial);

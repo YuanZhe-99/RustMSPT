@@ -1851,6 +1851,33 @@ cell's boundary without being a trace point of that face, where no Steiner point
   **99.946 / 99.938 / 99.963 %**; every other case's P3 and every check status unchanged; elements
   within +0.19 % (a3 +506, landed under D-11); default path unchanged; R-P2 and tests below.
   Ablations on a8: without the two sideless rules, or without the outline, 5 whole-cell fans each.
+  **Three more classes closed, 2026-09-30.** (a) a3's four "open edge the CELL carries" (cells
+  17257, 41505, 75954, 100254, one configuration at four corners): both components' caps share a
+  small triangle where the intersection curve meets the cube edge, and the second cut left it with
+  a boundary triangle as a fin that D-13 would not move because the source piece closed only after
+  the flap was shed. D-13 now keeps a move that closes the target and lowers the source's open
+  edges; flap shedding finishes the source. (b) a6a's two "open edge only the CAP carries" were
+  "pieces" made only of cap triangles both components share on the contact plane; such a piece
+  bounds no volume and is dropped. (c) a6a/a6b's "a facet has no area": a facet the rim matching
+  folds onto a line is skipped and **the nodes it interned are rolled back** - the refuted skip of
+  2026-09-29 kept one (a6b node 51389 on the limb's curve 14, N_ID [0]), which is all `[V9]` failed
+  on. Gated (`data/output/acceptance_m24f`): whole-cell fans a3 4 -> **0**, a6a 3 -> **0**, a6b 2 ->
+  **0**; a3 on-surface 99.927 -> **99.991**, `[V6]` FAIL -> **PASS** (adjacency 12 -> 0); a6a 99.998
+  -> **100.000**, cover 99.668 -> 99.872, `[V5]` WARN -> PASS; a6b 99.999 -> 100.000; elements a3
+  +180, a6a +16, a6b -9; every other case identical; reference cases 99.946 / 99.938 / 99.963 ->
+  **99.970 / 99.963** / 99.963 %; default path unchanged, R-P2 byte-identical, 677 tests. Tried and
+  reverted (inert): dropping cap
+  triangles an earlier component's cap already used (a3, before (a)); the contained-facet filter
+  again (a8, 4 -> 4); the outline rule without its "every vertex on the hull" condition (a8, 4 -> 4);
+  a side oracle treating a node inside or on any facet as on-surface (a8 cell 835403 moved from
+  "straddles" to "open edge only the CAP carries", count unchanged).
+  **Where M-2.1/M-2.3 stand, 2026-09-30.** Whole-cell fans are **0 on eight of nine cases**; a8 has
+  4, all on its overlapping struts: 425581 and 403695 (a strut face coinciding with part of a cell
+  face - the cap triangle there is dropped as lying in the face, and the face triangles under it are
+  placed by a coin toss), 29843 (facets of one component overlapping across a crease, two planes, so
+  the single-plane outline does not apply), 835403 (same as 425581 once its node-5 side is fixed).
+  The next step is the coincident-with-a-cell-face case: those face triangles are ON the surface,
+  so they need the cut's placement read from the dropped cap, not a centroid side.
   **Where M-2.1/M-2.3 stand at the end of 2026-09-29 (session pause).** Whole-cell fans, the arm
   M-2.3 deletes: **0 on a1, a2, a4, a7a, a7b**; a3 **4**, a6a **4**, a6b **2**, a8 **17** (from a3 110,
   a4 19, a6a 5, a6b 4, a8 738 this morning). Every change landed today was strictly better or taken
