@@ -1825,6 +1825,11 @@ cell's boundary without being a trace point of that face, where no Steiner point
   a3 whole-cell fans 8 -> **4**, on-surface 99.917 -> **99.927**, `[V6]` adjacency 23 -> **12**; every
   other case identical; reference cases 99.910 / 99.919 -> 99.936 / 99.935 %; R-P2 held, 677 tests
   (`data/output/acceptance_m23j`).
+  **Refuted: dropping a facet the rim matching left without area** (a6a/a6b "a facet has no
+  area", 2026-09-29). It lets a6b's two cells mesh (whole-cell fans 2 -> 0, on-surface -> 100.000)
+  but turns `[V9]` PASS -> FAIL on a6a and a6b: the collapsed facet lies along the limb's rim curve,
+  and it is what labels the curve nodes. Reverted; the facet has to stay as a constraint on the
+  curve, not be skipped.
 - **M-2.2. Boundary consistency: a facet vertex on the cell's boundary is a trace point.** The
   "hull carries a node the boundary has never heard of" class (a8 1,200 cells, 38.3 % of its
   stranded area) is the residue of record §6.43, which took it from 72 % of the population by making
