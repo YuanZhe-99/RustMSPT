@@ -2210,7 +2210,7 @@ every other case identical.
 a8's last three cells were one rule. M-2.2 adopts, for a facet rim vertex on a cell edge, the
 nearest boundary node on that edge the cut marks on-surface - and where a strut face lies on a
 lattice plane the edge lies IN the surface, the list names only its endpoints, and adoption moved
-a rim vertex up to 0.6 of an edge (29843: t = 0.614 on edge 1-2 went to the endpoint at t = 1),
+a rim vertex 0.39 of an edge (29843: t = 0.614 on edge 1-2 went to the endpoint at t = 1),
 folding the facet over its neighbour; S2's coplanar overlay was not the cause (the raw clipped
 facets tile). A node on that edge now also qualifies when it lies in the facet's own plane. Gated
 (`data/output/acceptance_m24h`): a8 whole-cell fans 3 -> **0**, on-surface 99.995 ->

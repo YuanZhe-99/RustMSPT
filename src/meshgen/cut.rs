@@ -8677,7 +8677,7 @@ fn plc_attempt(
                                 // or when the edge lies IN the facet's plane, so that every point
                                 // of it does: a8's strut faces on lattice planes, where the
                                 // on-surface list names only the edge's endpoints and adopting one
-                                // of them moved a rim vertex up to 0.6 of an edge and folded the
+                                // of them moved a rim vertex 0.39 of an edge and folded the
                                 // facet over its neighbour (cells 29843, 403695).
                                 if !on_plane[b].contains(id)
                                     || !(on_surface.contains(&(seed[*id as usize], *component))
