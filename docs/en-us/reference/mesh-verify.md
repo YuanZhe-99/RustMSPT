@@ -191,8 +191,8 @@ Scripts under `data/fixtures/meshgen/acceptance/` (all read a finished work dire
 
 Print-only diagnostics used with them (they change what is printed, never what is meshed):
 `RUSTMSPT_CUT_DIAG`, `RUSTMSPT_JCT_DIAG`, `RUSTMSPT_PLC_DIAG`, `RUSTMSPT_PLC_CSV=<path>` (per-cell
-§7.4 census), `RUSTMSPT_PLC_CELL=<lattice index>` (turns the cdt facet/hull/flat-tet dumps on for one
-cell), `RUSTMSPT_FACET_DIAG`, `RUSTMSPT_FLAT_DIAG`, `RUSTMSPT_HULL_DIAG`, `RUSTMSPT_SPLIT_DIAG` (the stranded-area census also names why the facet-split fan declined), `RUSTMSPT_TRACE_PROBE=x,y,z` (normalized frame: every lattice face through the point, its corners' `constraint_kind`/`on_cut`, trace chords and edge crossings), `RUSTMSPT_THIN_DIAG`, `RUSTMSPT_TIME_STAGES` (for `mesh-verify` it prints `[VERIFY-TIME]` per check; the checks run in parallel and the report is byte-identical to a serial run).
+§7.4 census), `RUSTMSPT_PLC_CELL=<lattice index>[,<index>...]` (turns the cdt facet/hull/flat-tet/side dumps on for those
+cells), `RUSTMSPT_FACET_DIAG`, `RUSTMSPT_FLAT_DIAG`, `RUSTMSPT_HULL_DIAG`, `RUSTMSPT_SPLIT_DIAG` (the stranded-area census also names why the facet-split fan declined), `RUSTMSPT_TRACE_PROBE=x,y,z` (normalized frame: every lattice face through the point, its corners' `constraint_kind`/`on_cut`, trace chords and edge crossings), `RUSTMSPT_THIN_DIAG`, `RUSTMSPT_TIME_STAGES` (for `mesh-verify` it prints `[VERIFY-TIME]` per check; the checks run in parallel and the report is byte-identical to a serial run).
 
 ## Fixture suite
 

@@ -2666,9 +2666,11 @@ pub fn cut_lattice(
                 on_surface.insert((*node, *component));
             }
         }
-        // Print-only: `RUSTMSPT_PLC_CELL=<lattice index>` turns the cdt diagnostics on for one cell.
-        let focus_cell: Option<usize> =
-            std::env::var("RUSTMSPT_PLC_CELL").ok().and_then(|v| v.parse().ok());
+        // Print-only: `RUSTMSPT_PLC_CELL=<lattice index>[,<index>...]` turns the cdt diagnostics
+        // on for those cells.
+        let focus_cells: BTreeSet<usize> = std::env::var("RUSTMSPT_PLC_CELL")
+            .map(|v| v.split(',').filter_map(|s| s.trim().parse().ok()).collect())
+            .unwrap_or_default();
         let attempt: Vec<Option<Result<PlcCell, &'static str>>> = lattice
             .tets
             .par_iter()
@@ -2676,7 +2678,7 @@ pub fn cut_lattice(
             .enumerate()
             .map(|(index, (tet, boundary))| {
                 boundary.as_ref().map(|boundary| {
-                    let focus = focus_cell == Some(index);
+                    let focus = focus_cells.contains(&index);
                     crate::meshgen::cdt::DIAG_CELL.with(|c| c.set(focus));
                     HULL_CELL.with(|c| c.set(index));
                     if focus {
@@ -8511,6 +8513,10 @@ fn hull_diag(
 //   it conforming with a neighbour that did take §7.4. That is why the boundary comes back too.
 //   A facet rim vertex on a cell EDGE adopts the nearest boundary node on that edge the cut marks
 //   on-surface for its component (plan M-2.2) - the edge's own crossing, however far S7 moved it.
+//   The facet-split fan's side oracle reads the same record: a node the cut put on a component's
+//   surface has no side of it. A component whose facets here all lie in one plane, share no vertex
+//   with another component's facet, and have every vertex on their common outline is capped by
+//   that outline (`coplanar_cap_outline`) instead of facet by facet (plan M-2.1, 2026-09-30).
 #[allow(clippy::too_many_arguments)]
 fn plc_attempt(
     tet: [u32; 4],
@@ -8792,6 +8798,37 @@ fn plc_attempt(
             let caps: Vec<Vec<[u32; 3]>> = groups
                 .values()
                 .map(|slots| {
+                    // A component whose facets here all lie in one plane is capped by the plane's
+                    // cross-section, fanned once (`coplanar_cap_outline`).
+                    let members: Vec<&[u32]> =
+                        slots.iter().map(|slot| facets[*slot].as_slice()).collect();
+                    // Not where another component's facet shares a vertex: another surface meets
+                    // this plane there (a3's sphere crossing the cube face along 11-14), and the
+                    // facet edges carrying that curve are what the other cut separates by.
+                    let junction = slots.iter().any(|slot| {
+                        facets[*slot].iter().any(|node| {
+                            facets.iter().zip(facet_of.iter()).any(|(other, component)| {
+                                *component != facet_of[*slot] && other.contains(node)
+                            })
+                        })
+                    });
+                    let outline = if junction {
+                        None
+                    } else {
+                        crate::meshgen::cdt::coplanar_cap_outline(&members, &arena.points, tol)
+                    };
+                    if let Some(outline) = outline {
+                        crate::meshgen::cdt::note_split_public(
+                            "a component's coplanar facets were capped by their common outline",
+                        );
+                        return crate::meshgen::cdt::fan_facet_without_slivers(
+                            &outline,
+                            &arena.points,
+                        )
+                        .into_iter()
+                        .filter(|t| !on_cell_face(t))
+                        .collect();
+                    }
                     slots
                         .iter()
                         .flat_map(|slot| {
@@ -8816,7 +8853,7 @@ fn plc_attempt(
                         .sum::<usize>()
                 })
                 .sum();
-            let dropped = offered - caps.iter().map(|cap| cap.len()).sum::<usize>();
+            let dropped = offered.saturating_sub(caps.iter().map(|cap| cap.len()).sum::<usize>());
             let on_patch: Vec<BTreeSet<u32>> = groups
                 .values()
                 .map(|slots| slots.iter().flat_map(|slot| facets[*slot].iter().copied()).collect())
@@ -8825,8 +8862,19 @@ fn plc_attempt(
             // snapshotted: the split appends one centroid per piece to the same list.
             let base: Vec<Vec3> = arena.points.clone();
             let uncertain = std::cell::Cell::new(0usize);
+            // **A node the cut already put on the surface has no side.** S7 snaps a lattice node
+            // onto a component's surface and invariant K2 promotes a crossing to it; the classifier
+            // asked about such a point exactly on the surface gives a coin toss, and a8's
+            // straddling boundary triangles were every one of them a triangle with one such corner
+            // read to the wrong side (cells 6619, 72050, 78462, 841020). The cut's decision is read,
+            // not recomputed - the same rule M-2.2 applies to rim vertices on a cell edge.
             let side_of = |group: usize, node: u32| -> Option<bool> {
                 if on_patch[group].contains(&node) {
+                    return None;
+                }
+                if (node as usize) < seed.len()
+                    && on_surface.contains(&(seed[node as usize], components[group]))
+                {
                     return None;
                 }
                 let slot = classifier.slot_of(components[group])?;
@@ -8846,6 +8894,26 @@ fn plc_attempt(
                 uncertain.set(here);
                 Some(inside)
             };
+            // Print-only: for the focused cell, every seed node's side per group beside what the
+            // cut recorded as on-surface for it, so a straddle can be charged to one node.
+            if crate::meshgen::cdt::DIAG_CELL.with(|c| c.get()) {
+                for (slot, facet) in facets.iter().enumerate() {
+                    eprintln!("[SIDE-FACET] slot {slot} component {} {:?}", facet_of[slot], facet);
+                }
+                for id in 0..seed.len() as u32 {
+                    let sides: Vec<Option<bool>> =
+                        (0..components.len()).map(|g| side_of(g, id)).collect();
+                    let recorded: Vec<i32> = components
+                        .iter()
+                        .copied()
+                        .filter(|c| on_surface.contains(&(seed[id as usize], *c)))
+                        .collect();
+                    eprintln!(
+                        "[SIDE-NODE] {id} global {} sides {:?} on-surface-for {:?} at {:?}",
+                        seed[id as usize], sides, recorded, base[id as usize]
+                    );
+                }
+            }
             crate::meshgen::cdt::LAST_SPLIT.with(|c| c.set(""));
             let split = crate::meshgen::cdt::facet_split_fan(
                 &boundary_local,

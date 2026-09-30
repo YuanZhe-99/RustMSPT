@@ -1830,6 +1830,27 @@ cell's boundary without being a trace point of that face, where no Steiner point
   but turns `[V9]` PASS -> FAIL on a6a and a6b: the collapsed facet lies along the limb's rim curve,
   and it is what labels the curve nodes. Reverted; the facet has to stay as a constraint on the
   curve, not be skipped.
+  **Corners exactly on the surface have no side, and a single-plane cap is its outline,
+  2026-09-30.** a8's 13 "a boundary triangle straddles the surface with no node on it" were one
+  mechanism, found by printing each boundary node's side beside what the cut recorded for it
+  (`[SIDE-NODE]`, print-only; `RUSTMSPT_PLC_CELL` now takes a list): every straddling triangle has
+  one corner EXACTLY on the surface that the fan's side oracle sent to the classifier - a coin toss.
+  Two kinds: nodes the cut already put on the component's surface (S7 snaps, K2 promotions - cells
+  6619, 72050, 78462, 841020), now read from the same record M-2.2 uses; and boundary nodes
+  `conform_cap_rim` split the cap's rim at (cell 29842's node 5), now sideless for that cap. Cell
+  29842 then showed its cap covering part of the cross-section twice: the component's three
+  facets all lie in the strut face's plane and snapping had left one a bow-tie ([8, 6, 1, 7, 4],
+  edges 8-6 and 1-7 crossing) - the "overlapping coplanar facets" of the pause note, which is why
+  the contained-facet rule was inert. A closed surface cannot end in the cell, so their union is the
+  plane's convex cross-section: `coplanar_cap_outline` caps it by the facet vertices' hull, only
+  when every vertex is on that hull and no other component's facet shares a vertex (without the
+  second condition a3's cube face lost its sphere curve and a3 went 4 -> 54 whole-cell fans; a
+  star-apex fan and an area-sum trigger were tried first and are refuted - the areas tile exactly).
+  Gated (`data/output/acceptance_m24c`): a8 whole-cell fans 17 -> **4**, on-surface 99.971 ->
+  **99.993**; a6a 4 -> **3**, 99.995 -> 99.998; reference cases 99.936 / 99.935 / 99.958 ->
+  **99.946 / 99.938 / 99.963 %**; every other case's P3 and every check status unchanged; elements
+  within +0.19 % (a3 +506, landed under D-11); default path unchanged; R-P2 and tests below.
+  Ablations on a8: without the two sideless rules, or without the outline, 5 whole-cell fans each.
   **Where M-2.1/M-2.3 stand at the end of 2026-09-29 (session pause).** Whole-cell fans, the arm
   M-2.3 deletes: **0 on a1, a2, a4, a7a, a7b**; a3 **4**, a6a **4**, a6b **2**, a8 **17** (from a3 110,
   a4 19, a6a 5, a6b 4, a8 738 this morning). Every change landed today was strictly better or taken

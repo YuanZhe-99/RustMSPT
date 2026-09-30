@@ -2841,7 +2841,9 @@ fn sorted_tri(t: [u32; 3]) -> [u32; 3] {
 //   another piece when that leaves both closed (D-13). The caller builds each cap with
 //   `fan_facet_without_slivers`. A piece closed in several disjoint shells, or pinched along an
 //   edge into sectors (`manifold_components`), becomes one piece per shell or sector; a piece that
-//   does not close sheds triangles another piece also carries (flaps) when that closes it.
+//   does not close sheds triangles another piece also carries (flaps) when that closes it. A node
+//   a cap passes through takes no side of that cap's surface, and a cap triangle two facets offer
+//   after rim conforming is kept once (plan M-2.1, 2026-09-30).
 pub fn facet_split_fan(
     boundary: &[[u32; 3]],
     caps: &[Vec<[u32; 3]>],
@@ -2923,10 +2925,28 @@ pub fn facet_split_fan(
             if conformed.len() != cap.len() {
                 note_split("the cap's rim was split to the nodes the cell's boundary carries");
             }
-            conformed
+            // One component's coplanar facets can overlap (a8's struts share face planes), and
+            // splitting one facet's rim at the other's vertices makes them offer the SAME
+            // triangle - cell 29842's [1, 6, 7] and [7, 6, 1]. It is one piece of surface, kept
+            // once; the identity is exact node ids, so no tolerance decides it.
+            let mut seen: std::collections::BTreeSet<[u32; 3]> = std::collections::BTreeSet::new();
+            conformed.into_iter().filter(|t| seen.insert(sorted_tri(*t))).collect()
         })
         .collect();
     let caps = &caps;
+    // **A node the cap passes through is ON the surface.** `conform_cap_rim` splits the cap's rim
+    // at boundary nodes lying on it - trace points where the surface meets a cell face - and those
+    // are not facet vertices, so the caller's oracle asks the classifier about a point exactly on
+    // the surface and gets a coin toss (a8 cell 29842: node 5, in the strut face's plane to the
+    // last digit, read "outside" and left a boundary triangle straddling).
+    let on_cap: Vec<std::collections::BTreeSet<u32>> =
+        caps.iter().map(|cap| cap.iter().flatten().copied().collect()).collect();
+    let side_of = |group: usize, node: u32| -> Option<bool> {
+        if on_cap[group].contains(&node) {
+            return None;
+        }
+        side_of(group, node)
+    };
     let mut pieces: Vec<(Vec<[u32; 3]>, Vec<(usize, bool)>)> =
         vec![(boundary.to_vec(), Vec::new())];
     // Boundary triangles whose side came from their own centroid because every corner is on the
@@ -5344,6 +5364,121 @@ pub(crate) fn facet_plane(facet: &[u32], points: &[Vec3], tol: f64) -> Option<(V
     Some((normal, offset, tol + deviation))
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: The cap outline of one component whose facets in a cell all lie in one plane: the convex hull of their vertices.
+// Inputs: the component's facets (node ids into `points`), `tol` (the arithmetic tolerance `facet_plane` widens by).
+// Returns: the hull ring (no three collinear) when every facet lies in the first one's plane band, every facet vertex
+//   lies on the hull's boundary, AND there are two or more facets or the one facet's ring crosses itself; `None`
+//   otherwise.
+// Side effects: None.
+// Notes: A closed surface cannot end inside the cell, and with every facet of the component in one plane nothing out of
+//   the plane continues it here, so the union's outline lies on the cell boundary: the union IS the plane's convex
+//   cross-section of the tet, whose corners are facet vertices. Fanning the facets one by one is wrong when they overlap
+//   (a8's struts share face planes) or when snapping rim vertices onto boundary nodes (M-2.2) left a ring crossing itself
+//   (a8 cell 29842's [8, 6, 1, 7, 4], edges 8-6 and 1-7 crossing): the fans then cover part of the cross-section twice
+//   and a piece does not close. A single simple facet is left to its own fan.
+pub(crate) fn coplanar_cap_outline(facets: &[&[u32]], points: &[Vec3], tol: f64) -> Option<Vec<u32>> {
+    let first = *facets.first()?;
+    let (normal, offset, band) = facet_plane(first, points, tol)?;
+    for facet in facets {
+        let (other, _, _) = facet_plane(facet, points, tol)?;
+        let off = other.cross(normal);
+        if off.dot(off) > 1.0e-12 {
+            return None;
+        }
+        if facet
+            .iter()
+            .any(|v| (normal.dot(points[*v as usize]) - offset).abs() > band)
+        {
+            return None;
+        }
+    }
+    let axis_u = {
+        let seed = if normal.x.abs() < 0.9 {
+            Vec3::new(1.0, 0.0, 0.0)
+        } else {
+            Vec3::new(0.0, 1.0, 0.0)
+        };
+        let u = seed.sub(normal.scale(seed.dot(normal)));
+        u.scale(1.0 / u.dot(u).sqrt())
+    };
+    let axis_v = normal.cross(axis_u);
+    let flat = |v: u32| {
+        let p = points[v as usize];
+        (p.dot(axis_u), p.dot(axis_v))
+    };
+    let turn = |o: (f64, f64), a: (f64, f64), b: (f64, f64)| {
+        (a.0 - o.0) * (b.1 - o.1) - (a.1 - o.1) * (b.0 - o.0)
+    };
+    if facets.len() == 1 {
+        let n = first.len();
+        let mut crosses = false;
+        for i in 0..n {
+            for j in i + 2..n {
+                if i == 0 && j == n - 1 {
+                    continue;
+                }
+                let (a, b) = (flat(first[i]), flat(first[(i + 1) % n]));
+                let (c, d) = (flat(first[j]), flat(first[(j + 1) % n]));
+                if turn(a, b, c) * turn(a, b, d) < 0.0 && turn(c, d, a) * turn(c, d, b) < 0.0 {
+                    crosses = true;
+                }
+            }
+        }
+        if !crosses {
+            return None;
+        }
+    }
+    let mut nodes: Vec<u32> = facets.iter().flat_map(|f| f.iter().copied()).collect();
+    nodes.sort_unstable();
+    nodes.dedup();
+    let mut sorted: Vec<((f64, f64), u32)> = nodes.iter().map(|v| (flat(*v), *v)).collect();
+    sorted.sort_by(|a, b| {
+        a.0 .0
+            .partial_cmp(&b.0 .0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.0 .1.partial_cmp(&b.0 .1).unwrap_or(std::cmp::Ordering::Equal))
+            .then(a.1.cmp(&b.1))
+    });
+    let mut hull: Vec<((f64, f64), u32)> = Vec::new();
+    for pass in 0..2 {
+        let start = hull.len();
+        let order: Vec<((f64, f64), u32)> = if pass == 0 {
+            sorted.clone()
+        } else {
+            sorted.iter().rev().copied().collect()
+        };
+        for p in order {
+            while hull.len() >= start + 2
+                && turn(hull[hull.len() - 2].0, hull[hull.len() - 1].0, p.0) <= 0.0
+            {
+                hull.pop();
+            }
+            hull.push(p);
+        }
+        hull.pop();
+    }
+    if hull.len() < 3 {
+        return None;
+    }
+    // Every facet vertex must lie ON the outline. A vertex inside it is where something else
+    // meets this plane - a3's cube face carries its intersection curve with the sphere - and a
+    // fan of the outline would drop it, leaving the other component's cut nothing to separate
+    // the cap by (a3's whole-cell fans 4 -> 54 when this was missing). The distance is taken in
+    // the plane against the same band the coplanarity test used.
+    let on_outline = |q: (f64, f64)| {
+        (0..hull.len()).any(|slot| {
+            let (a, b) = (hull[slot].0, hull[(slot + 1) % hull.len()].0);
+            let length = ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
+            length > 0.0 && turn(a, b, q).abs() / length <= band
+        })
+    };
+    if !sorted.iter().all(|p| on_outline(p.0)) {
+        return None;
+    }
+    Some(hull.iter().map(|p| p.1).collect())
+}
+
 fn inside_polygon(point: Vec3, facet: &[u32], points: &[Vec3], normal: Vec3, tol: f64) -> bool {
     for slot in 0..facet.len() {
         let a = points[facet[slot] as usize];
@@ -5354,6 +5489,7 @@ fn inside_polygon(point: Vec3, facet: &[u32], points: &[Vec3], normal: Vec3, tol
     }
     true
 }
+
 
 // AI-FUNC-SUMMARY: The smallest vertex id of a tet; returns u32; side effects: none.
 fn tet_min(t: [u32; 4]) -> u32 {

@@ -176,12 +176,13 @@ the shape. `s08_cut` is the first snapshot that fits the input.
 | `remove_flat_quad_tets` | `src/meshgen/cdt.rs:3385` | Removes flat tets from a constrained tetrahedralisation before the facet check: a vertex lying on an opposite edge splits every tet around that edge (a Steiner midpoint the Delaunay kept whole), and a flat quad tet is removed by 2-2-flipping one side\'s pyramid to the other diagonal; otherwise the flat tet and its face-neighbours are re-coned from one of their vertices with the cavity boundary kept (star test, no flat tet, volume); failing all three, one of the flat tet's edges that neither the hull nor a facet uses is removed (`remove_edge`), kept only when the flat count falls. Such a tet makes a facet read covered twice. Reference case 1 interior class 124 -> 84, gated a1 94.80 -> 95.91 %, a3 +0.2 points; the edge-removal move: reference case 1 refused facets 406 -> 226, gated on-surface 94.956 -> 95.346 %, a1 95.911 -> 96.882 %. |
 | `facet_plane` | `src/meshgen/cdt.rs:4493` | A §7.4 constraint facet's unit normal, offset and the band within which a face lies ON it: the facet's own deviation from its plane (its rim is snapped to the face traces, §6.43) plus `tol`. Used by the facet-coverage check, `regions_by_constraint` and the gated path's interface attribution; before it, a facet bent by its snap had none of its own faces counted and 90 % of A-3's "interior is not covered" refusals were this artefact. |
 | `constrained_tets_with_steiner` | `src/meshgen/cdt.rs:3786` | Plan M-2.1 on the gated path: `constrained_tets`, then up to three rounds of Steiner points on the constraint - (a) the midpoint of each facet edge the tetrahedralisation lacks, unless both ends lie in one cell face plane (J1), accepted only when `intern` creates a NEW node; (b) facet-plane crossings of mesh edges inside the facet; (c) on a thin-tet or uncovered-facet refusal, a point strictly inside the cell above each flat tet lying on a cell face (co-circular face nodes), a quarter of its longest edge in; (d) on a hull-recovery refusal ("the link polygon has no valid triangulation", "neither the boundary nor the facets survive"), the same point above every current hull face not in the frozen boundary, so the flip becomes a pyramid's (owner decision D-11: gated a8 99.12 -> 99.78 %, a3 98.91 -> 99.64 %, reference case 1 95.73 -> 97.70 %, at +1-8 % tets, +28 % on a7a/a7b, and more slivers, left to M-5). On refusal the facets and the arena are restored, so the facet-split fan sees exactly what it would have without the pass. Edge class 114 -> 49 (A-3), 25 -> 2 (A-6a), 1,835 -> 1,454 (A-8). |
-| `facet_split_fan` | `src/meshgen/cdt.rs:2845` | §7.4's fallback: split the frozen boundary by each component's cap into closed pieces, fill each by the constrained kernel or fan it from an apex in its kernel (centroid first, then a fixed candidate search), volumes checked; flaps another piece carries are shed; a cell with no cap left is one piece (D-12); an on-surface boundary triangle moves to the piece it closes (D-13); None sends the cell to the whole-cell fan. |
+| `facet_split_fan` | `src/meshgen/cdt.rs:2847` | §7.4's fallback: split the frozen boundary by each component's cap into closed pieces, fill each by the constrained kernel or fan it from an apex in its kernel (centroid first, then a fixed candidate search), volumes checked; flaps another piece carries are shed; a cell with no cap left is one piece (D-12); an on-surface boundary triangle moves to the piece it closes (D-13); a node on a cap takes no side of its surface and duplicate cap triangles are kept once; None sends the cell to the whole-cell fan. |
 | `sorted_tri` | `src/meshgen/cdt.rs:2819` | A triangle's node ids in ascending order, an orientation-free key. |
 | `fan_facet_without_slivers` | `src/meshgen/cdt.rs:2664` | Fan a facet ring from the apex whose thinnest triangle is least thin (area over longest edge squared), so a vertex on or near the intersection line between two others is not coned into a sliver cap triangle. |
 | `kernel_vertex_mean` | `src/meshgen/cdt.rs:2704` | A point in a closed piece's kernel: the mean of every three-face-plane intersection on the inner side of all faces; the facet-split fan's last apex candidate, still checked by the exact sign test. |
 | `manifold_components` | `src/meshgen/cdt.rs:2779` | Split a soup into the parts joined across edges carried exactly twice, so two solids touching only along an edge come apart; the facet-split fan keeps the split only if every part closes. |
-| `plc_attempt` | `src/meshgen/cut.rs:8504` | Mesh one gated cell by §7.2/§7.4 against the frozen boundary it is handed; clips the fragment, adopts each rim vertex from the faces (a face-plane vertex within `weld` of a boundary node takes it; a vertex on a cell EDGE takes that edge's on-surface node for its component, plan M-2.2), runs `constrained_tets_with_steiner`, and on refusal fans the facet-separated pieces. |
+| `coplanar_cap_outline` | `src/meshgen/cdt.rs:5380` | The cap of a component whose facets in a cell all lie in one plane: the convex hull of their vertices, when every vertex lies on it and there are two or more facets (or one crossing itself) - a closed surface cannot end inside the cell, so their union is the plane's cross-section. |
+| `plc_attempt` | `src/meshgen/cut.rs:8521` | Mesh one gated cell by §7.2/§7.4 against the frozen boundary it is handed; clips the fragment, adopts each rim vertex from the faces (a face-plane vertex within `weld` of a boundary node takes it; a vertex on a cell EDGE takes that edge's on-surface node for its component, plan M-2.2), runs `constrained_tets_with_steiner`, and on refusal fans the facet-separated pieces; the fan's side oracle gives no side to a node the cut put on the surface, and a single-plane, junction-free component is capped by its outline (`coplanar_cap_outline`). |
 | `hull_diag` | `src/meshgen/cut.rs:8360` | Print-only (`RUSTMSPT_HULL_DIAG`): one `[HULL-DIAG]` line per rim vertex a declined cell interned on its own face planes - cell, planes, distance to the nearest boundary node and edge, the nodes on the cell edge it lies on, and whether its facets lie in a cell face. |
 | `split_diag_reason` | `src/meshgen/cut.rs:8337` | Print-only (`RUSTMSPT_SPLIT_DIAG`): intern the §7.4 refusal joined with the facet-split fan's own refusal, so the stranded-area census ranks both. |
 | `constrained_face_triangulation` | `src/meshgen/cdt.rs:1131` | Triangulates one lattice face so every trace segment is an edge (§7.4's face half): Delaunay seeded with the face, rim points split the rim, segments recovered by flipping; a zero-area triangle (a point collinear with an edge inside the face, height under 1e-9 of its longest edge) is split with its neighbour across the long edge before returning. The result is a function of the face alone (J1). The zero-area split removed reference case 3's gated `[V9]` node. |
@@ -2006,7 +2007,7 @@ The facet band is for the facet's own vertices only (`face_on_facet_plane`); oth
 within `tol`. With the band applied to every node, a sliver tet lying flat along a bent facet had
 both faces counted, and the facet read over-covered (a8 cell 507267: 1.416) and was refused as
 "interior not covered". Gated a6a `[V9]` FAIL -> PASS; a3 97.11 -> 97.15 %, a8 98.448 -> 98.455 %.
-`RUSTMSPT_PLC_CELL=<lattice index>` (print-only) turns the cdt facet/hull diagnostics on for one cell.
+`RUSTMSPT_PLC_CELL=<lattice index>[,<index>...]` (print-only) turns the cdt facet/hull diagnostics on for those cells; `[SIDE-FACET]`/`[SIDE-NODE]` list the facets and each boundary node's side per component beside what the cut recorded on-surface for it.
 
 S7 has long ignored faces buried inside a self-intersecting component's own union (`active_face`),
 but S8's face traces and fragment clips read `PointClassifier::triangles_of`, which returned every
@@ -2157,6 +2158,27 @@ can land in a piece it does not bound, open along two edges (a3 cell 97751). For
 not close, triangles another piece also carries are removed greedily while the open-edge count
 falls, and the result is kept only if the piece closes: a3 whole-cell fans 8 -> 4, on-surface
 99.917 -> 99.927 %, `[V6]` adjacency 23 -> 12, every other case identical.
+
+A straddling boundary triangle (a8's 13 "a boundary triangle straddles the surface with no node on
+it", 2026-09-30) was always a corner EXACTLY on the surface read to the wrong side: the side oracle
+asked the classifier about every node that is not a facet vertex, and a point on the surface gets a
+coin toss. Two such nodes. (1) Nodes the cut already put on the component's surface - S7's snapped
+parents and K2's promoted crossings, the record M-2.2 reads for rim vertices (a8 cells 6619, 72050,
+78462, 841020: one such corner in every straddling triangle); the oracle now reads that record.
+(2) Boundary nodes `conform_cap_rim` split a cap's rim at (a8 cell 29842's node 5, in the strut
+face's plane to the last digit); a node a cap passes through now takes no side of it. Cell 29842
+also showed why its cap could not close: the component's three facets all lie in one plane, and
+snapping rim vertices had left one of them a bow-tie ([8, 6, 1, 7, 4], edges 8-6 and 1-7 crossing),
+so fanning facet by facet covered part of the cross-section twice. A closed surface cannot end
+inside the cell, so when every facet of a component there lies in one plane, their union is the
+plane's convex cross-section: `coplanar_cap_outline` caps it by the hull of the facet vertices,
+applied only when every vertex lies on that hull and no other component's facet shares a vertex -
+a3's cube face carries its intersection curve with the sphere inside the cross-section, and
+dropping it took a3's whole-cell fans 4 -> 54 before those two conditions existed. Duplicate cap
+triangles left by rim conforming are kept once. Gated: a8 whole-cell fans 17 -> **4**, on-surface
+99.971 -> **99.993 %**; a6a 4 -> 3, 99.995 -> 99.998 %; reference cases 99.936 / 99.935 / 99.958 ->
+99.946 / 99.938 / 99.963 %; every other case's P3 and every check status unchanged; elements within
++0.19 % (a3 +506). Removing either (1)+(2) or the outline measures a8 at 5 whole-cell fans.
 
 ### Welded sheet cuts (G6-5)
 
