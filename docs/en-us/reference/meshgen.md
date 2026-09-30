@@ -183,7 +183,7 @@ the shape. `s08_cut` is the first snapshot that fits the input.
 | `manifold_components` | `src/meshgen/cdt.rs:2779` | Split a soup into the parts joined across edges carried exactly twice, so two solids touching only along an edge come apart; the facet-split fan keeps the split only if every part closes. |
 | `coplanar_cap_outline` | `src/meshgen/cdt.rs:5467` | The cap of a component whose facets in a cell all lie in one plane: the convex hull of their vertices, when every vertex lies on it and there are two or more facets (or one crossing itself) - a closed surface cannot end inside the cell, so their union is the plane's cross-section. |
 | `facet_within` | `src/meshgen/cdt.rs:5570` | Whether points lie in a facet's own plane band and inside its outline (edges included, within `tol`); the facet-split fan's side oracle gives such a node no side. |
-| `plc_attempt` | `src/meshgen/cut.rs:8524` | Mesh one gated cell by §7.2/§7.4 against the frozen boundary it is handed; clips the fragment, adopts each rim vertex from the faces (a face-plane vertex within `weld` of a boundary node takes it; a vertex on a cell EDGE takes that edge's on-surface node for its component, plan M-2.2), runs `constrained_tets_with_steiner`, and on refusal fans the facet-separated pieces; the fan's side oracle gives no side to a node the cut put on the surface, and a single-plane, junction-free component is capped by its outline (`coplanar_cap_outline`); a facet folded to a line is skipped with its interned nodes rolled back. |
+| `plc_attempt` | `src/meshgen/cut.rs:8524` | Mesh one gated cell by §7.2/§7.4 against the frozen boundary it is handed; clips the fragment, adopts each rim vertex from the faces (a face-plane vertex within `weld` of a boundary node takes it; a vertex on a cell EDGE takes that edge's on-surface node for its component, plan M-2.2, or any node on it when the edge lies in the facet's plane), runs `constrained_tets_with_steiner`, and on refusal fans the facet-separated pieces; the fan's side oracle gives no side to a node the cut put on the surface, and a single-plane, junction-free component is capped by its outline (`coplanar_cap_outline`); a facet folded to a line is skipped with its interned nodes rolled back. |
 | `hull_diag` | `src/meshgen/cut.rs:8360` | Print-only (`RUSTMSPT_HULL_DIAG`): one `[HULL-DIAG]` line per rim vertex a declined cell interned on its own face planes - cell, planes, distance to the nearest boundary node and edge, the nodes on the cell edge it lies on, and whether its facets lie in a cell face. |
 | `split_diag_reason` | `src/meshgen/cut.rs:8337` | Print-only (`RUSTMSPT_SPLIT_DIAG`): intern the §7.4 refusal joined with the facet-split fan's own refusal, so the stranded-area census ranks both. |
 | `constrained_face_triangulation` | `src/meshgen/cdt.rs:1131` | Triangulates one lattice face so every trace segment is an edge (§7.4's face half): Delaunay seeded with the face, rim points split the rim, segments recovered by flipping; a zero-area triangle (a point collinear with an edge inside the face, height under 1e-9 of its longest edge) is split with its neighbour across the long edge before returning. The result is a function of the face alone (J1). The zero-area split removed reference case 3's gated `[V9]` node. |
@@ -2206,6 +2206,17 @@ plane band and outline), and D-13 also offers each edge-connected patch of centr
 triangles whole. Each alone was inert; together a8 whole-cell fans 4 -> 3, on-surface 99.993 ->
 99.995 %; reference cases 2 / 3 99.963 / 99.963 -> 99.966 / **99.995 %**; elements +3 to +56;
 every other case identical.
+
+a8's last three cells were one rule. M-2.2 adopts, for a facet rim vertex on a cell edge, the
+nearest boundary node on that edge the cut marks on-surface - and where a strut face lies on a
+lattice plane the edge lies IN the surface, the list names only its endpoints, and adoption moved
+a rim vertex up to 0.6 of an edge (29843: t = 0.614 on edge 1-2 went to the endpoint at t = 1),
+folding the facet over its neighbour; S2's coplanar overlay was not the cause (the raw clipped
+facets tile). A node on that edge now also qualifies when it lies in the facet's own plane. Gated
+(`data/output/acceptance_m24h`): a8 whole-cell fans 3 -> **0**, on-surface 99.995 ->
+**100.000 %** (worst corner 35.6 % -> 1.9 % of an element) - **every case at zero whole-cell
+fans**; elements a3 -25, a8 +4; every other case identical. `[RAW-FACET]` (print-only, focused
+cell) prints each clipped facet before adoption.
 
 ### Welded sheet cuts (G6-5)
 

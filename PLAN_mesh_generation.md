@@ -1881,16 +1881,19 @@ cell's boundary without being a trace point of that face, where no Steiner point
   `data/output/acceptance_m24g`): a8 whole-cell fans 4 -> **3**, 99.993 -> 99.995; reference cases
   2 / 3 99.963 / 99.963 -> 99.966 / **99.995 %**; elements +3 to +56; other cases identical;
   default path unchanged, R-P2 byte-identical, 677 tests.
-  **Where M-2.1/M-2.3 stand, 2026-09-30.** Whole-cell fans are **0 on eight of nine cases**; a8 has
-  **3**, and all three are one root cause: a8's single component is overlapping struts, S2 does not
-  merge a component's coplanar overlapping faces, so the facets in a cell overlap each other. 29843:
-  [7, 9, 8, 2] and [2, 10, 9, 7] share 2-7-9 (edge 2-7 carried four times); 403695: [8, 0, 5]
-  inside [2, 6, 8, 5, 0]; 835403: a crease of the strut (edge 1-4) runs INSIDE a cell face where
-  part of the strut coincides with it, and the face triangulation does not carry 1-4 as an edge.
-  Two routes, to be decided by measurement: (i) S2 coplanar self-overlay - merge a component's
-  overlapping coplanar faces upstream, so every stage sees a union surface; (ii) a per-plane union
-  of a component's facets inside the cell. (i) also addresses 835403, whose crease inside a face is
-  a face-level trace question (the face must carry it as a chord, J1), which (ii) cannot reach.
+  **The edge lying IN the facet: M-2.1 reaches zero, 2026-09-30.** a8's last three cells looked
+  like overlapping coplanar facets of one self-overlapping component, and S2's coplanar overlay was
+  suspected; printing the raw clipped facets before adoption (`[RAW-FACET]`) showed they tile
+  exactly. The overlap was made by M-2.2's adoption: where a strut face lies on a lattice plane,
+  the cell edge lies IN the surface, the on-surface list names only its endpoints, and a rim vertex
+  at t = 0.614 of edge 1-2 (cell 29843) was moved to the endpoint at t = 1, folding its facet over
+  the neighbour (403695 likewise; 835403's "crease inside a face" was the same fold seen from the
+  face). A node on the edge now also qualifies when it lies in the facet's own plane. Gated
+  (`data/output/acceptance_m24h`): a8 whole-cell fans 3 -> **0**, on-surface 99.995 ->
+  **100.000** (worst corner 35.6 % -> 1.9 % of an element); elements a3 -25, a8 +4; every other
+  case identical; reference cases 99.970 / 99.966 / 99.995 % unchanged; default path unchanged, R-P2
+  byte-identical, 677 tests. **Whole-cell fans are now 0 on all nine cases** - M-2.1's report is 0
+  and M-2.3 (delete the arm) is unblocked.
   **Where M-2.1/M-2.3 stand at the end of 2026-09-29 (session pause).** Whole-cell fans, the arm
   M-2.3 deletes: **0 on a1, a2, a4, a7a, a7b**; a3 **4**, a6a **4**, a6b **2**, a8 **17** (from a3 110,
   a4 19, a6a 5, a6b 4, a8 738 this morning). Every change landed today was strictly better or taken

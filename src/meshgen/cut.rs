@@ -8512,7 +8512,8 @@ fn hull_diag(
 //   A decline is not a failure of the cell: the caller fans it over this same boundary, which keeps
 //   it conforming with a neighbour that did take §7.4. That is why the boundary comes back too.
 //   A facet rim vertex on a cell EDGE adopts the nearest boundary node on that edge the cut marks
-//   on-surface for its component (plan M-2.2) - the edge's own crossing, however far S7 moved it.
+//   on-surface for its component (plan M-2.2) - the edge's own crossing, however far S7 moved it -
+//   or, when the edge lies in the facet's own plane, the nearest node on it at all.
 //   The facet-split fan's side oracle reads the same record: a node the cut put on a component's
 //   surface has no side of it. A component whose facets here all lie in one plane, share no vertex
 //   with another component's facet, and have every vertex on their common outline is capped by
@@ -8613,7 +8614,23 @@ fn plc_attempt(
             classifier.triangles_of(slot),
             edge * 1.0e-6,
         ) {
+            if crate::meshgen::cdt::DIAG_CELL.with(|c| c.get()) {
+                eprintln!("[RAW-FACET] component {} {:?}", component, facet);
+            }
             let interned_before = arena.points.len();
+            // The raw facet's own plane (Newell), so a cell edge lying IN the facet can be told
+            // from one the facet crosses.
+            let facet_normal = {
+                let mut sum = Vec3::new(0.0, 0.0, 0.0);
+                for k in 1..facet.len().saturating_sub(1) {
+                    sum = sum.add(facet[k].sub(facet[0]).cross(facet[k + 1].sub(facet[0])));
+                }
+                let length = sum.dot(sum).sqrt();
+                (length > 0.0).then(|| sum.scale(1.0 / length))
+            };
+            let in_facet_plane = |q: Vec3| {
+                facet_normal.is_some_and(|n| (n.dot(q) - n.dot(facet[0])).abs() <= edge * 1.0e-6)
+            };
             let ids: Vec<u32> = facet
                 .iter()
                 .map(|p| {
@@ -8656,8 +8673,15 @@ fn plc_attempt(
                             let (a, b) = (on_planes[0], on_planes[1]);
                             let mut best: Option<(f64, u32)> = None;
                             for id in &on_plane[a] {
+                                // A node on this edge is on the surface when the cut says so -
+                                // or when the edge lies IN the facet's plane, so that every point
+                                // of it does: a8's strut faces on lattice planes, where the
+                                // on-surface list names only the edge's endpoints and adopting one
+                                // of them moved a rim vertex up to 0.6 of an edge and folded the
+                                // facet over its neighbour (cells 29843, 403695).
                                 if !on_plane[b].contains(id)
-                                    || !on_surface.contains(&(seed[*id as usize], *component))
+                                    || !(on_surface.contains(&(seed[*id as usize], *component))
+                                        || in_facet_plane(arena.points[*id as usize]))
                                 {
                                     continue;
                                 }
