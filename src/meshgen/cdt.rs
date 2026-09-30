@@ -2838,8 +2838,8 @@ fn sorted_tri(t: [u32; 3]) -> [u32; 3] {
 //   the cell's. A cell no cap separates is one piece when no cap triangle is left at all - the
 //   surface lies in the cell's own faces (owner decision D-12); otherwise it is refused. A
 //   boundary triangle placed by its centroid because every corner is on the surface is moved to
-//   another piece when that closes the other and lowers its own open edges (D-13); a piece made
-//   only of triangles other pieces carry is dropped. The caller builds each cap with
+//   another piece when that closes the other and lowers its own open edges (D-13), singly or as an
+//   edge-connected patch; a piece made only of triangles other pieces carry is dropped. The caller builds each cap with
 //   `fan_facet_without_slivers`. A piece closed in several disjoint shells, or pinched along an
 //   edge into sectors (`manifold_components`), becomes one piece per shell or sector; a piece that
 //   does not close sheds triangles another piece also carries (flaps) when that closes it. A node
@@ -3156,6 +3156,78 @@ pub fn facet_split_fan(
                 note_split("a triangle lying in the surface was moved to the piece it closes");
             }
         }
+        // **A patch of such triangles moves as one.** Where a surface coincides with part of a
+        // cell face (a8's struts on lattice planes: cell 425581's face x = 0.1713 carries the
+        // surface over 0-4-1-2-5), every face triangle of that part is placed by its centroid, so
+        // the patch can land whole in the wrong piece and no single-triangle move closes anything.
+        // The on-surface triangles of one piece are grouped by shared edges and each group is
+        // offered whole, under the same rule.
+        for from in 0..pieces.len() {
+            let before_from = open_edges(&pieces[from]);
+            let members: Vec<usize> = (0..pieces[from].len())
+                .filter(|at| placed_on_surface.contains(&sorted_tri(pieces[from][*at])))
+                .collect();
+            if members.len() < 2 {
+                continue;
+            }
+            let mut group_of: Vec<usize> = (0..members.len()).collect();
+            fn root(group_of: &mut [usize], mut x: usize) -> usize {
+                while group_of[x] != x {
+                    group_of[x] = group_of[group_of[x]];
+                    x = group_of[x];
+                }
+                x
+            }
+            for a in 0..members.len() {
+                for b in a + 1..members.len() {
+                    let (ta, tb) = (pieces[from][members[a]], pieces[from][members[b]]);
+                    if ta.iter().filter(|n| tb.contains(n)).count() >= 2 {
+                        let (ra, rb) = (root(&mut group_of, a), root(&mut group_of, b));
+                        if ra != rb {
+                            group_of[ra.max(rb)] = ra.min(rb);
+                        }
+                    }
+                }
+            }
+            let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+            for slot in 0..members.len() {
+                let r = root(&mut group_of, slot);
+                groups.entry(r).or_default().push(members[slot]);
+            }
+            for group in groups.values() {
+                if group.len() < 2 {
+                    continue;
+                }
+                let moved: Vec<[u32; 3]> = group.iter().map(|at| pieces[from][*at]).collect();
+                let keys: std::collections::BTreeSet<[u32; 3]> =
+                    moved.iter().map(|t| sorted_tri(*t)).collect();
+                let without: Vec<[u32; 3]> = pieces[from]
+                    .iter()
+                    .copied()
+                    .filter(|t| !keys.contains(&sorted_tri(*t)))
+                    .collect();
+                let after_from = open_edges(&without);
+                if after_from > before_from || (before_from > 0 && after_from == before_from) {
+                    continue;
+                }
+                let target = (0..pieces.len()).find(|to| {
+                    *to != from
+                        && open_edges(&pieces[*to]) > 0
+                        && !pieces[*to].iter().any(|t| keys.contains(&sorted_tri(*t)))
+                        && {
+                            let mut with = pieces[*to].clone();
+                            with.extend(moved.iter().copied());
+                            open_edges(&with) == 0
+                        }
+                });
+                if let Some(to) = target {
+                    pieces[from] = without;
+                    pieces[to].extend(moved);
+                    note_split("a patch of triangles lying in the surface was moved to the piece it closes");
+                    break;
+                }
+            }
+        }
     }
     // **A flap is a copy of a triangle the other side carries.** A cap is shared by both sides of
     // its own cut, and where two components meet one of its triangles can land in a piece it
@@ -3342,6 +3414,10 @@ pub fn facet_split_fan(
                         eprintln!("[OPEN-NODE] {id} {:?}", points[id as usize]);
                     }
                     eprintln!("[OPEN-BOUNDARY] {:?}", boundary);
+                    for (other, soup) in pieces.iter().enumerate() {
+                        eprintln!("[ALL-PIECES] {other} {:?}", soup);
+                    }
+                    eprintln!("[ON-SURFACE-PLACED] {:?}", placed_on_surface);
                 }
                 if of_cap > 0 {
                     note_split("    the open edge is one only the CAP carries");
@@ -5488,6 +5564,17 @@ pub(crate) fn coplanar_cap_outline(facets: &[&[u32]], points: &[Vec3], tol: f64)
         return None;
     }
     Some(hull.iter().map(|p| p.1).collect())
+}
+
+// AI-FUNC-SUMMARY: Whether every vertex of `a` lies in facet `b`'s plane band and inside its outline (edges included, within `tol`); returns bool; side effects: none.
+pub(crate) fn facet_within(a: &[u32], b: &[u32], points: &[Vec3], tol: f64) -> bool {
+    let Some((normal, offset, band)) = facet_plane(b, points, tol) else {
+        return false;
+    };
+    a.iter().all(|v| {
+        let p = points[*v as usize];
+        (normal.dot(p) - offset).abs() <= band && inside_polygon(p, b, points, normal, tol)
+    })
 }
 
 fn inside_polygon(point: Vec3, facet: &[u32], points: &[Vec3], normal: Vec3, tol: f64) -> bool {

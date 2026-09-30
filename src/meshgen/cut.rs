@@ -8518,7 +8518,8 @@ fn hull_diag(
 //   with another component's facet, and have every vertex on their common outline is capped by
 //   that outline (`coplanar_cap_outline`) instead of facet by facet (plan M-2.1, 2026-09-30). A
 //   facet the rim matching leaves without area, or with fewer than three distinct vertices, is
-//   skipped and the nodes it interned are rolled back.
+//   skipped and the nodes it interned are rolled back. A node on or inside any facet of a component
+//   takes no side of it (`facet_within`).
 #[allow(clippy::too_many_arguments)]
 fn plc_attempt(
     tet: [u32; 4],
@@ -8869,9 +8870,31 @@ fn plc_attempt(
                 })
                 .sum();
             let dropped = offered.saturating_sub(caps.iter().map(|cap| cap.len()).sum::<usize>());
+            // A node lying ON one of a component's facets - a vertex, on an edge, or inside it -
+            // is on that surface. Vertices alone are not enough: a8 cell 425581's node 9 lies on
+            // the facet edge 0-5 whose cap triangles were dropped for lying in a cell face, so no
+            // cap carried it and the classifier read a point on the surface as outside.
             let on_patch: Vec<BTreeSet<u32>> = groups
                 .values()
-                .map(|slots| slots.iter().flat_map(|slot| facets[*slot].iter().copied()).collect())
+                .map(|slots| {
+                    let mut on: BTreeSet<u32> =
+                        slots.iter().flat_map(|slot| facets[*slot].iter().copied()).collect();
+                    for id in 0..arena.points.len() as u32 {
+                        if !on.contains(&id)
+                            && slots.iter().any(|slot| {
+                                crate::meshgen::cdt::facet_within(
+                                    &[id],
+                                    &facets[*slot],
+                                    &arena.points,
+                                    tol,
+                                )
+                            })
+                        {
+                            on.insert(id);
+                        }
+                    }
+                    on
+                })
                 .collect();
             // The oracle reads the points as they are BEFORE the split, which is also why they are
             // snapshotted: the split appends one centroid per piece to the same list.

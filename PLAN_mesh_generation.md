@@ -1871,13 +1871,26 @@ cell's boundary without being a trace point of that face, where no Steiner point
   again (a8, 4 -> 4); the outline rule without its "every vertex on the hull" condition (a8, 4 -> 4);
   a side oracle treating a node inside or on any facet as on-surface (a8 cell 835403 moved from
   "straddles" to "open edge only the CAP carries", count unchanged).
+  **A strut face on a cell face, 2026-09-30.** a8 cell 425581: the strut's face coincides with
+  part of the cell face x = 0.1713, its cap triangles there are dropped as lying in the face, and
+  node 9 - on the dropped facet's edge and on the cell edge - was neither a facet vertex nor on a cap,
+  so the classifier tossed a coin; the coincident region's face triangles, all placed by centroid,
+  then landed together in the wrong piece. The side oracle now gives no side to a node on or inside
+  any facet of the component (`facet_within`), and D-13 offers each edge-connected patch of
+  centroid-placed triangles whole. Each alone was inert on a8 (4 -> 4); together (gated,
+  `data/output/acceptance_m24g`): a8 whole-cell fans 4 -> **3**, 99.993 -> 99.995; reference cases
+  2 / 3 99.963 / 99.963 -> 99.966 / **99.995 %**; elements +3 to +56; other cases identical;
+  default path unchanged, R-P2 byte-identical, 677 tests.
   **Where M-2.1/M-2.3 stand, 2026-09-30.** Whole-cell fans are **0 on eight of nine cases**; a8 has
-  4, all on its overlapping struts: 425581 and 403695 (a strut face coinciding with part of a cell
-  face - the cap triangle there is dropped as lying in the face, and the face triangles under it are
-  placed by a coin toss), 29843 (facets of one component overlapping across a crease, two planes, so
-  the single-plane outline does not apply), 835403 (same as 425581 once its node-5 side is fixed).
-  The next step is the coincident-with-a-cell-face case: those face triangles are ON the surface,
-  so they need the cut's placement read from the dropped cap, not a centroid side.
+  **3**, and all three are one root cause: a8's single component is overlapping struts, S2 does not
+  merge a component's coplanar overlapping faces, so the facets in a cell overlap each other. 29843:
+  [7, 9, 8, 2] and [2, 10, 9, 7] share 2-7-9 (edge 2-7 carried four times); 403695: [8, 0, 5]
+  inside [2, 6, 8, 5, 0]; 835403: a crease of the strut (edge 1-4) runs INSIDE a cell face where
+  part of the strut coincides with it, and the face triangulation does not carry 1-4 as an edge.
+  Two routes, to be decided by measurement: (i) S2 coplanar self-overlay - merge a component's
+  overlapping coplanar faces upstream, so every stage sees a union surface; (ii) a per-plane union
+  of a component's facets inside the cell. (i) also addresses 835403, whose crease inside a face is
+  a face-level trace question (the face must carry it as a chord, J1), which (ii) cannot reach.
   **Where M-2.1/M-2.3 stand at the end of 2026-09-29 (session pause).** Whole-cell fans, the arm
   M-2.3 deletes: **0 on a1, a2, a4, a7a, a7b**; a3 **4**, a6a **4**, a6b **2**, a8 **17** (from a3 110,
   a4 19, a6a 5, a6b 4, a8 738 this morning). Every change landed today was strictly better or taken
