@@ -1924,6 +1924,14 @@ cell's boundary without being a trace point of that face, where no Steiner point
   earlier component's cap used (ref 1 / 2: 2 / 11 -> 5 / 20). **Standing: 2 / 11 / 5 = 18
   whole-cell fans, all on the reference cases**; reference case 2's eleven are two components whose
   facets partly coincide (cell 44176: [14, 24, 0], [15, 24, 14], [25, 15, 16] and more under both).
+  Three more variants aimed at that class were measured on reference cases 1 / 2 (baseline 2 / 11)
+  and refuted, 2026-09-30: not re-adding a cap triangle the piece already carries (5 / 20 - the
+  same as the global dedup, so where the copies go is not the defect); that plus deciding a
+  coincident triangle's half by stepping off it to the piece's known side of the earlier cut
+  (8 / 24); the side decision alone (2 / 11, inert - so the coin toss on coincident triangles is
+  not what fails these cells either). The next step is a geometric reading of one cell's pieces
+  (44176 splits into four, the open one a sliver between two nearly coincident walls), not a sixth
+  rule.
   **Where M-2.1/M-2.3 stand at the end of 2026-09-29 (session pause).** Whole-cell fans, the arm
   M-2.3 deletes: **0 on a1, a2, a4, a7a, a7b**; a3 **4**, a6a **4**, a6b **2**, a8 **17** (from a3 110,
   a4 19, a6a 5, a6b 4, a8 738 this morning). Every change landed today was strictly better or taken
