@@ -2690,6 +2690,84 @@ pub fn fan_facet_without_slivers(facet: &[u32], points: &[Vec3]) -> Vec<[u32; 3]
     fan_from(best.1)
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: A point in the kernel of a closed, consistently wound polyhedron - the region every
+//   face sees from its inner side - as the mean of the kernel polytope's vertices.
+// Inputs: the piece's oriented triangles and the node table.
+// Returns: the mean of every intersection of three face planes that lies on the inner side of all
+//   faces (within a relative tolerance), or None when there is none.
+// Side effects: None.
+// Notes: O(faces^4), used only on the few pieces the fixed candidate search could not fan; the
+//   caller still checks the answer with the exact all-faces-one-sign test, so a tolerance here can
+//   only cost a miss, never a folded fan. The inner side is taken from the sign the piece's own
+//   vertex mean gives most faces, since the winding may be either way round.
+fn kernel_vertex_mean(piece: &[[u32; 3]], points: &[Vec3]) -> Option<Vec3> {
+    let planes: Vec<(Vec3, f64)> = piece
+        .iter()
+        .filter_map(|t| {
+            let [a, b, c] = t.map(|id| points[id as usize]);
+            let n = b.sub(a).cross(c.sub(a));
+            let l = n.dot(n).sqrt();
+            (l > 0.0).then(|| {
+                let n = n.scale(1.0 / l);
+                (n, n.dot(a))
+            })
+        })
+        .collect();
+    if planes.len() < 4 {
+        return None;
+    }
+    let mut lo = points[piece[0][0] as usize];
+    let mut hi = lo;
+    let mut mean = Vec3::new(0.0, 0.0, 0.0);
+    let mut count = 0.0;
+    for t in piece {
+        for id in t {
+            let q = points[*id as usize];
+            lo = Vec3::new(lo.x.min(q.x), lo.y.min(q.y), lo.z.min(q.z));
+            hi = Vec3::new(hi.x.max(q.x), hi.y.max(q.y), hi.z.max(q.z));
+            mean = mean.add(q);
+            count += 1.0;
+        }
+    }
+    let mean = mean.scale(1.0 / count);
+    let span = hi.sub(lo);
+    let scale = span.x.max(span.y).max(span.z);
+    if scale <= 0.0 {
+        return None;
+    }
+    // Inner side: the sign most faces give the vertex mean (the winding is either way round).
+    let negative = planes.iter().filter(|(n, d)| n.dot(mean) - d < 0.0).count();
+    let inner = if negative * 2 >= planes.len() { -1.0 } else { 1.0 };
+    let tol = scale * 1.0e-12;
+    let mut sum = Vec3::new(0.0, 0.0, 0.0);
+    let mut found = 0usize;
+    for i in 0..planes.len() {
+        for j in i + 1..planes.len() {
+            for k in j + 1..planes.len() {
+                let (n1, d1) = planes[i];
+                let (n2, d2) = planes[j];
+                let (n3, d3) = planes[k];
+                let det = n1.dot(n2.cross(n3));
+                if det.abs() <= 1.0e-12 {
+                    continue;
+                }
+                let x = n2
+                    .cross(n3)
+                    .scale(d1)
+                    .add(n3.cross(n1).scale(d2))
+                    .add(n1.cross(n2).scale(d3))
+                    .scale(1.0 / det);
+                if planes.iter().all(|(n, d)| (n.dot(x) - d) * inner >= -tol) {
+                    sum = sum.add(x);
+                    found += 1;
+                }
+            }
+        }
+    }
+    (found > 0).then(|| sum.scale(1.0 / found as f64))
+}
+
 // AI-FUNC-SUMMARY: A triangle's node ids in ascending order, as an orientation-free key; returns [u32; 3]; side effects: none.
 fn sorted_tri(t: [u32; 3]) -> [u32; 3] {
     let mut k = t;
@@ -2708,7 +2786,8 @@ fn sorted_tri(t: [u32; 3]) -> [u32; 3] {
 // Notes: A piece is filled by the constrained kernel with no facet first; otherwise it is fanned
 //   from an apex that sees every face with one exact orientation sign - the centroid, or, when the
 //   piece is not star-shaped from it, the first kernel point among the midpoints to its vertices
-//   and a 5x5x5 grid over its box (plan M-2.1 residue, 2026-09-29). The pieces' volumes must sum to
+//   and a 5x5x5 grid over its box, and failing those the mean of the kernel polytope's vertices
+//   (`kernel_vertex_mean`) (plan M-2.1 residue, 2026-09-29). The pieces' volumes must sum to
 //   the cell's. A cell no cap separates is one piece when no cap triangle is left at all - the
 //   surface lies in the cell's own faces (owner decision D-12); otherwise it is refused. A
 //   boundary triangle placed by its centroid because every corner is on the surface is moved to
@@ -3248,6 +3327,13 @@ pub fn facet_split_fan(
                     }
                     if let Some(found) = candidates.into_iter().find(|c| sees_all(&sign_of(*c))) {
                         note_split("a non-star piece was fanned from a kernel point, not its centre");
+                        centre = found;
+                    } else if let Some(found) = kernel_vertex_mean(piece, points)
+                        .filter(|c| sees_all(&sign_of(*c)))
+                    {
+                        // The grid can step over a thin kernel; the kernel polytope's own vertices
+                        // cannot. Their mean is interior whenever the kernel has an interior.
+                        note_split("a non-star piece was fanned from its kernel's vertex mean");
                         centre = found;
                     }
                 }
