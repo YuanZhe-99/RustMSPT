@@ -3246,11 +3246,16 @@ pub fn facet_split_fan(
             }
             uses.values().filter(|n| **n % 2 == 1).count()
         };
+        // "Another piece carries it" is read from the pieces as they were BEFORE any shedding:
+        // a fin of cap both halves received (reference case 1, cell 27812: [7, 4, 10] along the
+        // cell edge 4-7) is a flap in both, and shedding it from the first piece must not stop the
+        // second from shedding it too.
+        let before_shedding: Vec<Vec<[u32; 3]>> = pieces.clone();
         for at in 0..pieces.len() {
             if open_edges(&pieces[at]) == 0 {
                 continue;
             }
-            let elsewhere: std::collections::BTreeSet<[u32; 3]> = pieces
+            let elsewhere: std::collections::BTreeSet<[u32; 3]> = before_shedding
                 .iter()
                 .enumerate()
                 .filter(|(other, _)| *other != at)

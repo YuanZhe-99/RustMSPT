@@ -8667,8 +8667,19 @@ fn plc_attempt(
                         })
                         .map(|(slot, _)| slot)
                         .collect();
+                    // On a cell edge the edge's decision comes first: a weld match to a node that
+                    // is NOT on that edge (reference case 1, cell 17275: a node on one face plane,
+                    // 5.7e-5 away, against the edge's own crossing 1e-4 away) pulls the rim off
+                    // the edge and drops the facet's corner there.
+                    let weld_on_edge = |id: u32| {
+                        on_planes.len() >= 2
+                            && on_plane[on_planes[0]].contains(&id)
+                            && on_plane[on_planes[1]].contains(&id)
+                    };
                     let found = match found {
-                        Some((d, id)) if d <= weld => Some((d, id)),
+                        Some((d, id)) if d <= weld && (on_planes.len() < 2 || weld_on_edge(id)) => {
+                            Some((d, id))
+                        }
                         _ if on_planes.len() >= 2 => {
                             let (a, b) = (on_planes[0], on_planes[1]);
                             let mut best: Option<(f64, u32)> = None;
@@ -8739,6 +8750,26 @@ fn plc_attempt(
                     }
                 })
                 .collect();
+            if crate::meshgen::cdt::DIAG_CELL.with(|c| c.get()) {
+                for (p, id) in facet.iter().zip(ids.iter()) {
+                    let on: Vec<usize> = planes
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, (normal, offset))| {
+                            (normal.dot(*p) - offset).abs() <= edge * 1.0e-6
+                        })
+                        .map(|(slot, _)| slot)
+                        .collect();
+                    let q = arena.points[*id as usize];
+                    eprintln!(
+                        "[ADOPT] component {component} raw {:?} planes {:?} -> {id} (seed {}) moved {:.3e}",
+                        p,
+                        on,
+                        (*id as usize) < seed.len(),
+                        q.sub(*p).dot(q.sub(*p)).sqrt()
+                    );
+                }
+            }
             // Matching can bring two rim vertices to one node, which collapses that edge of the
             // facet. Consecutive repeats are dropped; a facet left with fewer than three distinct
             // vertices constrains nothing and is skipped below.

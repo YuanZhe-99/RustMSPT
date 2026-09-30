@@ -2218,6 +2218,19 @@ facets tile). A node on that edge now also qualifies when it lies in the facet's
 fans**; elements a3 -25, a8 +4; every other case identical. `[RAW-FACET]` (print-only, focused
 cell) prints each clipped facet before adoption.
 
+Two more on the reference cases (2026-09-30). (a) **On a cell edge the edge decides first.** A rim
+vertex on two face planes took the nearest node within `weld` on either plane before M-2.2's edge
+rule was consulted, so a node on one face plane 5.7e-5 away beat the edge's own crossing 1e-4
+away (reference case 1, cell 17275) and the facet lost its corner there. A weld match now stands
+for an edge vertex only when the matched node is on that edge. (b) **Flap shedding reads "another
+piece carries it" from before any shedding.** A fin of cap both halves received is a flap in both,
+and shedding it from the first piece had stopped the second from shedding it (cell 27812).
+`[ADOPT]` (print-only, focused cell) prints each raw rim vertex, the face planes it lies on, the
+node it adopted and how far it moved. Gated (`data/output/acceptance_m25d`): reference case 1
+99.970 -> **99.993 %**, reference case 3 99.995 -> **100.000 %**, reference case 2 identical;
+elements +45 / -44; the nine acceptance cases byte-identical; reference-case whole-cell fans 4 / 11 /
+16 -> 2 / 11 / 9.
+
 ### Welded sheet cuts (G6-5)
 
 A sheet has no inside, so §6's sides cannot come from S6 - it refuses to classify one,
