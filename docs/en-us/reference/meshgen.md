@@ -2229,7 +2229,13 @@ and shedding it from the first piece had stopped the second from shedding it (ce
 node it adopted and how far it moved. Gated (`data/output/acceptance_m25d`): reference case 1
 99.970 -> **99.993 %**, reference case 3 99.995 -> **100.000 %**, reference case 2 identical;
 elements +45 / -44; the nine acceptance cases byte-identical; reference-case whole-cell fans 4 / 11 /
-16 -> 2 / 11 / 9.
+16 -> 2 / 11 / 9. D-13's patch move then joins two on-surface triangles only when they share an
+edge **and lie in one plane**: a surface coinciding with part of a cell face is flat, and joining
+through a corner into the neighbouring faces' on-surface triangles had merged reference case 3's
+cell 84796 patch (face x = 0.3119) with four triangles of other faces into a group no move could
+place. Reference case 3 whole-cell fans 9 -> 5, elements +15, every metric and case otherwise
+identical (`data/output/acceptance_m25e`). Refuted a second time: dropping cap triangles an
+earlier component's cap used (reference cases 1 / 2: 2 / 11 -> 5 / 20).
 
 ### Welded sheet cuts (G6-5)
 

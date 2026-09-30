@@ -3181,7 +3181,26 @@ pub fn facet_split_fan(
             for a in 0..members.len() {
                 for b in a + 1..members.len() {
                     let (ta, tb) = (pieces[from][members[a]], pieces[from][members[b]]);
-                    if ta.iter().filter(|n| tb.contains(n)).count() >= 2 {
+                    // Joined across a shared edge only when the two lie in one plane: a patch of
+                    // surface coinciding with a cell face is flat, and joining through a corner
+                    // into the neighbouring faces' on-surface triangles merged reference case 3's
+                    // cell 84796 patch with four triangles of other faces into one group that
+                    // no move could place.
+                    let coplanar = {
+                        let [p0, p1, p2] = ta.map(|id| points[id as usize]);
+                        let normal = p1.sub(p0).cross(p2.sub(p0));
+                        let length = normal.dot(normal).sqrt();
+                        let scale = [p1.sub(p0), p2.sub(p1), p0.sub(p2)]
+                            .iter()
+                            .map(|d| d.dot(*d).sqrt())
+                            .fold(0.0f64, f64::max);
+                        length > 0.0
+                            && tb.iter().all(|id| {
+                                (normal.scale(1.0 / length).dot(points[*id as usize].sub(p0))).abs()
+                                    <= scale * 1.0e-9
+                            })
+                    };
+                    if coplanar && ta.iter().filter(|n| tb.contains(n)).count() >= 2 {
                         let (ra, rb) = (root(&mut group_of, a), root(&mut group_of, b));
                         if ra != rb {
                             group_of[ra.max(rb)] = ra.min(rb);
