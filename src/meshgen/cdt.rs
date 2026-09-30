@@ -2768,6 +2768,53 @@ fn kernel_vertex_mean(piece: &[[u32; 3]], points: &[Vec3]) -> Option<Vec3> {
     (found > 0).then(|| sum.scale(1.0 / found as f64))
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Split a triangle soup into the parts joined across edges carried exactly twice, so two
+//   solids that touch only along an edge (a pinch) come apart.
+// Inputs: the soup.
+// Returns: the parts, in order of their first triangle.
+// Side effects: None.
+// Notes: An edge carried four times joins nothing here; the caller keeps the split only if every
+//   part then closes and orients on its own, and the pieces' volumes must still sum to the cell's.
+fn manifold_components(soup: &[[u32; 3]]) -> Vec<Vec<[u32; 3]>> {
+    let mut by_edge: BTreeMap<[u32; 2], Vec<usize>> = BTreeMap::new();
+    for (at, t) in soup.iter().enumerate() {
+        for slot in 0..3 {
+            let (a, b) = (t[slot], t[(slot + 1) % 3]);
+            by_edge.entry(if a <= b { [a, b] } else { [b, a] }).or_default().push(at);
+        }
+    }
+    let mut part = vec![usize::MAX; soup.len()];
+    let mut parts: Vec<Vec<[u32; 3]>> = Vec::new();
+    for start in 0..soup.len() {
+        if part[start] != usize::MAX {
+            continue;
+        }
+        let id = parts.len();
+        let mut members = Vec::new();
+        let mut queue = vec![start];
+        part[start] = id;
+        while let Some(at) = queue.pop() {
+            members.push(soup[at]);
+            for slot in 0..3 {
+                let (a, b) = (soup[at][slot], soup[at][(slot + 1) % 3]);
+                let on = &by_edge[&if a <= b { [a, b] } else { [b, a] }];
+                if on.len() != 2 {
+                    continue;
+                }
+                for other in on {
+                    if part[*other] == usize::MAX {
+                        part[*other] = id;
+                        queue.push(*other);
+                    }
+                }
+            }
+        }
+        parts.push(members);
+    }
+    parts
+}
+
 // AI-FUNC-SUMMARY: A triangle's node ids in ascending order, as an orientation-free key; returns [u32; 3]; side effects: none.
 fn sorted_tri(t: [u32; 3]) -> [u32; 3] {
     let mut k = t;
@@ -2792,8 +2839,8 @@ fn sorted_tri(t: [u32; 3]) -> [u32; 3] {
 //   surface lies in the cell's own faces (owner decision D-12); otherwise it is refused. A
 //   boundary triangle placed by its centroid because every corner is on the surface is moved to
 //   another piece when that leaves both closed (D-13). The caller builds each cap with
-//   `fan_facet_without_slivers`. A piece closed in several disjoint shells becomes one piece per
-//   shell.
+//   `fan_facet_without_slivers`. A piece closed in several disjoint shells, or pinched along an
+//   edge into sectors (`manifold_components`), becomes one piece per shell or sector.
 pub fn facet_split_fan(
     boundary: &[[u32; 3]],
     caps: &[Vec<[u32; 3]>],
@@ -3129,7 +3176,17 @@ pub fn facet_split_fan(
             let shells = crate::meshgen::junction::split_soup_components(&piece);
             if shells.len() > 1 && shells.iter().all(|shell| orient_soup(shell).is_some()) {
                 note_split("a piece closed in several shells was split into them");
-                shells.into_iter().map(|shell| shell.to_vec()).collect()
+                return shells.into_iter().map(|shell| shell.to_vec()).collect();
+            }
+            // **Two solids pinched along an edge.** Where a body's sharp edge lies on a cell edge
+            // (S7 snapped it there), the side outside the body wraps round it in two sectors that
+            // touch only along that edge: one soup whose pinch edge carries four triangles and
+            // cannot be oriented (a3 cell 80037). Joining triangles only across edges carried
+            // exactly twice separates the sectors; each must then close on its own.
+            let pinched = manifold_components(&piece);
+            if pinched.len() > 1 && pinched.iter().all(|shell| orient_soup(shell).is_some()) {
+                note_split("a piece pinched along an edge was split into its sectors");
+                pinched
             } else {
                 vec![piece]
             }
@@ -3178,9 +3235,9 @@ pub fn facet_split_fan(
                 }
                 if DIAG_CELL.with(|c| c.get()) {
                     for (edge, count) in &uses {
-                        if *count == 1 {
+                        if *count != 2 {
                             eprintln!(
-                                "[OPEN-EDGE] {:?} cell-edge {} at {:?} {:?}",
+                                "[OPEN-EDGE] {:?} x{count} cell-edge {} at {:?} {:?}",
                                 edge,
                                 cell_edges.contains(edge),
                                 points[edge[0] as usize],
@@ -3192,6 +3249,12 @@ pub fn facet_split_fan(
                         eprintln!("[OPEN-CAP] group {group} {:?}", cap);
                     }
                     eprintln!("[OPEN-PIECE] {:?}", piece);
+                    let mut ids: Vec<u32> = piece.iter().flatten().copied().collect();
+                    ids.sort_unstable();
+                    ids.dedup();
+                    for id in ids {
+                        eprintln!("[OPEN-NODE] {id} {:?}", points[id as usize]);
+                    }
                     eprintln!("[OPEN-BOUNDARY] {:?}", boundary);
                 }
                 if of_cap > 0 {
