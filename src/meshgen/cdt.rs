@@ -104,6 +104,11 @@ thread_local! {
     /// Print-only: the Steiner round `constrained_tets_with_steiner` is in, and whether it is the
     /// last one, or `(-1, false)` outside it - so a census can read the refusal that stood.
     pub static DIAG_ROUND: std::cell::Cell<(i32, bool)> = const { std::cell::Cell::new((-1, false)) };
+    /// Set by `facet_split_fan` when it declines only because a non-star piece's hull carving
+    /// could not recover some of the piece's edges, all of them inside the cell (not edges of the
+    /// cell's boundary): the caller may split those edges at their midpoints in every cap and retry
+    /// (plan M-2.1). Empty otherwise.
+    pub static SPLIT_REQUEST: std::cell::RefCell<Vec<[u32; 2]>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 // AI-FUNC-SUMMARY: Whether a print-only cdt diagnostic named by `var` is on for the current cell; returns bool; side effects: none.
@@ -2691,6 +2696,188 @@ pub fn fan_facet_without_slivers(facet: &[u32], points: &[Vec3]) -> Vec<[u32; 3]
 }
 
 // AI-FUNC-SUMMARY:
+// Purpose: Tetrahedralise a closed piece that is not convex and not star-shaped, from its own nodes: the hull is
+//   tetrahedralised with the piece's triangles as constraints and everything outside the piece is carved off.
+// Inputs: the piece's triangles, the node table, the node keys, and the tolerance.
+// Returns: tets in the node table's ids whose volumes sum to the piece's; or Err with the piece's edges
+//   the kernel could not recover (in the node table's ids - empty when it failed for another reason).
+// Side effects: None - no node is added.
+// Notes: The constrained kernel takes a boundary that IS the hull of its points, which is why it refuses a
+//   non-convex piece outright ("a boundary node is not on the hull"). Handing it the Delaunay hull as the
+//   boundary and the piece's own triangles as facets asks the same question the cell-level kernel answers
+//   for a cell: recover these faces inside this convex set. The facets then separate regions
+//   (`regions_by_constraint`), and a region is kept when the generalised winding number of the piece at its
+//   largest tet's centroid is about one - inside. The volume test (relative 1e-9) refuses anything else.
+//   This is the fallback for a piece no apex sees whole (plan M-2.1, the reference cases' non-star class).
+fn fill_non_convex(
+    piece: &[[u32; 3]],
+    points: &[Vec3],
+    keys: &[NodeKey],
+    tol: f64,
+) -> Result<Vec<[u32; 4]>, Vec<[u32; 2]>> {
+    let mut nodes: Vec<u32> = piece.iter().flatten().copied().collect();
+    nodes.sort_unstable();
+    nodes.dedup();
+    if nodes.len() < 4 {
+        return Err(Vec::new());
+    }
+    let local: BTreeMap<u32, u32> =
+        nodes.iter().enumerate().map(|(slot, node)| (*node, slot as u32)).collect();
+    let mut sub_points: Vec<Vec3> = nodes.iter().map(|n| points[*n as usize]).collect();
+    let mut sub_keys: Vec<NodeKey> = Vec::with_capacity(nodes.len() + 8);
+    // **The piece goes inside a box, so every one of its triangles is an interior facet.** Handed
+    // the piece's own hull as the frozen boundary, the kernel cannot re-split a hull face the piece
+    // splits on the other diagonal - which already happens on a plain cube. A box half again as
+    // large adds eight corners that only tets OUTSIDE the piece can use, and those are carved off,
+    // so the result still has no node the piece did not have. The corners are keyed with the
+    // quantum the piece's own keys were made with.
+    let quantum = nodes
+        .iter()
+        .filter(|n| (**n as usize) < keys.len())
+        .map(|n| (points[*n as usize], keys[*n as usize]))
+        .map(|(p, k)| {
+            let (c, kk) = [(p.x, k.0), (p.y, k.1), (p.z, k.2)]
+                .into_iter()
+                .max_by_key(|(_, kk)| kk.unsigned_abs())
+                .unwrap_or((0.0, 0));
+            if kk != 0 { (c / kk as f64).abs() } else { 0.0 }
+        })
+        .fold(0.0f64, f64::max);
+    if quantum <= 0.0 {
+        return Err(Vec::new());
+    }
+    for n in &nodes {
+        sub_keys.push(if (*n as usize) < keys.len() {
+            keys[*n as usize]
+        } else {
+            crate::meshgen::predicates::node_key(points[*n as usize], quantum)
+        });
+    }
+    let (mut lo, mut hi) = (sub_points[0], sub_points[0]);
+    for q in &sub_points {
+        lo = Vec3::new(lo.x.min(q.x), lo.y.min(q.y), lo.z.min(q.z));
+        hi = Vec3::new(hi.x.max(q.x), hi.y.max(q.y), hi.z.max(q.z));
+    }
+    let span = hi.sub(lo);
+    let margin = span.x.max(span.y).max(span.z) * 0.5;
+    let (lo, hi) = (
+        Vec3::new(lo.x - margin, lo.y - margin, lo.z - margin),
+        Vec3::new(hi.x + margin, hi.y + margin, hi.z + margin),
+    );
+    let corner_start = sub_points.len() as u32;
+    for k in 0..8u32 {
+        let corner = Vec3::new(
+            if k & 1 == 0 { lo.x } else { hi.x },
+            if k & 2 == 0 { lo.y } else { hi.y },
+            if k & 4 == 0 { lo.z } else { hi.z },
+        );
+        sub_points.push(corner);
+        sub_keys.push(crate::meshgen::predicates::node_key(corner, quantum));
+    }
+    let Some(delaunay) = delaunay_tets(&sub_points, &sub_keys) else { return Err(Vec::new()) };
+    let mut uses: BTreeMap<[u32; 3], ([u32; 3], usize)> = BTreeMap::new();
+    for tet in &delaunay {
+        for face in tet_faces(*tet) {
+            uses.entry(sorted_tri(face)).or_insert((face, 0)).1 += 1;
+        }
+    }
+    let hull: Vec<[u32; 3]> =
+        uses.values().filter(|(_, n)| *n == 1).map(|(face, _)| *face).collect();
+    if hull.iter().flatten().any(|id| *id < corner_start) {
+        return Err(Vec::new());
+    }
+    let sub_piece: Vec<[u32; 3]> =
+        piece.iter().map(|t| [local[&t[0]], local[&t[1]], local[&t[2]]]).collect();
+    let facets: Vec<Vec<u32>> = sub_piece.iter().map(|t| t.to_vec()).collect();
+    let tets = match constrained_tets_detailed(&sub_points, &sub_keys, &hull, &facets, tol) {
+        Ok(tets) => tets,
+        Err((reason, at)) => {
+            if reason != "a facet edge is not an edge of the tetrahedralisation" {
+                return Err(Vec::new());
+            }
+            let mut present: std::collections::BTreeSet<[u32; 2]> = std::collections::BTreeSet::new();
+            for t in &at {
+                for i in 0..4 {
+                    for j in i + 1..4 {
+                        present.insert(sorted_edge([t[i], t[j]]));
+                    }
+                }
+            }
+            let mut missing: std::collections::BTreeSet<[u32; 2]> = std::collections::BTreeSet::new();
+            for f in &sub_piece {
+                for k in 0..3 {
+                    let e = sorted_edge([f[k], f[(k + 1) % 3]]);
+                    if !present.contains(&e) {
+                        missing.insert(sorted_edge([nodes[e[0] as usize], nodes[e[1] as usize]]));
+                    }
+                }
+            }
+            return Err(missing.into_iter().collect());
+        }
+    };
+    let regions = regions_by_constraint(&tets, &facets, &sub_points, tol);
+    let volume = |t: &[u32; 4]| {
+        let [a, b, c, d] = t.map(|id| sub_points[id as usize]);
+        (b.sub(a).cross(c.sub(a)).dot(d.sub(a)) / 6.0).abs()
+    };
+    let winding = |q: Vec3| {
+        sub_piece
+            .iter()
+            .map(|t| {
+                let [a, b, c] = t.map(|id| sub_points[id as usize]);
+                crate::meshgen::topo::solid_angle(a, b, c, q)
+            })
+            .sum::<f64>()
+            .abs()
+            / (4.0 * std::f64::consts::PI)
+    };
+    let mut largest: BTreeMap<u32, usize> = BTreeMap::new();
+    for (at, region) in regions.iter().enumerate() {
+        let entry = largest.entry(*region).or_insert(at);
+        if volume(&tets[at]) > volume(&tets[*entry]) {
+            *entry = at;
+        }
+    }
+    let inside: std::collections::BTreeSet<u32> = largest
+        .iter()
+        .filter(|(_, at)| {
+            let [a, b, c, d] = tets[**at].map(|id| sub_points[id as usize]);
+            winding(a.add(b).add(c).add(d).scale(0.25)) > 0.5
+        })
+        .map(|(region, _)| *region)
+        .collect();
+    let kept: Vec<[u32; 4]> = tets
+        .iter()
+        .zip(regions.iter())
+        .filter(|(_, region)| inside.contains(region))
+        .map(|(t, _)| *t)
+        .collect();
+    if kept.iter().flatten().any(|id| *id >= corner_start) {
+        return Err(Vec::new());
+    }
+    let kept: Vec<[u32; 4]> = kept.iter().map(|t| t.map(|id| nodes[id as usize])).collect();
+    let filled: f64 = tets
+        .iter()
+        .zip(regions.iter())
+        .filter(|(_, region)| inside.contains(region))
+        .map(|(t, _)| volume(t))
+        .sum();
+    let expected: f64 = sub_piece
+        .iter()
+        .map(|t| {
+            let [a, b, c] = t.map(|id| sub_points[id as usize]);
+            a.dot(b.cross(c)) / 6.0
+        })
+        .sum::<f64>()
+        .abs();
+    if !kept.is_empty() && (filled - expected).abs() <= expected * 1.0e-9 {
+        Ok(kept)
+    } else {
+        Err(Vec::new())
+    }
+}
+
+// AI-FUNC-SUMMARY:
 // Purpose: A point in the kernel of a closed, consistently wound polyhedron - the region every
 //   face sees from its inner side - as the mean of the kernel polytope's vertices.
 // Inputs: the piece's oriented triangles and the node table.
@@ -3735,6 +3922,39 @@ pub fn facet_split_fan(
                     return None;
                 }
                 if signs.iter().any(|s| *s != signs[0]) {
+                    // No apex sees the whole piece: tetrahedralise its hull with the piece as a
+                    // constraint and carve off the outside (`fill_non_convex`). When that stalls on
+                    // piece edges that are all inside the cell, ask the caller to split them.
+                    match fill_non_convex(piece, points, keys, tol) {
+                        Ok(carved) => {
+                            note_split("a non-star piece was carved from its hull");
+                            for tet in carved {
+                                tets.push(tet);
+                                regions.push(region as u32);
+                            }
+                            summed += soup_volume(piece, points);
+                            continue;
+                        }
+                        Err(missing) => {
+                            let cell_edges: std::collections::BTreeSet<[u32; 2]> = boundary
+                                .iter()
+                                .flat_map(|t| (0..3).map(move |k| sorted_edge([t[k], t[(k + 1) % 3]])))
+                                .collect();
+                            if DIAG_CELL.with(|c| c.get()) {
+                                let on_cell: Vec<&[u32; 2]> =
+                                    missing.iter().filter(|e| cell_edges.contains(*e)).collect();
+                                eprintln!(
+                                    "[CARVE-MISSING] {} piece edge(s) not recovered {:?}, of which on the cell's boundary {:?}",
+                                    missing.len(),
+                                    missing,
+                                    on_cell
+                                );
+                            }
+                            if !missing.is_empty() && missing.iter().all(|e| !cell_edges.contains(e)) {
+                                SPLIT_REQUEST.with(|r| *r.borrow_mut() = missing);
+                            }
+                        }
+                    }
                     note_split("a piece is not star-shaped from its centre - its fan would fold");
                     return None;
                 }
@@ -7998,6 +8218,99 @@ mod tests {
         let rings = chain_trace(&ring, QUANTUM).expect("near-equal endpoints must still chain");
         assert_eq!(rings.len(), 1);
         assert_eq!(rings[0].len(), 3);
+    }
+
+    // A closed, outward-wound prism over a 2D outline, its vertices nudged off any common sphere or
+    // plane (a lattice cell's pieces are not co-spherical; a cube's eight corners are, and the flip
+    // recovery cannot choose between its diagonals).
+    fn prism_piece(outline: &[(f64, f64)], cap: &[[u32; 3]], height: f64) -> (Vec<[u32; 3]>, Vec<Vec3>) {
+        let n = outline.len() as u32;
+        let jitter = |k: usize, axis: f64| 0.003 * ((k as f64 * 1.37 + axis * 2.11).sin());
+        let mut points: Vec<Vec3> = outline
+            .iter()
+            .enumerate()
+            .map(|(k, (x, y))| Vec3::new(*x + jitter(k, 0.0), *y + jitter(k, 1.0), jitter(k, 2.0)))
+            .collect();
+        points.extend(outline.iter().enumerate().map(|(k, (x, y))| {
+            let k = k + outline.len();
+            Vec3::new(*x + jitter(k, 0.0), *y + jitter(k, 1.0), height + jitter(k, 2.0))
+        }));
+        let mut piece: Vec<[u32; 3]> = Vec::new();
+        for t in cap {
+            piece.push([t[0] + n, t[1] + n, t[2] + n]);
+            piece.push([t[0], t[2], t[1]]);
+        }
+        for i in 0..n {
+            let j = (i + 1) % n;
+            piece.push([i, j, j + n]);
+            piece.push([i, j + n, i + n]);
+        }
+        (piece, points)
+    }
+
+    fn piece_volume(piece: &[[u32; 3]], points: &[Vec3]) -> f64 {
+        piece
+            .iter()
+            .map(|t| {
+                let [a, b, c] = t.map(|id| points[id as usize]);
+                a.dot(b.cross(c)) / 6.0
+            })
+            .sum::<f64>()
+            .abs()
+    }
+
+    // Carving the hull keeps exactly the piece: a box comes back as tets summing to its volume,
+    // each one non-degenerate, using only the box's own nodes.
+    #[test]
+    fn a_closed_piece_is_carved_from_its_hull() {
+        let (piece, points) = prism_piece(
+            &[(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)],
+            &[[0, 1, 2], [0, 2, 3]],
+            1.0,
+        );
+        let tets = fill_non_convex(&piece, &points, &keys_of(&points), 1.0e-9)
+            .expect("a box is carved");
+        let mut total = 0.0;
+        for t in &tets {
+            assert!(t.iter().all(|id| (*id as usize) < points.len()), "a box corner leaked: {t:?}");
+            let [a, b, c, d] = t.map(|id| points[id as usize]);
+            let v = (b.sub(a).cross(c.sub(a)).dot(d.sub(a)) / 6.0).abs();
+            assert!(v > 1.0e-12, "a carved tet is flat: {t:?}");
+            total += v;
+        }
+        assert!((total - piece_volume(&piece, &points)).abs() < 1.0e-12, "volumes sum to {total}");
+    }
+
+    // Where the flip recovery cannot reach a piece edge, the carving names the edges rather than
+    // returning a wrong fill: a U prism (no apex sees it whole) either comes back exact or reports
+    // the edges a caller may split.
+    #[test]
+    fn a_carving_that_stalls_names_the_edges_it_could_not_recover() {
+        let (piece, points) = prism_piece(
+            &[(0.0, 0.0), (3.0, 0.0), (3.0, 3.0), (2.0, 3.0), (2.0, 1.0), (1.0, 1.0), (1.0, 3.0), (0.0, 3.0)],
+            &[[0, 1, 4], [0, 4, 5], [0, 5, 7], [5, 6, 7], [1, 2, 4], [2, 3, 4]],
+            0.5,
+        );
+        match fill_non_convex(&piece, &points, &keys_of(&points), 1.0e-9) {
+            Ok(tets) => {
+                let total: f64 = tets
+                    .iter()
+                    .map(|t| {
+                        let [a, b, c, d] = t.map(|id| points[id as usize]);
+                        (b.sub(a).cross(c.sub(a)).dot(d.sub(a)) / 6.0).abs()
+                    })
+                    .sum();
+                assert!((total - piece_volume(&piece, &points)).abs() < 1.0e-9);
+            }
+            Err(missing) => {
+                let edges: std::collections::BTreeSet<[u32; 2]> = piece
+                    .iter()
+                    .flat_map(|t| (0..3).map(move |k| sorted_edge([t[k], t[(k + 1) % 3]])))
+                    .collect();
+                assert!(!missing.is_empty(), "a stalled carving must name what it could not recover");
+                assert!(missing.iter().all(|e| edges.contains(e)), "{missing:?} are not piece edges");
+            }
+        }
     }
 
 }

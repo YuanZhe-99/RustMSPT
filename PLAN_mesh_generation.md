@@ -1975,6 +1975,16 @@ cell's boundary without being a trace point of that face, where no Steiner point
   What is left: 7 non-star pieces (need segment splitting - a Steiner point on a cap edge, carried
   by every piece of the cell sharing it; never on a cell face), 4 cells whose open pieces disagree
   with the face triangulation over a coplanar quad (different diagonals), 1 straddle.
+  **Landed 2026-10-01 (owner chose "build the splitting fill"): hull carving plus cap-edge splitting.**
+  `fill_non_convex` carves a non-star piece from a box around it (every piece triangle an interior
+  facet; regions by winding; volume checked); when the kernel cannot recover piece edges that are all
+  inside the cell, `plc_attempt` splits them at new midpoint nodes in every cap and retries (four
+  rounds, no trace on refusal). Reference case 2 whole-cell fans 9 -> **8**, on-surface unchanged
+  (99.968), disp 0.570 -> 0.576, elements +53; nine cases identical; default path unchanged; R-P2
+  byte-identical; 677 tests (`data/output/acceptance_m26f`). **Standing: 2 / 8 / 1 = 11.** The other
+  six non-star cells: four miss edges ON the cell's boundary (7840, 97539, 118929, 25713 - J1 forbids
+  the split), two fail after recovery (64187, 140287: no missing edge, the carving or volume check
+  refuses), and 44176 still fails after its one interior edge is split.
   **Where M-2.1/M-2.3 stand at the end of 2026-09-29 (session pause).** Whole-cell fans, the arm
   M-2.3 deletes: **0 on a1, a2, a4, a7a, a7b**; a3 **4**, a6a **4**, a6b **2**, a8 **17** (from a3 110,
   a4 19, a6a 5, a6b 4, a8 738 this morning). Every change landed today was strictly better or taken
@@ -2609,7 +2619,7 @@ without the stated fallback.
 | M-2.0 | J1 fingerprint mismatch is a hard error; fingerprint = constraint entity ids (MG-06) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ● landed `9b9c1a2` |
 | M-2.1 | Facet recovery by Steiner points on the constraint — gate | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — cutaway renders at a3's cube edges and an a8 strut junction, before/after | ◐ 2026-09-29: the facet-split fan's non-star refusal answered by a kernel apex - gated a1 **100.000** and a7b **100.000** (`[V13]` PASS), a8 99.942, a4 99.971, a3 99.716, reference cases 99.597 / 99.789 / 99.939 %; whole-cell fans 0 on a1/a2/a7a/a7b, and after D-12 (one piece where no cap is left) a3 23, a4 11, a6a 4, a6b 1, a8 96 (earlier: move (d) on D-11 (a), +1–8 % tets, slivers for M-5) |
 | M-2.2 | Boundary consistency: facet vertices on the cell boundary are trace points | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ● landed 2026-09-29: a rim vertex on a cell edge adopts the edge's K2 representative; hull classes 0 on a3/a4/a8; a4 99.911, a8 99.833, ref 3 99.854 |
-| M-2.3 | Delete the whole-cell fan | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ blocked by M-2.1 on the reference cases (2 / 9 / 1 whole-cell fans); 0 on all nine acceptance cases since 2026-09-30; the deletion is written and tested (`data/output/patches/m23_delete_whole_cell_fan.patch`, nine cases byte-identical) |
+| M-2.3 | Delete the whole-cell fan | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ blocked by M-2.1 on the reference cases (2 / 8 / 1 whole-cell fans); 0 on all nine acceptance cases since 2026-09-30; the deletion is written and tested (`data/output/patches/m23_delete_whole_cell_fan.patch`, nine cases byte-identical) |
 | M-2.4 | Retire `contact_chamfered_by` | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ◐ counted (a6a 895, a6b 2,396 gated); blocked: the limb's contact strip is thinner than a lattice face, so the faces it declares are genuine rim chamfer |
 | M-2.5 | P3 residual audit | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — the same cutaways | ○ |
 | M-3.1 | The control | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ● all twelve cases, re-held 2026-09-29 after every M-2 step: gated FAIL sets equal the default's, gated `[V13]` better everywhere (gated a1/a2/a7b 100.000 PASS, a4 100.000, a3 99.927, a8 99.971; reference cases 99.936 / 99.935 / 99.958 % against the default's 95.248 / 96.097 / 96.831 %) |

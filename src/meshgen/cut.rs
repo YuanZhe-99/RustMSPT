@@ -8866,7 +8866,7 @@ fn plc_attempt(
                     })
                 })
             };
-            let caps: Vec<Vec<[u32; 3]>> = groups
+            let mut caps: Vec<Vec<[u32; 3]>> = groups
                 .values()
                 .map(|slots| {
                     // A component whose facets here all lie in one plane is capped by the plane's
@@ -8954,6 +8954,16 @@ fn plc_attempt(
             // The oracle reads the points as they are BEFORE the split, which is also why they are
             // snapshotted: the split appends one centroid per piece to the same list.
             let base: Vec<Vec3> = arena.points.clone();
+            // Nodes a retry below adds at the midpoint of a cap edge, after `base` was taken.
+            let added: std::cell::RefCell<Vec<Vec3>> = std::cell::RefCell::new(Vec::new());
+            let at = |node: u32| -> Option<Vec3> {
+                let i = node as usize;
+                if i < base.len() {
+                    Some(base[i])
+                } else {
+                    added.borrow().get(i - base.len()).copied()
+                }
+            };
             let uncertain = std::cell::Cell::new(0usize);
             // **A node the cut already put on the surface has no side.** S7 snaps a lattice node
             // onto a component's surface and invariant K2 promotes a crossing to it; the classifier
@@ -8971,8 +8981,9 @@ fn plc_attempt(
                     return None;
                 }
                 let slot = classifier.slot_of(components[group])?;
+                let point = at(node)?;
                 let mut here = uncertain.get();
-                let inside = classifier.inside(base[node as usize], slot, &mut here);
+                let inside = classifier.inside(point, slot, &mut here);
                 uncertain.set(here);
                 Some(inside)
             };
@@ -9007,16 +9018,83 @@ fn plc_attempt(
                     );
                 }
             }
-            crate::meshgen::cdt::LAST_SPLIT.with(|c| c.set(""));
-            let split = crate::meshgen::cdt::facet_split_fan(
-                &boundary_local,
-                &caps,
-                &side_of,
-                &side_of_point,
-                &mut arena.points,
-                &arena.keys,
-                tol,
-            );
+            // **A non-star piece whose carving stalls on edges inside the cell gets those edges
+            // split.** `facet_split_fan` reports them (`SPLIT_REQUEST`) only when none is an edge of
+            // the cell's boundary, so no node lands on a face a neighbour shares (invariant J1). The
+            // midpoint is interned as a NEW node - one that welds onto an existing node is not on the
+            // edge - and every cap triangle carrying the edge is split there, so every piece of the
+            // cell that uses the edge carries the same point. A refused attempt leaves no trace.
+            let cell_scale = edge;
+            let mut split = None;
+            for round in 0..4 {
+                crate::meshgen::cdt::LAST_SPLIT.with(|c| c.set(""));
+                crate::meshgen::cdt::SPLIT_REQUEST.with(|r| r.borrow_mut().clear());
+                let entry = arena.points.len();
+                split = crate::meshgen::cdt::facet_split_fan(
+                    &boundary_local,
+                    &caps,
+                    &side_of,
+                    &side_of_point,
+                    &mut arena.points,
+                    &arena.keys,
+                    tol,
+                );
+                if split.is_some() {
+                    break;
+                }
+                arena.truncate(entry);
+                let request: Vec<[u32; 2]> =
+                    crate::meshgen::cdt::SPLIT_REQUEST.with(|r| std::mem::take(&mut *r.borrow_mut()));
+                if request.is_empty() || round == 3 {
+                    break;
+                }
+                let mut fresh: Vec<([u32; 2], u32)> = Vec::new();
+                let mut usable = true;
+                for pair in &request {
+                    let (pa, pb) = (arena.points[pair[0] as usize], arena.points[pair[1] as usize]);
+                    let middle = pa.add(pb).scale(0.5);
+                    if planes
+                        .iter()
+                        .any(|(normal, offset)| (normal.dot(middle) - offset).abs() <= cell_scale * 1.0e-6)
+                    {
+                        usable = false;
+                        break;
+                    }
+                    let before = arena.points.len();
+                    let id = arena.intern(middle);
+                    if (id as usize) < before {
+                        usable = false;
+                        break;
+                    }
+                    added.borrow_mut().push(middle);
+                    fresh.push((*pair, id));
+                }
+                if !usable {
+                    arena.truncate(entry);
+                    break;
+                }
+                crate::meshgen::cdt::note_split_public("a cap edge a non-star piece could not recover was split");
+                for (edge, middle) in &fresh {
+                    for cap in caps.iter_mut() {
+                        let mut next: Vec<[u32; 3]> = Vec::with_capacity(cap.len() + 2);
+                        for t in cap.iter() {
+                            let slot = (0..3).find(|k| {
+                                let (a, b) = (t[*k], t[(*k + 1) % 3]);
+                                (a == edge[0] && b == edge[1]) || (a == edge[1] && b == edge[0])
+                            });
+                            match slot {
+                                Some(k) => {
+                                    let (a, b, c) = (t[k], t[(k + 1) % 3], t[(k + 2) % 3]);
+                                    next.push([a, *middle, c]);
+                                    next.push([*middle, b, c]);
+                                }
+                                None => next.push(*t),
+                            }
+                        }
+                        *cap = next;
+                    }
+                }
+            }
             let split_why = Some(crate::meshgen::cdt::LAST_SPLIT.with(|c| c.get()));
             match split {
                 Some((tets, regions)) => {

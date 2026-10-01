@@ -205,7 +205,7 @@ fn compute_gwn_for_component(
 }
 
 // AI-FUNC-SUMMARY: Signed solid angle of triangle (a,b,c) subtended at query point p; returns f64 radians; side effects: none.
-fn solid_angle(a: Vec3, b: Vec3, c: Vec3, p: Vec3) -> f64 {
+pub(crate) fn solid_angle(a: Vec3, b: Vec3, c: Vec3, p: Vec3) -> f64 {
     let u = a.sub(p);
     let v = b.sub(p);
     let w = c.sub(p);
