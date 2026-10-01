@@ -1950,6 +1950,16 @@ cell's boundary without being a trace point of that face, where no Steiner point
   `data/output/patches/m25_peel_ears_lenient_with_tests.rs.txt`. This class needs a real
   tetrahedraliser for a non-convex piece - the hull tetrahedralised with the piece boundary as
   constraints and the outside carved off, or Steiner points - which is a capability, not a rule.
+  **Hull-and-carve measured too, 2026-10-01 - also refuted on the data.** `fill_non_convex` put the
+  piece inside a box half again its size (so every piece triangle is an interior facet - handing
+  the piece's own Delaunay hull as the frozen boundary fails even on a cube, whose hull diagonals
+  need not be the piece's), ran the constrained kernel with the piece triangles as facets, carved
+  regions by winding number and checked the volume. A jittered box carves exactly; a U prism and
+  all seven reference-case non-star pieces stop at "a facet edge is not an edge of the
+  tetrahedralisation" (ref 1 cell 7840: seven piece edges the flip-based recovery cannot reach).
+  Reference cases unchanged at 2 / 10 / 5. Recovering those edges needs Steiner points on them,
+  some on cell faces (J1 forbids it) and some on cap edges (which every piece of the cell sharing
+  the edge would then have to carry). Kept at `data/output/patches/m26_fill_non_convex_hull_carve.rs.txt`.
   **Where M-2.1/M-2.3 stand at the end of 2026-09-29 (session pause).** Whole-cell fans, the arm
   M-2.3 deletes: **0 on a1, a2, a4, a7a, a7b**; a3 **4**, a6a **4**, a6b **2**, a8 **17** (from a3 110,
   a4 19, a6a 5, a6b 4, a8 738 this morning). Every change landed today was strictly better or taken
