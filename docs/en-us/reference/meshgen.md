@@ -2247,6 +2247,14 @@ still lacks. Moves and shedding therefore run in alternation, three rounds. Refe
 whole-cell fans 11 -> 10, on-surface 99.966 -> 99.968 %, elements +58; everything else identical
 (`data/output/acceptance_m25f`).
 
+Two pieces open along exactly the same edges are one piece cut by a fin: where a surface lies in
+part of a cell face and leaves it only as a cap that separates nothing (reference case 3, cells
+497208, 511260, 617572, 631524 - the coincident face patch went to one piece by its centroids,
+every other boundary triangle to the other), their union with the shared cap triangles removed is
+exactly the cell's boundary, and it is kept as one piece - D-12's statement when no cap is left at
+all. Reference cases 2 / 3 whole-cell fans 10 / 5 -> 9 / 1, elements -8 / -16, P3 and every
+status identical (`data/output/acceptance_m26c`).
+
 ### Welded sheet cuts (G6-5)
 
 A sheet has no inside, so §6's sides cannot come from S6 - it refuses to classify one,

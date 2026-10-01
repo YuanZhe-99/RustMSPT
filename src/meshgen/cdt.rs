@@ -2844,7 +2844,8 @@ fn sorted_tri(t: [u32; 3]) -> [u32; 3] {
 //   edge into sectors (`manifold_components`), becomes one piece per shell or sector; a piece that
 //   does not close sheds triangles another piece also carries (flaps), singly or as an
 //   edge-connected run, when that lowers its open edges; moves and shedding alternate for three
-//   rounds. A node
+//   rounds. Two pieces open along the same edges whose union (shared triangles removed) closes are
+//   merged into one. A node
 //   a cap passes through takes no side of that cap's surface, and a cap triangle two facets offer
 //   after rim conforming is kept once (plan M-2.1, 2026-09-30).
 pub fn facet_split_fan(
@@ -3382,6 +3383,58 @@ pub fn facet_split_fan(
     }
     }
     pieces.retain(|piece| !piece.is_empty());
+    // **Two pieces open along the same edges are one piece cut by a fin.** Where a surface lies in
+    // part of a cell face and leaves it only as a cap that separates nothing (reference case 3,
+    // cells 497208, 511260, 617572, 631524: the coincident face patch went to one piece by its
+    // centroids and every other boundary triangle to the other), neither half closes and their
+    // union, with the cap triangles both carry removed, is exactly the cell's boundary. Merged,
+    // it is one piece - the same statement D-12 makes when no cap is left at all.
+    let open_set = |soup: &[[u32; 3]]| -> std::collections::BTreeSet<[u32; 2]> {
+        let mut uses: BTreeMap<[u32; 2], usize> = BTreeMap::new();
+        for t in soup {
+            for k in 0..3 {
+                let (a, b) = (t[k], t[(k + 1) % 3]);
+                *uses.entry(if a <= b { [a, b] } else { [b, a] }).or_insert(0) += 1;
+            }
+        }
+        uses.into_iter().filter(|(_, n)| n % 2 == 1).map(|(e, _)| e).collect()
+    };
+    let mut merged_any = false;
+    'pairs: for a in 0..pieces.len() {
+        let open_a = open_set(&pieces[a]);
+        if open_a.is_empty() {
+            continue;
+        }
+        for b in a + 1..pieces.len() {
+            if open_set(&pieces[b]) != open_a {
+                continue;
+            }
+            let keys_b: BTreeMap<[u32; 3], usize> = pieces[b]
+                .iter()
+                .fold(BTreeMap::new(), |mut m, t| {
+                    *m.entry(sorted_tri(*t)).or_insert(0) += 1;
+                    m
+                });
+            let keys_a: std::collections::BTreeSet<[u32; 3]> =
+                pieces[a].iter().map(|t| sorted_tri(*t)).collect();
+            let union: Vec<[u32; 3]> = pieces[a]
+                .iter()
+                .filter(|t| !keys_b.contains_key(&sorted_tri(**t)))
+                .chain(pieces[b].iter().filter(|t| !keys_a.contains(&sorted_tri(**t))))
+                .copied()
+                .collect();
+            if !union.is_empty() && open_set(&union).is_empty() {
+                pieces[a] = union;
+                pieces[b].clear();
+                merged_any = true;
+                note_split("two pieces open along the same edges were one piece cut by a fin");
+                continue 'pairs;
+            }
+        }
+    }
+    if merged_any {
+        pieces.retain(|piece| !piece.is_empty());
+    }
     if pieces.is_empty() {
         note_split("no surface separates the cell into two pieces");
         return None;
