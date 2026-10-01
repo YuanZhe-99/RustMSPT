@@ -85,14 +85,36 @@ CASES = [
     ("a7a", ["a7a_lower.stl", "a7a_upper.stl"], {}),
     ("a7b", ["a7b_lower.stl", "a7b_upper.stl"], {}),
     ("a8", ["a8_lattice.stl"], {"h_min_frac": 0.006}),
+    # Rotated copies (generate_rotated_cases.py): the same scenes turned 23 degrees about
+    # (1, 2, 3), so no face, edge or contact plane lies along a lattice direction. Same
+    # sizing as the originals - nothing is scaled.
+    ("a6a_r", ["a6a_cube_r.stl", "a6a_limb_r.stl"], {"h_max_frac": 0.04, "h_min_frac": 0.004}),
+    ("a6b_r", ["a6b_cube_r.stl", "a6b_limb_r.stl"], {"h_max_frac": 0.04, "h_min_frac": 0.004}),
+    ("a7a_r", ["a7a_lower_r.stl", "a7a_upper_r.stl"], {}),
+    ("a7b_r", ["a7b_lower_r.stl", "a7b_upper_r.stl"], {}),
+    ("a8_r", ["a8_lattice_r.stl"], {"h_min_frac": 0.006}),
+    # A compressed metal body (millimetres) and the ten gas cavities inside it, the largest
+    # with a 0.35 um waist (p1/README). The cavities take precedence over the body (priority
+    # 0 against 1), so a cavity's inside is gas; the domain is the body's box plus 2 %.
+    (
+        "p1",
+        [("p1/body.stl", 1)] + [("p1/pore_%04d.stl" % k, 0) for k in range(1, 11)],
+        {
+            "domain": ((-0.0014, -0.0047, -0.0087), (0.0714, 0.1302, 0.1304)),
+            "h_max_frac": 0.05,
+            "h_min_frac": 0.004,
+        },
+    ),
 ]
+
+FEW_DEFECT_RENDERS = {"p1"}
 
 CONFIG = """meshgen:
   inputs:
 {inputs}
   domain:
-    min: [0.0, 0.0, 0.0]
-    max: [1.0, 1.0, 1.0]
+    min: [{dmin}]
+    max: [{dmax}]
   sizing:
     h_max_frac: {h_max_frac}
     h_min_frac: {h_min_frac}
@@ -127,12 +149,24 @@ CONFIG = """meshgen:
 """
 
 
+def stl_entry(entry):
+    """(path, priority) for a CASES input given either as a path or as (path, priority)."""
+    return entry if isinstance(entry, tuple) else (entry, None)
+
+
 def write_config(case, stls, overrides):
-    inputs = "\n".join(
-        "    - stl: {}".format(os.path.join(HERE, s)) for s in stls
-    )
+    lines = []
+    for entry in stls:
+        stl, priority = stl_entry(entry)
+        lines.append("    - stl: {}".format(os.path.join(HERE, stl)))
+        if priority is not None:
+            lines.append("      priority: {}".format(priority))
+    inputs = "\n".join(lines)
+    dmin, dmax = overrides.get("domain", ((0.0, 0.0, 0.0), (1.0, 1.0, 1.0)))
     text = CONFIG.format(
         inputs=inputs,
+        dmin=", ".join(repr(float(x)) for x in dmin),
+        dmax=", ".join(repr(float(x)) for x in dmax),
         h_max_frac=overrides.get("h_max_frac", 0.05),
         h_min_frac=overrides.get("h_min_frac", 0.012),
         out=os.path.join(WORK, case + ".vtu"),
@@ -260,8 +294,12 @@ def verify_case(case, stls, env, wall, stages, contract, delivered):
     vcfg = os.path.join(WORK, case + "_verify.yaml")
     with open(vcfg, "w") as f:
         f.write("mesh_verify:\n  input: {}\n  json: {}\n  surfaces:\n".format(contract, js))
-        for stl in stls:
-            f.write("    - {}\n".format(os.path.join(HERE, stl)))
+        for entry in stls:
+            stl, priority = stl_entry(entry)
+            if priority is None:
+                f.write("    - {}\n".format(os.path.join(HERE, stl)))
+            else:
+                f.write("    - {{stl: {}, priority: {}}}\n".format(os.path.join(HERE, stl), priority))
         f.write("  verify:\n    max_ar_warn: 20.0\n    min_dihedral_deg: 5.0\n")
     verify = subprocess.run(
         [BIN, "mesh-verify", "--config", vcfg],
@@ -406,8 +444,10 @@ def main():
     def finish(case, pending):
         r = pending() if callable(pending) else pending
         if focus and "error" not in r:
+            # A large mesh renders slowly (p1: ~5 min per panel), so it gets one defect close-up.
+            extra = ["--defects", "1"] if case in FEW_DEFECT_RENDERS else []
             subprocess.run(
-                ["uv", "run", os.path.join(HERE, "render_focus.py"), WORK, case],
+                ["uv", "run", os.path.join(HERE, "render_focus.py"), WORK, case] + extra,
                 capture_output=True, text=True,
             )
         print(f"[{case}] done", file=sys.stderr)

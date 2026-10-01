@@ -8518,6 +8518,8 @@ fn hull_diag(
 //   surface has no side of it. A component whose facets here all lie in one plane, share no vertex
 //   with another component's facet, and have every vertex on their common outline is capped by
 //   that outline (`coplanar_cap_outline`) instead of facet by facet (plan M-2.1, 2026-09-30). A
+//   boundary node on a component's face trace (where the surface crosses or runs along a boundary
+//   triangle) takes no side of it, facet or not. A
 //   facet the rim matching leaves without area, or with fewer than three distinct vertices, is
 //   skipped and the nodes it interned are rolled back. A node on or inside any facet of a component
 //   takes no side of it (`facet_within`).
@@ -8929,9 +8931,19 @@ fn plc_attempt(
             // is on that surface. Vertices alone are not enough: a8 cell 425581's node 9 lies on
             // the facet edge 0-5 whose cap triangles were dropped for lying in a cell face, so no
             // cap carried it and the classifier read a point on the surface as outside.
+            let (cell_lo, cell_hi) = corners.iter().fold(
+                ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]),
+                |(lo, hi), p| {
+                    let q = [p.x, p.y, p.z];
+                    (
+                        [lo[0].min(q[0]), lo[1].min(q[1]), lo[2].min(q[2])],
+                        [hi[0].max(q[0]), hi[1].max(q[1]), hi[2].max(q[2])],
+                    )
+                },
+            );
             let on_patch: Vec<BTreeSet<u32>> = groups
-                .values()
-                .map(|slots| {
+                .iter()
+                .map(|(component, slots)| {
                     let mut on: BTreeSet<u32> =
                         slots.iter().flat_map(|slot| facets[*slot].iter().copied()).collect();
                     for id in 0..arena.points.len() as u32 {
@@ -8946,6 +8958,43 @@ fn plc_attempt(
                             })
                         {
                             on.insert(id);
+                        }
+                    }
+                    // A boundary node on this surface's TRACE across a boundary triangle is on it
+                    // too, facet or not: where the surface only grazes the cell along a face edge
+                    // there is no facet at all (reference case 3, cell 727379: node 7, on the edge
+                    // 2-7 the surface runs along, was read "outside" and left [0, 2, 7] straddling).
+                    // Only input triangles whose box meets the cell's are traced.
+                    if let Some(slot) = classifier.slot_of(*component) {
+                        let near: Vec<[Vec3; 3]> = classifier
+                            .triangles_of(slot)
+                            .iter()
+                            .filter(|t| {
+                                (0..3).all(|k| {
+                                    let c = |p: &Vec3| [p.x, p.y, p.z][k];
+                                    let lo = t.iter().map(c).fold(f64::INFINITY, f64::min);
+                                    let hi = t.iter().map(c).fold(f64::NEG_INFINITY, f64::max);
+                                    hi >= cell_lo[k] - edge * 1.0e-6 && lo <= cell_hi[k] + edge * 1.0e-6
+                                })
+                            })
+                            .copied()
+                            .collect();
+                        if !near.is_empty() {
+                            for t in &boundary_local {
+                                let face = t.map(|id| arena.points[id as usize]);
+                                for segment in crate::meshgen::cdt::trace_on_face(face, &near, edge * 1.0e-6) {
+                                    let along = segment[1].sub(segment[0]);
+                                    let length2 = along.dot(along);
+                                    for id in t {
+                                        let rel = arena.points[*id as usize].sub(segment[0]);
+                                        let at = if length2 > 0.0 { (rel.dot(along) / length2).clamp(0.0, 1.0) } else { 0.0 };
+                                        let off = rel.sub(along.scale(at));
+                                        if off.dot(off) <= (edge * 1.0e-9) * (edge * 1.0e-9) {
+                                            on.insert(*id);
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                     on
@@ -9003,6 +9052,20 @@ fn plc_attempt(
             if crate::meshgen::cdt::DIAG_CELL.with(|c| c.get()) {
                 for (slot, facet) in facets.iter().enumerate() {
                     eprintln!("[SIDE-FACET] slot {slot} component {} {:?}", facet_of[slot], facet);
+                }
+                for component in all_components.iter() {
+                    let Some(slot) = classifier.slot_of(*component) else { continue };
+                    for t in &boundary_local {
+                        let face = t.map(|id| arena.points[id as usize]);
+                        let trace = crate::meshgen::cdt::trace_on_face(
+                            face,
+                            classifier.triangles_of(slot),
+                            edge * 1.0e-6,
+                        );
+                        if !trace.is_empty() {
+                            eprintln!("[SIDE-TRACE] component {component} boundary {:?} trace {:?}", t, trace);
+                        }
+                    }
                 }
                 for id in 0..seed.len() as u32 {
                     let sides: Vec<Option<bool>> =

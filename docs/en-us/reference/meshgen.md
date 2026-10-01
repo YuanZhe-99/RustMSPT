@@ -2269,6 +2269,13 @@ cell carries the point, and retries, at most four rounds, leaving no trace on re
 boundary (J1 forbids splitting them) and two fail after recovery. `[CARVE-MISSING]` (print-only,
 focused cell) names the unrecovered edges and which lie on the boundary.
 
+A boundary node on a component's TRACE across a boundary triangle - where the surface crosses or
+runs along it - is on that surface whether or not a facet passes there. Where the surface only
+grazes a cell along a face edge there is no facet at all (reference case 3, cell 727379: node 7,
+on the edge 2-7 the surface runs along, was read "outside" and left [0, 2, 7] straddling). Only
+input triangles whose box meets the cell's are traced. Reference case 3 whole-cell fans 1 -> 0.
+`[SIDE-TRACE]` (print-only, focused cell) lists each boundary triangle's trace.
+
 ### Welded sheet cuts (G6-5)
 
 A sheet has no inside, so §6's sides cannot come from S6 - it refuses to classify one,

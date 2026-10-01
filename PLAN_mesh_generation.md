@@ -1985,6 +1985,35 @@ cell's boundary without being a trace point of that face, where no Steiner point
   six non-star cells: four miss edges ON the cell's boundary (7840, 97539, 118929, 25713 - J1 forbids
   the split), two fail after recovery (64187, 140287: no missing edge, the carving or volume check
   refuses), and 44176 still fails after its one interior edge is split.
+  **On the trace is on the surface, 2026-10-01.** Reference case 3's last cell (727379) straddled
+  because node 7 lies on the edge 2-7 the surface runs ALONG: no facet passes there (the surface
+  only grazes the cell), so the facet-based `on_patch` rules never saw it and the classifier called it
+  outside. `on_patch` now also takes every boundary node on a component's trace across a boundary
+  triangle (input triangles prefiltered by the cell box). Reference case 3 whole-cell fans 1 -> **0**;
+  elements +8, on-surface 100.000 unchanged, statuses unchanged; reference cases 1 and 2 and all nine
+  acceptance cases identical to `acceptance_m26f`. **Standing: 2 / 8 / 0 = 10.**
+  **New tests, 2026-10-01 (owner request): rotated cases and p1.** `generate_rotated_cases.py` turns
+  a6a, a6b, a7a, a7b and a8 by 23 degrees about (1, 2, 3) through the domain centre (unscaled, same
+  sizing), so no face, edge or contact plane is parallel to a lattice direction; `p1/` is a metal body
+  with ten gas cavities (mm; the largest cavity has a 0.35 um waist), cavities priority 0 over the
+  body's 1. Both are in `run_acceptance.py`'s CASES (fifteen cases). Gated, `data/output/acceptance_m27c`:
+  | case | on% | `[V1]` | `[V3]` | whole-cell fans | tets |
+  |---|---|---|---|---|---|
+  | a6a_r | 99.985 | FAIL | FAIL | 5 | 565,276 |
+  | a6b_r | 99.989 | FAIL | FAIL | 6 | 436,168 |
+  | a7a_r | 99.989 | PASS | PASS | 0 | 410,512 |
+  | a7b_r | 99.989 | PASS | PASS | 0 | 414,047 |
+  | a8_r | 98.941 | FAIL | FAIL | 16 | 1,667,136 |
+  | p1 | 99.990 | FAIL | FAIL | 30 | 3,873,839 |
+  **What they show.** The plates (a7a_r, a7b_r) keep every check the axis-aligned originals pass. The
+  limb-on-cube cases and the strut lattice do not: `[V1]` negative volumes of 1e-29..1e-23 (slivers
+  whose sign is lost to rounding), `[V3]` `folded_face` (two positive tets over one face, apexes on the
+  same side), a few `[V2]` duplicate nodes, and whole-cell fans come back (a6a_r 5, a6b_r 6, a8_r 16). p1 meshes
+  (3.87 M tets, S8 ~16 min) with the same `[V1]`/`[V3]` failure kinds plus ~250 k misattributed cells.
+  The DEFAULT path (§6 table + §7.6) fails too, differently: `[V1]` passes everywhere but `[V3]` fails on
+  a6b_r, a8_r and p1 (on-surface 95.8 / 89.2 / 98.3 %), so part of the defect is upstream of §7.4 -
+  shared by both paths. So much of M-2.1's repair was tuned where faces and contacts lie in lattice planes. **The next phase
+  starts here (M-2.6 below), ahead of the last 10 reference-case cells.**
   **Where M-2.1/M-2.3 stand at the end of 2026-09-29 (session pause).** Whole-cell fans, the arm
   M-2.3 deletes: **0 on a1, a2, a4, a7a, a7b**; a3 **4**, a6a **4**, a6b **2**, a8 **17** (from a3 110,
   a4 19, a6a 5, a6b 4, a8 738 this morning). Every change landed today was strictly better or taken
@@ -2030,6 +2059,12 @@ cell's boundary without being a trace point of that face, where no Steiner point
   unchanged on all twelve; default path unchanged; R-P2 byte-identical on a4/a8; 677 tests. Residue
   now: a8 facet-edge 51 % / thin-tet 27 % / interior 18 %, a4 interior 75 %, a3 interior 69 % -
   all facet or thin classes, none hull.
+- **M-2.6. Inclined geometry (new 2026-10-01).** The rotated cases and p1 fail `[V1]`/`[V3]` where the
+  axis-aligned originals pass. Find, per failure kind (negative-volume sliver, folded face, duplicate
+  node, the returning whole-cell fans), the arm that emits it (`plc_path`, `parent_cell`) and dump one
+  cell each, as M-2.1 did. Then p1's misattributed cells.
+  *Acceptance:* `[V1]`/`[V2]`/`[V3]` PASS on all fifteen cases, whole-cell fans 0 on the five rotated
+  cases. *Tier T3. Multimodal: yes - the rotated cases' cutaways beside the originals.*
 - **M-2.3. Delete the whole-cell centroid fan (R1).** When M-2.1 reports 0 on the matrix, the arm is
   removed: a cell neither §7.4 nor the facet-split fan can mesh is `Err` naming the cell, with the
   per-cell dump `RUSTMSPT_PLC_DUMP` already writes. Not "kept for safety": a fallback that abandons
@@ -2619,7 +2654,8 @@ without the stated fallback.
 | M-2.0 | J1 fingerprint mismatch is a hard error; fingerprint = constraint entity ids (MG-06) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ● landed `9b9c1a2` |
 | M-2.1 | Facet recovery by Steiner points on the constraint — gate | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — cutaway renders at a3's cube edges and an a8 strut junction, before/after | ◐ 2026-09-29: the facet-split fan's non-star refusal answered by a kernel apex - gated a1 **100.000** and a7b **100.000** (`[V13]` PASS), a8 99.942, a4 99.971, a3 99.716, reference cases 99.597 / 99.789 / 99.939 %; whole-cell fans 0 on a1/a2/a7a/a7b, and after D-12 (one piece where no cap is left) a3 23, a4 11, a6a 4, a6b 1, a8 96 (earlier: move (d) on D-11 (a), +1–8 % tets, slivers for M-5) |
 | M-2.2 | Boundary consistency: facet vertices on the cell boundary are trace points | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ● landed 2026-09-29: a rim vertex on a cell edge adopts the edge's K2 representative; hull classes 0 on a3/a4/a8; a4 99.911, a8 99.833, ref 3 99.854 |
-| M-2.3 | Delete the whole-cell fan | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ blocked by M-2.1 on the reference cases (2 / 8 / 1 whole-cell fans); 0 on all nine acceptance cases since 2026-09-30; the deletion is written and tested (`data/output/patches/m23_delete_whole_cell_fan.patch`, nine cases byte-identical) |
+| M-2.6 | Inclined geometry: the rotated cases and p1 pass `[V1]`/`[V2]`/`[V3]` | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** | ○ next (2026-10-01): a6a_r/a6b_r/a8_r/p1 fail `[V1]`/`[V3]`; a7a_r/a7b_r pass |
+| M-2.3 | Delete the whole-cell fan | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ blocked by M-2.1 on the reference cases (2 / 8 / 0 whole-cell fans) and by M-2.6 on the rotated cases (a6a_r 5, a6b_r 6, a8_r 16, p1 30); 0 on all nine acceptance cases since 2026-09-30; the deletion is written and tested (`data/output/patches/m23_delete_whole_cell_fan.patch`, nine cases byte-identical) |
 | M-2.4 | Retire `contact_chamfered_by` | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ◐ counted (a6a 895, a6b 2,396 gated); blocked: the limb's contact strip is thinner than a lattice face, so the faces it declares are genuine rim chamfer |
 | M-2.5 | P3 residual audit | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — the same cutaways | ○ |
 | M-3.1 | The control | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ● all twelve cases, re-held 2026-09-29 after every M-2 step: gated FAIL sets equal the default's, gated `[V13]` better everywhere (gated a1/a2/a7b 100.000 PASS, a4 100.000, a3 99.927, a8 99.971; reference cases 99.936 / 99.935 / 99.958 % against the default's 95.248 / 96.097 / 96.831 %) |
