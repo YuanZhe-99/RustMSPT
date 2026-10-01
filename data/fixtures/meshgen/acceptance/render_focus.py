@@ -127,7 +127,29 @@ def read_surface(path):
 def write_window(faces, lo, hi, path):
     """The faces whose centroid lies in [lo, hi], as a small surface VTU: a defect close-up then
     loads a few thousand triangles instead of the whole comparison surface."""
-    keep = [f for f in faces if all(lo[i] <= f["centroid"][i] <= hi[i] for i in range(3))]
+    return write_faces([f for f in faces if all(lo[i] <= f["centroid"][i] <= hi[i] for i in range(3))], path)
+
+
+def enclosed_components(faces):
+    """Components whose input surface lies strictly inside another component's input box: a pore
+    in a body, a cube in a sphere. The overview shows only the outer surface, so these are never
+    seen unless they get their own panels. Returns {component: (lo, hi)} of the enclosed ones."""
+    boxes = {}
+    for f in faces:
+        if f["source"] != 0:
+            continue
+        lo, hi = boxes.setdefault(f["component"], ([1e300] * 3, [-1e300] * 3))
+        for p in f["tri"]:
+            for i in range(3):
+                lo[i] = min(lo[i], p[i])
+                hi[i] = max(hi[i], p[i])
+    inside = lambda a, b: all(b[0][i] < a[0][i] and a[1][i] < b[1][i] for i in range(3))
+    return {c: bx for c, bx in sorted(boxes.items())
+            if any(o != c and inside(bx, ob) for o, ob in boxes.items())}
+
+
+def write_faces(keep, path):
+    """A face subset as a small surface VTU (source and dev_class carried)."""
     pts = [p for f in keep for p in f["tri"]]
     n = len(keep)
 
@@ -187,7 +209,7 @@ def clusters(faces, radius, threshold):
 
 # ----------------------------------------------------------------- rendering
 
-def render(out, name, surface, view_dir, focus, frame, filters, colour, width, opacity=1.0, extra=()):
+def render(out, name, surface, view_dir, focus, frame, filters, colour, width, opacity=1.0, extra=(), wireframe=True):
     """One mesh-render call; `extra` adds (name, view_dir) views that share its filters."""
     lines = ["mesh_render:", f"  input: {surface}", f"  output_dir: {os.path.join(out, 'png')}", "  views:"]
     for view_name, direction in [(name, view_dir)] + list(extra):
@@ -199,7 +221,7 @@ def render(out, name, surface, view_dir, focus, frame, filters, colour, width, o
         "  background: [255, 255, 255]",
         "  ambient: 0.45",
         "  backend: cpu",
-        "  wireframe: true",
+        f"  wireframe: {'true' if wireframe else 'false'}",
         "  projection: orthographic",
         "  fit_padding: 0.0",
         f"  face_opacity: {opacity}",
@@ -278,6 +300,45 @@ def main():
         panels.append({"title": f"overview, from the {'+x+y+z' if tag == 'ne' else '-x-y-z'} corner",
                        "labels": ["input", "output"],
                        "files": [png(f"overview_{tag}_input"), png(f"overview_{tag}_output")]})
+
+    # components enclosed by another body are invisible in the overview: show them on their own
+    inner = enclosed_components(faces)
+    if len(inner) > 1:
+        keep = [f for f in faces if f["component"] in inner]
+        sub_surface = write_faces(keep, os.path.join(out, "interior.vtu"))
+        ilo = [min(b[0][i] for b in inner.values()) for i in range(3)]
+        ihi = [max(b[1][i] for b in inner.values()) for i in range(3)]
+        icenter = [(ilo[i] + ihi[i]) / 2 for i in range(3)]
+        iframe = box(icenter, max(ihi[i] - ilo[i] for i in range(3)) * 0.5)
+        render(out, "interior_ne_input", sub_surface, (-1.0, -1.0, -1.0), icenter, iframe, [ONLY_INPUT], INPUT,
+               args.width, extra=[("interior_sw_input", (1.0, 1.0, 1.0))], wireframe=False)
+        render(out, "interior_ne_output", sub_surface, (-1.0, -1.0, -1.0), icenter, iframe, [ONLY_OUTPUT],
+               OUTPUT, args.width, extra=[("interior_sw_output", (1.0, 1.0, 1.0))], wireframe=False)
+        for tag in ("ne", "sw"):
+            panels.append({"title": f"enclosed bodies {sorted(inner)}, outer body removed, from the "
+                                    f"{'+x+y+z' if tag == 'ne' else '-x-y-z'} corner",
+                           "labels": ["input", "output"],
+                           "files": [png(f"interior_{tag}_input").replace(stem, "interior"),
+                                     png(f"interior_{tag}_output").replace(stem, "interior")]})
+    if inner:
+        for c, (blo, bhi) in inner.items():
+            path = write_faces([f for f in faces if f["component"] == c], os.path.join(out, f"component{c}.vtu"))
+            cstem = os.path.splitext(os.path.basename(path))[0]
+            ccenter = [(blo[i] + bhi[i]) / 2 for i in range(3)]
+            cframe = box(ccenter, max(bhi[i] - blo[i] for i in range(3)) * 0.42)
+            for s_name, filt, colour, op in (("input", [ONLY_INPUT], INPUT, 1.0), ("output", [ONLY_OUTPUT], OUTPUT, 1.0),
+                                             ("both", [], OUTPUT, 0.55)):
+                render(out, f"c{c}_ne_{s_name}", path, (-1.0, -1.0, -1.0), ccenter, cframe, filt, colour,
+                       args.width, opacity=op, extra=[(f"c{c}_sw_{s_name}", (1.0, 1.0, 1.0))], wireframe=False)
+            on = [f for f in faces if f["component"] == c and f["source"] == 1]
+            area = sum(f["area"] for f in on) or 1.0
+            share = sum(f["area"] for f in on if f["dev"] < 2.0) / area
+            for tag in ("ne", "sw"):
+                panels.append({"title": f"component {c} alone ({100 * share:.2f} % on the surface), from the "
+                                        f"{'+x+y+z' if tag == 'ne' else '-x-y-z'} corner",
+                               "labels": ["input", "output", "both"],
+                               "files": [os.path.join(out, "png", f"{cstem}_c{c}_{tag}_{s}.png")
+                                         for s in ("input", "output", "both")]})
 
     w = 4.0 * h
     found = clusters(faces, 2.0 * w, args.threshold)

@@ -2014,6 +2014,13 @@ cell's boundary without being a trace point of that face, where no Steiner point
   a6b_r, a8_r and p1 (on-surface 95.8 / 89.2 / 98.3 %), so part of the defect is upstream of §7.4 -
   shared by both paths. So much of M-2.1's repair was tuned where faces and contacts lie in lattice planes. **The next phase
   starts here (M-2.6 below), ahead of the last 10 reference-case cells.**
+  **Enclosed bodies get their own pictures (owner question, 2026-10-01).** p1's ten cavities were
+  checked all along (`[V5]`/`[V13]` are per component) but never seen: the overview shows the body's
+  outside. `render_focus.py` now gives every component whose input box lies strictly inside another's
+  its own input / output / overlay panels (no wireframe, so the deviation colours read) and, when
+  there are several, a combined view without the outer body. Per cavity, on-surface gated / default:
+  99.70-100.00 % / 77.25-89.06 %; volume error <= 1.2e-4 everywhere. The default path's weakness on
+  small curved closed bodies is plain in the pictures (red and orange flakes along every cavity).
   **Where M-2.1/M-2.3 stand at the end of 2026-09-29 (session pause).** Whole-cell fans, the arm
   M-2.3 deletes: **0 on a1, a2, a4, a7a, a7b**; a3 **4**, a6a **4**, a6b **2**, a8 **17** (from a3 110,
   a4 19, a6a 5, a6b 4, a8 738 this morning). Every change landed today was strictly better or taken

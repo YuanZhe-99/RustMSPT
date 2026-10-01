@@ -160,7 +160,7 @@ cargo run --release -- mesh-verify \
 | `run_acceptance.py --path default\|gated [--focus] [--jobs N]` | 在一条 S8 路径上跑十五个算例的矩阵（原有九个、它们的五个旋转版本 `a6a_r` … `a8_r`，以及 `p1`）：P3 表（`cont%`、`cover%`、`on%`）、P2 表、检查状态、各阶段耗时；`--focus` 为每个算例运行 `render_focus.py`。网格生成串行执行；每个算例的 `mesh-verify` 与渲染在最多 `N` 个工作线程上与下一个算例的网格生成重叠（默认 3，`--jobs 1` 完全串行）。`RUSTMSPT_ACCEPTANCE_WORK` 可改工作目录。 |
 | `generate_rotated_cases.py` | 写出 `<name>_r.stl`：a6a、a6b、a7a、a7b、a8 绕过定义域中心的 (1, 2, 3) 轴转 23 度，不缩放，使任何面、棱和接触面都不沿点阵方向。若有部分离开单位定义域则拒绝。 |
 | `p1/` | 一块金属体与其中十个气孔，单位毫米（最大气孔有 0.35 µm 的细颈）；气孔优先级 0 高于金属体的 1，定义域为金属体包围盒外扩 2 %。为此 CASES 条目支持 `(路径, 优先级)` 与 `domain` 覆盖。 |
-| `render_focus.py <work> <case>` | 同一相机下输入 STL 与输出材料边界并排，输出按偏离着色；缺陷聚类、排序并以正视/斜视渲染（R9）。 |
+| `render_focus.py <work> <case>` | 同一相机下输入 STL 与输出材料边界并排，输出按偏离着色；缺陷聚类、排序并以正视/斜视渲染（R9）。输入包围盒严格位于另一组分包围盒内的组分（金属体中的气孔、球内的立方体）在总览中被挡住，因此每个这样的组分另有自己的输入/输出/叠加两角视图；若有多个，另加一张去掉外部组分的合并视图。 |
 | `run_reference.py` | 三个参考算例，按参考工具自身的背景网格与分段层级运行；报告单元比与 P3。路径跟随环境中的 `RUSTMSPT_PLC_PASS`。每个算例的 `mesh-verify` 与下一个算例的网格生成重叠。 |
 | `check_determinism.py <work> --path P [--out table]` | 矩阵上的 R-P2：每个算例在 `RAYON_NUM_THREADS=1` 下重跑，按 SHA-256 比较交付文件与契约文件（排除标识运行的行）。表格：`determinism_{gated,default,reference}.txt`。 |
 | `p2_equal_fidelity.py <work> [--out table]` | M-1.4：默认路径达到门控路径贴面比例所需 `h` 下的单元数（`h_max_frac`、`h_min_frac`、`eps_frac` 一起减半），在尺寸叶子预算或 2 GB 处停止。表格：`p2_equal_fidelity.md`。 |
