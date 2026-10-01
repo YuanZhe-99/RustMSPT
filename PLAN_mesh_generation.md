@@ -1967,7 +1967,14 @@ cell's boundary without being a trace point of that face, where no Steiner point
   triangles removed is the cell's boundary and is kept as one piece. Reference cases 2 / 3
   10 / 5 -> **9 / 1**, elements -8 / -16, P3 and statuses identical, nine cases identical
   (`data/output/acceptance_m26c`); default path unchanged, R-P2 byte-identical, 677 tests.
-  **Standing: 2 / 9 / 1 = 12.**
+  **Standing: 2 / 9 / 1 = 12.** Measured after it, 2026-10-01: relaxing the merge to "any two open
+  pieces whose union closes" is inert; and the non-star class is genuinely non-star - reference
+  case 1 cell 7840's failing piece (50 faces) has an EMPTY kernel by linear programming (Chebyshev
+  radius -1 % of its span; its 22-face sibling's kernel is 5 % and fans fine), so no apex search can
+  reach it; fixing `kernel_vertex_mean`'s inner side to come from the winding is correct and inert.
+  What is left: 7 non-star pieces (need segment splitting - a Steiner point on a cap edge, carried
+  by every piece of the cell sharing it; never on a cell face), 4 cells whose open pieces disagree
+  with the face triangulation over a coplanar quad (different diagonals), 1 straddle.
   **Where M-2.1/M-2.3 stand at the end of 2026-09-29 (session pause).** Whole-cell fans, the arm
   M-2.3 deletes: **0 on a1, a2, a4, a7a, a7b**; a3 **4**, a6a **4**, a6b **2**, a8 **17** (from a3 110,
   a4 19, a6a 5, a6b 4, a8 738 this morning). Every change landed today was strictly better or taken
