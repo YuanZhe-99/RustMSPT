@@ -446,7 +446,7 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `SPECULATIVE_BATCH_PER_WORKER` / `SERIAL_ATTEMPTS_BEFORE_BATCHING` | Pipeline — Packing | `src/pipeline/placement.rs:407` | Speculative batch cap (8 per worker) and serial attempts before batching (4), both measured. |
 | `accept` | Pipeline — Packing | `src/pipeline/placement.rs:715` | Commits an accepted candidate into the geometry and the record. |
 | `run_top_up` | Pipeline — Packing | `src/pipeline/placement.rs:776` | Draws further batches when clipping alone left the target short. |
-| `decide_stop` | Pipeline — Packing | `src/pipeline/placement.rs:843` | Decides which of the four stop reasons a run ended with. |
+| `decide_stop` | Pipeline — Packing | `src/pipeline/placement.rs:843` | Decides normal completion or user interruption; interruption has precedence. |
 | `write_outputs` | Pipeline — Packing | `src/pipeline/placement.rs:959` | Writes the geometry, the per-particle record and the size CSV. |
 | `entity_id` | Pipeline — Packing | `src/pipeline/placement.rs:1104` | The stable id of a placed particle. |
 | `particle_record` | Pipeline — Packing | `src/pipeline/placement.rs:1109` | Turns one placed particle into its record entry. |
@@ -471,7 +471,7 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `solid_pair_rejection` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:435` | Overlap then enclosure test for one candidate-neighbour pair. |
 | `retained_depth` | Pipeline — Packing | `src/pipeline/placement_feasibility.rs:470` | How far a straddling particle still reaches inside the domain. |
 | `ToolRecord` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:15` | The build identity as it appears in a record or report. |
-| `StopReason` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:53` | The fixed four-word vocabulary a run may stop with. |
+| `StopReason` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:53` | Four normal completion reasons plus interruption with saved partial outputs. |
 | `ParticleRecord` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:133` | One placed particle's entry in the record file. |
 | `RecordFile` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:152` | The per-particle record file's top-level shape. |
 | `conventions` | Pipeline — Packing | `src/pipeline/placement_outputs.rs:173` | States every convention a reader needs to reconstruct a particle. |
@@ -1112,3 +1112,44 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `PackQueryStats::summary_line` | Pipeline Packing | `src/pipeline/pack.rs:44` | Format pack query counters. |
 | `run_cli` | CLI | `src/main.rs:207` | Parse CLI arguments and run the selected pipeline; `main` releases shared GPU devices afterwards. |
 | `sample_counts` (s2_monte_carlo.wgsl) | GPU | `src/gpu/shaders/s2_monte_carlo.wgsl` | Evaluate one global logical sample id for a batch-local radius slot. |
+
+
+### Placement interruption additions
+
+See [control contracts](pipeline-placement.md#control-function-contracts).
+
+- `SignalGuard::install` — cooperative interruption/progress; source `src/pipeline/placement_control.rs` (EngineState adapter in `placement.rs`).
+- `request_stop` — cooperative interruption/progress; source `src/pipeline/placement_control.rs` (EngineState adapter in `placement.rs`).
+- `SignalGuard::drop` — cooperative interruption/progress; source `src/pipeline/placement_control.rs` (EngineState adapter in `placement.rs`).
+- `PlacementControl::new` — cooperative interruption/progress; source `src/pipeline/placement_control.rs` (EngineState adapter in `placement.rs`).
+- `PlacementControl::poll` — cooperative interruption/progress; source `src/pipeline/placement_control.rs` (EngineState adapter in `placement.rs`).
+- `PlacementControl::publish` — cooperative interruption/progress; source `src/pipeline/placement_control.rs` (EngineState adapter in `placement.rs`).
+- `EngineState::poll_control` — cooperative interruption/progress; source `src/pipeline/placement_control.rs` (EngineState adapter in `placement.rs`).
+
+`run_placement`, `decide_stop`, `finish_report`, `place_all`, `try_place_one`, and `run_top_up` now preserve accepted outputs on interruption, as documented in pipeline-placement.md.
+
+
+### Aggregate placement
+
+See [pipeline-aggregates.md](pipeline-aggregates.md) for contracts of Member,
+Template, Proxy, xyz, envelope, fcc_sites, settle_one, build_template,
+world_proxy, proxy_check, export_template, plan_templates, and run in
+`src/pipeline/placement_aggregates.rs`. `AggregateSpec::default` and
+`PlacementParams::validate` are in config/placement.rs; `SizeSource::quantile`
+and `sample` are in pipeline/placement_sizes.rs. Empty-plan EngineState::new,
+run_placement_in_pool dispatch and PlacementControl phase labels are documented there.
+
+`PreparedMember`, `prepare_member`, `members_clear` and `refine_meshes` in pipeline/placement_aggregates.rs perform deterministic real-mesh refinement; see pipeline-aggregates.md.
+
+Aggregate target search: `SearchStats`, `compose_rotation`, `container_volume`,
+`compression_cost`, `recenter`, `compact_to_target` in
+`src/pipeline/placement_aggregates.rs`; `deserialize_aggregate_variants` in
+`src/config/placement.rs`. See [pipeline-aggregates.md](pipeline-aggregates.md).
+
+New aggregate tests in `tests/placement_aggregate_tests.rs`:
+`target_search_rotates_rearranges_and_preserves_real_geometry`,
+`target_search_reports_success_budget_and_invalid_controls`,
+`automatic_templates_and_mixed_fallback_place_smaller_blocks`,
+`shipped_configuration_templates_expose_supported_modes`,
+`stop_during_target_search_preserves_valid_best_template`.
+Contracts: [pipeline-aggregates.md](pipeline-aggregates.md#additional-regression-contracts).

@@ -270,7 +270,12 @@ impl SizeSource {
     // is chosen by cumulative frequency and the diameter is uniform inside it, so the sub-bin law
     // is stated rather than defaulting to the midpoint.
     pub fn sample<R: RngCore + ?Sized>(&self, rng: &mut R) -> f64 {
-        let u = u01(rng);
+        self.quantile(u01(rng))
+    }
+
+    // AI-FUNC-SUMMARY: Evaluate the configured size quantile at finite u in [0,1); returns diameter; no RNG or I/O.
+    pub fn quantile(&self, u: f64) -> f64 {
+        assert!(u.is_finite() && (0.0..1.0).contains(&u));
         match self {
             SizeSource::Lognormal {
                 mu,

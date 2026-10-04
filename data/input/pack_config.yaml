@@ -1,3 +1,5 @@
+# Legacy packing engine: individual particles. Optional aggregates use placement_config.yaml,
+# placement_aggregate_config.yaml or placement_mixed_config.yaml instead.
 # config.yaml
 
 # Input settings

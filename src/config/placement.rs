@@ -41,6 +41,88 @@ pub struct PlacementParams {
     #[serde(default = "default_threads")]
     pub threads: i32,
     pub outputs: OutputsSpec,
+    #[serde(default)]
+    pub aggregates: AggregateSpec,
+}
+
+/// Optional hierarchical packing; disabled unless explicitly enabled.
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AggregateSpec {
+    pub enabled: bool,
+    #[serde(deserialize_with = "deserialize_aggregate_variants")]
+    pub variants: usize,
+    pub mode: AggregateMode,
+    pub fallback_particles_per_cluster: Vec<usize>,
+    pub particles_per_cluster: usize,
+    pub shape: AggregateShape,
+    pub internal_gap: f64,
+    pub compaction_sweeps: usize,
+    pub mesh_refinement_sweeps: usize,
+    pub target_internal_volume_fraction: Option<f64>,
+    pub strategy_rounds: usize,
+    pub max_compaction_trials: usize,
+    pub rotation_search: bool,
+    pub lateral_rearrangement: bool,
+    pub pair_rearrangement: bool,
+    pub container_shrink_fraction: f64,
+    pub rotation_step_degrees: f64,
+}
+impl Default for AggregateSpec {
+    // AI-FUNC-SUMMARY: Defaults for opt-in deterministic aggregate generation; no I/O.
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            variants: 8,
+            mode: AggregateMode::Clusters,
+            fallback_particles_per_cluster: vec![16, 4, 1],
+            particles_per_cluster: 64,
+            shape: AggregateShape::Sphere,
+            internal_gap: 0.1,
+            compaction_sweeps: 32,
+            mesh_refinement_sweeps: 8,
+            target_internal_volume_fraction: None,
+            strategy_rounds: 8,
+            max_compaction_trials: 6000,
+            rotation_search: true,
+            lateral_rearrangement: true,
+            pair_rearrangement: true,
+            container_shrink_fraction: 0.03,
+            rotation_step_degrees: 15.0,
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AggregateShape {
+    Sphere,
+    Cube,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AggregateMode {
+    Clusters,
+    Mixed,
+}
+
+// AI-FUNC-SUMMARY: Deserialize explicit template count or auto (stored as zero); rejects zero numeric counts and other strings; no I/O.
+fn deserialize_aggregate_variants<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<usize, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Count {
+        Number(usize),
+        Text(String),
+    }
+    match Count::deserialize(d)? {
+        Count::Number(n) if n > 0 => Ok(n),
+        Count::Text(s) if s == "auto" => Ok(0),
+        _ => Err(serde::de::Error::custom(
+            "variants must be a positive count or auto",
+        )),
+    }
 }
 
 // AI-FUNC-SUMMARY: The default thread setting, -1 meaning every available core; returns i32; side effects: none.
@@ -406,6 +488,7 @@ pub struct ResolvedPlacement {
     pub budget: BudgetSpec,
     pub threads: i32,
     pub outputs: ResolvedOutputs,
+    pub aggregates: AggregateSpec,
     pub config_path: PathBuf,
 }
 
@@ -436,7 +519,9 @@ pub enum ResolvedDistribution {
 pub enum ResolvedClasses {
     /// Histogram bins double as the reporting classes.
     FromHistogram,
-    EqualWidth { count: usize },
+    EqualWidth {
+        count: usize,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -665,7 +750,10 @@ impl PlacementParams {
                     }
                 }
                 let overlap_voxel_size = match &v.overlap_volume {
-                    Some(o) => Some(require_positive("void.overlap_volume.voxel_size", o.voxel_size)?),
+                    Some(o) => Some(require_positive(
+                        "void.overlap_volume.voxel_size",
+                        o.voxel_size,
+                    )?),
                     None => None,
                 };
                 Some(ResolvedVoid {
@@ -692,7 +780,8 @@ impl PlacementParams {
                 )?;
                 let sigma_log = require_positive(
                     "size.distribution.sigma_log",
-                    d.sigma_log.ok_or_else(|| missing("sigma_log", "lognormal"))?,
+                    d.sigma_log
+                        .ok_or_else(|| missing("sigma_log", "lognormal"))?,
                 )?;
                 let min = require_positive(
                     "size.distribution.min",
@@ -738,7 +827,9 @@ impl PlacementParams {
 
         let classes = match (&self.size.classes, &distribution) {
             (None, ResolvedDistribution::Histogram { .. }) => ResolvedClasses::FromHistogram,
-            (None, ResolvedDistribution::Lognormal { .. }) => ResolvedClasses::EqualWidth { count: 10 },
+            (None, ResolvedDistribution::Lognormal { .. }) => {
+                ResolvedClasses::EqualWidth { count: 10 }
+            }
             (Some(c), _) => match c.kind {
                 ClassKind::EqualWidth => {
                     let count = c.count.unwrap_or(10);
@@ -853,7 +944,10 @@ impl PlacementParams {
 
         let out_dir = resolve_against(&dir, &self.outputs.dir);
         let voxel_labels = match &self.outputs.voxel_labels {
-            Some(v) => Some(require_positive("outputs.voxel_labels.voxel_size", v.voxel_size)?),
+            Some(v) => Some(require_positive(
+                "outputs.voxel_labels.voxel_size",
+                v.voxel_size,
+            )?),
             None => None,
         };
         let outputs = ResolvedOutputs {
@@ -867,6 +961,64 @@ impl PlacementParams {
             voxel_labels,
         };
 
+        if self.aggregates.enabled {
+            let a = &self.aggregates;
+            if a.variants > 128
+                || a.particles_per_cluster == 0
+                || a.particles_per_cluster > 1024
+                || a.variants * a.particles_per_cluster > 65536
+                || !a.internal_gap.is_finite()
+                || a.internal_gap < 0.0
+                || a.compaction_sweeps > 1024
+                || a.mesh_refinement_sweeps > 128
+            {
+                return Err(RustMsptError::InvalidConfig("placement.aggregates: variants=1..128 or auto, particles_per_cluster=1..1024, total template members<=65536, finite internal_gap>=0, compaction_sweeps<=1024, mesh_refinement_sweeps<=128 required".into()));
+            }
+            if a.target_internal_volume_fraction
+                .is_some_and(|v| !v.is_finite() || v <= 0.0 || v > 1.0)
+                || a.strategy_rounds > 128
+                || a.max_compaction_trials > 1_000_000
+                || !a.container_shrink_fraction.is_finite()
+                || a.container_shrink_fraction <= 0.0
+                || a.container_shrink_fraction >= 0.5
+                || !a.rotation_step_degrees.is_finite()
+                || a.rotation_step_degrees <= 0.0
+                || a.rotation_step_degrees > 180.0
+            {
+                return Err(RustMsptError::InvalidConfig("placement.aggregates: target_internal_volume_fraction in (0,1], strategy_rounds<=128, max_compaction_trials<=1000000, container_shrink_fraction in (0,0.5), rotation_step_degrees in (0,180] required".into()));
+            }
+            if a.mode == AggregateMode::Mixed {
+                let mut last = a.particles_per_cluster;
+                let mut total = last;
+                if a.fallback_particles_per_cluster.is_empty()
+                    || a.fallback_particles_per_cluster.len() > 8
+                {
+                    return Err(RustMsptError::InvalidConfig(
+                        "mixed aggregates require 1..8 fallback member counts".into(),
+                    ));
+                }
+                for &n in &a.fallback_particles_per_cluster {
+                    if n == 0 || n >= last {
+                        return Err(RustMsptError::InvalidConfig("mixed fallback member counts must be positive and strictly decreasing below particles_per_cluster".into()));
+                    }
+                    total += n;
+                    last = n;
+                }
+                if total * (if a.variants == 0 { 32 } else { a.variants }) > 65536 {
+                    return Err(RustMsptError::InvalidConfig(
+                        "mixed template catalog exceeds 65536 members".into(),
+                    ));
+                }
+            }
+            if boundary.mode != BoundaryMode::Strict
+                || self.position.mode != PositionMode::FeasibleUniform
+                || void
+                    .as_ref()
+                    .is_some_and(|v| v.crossing != VoidCrossing::Forbidden)
+            {
+                return Err(RustMsptError::InvalidConfig("placement.aggregates currently requires strict boundary, feasible_uniform position and forbidden void crossing".into()));
+            }
+        }
         Ok(ResolvedPlacement {
             seed: self.seed,
             unit: self.frame.unit.clone(),
@@ -894,6 +1046,7 @@ impl PlacementParams {
             threads: self.threads,
             outputs,
             config_path: config_path.to_path_buf(),
+            aggregates: self.aggregates.clone(),
         })
     }
 }

@@ -331,9 +331,9 @@ Exhausting the per-particle budget is *how* an unattainable size is detected. Or
 every distribution failure would report as a budget failure, and the requirement that the run say why
 it stopped would never be met.
 
-The vocabulary is fixed at four words. A run that placed everything it planned but lost volume at the
-domain boundary is `target_reached` with the deficit named in `stop_detail`, not a fifth word — a
-consumer's adapter is written against this list, and a fifth value would reach it as an unknown one.
+Normal completion uses four reasons; cooperative cancellation adds `interrupted` (see below). A run that placed everything it planned but lost volume at the
+domain boundary is `target_reached` with the deficit named in `stop_detail`, not an additional normal-completion word.
+Consumers must now also handle the explicit `interrupted` reason.
 `stop_detail` is always an object and always carries a `message` suitable for a log line.
 
 One combination is worth knowing: `on_unattainable: stop` with the default `descending` order ends
@@ -372,3 +372,45 @@ sequential. Regression tests compare records, STL, CSV, phase/particle-id TIFFs 
 byte for byte at 1, 2 and 8 workers.
 
 Label generation now uses 1024-voxel tiles, sorted spatial candidates and cached per-particle parity queries. It preserves void precedence and first-particle ownership; full phase/id arrays are still resident.
+
+
+## Cooperative stop and partial-result preservation
+
+For `pack` with a `placement:` config, create `<outputs.dir>/STOP` to request a
+portable cooperative stop. On Unix the CLI also handles SIGINT (Ctrl-C) and
+SIGTERM. Handlers only set an atomic flag; geometry and file I/O stay outside the
+handler. Repeated requests continue to allow saving. SIGKILL, crashes, and loss
+of power cannot save in-memory geometry.
+
+The engine observes cancellation between proposal batches (and particles/top-up
+batches), finishes already running geometric queries, and uses the normal output
+writer to export every accepted particle. An interrupted candidate is not counted
+as a proven size failure. No replacement sizes or new top-up batches are started
+after cancellation. Loading/planning and output writing are not preempted; wait
+for the final report, since complex queries and large STL files can take time.
+
+`particles.stl` (when nonempty), `particles.json`, `size_distribution.csv`, frozen
+void copy, and configured optional outputs describe the accepted partial result.
+The final report has `status: interrupted` and `stop_reason: interrupted`; it is
+written only after output saving succeeds. I/O failure propagates as an error,
+not as a successfully saved interruption. A request before any acceptance writes
+an empty record/report without a particles STL. Exit zero means outputs were
+saved, not that the target was reached. Existing four normal stop reasons retain
+their behavior. Consumers must accept the additional interruption reason. CSV
+shortfall is planned minus placed and thus includes unattempted sizes in a partial
+run; `stop_detail.failed_sizes` counts exhausted size attempts separately.
+
+`progress.json` is atomically replaced at start, first acceptance, approximately
+every 10 seconds at a batch boundary, before saving and after successful saving.
+It reports count, attempts, elapsed time and volume fraction on the configured
+basis; the raw VF is not independent void-screen certification. The same summary
+is printed to stderr. A long single query may delay a heartbeat. Progress I/O
+errors warn without discarding the packing result. STOP-file polling is throttled
+to 250 ms at boundaries; signal polling occurs at every boundary. Remove STOP
+before a new run. Use a new output directory to preserve an older result.
+
+This feature saves a usable partial assembly, **not a resumable RNG/engine
+checkpoint**. It does not change the legacy `packing:` engine. CLI signal handlers
+are restored on return; in-process callers use the per-output STOP file and do not
+install process-global handlers. Normal packing order, RNG stream and geometry
+checks are unchanged.

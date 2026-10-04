@@ -294,6 +294,7 @@ fn run_cli() -> anyhow::Result<()> {
                         params.outputs.dir = cli_path_as_config_relative(&output);
                     }
                     let resolved = params.validate(&path)?;
+                    let _signals = rustmspt::pipeline::placement_control::SignalGuard::install()?;
                     PlacementPipeline { config: resolved }.run()?;
                 }
                 PackDocument::Legacy(mut conf) => {

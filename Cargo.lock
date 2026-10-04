@@ -1428,6 +1428,7 @@ dependencies = [
  "csv",
  "image",
  "indicatif",
+ "libc",
  "nalgebra",
  "parry3d-f64",
  "pollster",

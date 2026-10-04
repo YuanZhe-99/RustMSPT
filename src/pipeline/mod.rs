@@ -10,6 +10,7 @@ mod optimize_volume;
 pub mod pack;
 pub mod pack_targets;
 pub mod placement;
+pub mod placement_control;
 pub mod placement_feasibility;
 pub mod placement_labels;
 pub mod placement_library;

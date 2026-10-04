@@ -62,7 +62,7 @@ selects the original loop instead, which is documented in
 | `SPECULATIVE_BATCH_PER_WORKER` / `SERIAL_ATTEMPTS_BEFORE_BATCHING` | `src/pipeline/placement.rs:407` | Speculative batch cap (8 per worker) and serial attempts before batching (4), both measured. |
 | `accept` | `src/pipeline/placement.rs:715` | Commits an accepted candidate into the geometry and the record. |
 | `run_top_up` | `src/pipeline/placement.rs:776` | Draws further batches when clipping alone left the target short. |
-| `decide_stop` | `src/pipeline/placement.rs:843` | Decides which of the four stop reasons a run ended with. |
+| `decide_stop` | `src/pipeline/placement.rs:843` | Decides normal completion or user interruption; interruption has precedence. |
 | `write_outputs` | `src/pipeline/placement.rs:959` | Writes the geometry, the per-particle record and the size CSV. |
 | `entity_id` | `src/pipeline/placement.rs:1104` | The stable id of a placed particle. |
 | `particle_record` | `src/pipeline/placement.rs:1109` | Turns one placed particle into its record entry. |
@@ -87,7 +87,7 @@ selects the original loop instead, which is documented in
 | `solid_pair_rejection` | `src/pipeline/placement_feasibility.rs:435` | Overlap then enclosure test for one pair. |
 | `retained_depth` | `src/pipeline/placement_feasibility.rs:470` | How far a straddling particle still reaches inside the domain. |
 | `ToolRecord` | `src/pipeline/placement_outputs.rs:15` | The build identity as it appears in a record or report. |
-| `StopReason` | `src/pipeline/placement_outputs.rs:53` | The fixed four-word vocabulary a run may stop with. |
+| `StopReason` | `src/pipeline/placement_outputs.rs:53` | Four normal completion reasons plus `Interrupted` for saved partial output. |
 | `ParticleRecord` | `src/pipeline/placement_outputs.rs:133` | One placed particle's entry in the record file. |
 | `RecordFile` | `src/pipeline/placement_outputs.rs:152` | The per-particle record file's top-level shape. |
 | `conventions` | `src/pipeline/placement_outputs.rs:173` | States every convention a reader needs to reconstruct a particle. |
@@ -149,7 +149,7 @@ run_placement
 │       └── evaluate_proposal   parallel within a batch; read-only
 │           └── check_placement every rule, in one fixed order
 ├── run_top_up                  only if nothing failed
-├── decide_stop                 which of the four words
+├── decide_stop                 normal completion or interruption
 ├── write_outputs               geometry, record, size CSV, void copy, labels
 └── finish_report + write_json  the report again, as `finished`
 ```
@@ -215,9 +215,9 @@ The entries most worth reading in the source first, and why:
 | `size_distribution.csv` | header row, ten columns | `write_size_distribution_csv` |
 | `voxel_labels/voxel_labels.json` | `rustmspt.placement.voxel_labels/1` | `VoxelLabelsHeader` |
 
-`StopReason` is a fixed four-word vocabulary: `target_reached`, `budget_exhausted`,
-`distribution_unattainable`, `no_feasible_placement`. A consumer's adapter is written against that
-list, so nothing may emit a fifth value.
+`StopReason` includes `target_reached`, `budget_exhausted`,
+`distribution_unattainable`, `no_feasible_placement`, and `interrupted`. Consumers
+must recognize `interrupted` as saved partial output, never target attainment.
 
 ## Cross-cutting notes
 
@@ -268,3 +268,72 @@ Shape library input now uses `load_stl_hashed` so geometry and source digest com
 ### Stage timing (PERF-00)
 
 `run_placement_in_pool` prints `[Timing] placement stage=<load|plan|place|write_outputs|report|total_in_pool> seconds=<f>`, `[Timing] placement workers=<n>` and `[Timing] placement peak_rss_bytes=<n|unavailable>` to stdout. They are never written into the record, report or CSV, so the byte-identical output comparisons across thread counts are unaffected; the report's own `elapsed` field is unchanged.
+
+
+## Cooperative stop and partial-result preservation
+
+For `pack` with a `placement:` config, create `<outputs.dir>/STOP` to request a
+portable cooperative stop. On Unix the CLI also handles SIGINT (Ctrl-C) and
+SIGTERM. Handlers only set an atomic flag; geometry and file I/O stay outside the
+handler. Repeated requests continue to allow saving. SIGKILL, crashes, and loss
+of power cannot save in-memory geometry.
+
+The engine observes cancellation between proposal batches (and particles/top-up
+batches), finishes already running geometric queries, and uses the normal output
+writer to export every accepted particle. An interrupted candidate is not counted
+as a proven size failure. No replacement sizes or new top-up batches are started
+after cancellation. Loading/planning and output writing are not preempted; wait
+for the final report, since complex queries and large STL files can take time.
+
+`particles.stl` (when nonempty), `particles.json`, `size_distribution.csv`, frozen
+void copy, and configured optional outputs describe the accepted partial result.
+The final report has `status: interrupted` and `stop_reason: interrupted`; it is
+written only after output saving succeeds. I/O failure propagates as an error,
+not as a successfully saved interruption. A request before any acceptance writes
+an empty record/report without a particles STL. Exit zero means outputs were
+saved, not that the target was reached. Existing four normal stop reasons retain
+their behavior. Consumers must accept the additional interruption reason. CSV
+shortfall is planned minus placed and thus includes unattempted sizes in a partial
+run; `stop_detail.failed_sizes` counts exhausted size attempts separately.
+
+`progress.json` is atomically replaced at start, first acceptance, approximately
+every 10 seconds at a batch boundary, before saving and after successful saving.
+It reports count, attempts, elapsed time and volume fraction on the configured
+basis; the raw VF is not independent void-screen certification. The same summary
+is printed to stderr. A long single query may delay a heartbeat. Progress I/O
+errors warn without discarding the packing result. STOP-file polling is throttled
+to 250 ms at boundaries; signal polling occurs at every boundary. Remove STOP
+before a new run. Use a new output directory to preserve an older result.
+
+This feature saves a usable partial assembly, **not a resumable RNG/engine
+checkpoint**. It does not change the legacy `packing:` engine. CLI signal handlers
+are restored on return; in-process callers use the per-output STOP file and do not
+install process-global handlers. Normal packing order, RNG stream and geometry
+checks are unchanged.
+
+### Control function contracts
+
+| Item | Location | Contract |
+|---|---|---|
+| `SignalGuard::install` | `src/pipeline/placement_control.rs` | CLI-only Unix signal setup; restores previous dispositions on drop; returns OS failures. |
+| `request_stop` | `src/pipeline/placement_control.rs` | Signal handler sets only a lock-free atomic flag. |
+| `SignalGuard::drop` | `src/pipeline/placement_control.rs` | Restore previous signal handlers. |
+| `PlacementControl::new` | `src/pipeline/placement_control.rs` | Initialize per-run cancellation and progress clocks. |
+| `PlacementControl::poll` | `src/pipeline/placement_control.rs` | Latch stop requests and periodically publish progress; does not touch RNG or geometry. |
+| `PlacementControl::publish` | `src/pipeline/placement_control.rs` | Atomically replace progress JSON and emit stderr heartbeat; warn on telemetry I/O failure. |
+| `EngineState::poll_control` | `src/pipeline/placement.rs` | Supply count/attempt/VF to control at safe boundaries. |
+
+`run_placement` now writes partial outputs on cooperative stop. `decide_stop`
+gives interruption precedence, and `finish_report` distinguishes interrupted from
+finished. `place_all`, `try_place_one` and `run_top_up` check control at boundaries;
+unaccepted interrupted candidates do not increment exhausted-size counts.
+
+
+## Optional aggregate path
+
+`run_placement_in_pool` delegates to `aggregates::run` only when the validated
+aggregate feature is enabled. Shared `accept`, `write_outputs` and `finish_report`
+still operate on individual particles. Empty-plan `EngineState::new` uses a safe
+single spatial cell. See [aggregate function contracts](pipeline-aggregates.md).
+`SizeSource::sample` now calls deterministic `SizeSource::quantile(u01(rng))`,
+preserving its original random stream and inverse-CDF arithmetic.

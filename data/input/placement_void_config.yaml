@@ -58,3 +58,24 @@ placement:
     dir: "../output/placement_void"
     # Uncomment to also write the three-phase label field and per-voxel ids.
     # voxel_labels: { voxel_size: 1.0 }
+
+  # Optional aggregate engine. False (or omitted) keeps individual placement.
+  # For enabled examples see placement_aggregate_config.yaml / placement_mixed_config.yaml.
+  aggregates:
+    enabled: false
+    mode: clusters               # clusters or mixed (large then smaller blocks)
+    variants: auto               # Or an explicit positive integer, e.g. 8
+    particles_per_cluster: 64
+    fallback_particles_per_cluster: [16, 4, 1]  # Mixed only, decreasing counts
+    shape: sphere                # sphere or cube
+    internal_gap: 0.1
+    compaction_sweeps: 32
+    mesh_refinement_sweeps: 8
+    target_internal_volume_fraction: 0.50  # True member volume / container volume
+    strategy_rounds: 8
+    max_compaction_trials: 6000   # Per-template additional deterministic trials
+    rotation_search: true
+    lateral_rearrangement: true
+    pair_rearrangement: true
+    container_shrink_fraction: 0.03
+    rotation_step_degrees: 15

@@ -57,12 +57,12 @@ placement:
     total_attempts: 2000000
 
   outputs:
-    dir: "../output/placement"
+    dir: "../output/placement_clusters"
 
   # Optional aggregate engine. False (or omitted) keeps individual placement.
   # For enabled examples see placement_aggregate_config.yaml / placement_mixed_config.yaml.
   aggregates:
-    enabled: false
+    enabled: true
     mode: clusters               # clusters or mixed (large then smaller blocks)
     variants: auto               # Or an explicit positive integer, e.g. 8
     particles_per_cluster: 64

@@ -525,3 +525,40 @@ Split-filter also accepts top-level `cpu_max: <integer>` (including flexible str
 `MeshRenderConfig` accepts optional top-level `cpu_max` beside `mesh_render`, using flexible signed-integer deserialization. See [mesh-render-and-vtu.md](mesh-render-and-vtu.md#cpu-worker-budget) for clamping and execution scope.
 
 Standalone `mesh_render` also accepts optional `gpu_memory_limit_mb` and `gpu_min_pixels` (default 0), described in mesh-render-and-vtu.md.
+
+
+## Aggregate configuration
+
+Optional `placement.aggregates` (unknown fields are rejected):
+
+| Field | Default | Meaning / accepted range when enabled |
+|---|---|---|
+| enabled | false | Opt into template generation and cluster proxy placement. |
+| variants | 8 | Template kinds, integer 1..128 or `auto`; auto estimates ceil(source shells/primary member count), clamped to 4..32, per stage. Independent of instance count. |
+| particles_per_cluster | 64 | Member count, 1..1024; variants*members <= 65536. |
+| shape | sphere | sphere or cube; cube globally uses rotated cube's enclosing world AABB. |
+| internal_gap | 0.1 | Finite nonnegative member gap, in frame units. |
+| compaction_sweeps | 32 | Deterministic bounding-ball contact sweeps, 0..1024. |
+| mesh_refinement_sweeps | 8 | Real-mesh coordinate-descent sweeps, 0..128; 0 disables this refinement. |
+
+
+| target_internal_volume_fraction | null | Optional real material/container target in (0,1]; null retains the original refinement only. |
+| strategy_rounds | 8 | Target-search rounds, 0..128; alternate forward/reverse order and reduce angular/translation steps. |
+| max_compaction_trials | 6000 | Per-template target-search candidate budget, 0..1000000; separate from global placement budget. |
+| rotation_search | true | Try signed rotations about three axes, also coupled with inward displacement. |
+| lateral_rearrangement | true | Try signed lateral steps about three axes, also coupled with inward displacement. |
+| pair_rearrangement | true | Move each member and its nearest neighbour together toward the origin. |
+| container_shrink_fraction | 0.03 | Finite fraction in (0,0.5) for shrinking the preferred container and inward steps. |
+| rotation_step_degrees | 15 | Finite starting angular step in (0,180]. |
+| mode | clusters | clusters: whole primary blocks only; mixed: primary blocks followed by smaller fallback blocks if the global target is unmet. |
+| fallback_particles_per_cluster | [16,4,1] | Mixed-only sequence, 1..8 strictly decreasing positive counts below the primary member count. A count of 1 is an individual-particle block. |
+
+The catalog member cap includes all mixed stages. Global target VF remains
+`placement.target.volume_fraction`; internal target VF is a different denominator.
+Unmet internal targets are explicitly reported and the best valid template is used.
+
+Requires strict boundaries, feasible_uniform position, and forbidden void crossing.
+`PlacementParams::validate` rejects unsupported combinations before packing.
+Disabled settings do not change the ordinary path. See
+[aggregate algorithm](../algorithms/aggregate-placement.md) and
+[configuration example](../examples/pack-aggregates.md).

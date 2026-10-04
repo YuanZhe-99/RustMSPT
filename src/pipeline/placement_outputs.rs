@@ -42,12 +42,9 @@ impl From<&BuildIdentity> for ToolRecord {
 pub const RECORD_SCHEMA: &str = "rustmspt.placement.record/1";
 pub const REPORT_SCHEMA: &str = "rustmspt.placement.report/1";
 
-/// The fixed vocabulary a run may stop with.
-///
-/// Four words, no more: a consumer's adapter is written against this list, and a
-/// fifth value would reach it as an unknown one. "Placed everything I planned but
-/// lost volume to the boundary" is `target_reached` with a deficit recorded in
-/// `stop_detail`, not a new word.
+/// Placement completion reasons, including cooperative user interruption.
+/// `Interrupted` means accepted geometry was saved, not that the target was reached.
+/// Consumers must accept `interrupted` in addition to the original four reasons.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StopReason {
@@ -55,6 +52,8 @@ pub enum StopReason {
     BudgetExhausted,
     DistributionUnattainable,
     NoFeasiblePlacement,
+    /// User requested a cooperative stop; accepted geometry was saved.
+    Interrupted,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,3 +1,6 @@
+#[path = "placement_aggregates.rs"]
+mod aggregates;
+
 use crate::config::placement::{
     BoundaryMode, OnUnattainable, OrientationMode, PlacementOrder, PositionMode,
     ResolvedDistribution, ResolvedPlacement, TargetBasis, VoidCrossing,
@@ -73,7 +76,8 @@ pub struct PlacementOutcome {
 // Side effects: Creates the configured worker pool, reads inputs, creates the output directory, writes all outputs.
 // Notes: The testable core: the pipeline's run() is a thin wrapper so tests need not go through
 // stdout. The report is written twice - once as `running` before placement starts, once as
-// `finished` at the end - so a run that is killed still leaves evidence of what it was.
+// `finished` or `interrupted` after output saving. Cooperative stop preserves accepted geometry;
+// force-kill still cannot save it. progress.json provides batch-boundary heartbeats.
 pub fn run_placement(config: &ResolvedPlacement) -> Result<PlacementOutcome> {
     with_placement_pool(config.threads, || run_placement_in_pool(config))
 }
@@ -151,6 +155,10 @@ fn run_placement_in_pool(config: &ResolvedPlacement) -> Result<PlacementOutcome>
     };
 
     timer.stage("load");
+    if config.aggregates.enabled {
+        return aggregates::run(config, &library, &source, &classes, void.as_ref(),
+            void_volume_in_domain, void_volume_method, basis_volume, &tool, started);
+    }
     let target_volume = basis_volume * config.target_volume_fraction;
     let mut rng = seeded_rng(config.seed);
     let mut plan = plan_size_multiset(
@@ -199,6 +207,8 @@ fn run_placement_in_pool(config: &ResolvedPlacement) -> Result<PlacementOutcome>
     timer.stage("plan");
 
     let mut state = EngineState::new(config, &library, &classes, &plan.draws);
+    state.basis_volume = basis_volume;
+    state.poll_control(config, true);
     place_all(
         config,
         &library,
@@ -218,7 +228,7 @@ fn run_placement_in_pool(config: &ResolvedPlacement) -> Result<PlacementOutcome>
         drawn: 0,
         placed: 0,
     };
-    if state.shortfall_total == 0 && !state.budget_spent(config) {
+    if !state.control.interrupted && state.shortfall_total == 0 && !state.budget_spent(config) {
         run_top_up(
             config,
             &library,
@@ -239,9 +249,11 @@ fn run_placement_in_pool(config: &ResolvedPlacement) -> Result<PlacementOutcome>
         state.grid_queries.load(std::sync::atomic::Ordering::Relaxed),
         state.grid_candidates.load(std::sync::atomic::Ordering::Relaxed)
     );
+    state.poll_control(config, true);
     let elapsed = started.elapsed().as_secs_f64();
     let stop = decide_stop(config, &state, &plan, target_volume, elapsed);
 
+    state.control.publish(config, "saving", state.placed.len(), state.attempts, state.volume_solid / basis_volume);
     let outputs = write_outputs(
         config,
         &library,
@@ -266,6 +278,7 @@ fn run_placement_in_pool(config: &ResolvedPlacement) -> Result<PlacementOutcome>
     );
     write_json(&config.outputs.report, &report)?;
 
+    state.control.publish(config, &report.status, state.placed.len(), state.attempts, state.volume_solid / basis_volume);
     timer.stage("report");
     let summary_lines = summary(config, &state, &stop, target_volume, basis_volume);
     timer.total("total_in_pool");
@@ -316,9 +329,15 @@ struct EngineState {
     shortfall_total: usize,
     first_failed_diameter: Option<f64>,
     stopped_early: bool,
+    control: crate::pipeline::placement_control::PlacementControl,
+    basis_volume: f64,
 }
 
 impl EngineState {
+    // AI-FUNC-SUMMARY: Poll cooperative cancellation and publish timed progress at a batch boundary; returns true once stopped; mutates control only, never RNG or geometry.
+    fn poll_control(&mut self, config: &ResolvedPlacement, force: bool) -> bool {
+        self.control.poll(config, force, self.placed.len(), self.attempts, self.volume_solid / self.basis_volume)
+    }
     fn new(
         config: &ResolvedPlacement,
         library: &ShapeLibrary,
@@ -331,7 +350,10 @@ impl EngineState {
             .fold(0.0f64, f64::max)
             .max(1e-9);
         let extent_ratio = library.max_extent_ratio.max(1.0);
-        let cell_size = largest * extent_ratio + config.gap_particle_particle;
+        let cell_size = if draws.is_empty() {
+            let d = config.domain.size();
+            d.x.max(d.y).max(d.z)
+        } else { largest * extent_ratio + config.gap_particle_particle };
         let mut drawn_per_class = vec![0usize; classes.len()];
         for d in draws {
             if let Some(slot) = drawn_per_class.get_mut(d.class) {
@@ -355,6 +377,8 @@ impl EngineState {
             shortfall_total: 0,
             first_failed_diameter: None,
             stopped_early: false,
+            control: crate::pipeline::placement_control::PlacementControl::new(),
+            basis_volume: config.domain.volume(),
         }
     }
 
@@ -389,16 +413,18 @@ fn place_all(
     state: &mut EngineState,
 ) {
     for draw in draws.iter() {
-        if state.budget_spent(config) {
+        if state.poll_control(config, false) || state.budget_spent(config) {
             state.stopped_early = true;
             break;
         }
         let placed = try_place_one(config, library, void, rng, draw, state);
         if placed {
+            if state.placed.len() == 1 { state.poll_control(config, true); }
             if let Some(slot) = state.placed_per_class.get_mut(draw.class) {
                 *slot += 1;
             }
         } else {
+            if state.control.interrupted { break; }
             state.shortfall_total += 1;
             if state.first_failed_diameter.is_none() {
                 state.first_failed_diameter = Some(draw.diameter);
@@ -637,6 +663,7 @@ fn try_place_one(
     let mut serial_attempts = 0usize;
     let mut remaining = config.budget.attempts_per_particle;
     while remaining > 0 {
+        if state.poll_control(config, false) { return false; }
         let room = remaining.min(config.budget.total_attempts.saturating_sub(state.attempts));
         if room == 0 {
             return false;
@@ -786,7 +813,7 @@ fn run_top_up(
 ) -> Result<()> {
     while top_up.batches < config.budget.max_top_up_batches {
         let deficit = target_volume * (1.0 - config.target_tolerance) - state.volume_solid;
-        if deficit <= 0.0 || state.budget_spent(config) {
+        if state.poll_control(config, false) || deficit <= 0.0 || state.budget_spent(config) {
             break;
         }
         let mut batch = plan_size_multiset(rng, source, classes, deficit, MAX_PLANNED_PARTICLES)?;
@@ -798,7 +825,7 @@ fn run_top_up(
         top_up.drawn += batch.draws.len();
         let before = state.placed.len();
         for draw in &batch.draws {
-            if state.budget_spent(config) {
+            if state.poll_control(config, false) || state.budget_spent(config) {
                 state.stopped_early = true;
                 break;
             }
@@ -829,7 +856,7 @@ struct StopDecision {
 }
 
 // AI-FUNC-SUMMARY:
-// Purpose: Decide which of the four stop reasons a finished run ended with.
+// Purpose: Decide why a run stopped; user interruption takes precedence over geometry/budget outcomes.
 // Inputs: the config, engine state, plan, target volume and elapsed time.
 // Returns: the reason and its detail.
 // Side effects: None.
@@ -838,8 +865,7 @@ struct StopDecision {
 // Unattainable outranks budget-exhausted, because exhausting the per-particle budget is *how* an
 // unattainable size is detected - without this order every distribution failure would report as a
 // budget failure, and the requirement that the run say why it stopped would never be met.
-// Nothing here can emit a fifth word: a run that placed everything it planned but lost volume to
-// the boundary is target_reached with the deficit named in the detail.
+// Interrupted runs save accepted geometry and explicitly report a partial, non-resumable result.
 fn decide_stop(
     config: &ResolvedPlacement,
     state: &EngineState,
@@ -852,6 +878,11 @@ fn decide_stop(
     detail.insert("placed".to_string(), state.placed.len().to_string());
     detail.insert("attempts".to_string(), state.attempts.to_string());
 
+    if state.control.interrupted {
+        detail.insert("message".into(), "User requested stop; accepted particles saved. This is a partial result, not a resumable checkpoint.".into());
+        detail.insert("failed_sizes".into(), state.shortfall_total.to_string());
+        return StopDecision { reason: StopReason::Interrupted, detail };
+    }
     if state.placed.is_empty() {
         let (top, count) = state
             .rejections
@@ -1401,7 +1432,7 @@ fn finish_report(
         (logs.iter().map(|l| (l - m) * (l - m)).sum::<f64>() / (n as f64 - 1.0)).sqrt()
     });
 
-    report.status = "finished".to_string();
+    report.status = if stop.reason == StopReason::Interrupted { "interrupted" } else { "finished" }.to_string();
     report.runtime = RuntimeRecord { threads, elapsed_s: elapsed };
     report.actual = ActualReport {
         particles: n,

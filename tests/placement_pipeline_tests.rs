@@ -854,3 +854,105 @@ placement:
     assert!(meshes.len() > 20, "only {} particles placed", meshes.len());
     assert_nothing_nested(&meshes, &boxes);
 }
+
+// AI-FUNC-SUMMARY: Verify an existing STOP request saves an empty partial record and never claims success; uses a temporary output directory.
+#[test]
+fn stop_before_placement_is_an_explicit_empty_partial_result() {
+    let dir = tempfile::tempdir().unwrap();
+    let c = case(dir.path(), &roomy(31, ""));
+    fs::create_dir(dir.path().join("out")).unwrap();
+    fs::write(dir.path().join("out/STOP"), "stop").unwrap();
+    let outcome = run_placement(&resolve(&c.config)).unwrap();
+    assert_eq!(outcome.stop_reason, StopReason::Interrupted);
+    assert_eq!(outcome.placed, 0);
+    let report = read_report(&dir.path().join("out/run_report.json")).unwrap();
+    assert_eq!(report.status, "interrupted");
+    assert_eq!(report.attempts.total, 0);
+    assert!(read_record(&dir.path().join("out/particles.json")).unwrap().particles.is_empty());
+}
+
+// AI-FUNC-SUMMARY: Run CLI to first accepted particle, request STOP/SIGINT/SIGTERM, then validate saved geometry and an identical uninterrupted-budget prefix; kills timed-out child on test failure.
+#[cfg(unix)]
+fn interrupt_cli_and_check_partial(signal: Option<i32>) {
+    use std::process::{Child, Command, Stdio};
+    use std::time::{Duration, Instant};
+    struct ChildGuard(Child);
+    impl Drop for ChildGuard {
+        fn drop(&mut self) { let _ = self.0.kill(); let _ = self.0.wait(); }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let config = roomy(731, "").replace("volume_fraction: 0.05", "volume_fraction: 0.85")
+        .replace("total_attempts: 200000", "total_attempts: 20000000");
+    let c = case(dir.path(), &config);
+    let mut child = ChildGuard(Command::new(env!("CARGO_BIN_EXE_rustmspt"))
+        .args(["pack", "--config"]).arg(&c.config).args(["--threads", "2"])
+        .stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap());
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        assert!(child.0.try_wait().unwrap().is_none(), "child exited before interrupt");
+        let progress = fs::read(dir.path().join("out/progress.json")).ok()
+            .and_then(|s| serde_json::from_slice::<serde_json::Value>(&s).ok());
+        if progress.is_some_and(|p| p["particles"].as_u64().unwrap_or(0) > 0) { break; }
+        assert!(Instant::now() < deadline, "no initial particle progress");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    if let Some(signal) = signal {
+        // SAFETY: signal a live child owned by this test, using its OS pid.
+        assert_eq!(unsafe { libc::kill(child.0.id() as libc::pid_t, signal) }, 0);
+    } else {
+        fs::write(dir.path().join("out/STOP"), "stop and save").unwrap();
+    }
+    loop {
+        if let Some(exit) = child.0.try_wait().unwrap() { assert!(exit.success()); break; }
+        assert!(Instant::now() < deadline, "interrupt failed to save/exit");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let out = dir.path().join("out");
+    let report = read_report(&out.join("run_report.json")).unwrap();
+    let record = read_record(&out.join("particles.json")).unwrap();
+    assert_eq!(report.status, "interrupted");
+    assert_eq!(report.stop_reason, Some(StopReason::Interrupted));
+    assert!(!record.particles.is_empty());
+    assert_eq!(record.particles.len(), report.actual.particles);
+    let stl = load_stl(&out.join("particles.stl")).unwrap();
+    let volume: f64 = record.particles.iter().map(|p| p.volume.in_domain).sum();
+    assert!((volume - report.actual.volume_in_domain).abs() < 1e-8);
+    assert!((mesh_volume(&stl) - volume).abs() / volume < 1e-5);
+    let progress: serde_json::Value = serde_json::from_slice(&fs::read(out.join("progress.json")).unwrap()).unwrap();
+    assert_eq!(progress["state"], "interrupted");
+    assert_eq!(progress["particles"].as_u64().unwrap() as usize, record.particles.len());
+    // Replay precisely the consumed budget without cancellation. All accepted transforms,
+    // counters and STL must equal the interrupted prefix, including speculative rewinds.
+    let baseline = config.replace("dir: \"out\"", "dir: \"baseline\"")
+        .replace("total_attempts: 20000000", &format!("total_attempts: {}", report.attempts.total));
+    fs::write(&c.config, baseline).unwrap();
+    let mut resolved = resolve(&c.config); resolved.threads = 1;
+    run_placement(&resolved).unwrap();
+    assert_eq!(fs::read(out.join("particles.stl")).unwrap(), fs::read(dir.path().join("baseline/particles.stl")).unwrap());
+    let replay = read_report(&dir.path().join("baseline/run_report.json")).unwrap();
+    assert_eq!(replay.attempts.total, report.attempts.total);
+    assert_eq!(replay.rejections, report.rejections);
+}
+
+#[cfg(unix)]
+#[test]
+fn stop_file_preserves_accepted_geometry() { interrupt_cli_and_check_partial(None); }
+#[cfg(unix)]
+#[test]
+fn sigint_preserves_accepted_geometry() { interrupt_cli_and_check_partial(Some(libc::SIGINT)); }
+#[cfg(unix)]
+#[test]
+fn sigterm_preserves_accepted_geometry() { interrupt_cli_and_check_partial(Some(libc::SIGTERM)); }
+
+// AI-FUNC-SUMMARY: Force a record-write failure during stop/save; verify no successful interrupted report is published.
+#[test]
+fn interrupted_save_failure_is_not_reported_as_saved() {
+    let dir = tempfile::tempdir().unwrap();
+    let c = case(dir.path(), &roomy(42, ""));
+    fs::create_dir_all(dir.path().join("out/particles.json")).unwrap();
+    fs::write(dir.path().join("out/STOP"), "stop").unwrap();
+    assert!(run_placement(&resolve(&c.config)).is_err());
+    let report = read_report(&dir.path().join("out/run_report.json")).unwrap();
+    assert_eq!(report.status, "running");
+    assert!(report.stop_reason.is_none());
+}
