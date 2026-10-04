@@ -69,5 +69,4 @@ geometry, template STL, template metadata and global flat particle output.
 | `shipped_configuration_templates_expose_supported_modes` | Shipped default/void/cluster/mixed YAML resolve with all supported controls. |
 | `stop_during_target_search_preserves_valid_best_template` | Stop mid-search saves best template, standard interrupted outputs and independent all-pair mesh gap verification. |
 
-All tests live in tests/placement_aggregate_tests.rs; its 13 tests and 108 other
-placement tests pass. Existing unrelated Clippy warnings are retained.
+These regression contracts are implemented in `tests/placement_aggregate_tests.rs`.

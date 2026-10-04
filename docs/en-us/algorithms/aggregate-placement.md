@@ -45,8 +45,9 @@ The initial bounding-ball stage is **conservative** for irregular shapes; real-m
 refinement relaxes that constraint while preserving actual mesh separation. This is
 a deterministic local packing method, not a certificate of the densest possible packing. Polydispersity, bounding-ball slack and
 finite cluster boundaries can leave significant matrix volume inside the proxy.
-Both initial and final true internal VF are reported. Do not assume it reaches
-40%, or equate proxy volume with particle volume. This is a modeling change that
+Both initial and final true internal VF are reported. Attainable density depends
+on particle geometry and packing constraints. Proxy volume and particle material
+volume have different meanings. This is a modeling change that
 introduces clustered spatial correlations, not a statistically identical speedup
 of ordinary RSA.
 
@@ -91,7 +92,7 @@ forbidden void crossing. Incompatible settings are refused, not silently ignored
   density before/after settlement. `aggregate_templates/template_NNNN.stl`
   contains the real constituent meshes, not a solid proxy.
 - `particles.json` and `particles.stl` remain flat real-particle outputs. Source
-  transforms reconstruct each particle directly. Proxy volume is never SiC volume.
+  transforms reconstruct each particle directly. Proxy volume is never particle material volume.
 - Existing SIGINT/SIGTERM/STOP cancellation also applies. Generation stops at a
   safe member boundary; already built templates remain available. Global placement
   commits a whole accepted cluster before honoring interruption. Standard output

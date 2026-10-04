@@ -41,8 +41,8 @@ still in `run_report.json`. A target can be missed through proxy congestion or
 whole-template volume granularity. The standard STOP file or Unix Ctrl-C saves
 accepted clusters as real particle outputs.
 
-These settings illustrate the API; they do not assert a validated 40% RVE or an
-empirical physical aggregation model. Read [the algorithm](../algorithms/aggregate-placement.md)
+These settings illustrate the configuration interface. Attainable density depends
+on the input geometry and separation constraints. Read [the algorithm](../algorithms/aggregate-placement.md)
 for conservatism and supported modes.
 
 Internal target 0.50 is a search request, not a guaranteed result. The global VF
@@ -54,7 +54,4 @@ template's target_reached and compaction_search, and aggregates.json stages.
 Repository templates are shipped in data/input/placement_config.yaml (disabled),
 placement_void_config.yaml (disabled), placement_aggregate_config.yaml (clusters)
 and placement_mixed_config.yaml (mixed). All expose the new controls explicitly.
-Tests resolve each template without launching a production run. Real-shape A
-comparison reached internal VF 12.91–28.16% for four 16-member templates,
-19.44% for one 32-member template and 18.89% for one 64-member template.
-Each requested 50% and explicitly reported a bounded-search shortfall.
+The configuration-template regression resolves each shipped template.

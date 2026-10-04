@@ -1156,31 +1156,28 @@ A `Volume3D { ... }` literal whose `data` does not fix the element type (e.g. `v
 
 `PLAN.Performance.md` was completed and removed. References of the form `PLAN.Performance.md@1349c46 §NN` point to its last version: `git show 1349c46:PLAN.Performance.md`, which holds every measurement behind the thresholds and constants cited in code and docs. Still open, none doable without hardware or a new dependency: GPU kernel timestamp queries; the PERF-08/09 GPU performance acceptance; GPU direct shell counting vs CPU FFT at large radii; release benchmarks on a real integrated and a discrete GPU (`hardware_gpu_acceptance` is ready, `--ignored`); an optional real-valued or GPU FFT experiment. Owner decisions (2026-09-25), all "keep as is": measure exact has no wall-time cap (the 768 MiB budget and the planner's modeled time are the guard); the CPU mesh-render render/write overlap stays (no measured gain, identical output); mesh-render keeps `gpu_min_pixels: 0` so `auto` does not change which image small renders produce; the GPU PNG writer keeps its scoped thread rather than Rayon until equal blocking/fallback order is proven.
 
+### Placement cancellation and aggregate maintenance
 
-
-Placement cooperative stop (2026-10-04): `placement:` CLI catches Unix SIGINT/SIGTERM, or polls outputs.dir/STOP. Keep signal handlers atomic-only. Stop at batch boundaries and write accepted geometry before reporting status/stop_reason interrupted. Repeated signals must not abort saving. Progress JSON is separate from final report. No resumable checkpoint; legacy packing unchanged. CLI interruption integration tests verify STL identity with an uninterrupted prefix at the exact consumed budget.
-
-
-Aggregate Pack (2026-10-04): optional placement.aggregates is disabled by default.
-Read docs/en-us/algorithms/aggregate-placement.md and reference/pipeline-aggregates.md.
-Template construction is deterministic FCC plus swept-contact bounding-ball
-settlement, never random rejection. Individual PSD sizes must not be rescaled
-when repeating templates. Global proxies are conservative; material VF must sum
-real members only. Reject unsupported boundary/void modes. Preserve flat particle
-records, cluster membership, and stop/save at whole-cluster commit boundaries.
-
-Aggregate mesh refinement uses deterministic coordinate descent after FCC/contact initialization; validate solid intersections, containment and gap for every accepted trial. Final proxies enclose actual vertices. Keep mesh_refinement_sweeps configurable; this is static packing, not simulated particle motion.
-
-Aggregate target compaction/mixed Pack (2026-10-04): aggregates remain disabled by
-default; mode clusters or explicit mixed with decreasing fallback member counts.
-variants accepts a positive count or auto; resolve deterministic 4..32 catalog
-count from source shells/primary size. Preserve real member PSD sizes. Internal
-VF target has a separate denominator from global target; never promise attainment.
-Target search is finite, deterministic, rotation/lateral/pair/shrinking objective;
-restore and validate best feasible geometry even on stop. Propagate local rotations
-into envelope, collisions, metadata, template STL and global*local records. Reserve
-proposal budget for mixed fallback stages; record fallback draws and original
-shortfalls explicitly. Config examples live in workspace rve/configs/. Format only
-changed source files with rustfmt, as cargo fmt reformats unrelated legacy sources.
-
-Aggregate target/mixed validation: 121 placement tests pass (13 aggregate). Actual A sphere templates improve to 12.91–28.16% (16 members), 19.44% (32), 18.89% (64), but miss requested internal 50%; never describe these as a 40% production RVE.
+- Keep application experiments, external dataset paths, measured results, execution
+  logs and delivery records in the owning application workspace. Repository docs
+  describe reusable behavior, configuration and maintenance contracts. Keep the
+  mesh-generation development plan in `PLAN_mesh_generation.md`.
+- Placement cancellation uses atomic-only Unix signal handlers or `outputs.dir/STOP`.
+  Finish an accepted batch or whole cluster, save geometry, then report interruption.
+  Repeated signals must not abort saving. Progress and final reports are separate;
+  cancellation does not provide resumable checkpoints. Legacy packing is unchanged.
+- Aggregates are disabled by default. Keep primary-only and explicit mixed modes,
+  positive/auto variant counts and decreasing fallback member counts configurable.
+  Template construction and target compaction remain deterministic. Preserve member
+  sizes, real-mesh separation, flat transforms and whole-cluster commit boundaries.
+- Internal template VF and global placement VF have separate denominators. Count
+  real material only. Restore and validate the best feasible geometry after bounded
+  target search or cancellation. Apply local rotations consistently to proxy bounds,
+  collision geometry, exports and global*local particle reconstruction.
+- Reserve proposal budget for mixed fallback stages and report fallback draws and
+  original shortfalls. Refuse unsupported boundary/void modes. Read
+  `docs/en-us/algorithms/aggregate-placement.md` and
+  `docs/en-us/reference/pipeline-aggregates.md` before changes. Shipped templates
+  live in `data/input/placement*_config.yaml`; update them when config types change.
+- Format changed Rust files only; repository-wide formatting rewrites unrelated
+  legacy sources. Run the relevant placement tests for behavioral changes.
