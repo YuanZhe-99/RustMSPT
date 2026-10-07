@@ -1126,7 +1126,7 @@ See [control contracts](pipeline-placement.md#control-function-contracts).
 - `PlacementControl::publish` — cooperative interruption/progress; source `src/pipeline/placement_control.rs` (EngineState adapter in `placement.rs`).
 - `EngineState::poll_control` — cooperative interruption/progress; source `src/pipeline/placement_control.rs` (EngineState adapter in `placement.rs`).
 
-`run_placement`, `decide_stop`, `finish_report`, `place_all`, `try_place_one`, and `run_top_up` now preserve accepted outputs on interruption, as documented in pipeline-placement.md.
+`run_placement`, `decide_stop`, `finish_report`, `place_resumable`, and `try_place_one` preserve accepted outputs on interruption, as documented in pipeline-placement.md.
 
 
 ### Aggregate placement
@@ -1153,3 +1153,50 @@ New aggregate tests in `tests/placement_aggregate_tests.rs`:
 `shipped_configuration_templates_expose_supported_modes`,
 `stop_during_target_search_preserves_valid_best_template`.
 Contracts: [pipeline-aggregates.md](pipeline-aggregates.md#additional-regression-contracts).
+
+## Placement resumability and bounded geometry
+
+See [pipeline-placement-state.md](pipeline-placement-state.md) for the complete index of `Store`, `Snapshot`, `IndividualCursor`, `AggregateCursor`, `GeometryCache`, `GeometryHandle`, `place_resumable`, `write_particles_stl` and `particle_at_tile`.
+
+
+| `placement_initial::load` | `src/pipeline/placement_initial.rs` | Validate and retain an inherited assembly for real-geometry filling. |
+| `exact_fallback_check` | `src/pipeline/placement_aggregates.rs` | Refine mixed fallback proposals against real particle geometry. |
+
+## Optional free-space placement
+
+`FreeSpaceSpec`, `free_space::Index::{new, score, propose, feedback, inserted, begin_draw, rebuild, summary}` and `checkpoint::import_remaining_plan` are indexed in [pipeline-placement-state.md](pipeline-placement-state.md#free-space-guidance-contracts).
+
+## Contact-growth construction
+
+| Item | Source | Contract |
+|---|---|---|
+| `Growth` | `src/pipeline/placement_aggregate_contact.rs` | Serializable pending plan, committed/best members and insertion/relaxation cursors; the posed-body cache is not serialized and is rebuilt on resume. |
+| `Body` / `Bodies` | `src/pipeline/placement_aggregate_bodies.rs` | Per-member query mesh/hierarchy in its own scaled frame plus convex-hull vertices, principal axes and volume, keyed by shell and exact scale; built once, never per pose. |
+| `Bodies::ensure` / `pose` | `src/pipeline/placement_aggregate_bodies.rs` | Build missing bodies; pose a member as an isometry without copying or transforming geometry. |
+| `Bodies::envelope` | `src/pipeline/placement_aggregate_bodies.rs` | Sphere/cube envelope from hull vertices; equal to the all-vertex envelope (both norms are convex). |
+| `principal_axes` | `src/pipeline/placement_aggregate_bodies.rs` | Vertex-covariance eigenvectors, longest extent first. |
+| `distance_capped` | `src/pipeline/placement_aggregate_bodies.rs` | min(exact triangle-pair surface distance, cap) by simultaneous branch-and-bound hierarchy traversal through the relative isometry; bounding-ball rejection first. Nesting is not tested (motions start separated and move conservatively). |
+| `clearance_capped` | `src/pipeline/placement_aggregate_bodies.rs` | Smallest capped distance to a set of posed obstacles, tightening the cap as it goes. |
+| `directions` | `src/pipeline/placement_aggregate_contact.rs` | Return deterministic spherical directions without RNG or thread dependence. |
+| `orientation` | `src/pipeline/placement_aggregate_contact.rs` | Start orientation per approach: legacy fixed rotations, or (`contact_orientation: principal`) minor/major principal axis along the approach with deterministic spins. |
+| `advance` | `src/pipeline/placement_aggregate_contact.rs` | Conservative advancement of a translation/rotation: each step moves less than the current exact clearance surplus, one capped distance query per step (cap <= half the bounding radius keeps pruning tight); returns last feasible pose on contact, step limit or cancellation. |
+| `settle` | `src/pipeline/placement_aggregate_contact.rs` | Optional roll toward the centre (lift, tangential slide, fall); accepts only strictly closer feasible poses. |
+| `insertion_search` | `src/pipeline/placement_aggregate_contact.rs` | Straight approaches over directions x orientations evaluated in parallel, stable ranking, optional settling of the best `contact_settle_candidates`; always returns a feasible pose. |
+| `parallel` | `src/pipeline/placement_aggregate_contact.rs` | Run independent motion jobs on the Rayon pool with cancellation-only worker controls; results keep job order, so output is thread-count independent. |
+| `centre_envelope` | `src/pipeline/placement_aggregate_contact.rs` | Bounding-box centring then deterministic pattern search over hull vertices; rigidly translate all members only when the envelope shrinks. |
+| `score` | `src/pipeline/placement_aggregate_contact.rs` | Whole-template envelope and squared-centre secondary cost, no mutation. |
+| `better` | `src/pipeline/placement_aggregate_contact.rs` | Lexicographic acceptance of envelope then centre cost. |
+| `Growth::new` | `src/pipeline/placement_aggregate_contact.rs` | Fix quantile sizes/source assignments and initialize serializable construction state. |
+| `Growth::step` | `src/pipeline/placement_aggregate_contact.rs` | Commit one insertion or relaxation transaction (the six relaxation transactions of a member run in parallel from the same arrangement); reserve future insertion budget; rollback unfinished unit on stop; accumulates profiling counters. |
+| `Growth::target_reached` | `src/pipeline/placement_aggregate_contact.rs` | Compare best-member material volume to the real enclosing proxy volume. |
+| `Growth::snapshot` | `src/pipeline/placement_aggregate_contact.rs` | Independently validate every pair with the world-frame exact predicates and export committed members with honest target/stop status. |
+| `run_growth_batch` | `src/pipeline/placement_aggregates.rs` | Advance up to `threads` consecutive contact-growth templates of one stage concurrently; heartbeat thread keeps progress fresh; stop latches into the run control. |
+| `commit_template` | `src/pipeline/placement_aggregates.rs` | Append a completed template, export it and advance the variant/stage cursor. |
+| `contact::tests::setup` | `src/pipeline/placement_aggregate_contact.rs` | Build a closed-mesh motion/serialization fixture. |
+| `contact_advance_stops_before_obstacle_even_when_endpoint_is_clear` | `src/pipeline/placement_aggregate_contact.rs` | Pin first-contact stopping, surface gap and separating-motion escape. |
+| `posed_distance_matches_world_frame_distance` | `src/pipeline/placement_aggregate_contact.rs` | Posed capped distance equals the world-frame exact distance for rotated/scaled members, respects the cap; hull envelope equals all-vertex envelope. |
+| `contact_growth_serialized_member_boundary_resumes_exactly` | `src/pipeline/placement_aggregate_contact.rs` | Require identical final transforms/counters (wall time excluded) after serialized intermediate state. |
+| `contact_growth_geometry_density_and_determinism` | `tests/placement_aggregate_tests.rs` | Check exported clearances/transforms, density improvement and thread determinism. |
+| `contact_growth_controls_and_exhaustion` | `tests/placement_aggregate_tests.rs` | Reject invalid controls and preserve all members at zero search budget. |
+
+Additional regressions: `contact_rotation_cannot_tunnel_with_clear_endpoints` checks swept bar rotation, and `contact_growth_cli_stop_resume_matches_uninterrupted` checks saved in-template state plus binary-identical resumed geometry.

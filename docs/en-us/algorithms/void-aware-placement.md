@@ -215,11 +215,11 @@ refuses it by name.
 
 ### 6.2 Cost
 
-A box prefilter bounds everything. If no void triangle comes within `g_pv` of the particle's bounding
-box, the particle is both farther than `g_pv` from every void triangle **and** not nested inside a
-shell — because a nested particle's box necessarily intersects that shell's own hierarchy leaves.
-One `Qbvh::intersect_aabb` call therefore skips all three tests for the overwhelming majority of
-proposals.
+A box prefilter bounds **surface work only**. A particle entirely inside a large
+pore can have no pore triangle near its box. Therefore test the centroid and one
+actual particle vertex for void parity unconditionally before `near_box`. The
+vertex covers nonconvex shapes whose volume centroid need not lie in their solid.
+Only surface intersection/gap and reverse containment use the surface prefilter.
 
 ### 6.3 Inside-the-void is ray parity
 
@@ -379,8 +379,8 @@ Label generation now uses 1024-voxel tiles, sorted spatial candidates and cached
 For `pack` with a `placement:` config, create `<outputs.dir>/STOP` to request a
 portable cooperative stop. On Unix the CLI also handles SIGINT (Ctrl-C) and
 SIGTERM. Handlers only set an atomic flag; geometry and file I/O stay outside the
-handler. Repeated requests continue to allow saving. SIGKILL, crashes, and loss
-of power cannot save in-memory geometry.
+handler. Repeated requests continue to allow saving. SIGKILL, crashes and loss of power do not trigger final saving; recovery uses
+the last successfully committed checkpoint when enabled.
 
 The engine observes cancellation between proposal batches (and particles/top-up
 batches), finishes already running geometric queries, and uses the normal output
@@ -409,8 +409,9 @@ errors warn without discarding the packing result. STOP-file polling is throttle
 to 250 ms at boundaries; signal polling occurs at every boundary. Remove STOP
 before a new run. Use a new output directory to preserve an older result.
 
-This feature saves a usable partial assembly, **not a resumable RNG/engine
-checkpoint**. It does not change the legacy `packing:` engine. CLI signal handlers
+Interruption saves a usable partial assembly. With default-enabled checkpoints,
+it also saves RNG/engine state before geometry export; see
+[checkpoint and geometry caching](placement-checkpoints-and-memory.md). It does not change the legacy `packing:` engine. CLI signal handlers
 are restored on return; in-process callers use the per-output STOP file and do not
 install process-global handlers. Normal packing order, RNG stream and geometry
 checks are unchanged.

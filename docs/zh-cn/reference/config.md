@@ -1,7 +1,5 @@
 # 配置参考（`src/config/`）
 
-> **待翻译：** `RenderConfig`/`RenderParams`、`gpu_min_pixels` 及 render 默认值的详细契约见[英文配置参考](../../en-us/reference/config.md#renderrs)。
-
 本模块定义了每个 RustMSPT 流水线所使用的、可从 YAML 反序列化的配置结构体。每个流水线（forging、scaling、measurement、optimization、packing、crop、split/filter）都拥有自己的顶层 `*Config` 结构体，该结构体组合了一个 `input`、一个 `output`，以及一个承载流水线专属参数的 `*Params` 结构体。所有结构体都派生了 `serde::Deserialize`，并通过 `load_yaml` 从 YAML 加载（参见[函数](#函数)）。少数字段使用了 `deserialize.rs` 中定义的自定义 `deserialize_with` 辅助函数，以便整数字段能同时接受数值和字符串两种 YAML 表示形式（例如 `"1_000_000"` 或 `1000000`）。
 
 以下按源文件对结构体定义进行分组，顺序与任务分配中列出的一致。字段表中标注了 Rust 类型、（当与字段名不同时的）YAML 键（通过 `r#type`/`r#box` 原始标识符或 `#[serde(rename)]`）、`#[serde(default = ...)]` 生效时的默认值，以及基于该字段在代码库其他地方如何被使用而给出的简短含义描述。
@@ -50,6 +48,7 @@
 | `backend` | `String` | `backend` | `"wgpu"` | 要使用的 GPU 后端名称。 |
 | `cpu_fallback` | `bool` | `cpu_fallback` | `true` | 当 GPU 加速不可用或失败时，是否回退到 CPU 执行。 |
 | `gpu_min_voxels` | `usize` | `gpu_min_voxels` | `250_000` | 低于该体素网格规模时，GPU 加速的开销不值得（由 `auto` 模式启发式使用）。 |
+| `gpu_min_pixels` | `usize` | `gpu_min_pixels` | `250_000` | 低于该渲染像素数时，`auto` 使用 CPU。 |
 | `gpu_memory_limit_mb` | `Option<u64>` | `gpu_memory_limit_mb` | `None` | 对 GPU 内存使用的可选上限，单位为兆字节。 |
 | `gpu_prefer_power` | `bool` | `gpu_prefer_power` | `false` | 在设备选择时，是否优先选择高性能（独立）GPU 适配器而非低功耗/集成适配器。 |
 | `gpu_precision` | `String` | `gpu_precision` | `"f32"` | GPU 计算着色器所请求的浮点精度。 |
@@ -65,6 +64,9 @@
 #### default_gpu_min_voxels
 `fn default_gpu_min_voxels() -> usize` — `src/config/acceleration.rs:31`。`gpu_min_voxels` 的 serde 默认值函数：返回 `250_000`。无副作用。
 
+#### default_gpu_min_pixels
+`fn default_gpu_min_pixels() -> usize` — `gpu_min_pixels` 的 serde 默认值函数：返回 `250_000`。无副作用。
+
 #### default_gpu_precision
 `fn default_gpu_precision() -> String` — `src/config/acceleration.rs:40`。`gpu_precision` 的 serde 默认值函数：返回 `"f32"`。无副作用。
 
@@ -74,6 +76,14 @@
 - **用途：** Rust 层面（非 serde）的默认实现，与上述 `#[serde(default = ...)]` 辅助函数的值一致，使得 `AccelerationConfig::default()` 可以在反序列化之外使用（例如测试中手动构造配置结构体时）。
 - **返回值：** `AccelerationConfig`，其中 `mode: Auto`、`backend: "wgpu"`、`cpu_fallback: true`、`gpu_min_voxels: 250_000`、`gpu_memory_limit_mb: None`、`gpu_prefer_power: false`、`gpu_precision: "f32"`。
 - **副作用：** 无。
+
+## `render.rs`
+
+### RenderConfig / RenderParams
+
+`RenderConfig { render: RenderParams }` 是顶层的 `render` YAML 对象。`RenderParams` 要求提供 `stl_path`、`focus_point` 与 `view_direction`；`output_path` 默认为 `data/output/rendered.png`。可选/带默认值的字段为 `up_vector`、`projection = "orthographic"`、`perspective_fov_degrees = 45`、`camera_distance`、`fit_padding = 0.05`、`width = height = 1024`、`cpu_max` 以及共享的 `acceleration`。
+
+私有默认值函数 `default_output_path`、`default_projection`、`default_fov_degrees`、`default_fit_padding` 与 `default_resolution` 返回上述取值，无副作用。
 
 ## `crop.rs`
 
@@ -326,10 +336,10 @@ map 缓冲，`deny_unknown_fields` 在该路径上不会触发——`{kind: logn
 | `size.distribution.{median,sigma_log,min,max}` | `f64` | `lognormal` 时 | — | 直径上的截断对数正态分布。 |
 | `size.distribution.csv` | `String` | `histogram` 时 | — | `bin,right,frequency` 格式的 CSV，与旧引擎读取的格式相同。 |
 | `size.classes` | 结构体 | 否 | 对数正态为 10 个等宽区间；直方图用其自身的 bin | 目标与实际对照所用的统计分组。 |
-| `size.on_unattainable` | `skip_reported` \| `stop` | 否 | `skip_reported` | 抽到的尺寸无法放置时如何处理。两种情形运行都以 `distribution_unattainable` 结束；都不会补抽替代。 |
+| `size.on_unattainable` | `skip_reported` \| `stop` | 否 | `skip_reported` | 抽到的尺寸无法放置时如何处理。两者都不会补抽替代；未完成的全局预算停止优先于更早失败的尺寸。 |
 | `size.placement_order` | `descending` \| `drawn` | 否 | `descending` | 大颗粒才是先放不下的那批，因此先放它们。 |
 | `orientation.mode` | `uniform_so3` \| `fixed` | 否 | `uniform_so3` | Shoemake 均匀单位四元数，在 SO(3) 上服从 Haar 分布。 |
-| `position.mode` | `feasible_uniform` \| `void_neighbourhood` | 否 | `feasible_uniform` | 后者是刻意构造，绝不作为"随机"上报。 |
+| `position.mode` | `feasible_uniform` \| `void_neighbourhood` \| `free_space_guided` | 否 | `feasible_uniform` | 引导模式与孔隙邻域模式都是显式构造。 |
 | `position.band` | `[f64; 2]` | `void_neighbourhood` 时 | — | 距孔面的距离带。 |
 | `boundary.mode` | `strict` \| `clip` \| `periodic` | 否 | `strict` | 颗粒是否可以跨越域边界。 |
 | `boundary.min_boundary_dist` | `f64` | 否 | `0.0` | 与域壁的间隙。 |
@@ -499,10 +509,124 @@ CPU 和小任务 auto 不探测设备；小任务 auto 在禁止回退时仍可�
 容量与初始化行为见 [pipeline-optimize.md](pipeline-optimize.md)。全部岛共享 `cpu_max` worker 预算，多余岛排队。
 
 
-Split-filter also accepts top-level `cpu_max: <integer>` (including flexible string integers); absent or -1 uses available cores, other values clamp to 1..available. This bounds its complete execution pool.
+Split-filter 还接受顶层 `cpu_max: <integer>`（包括灵活的字符串整数）；缺省或 -1 使用全部可用核心，其他值夹取到 1..available。它限定其完整执行池的规模。
 
 ### 独立 mesh-render 执行预算
 
-MeshRenderConfig 新增与 mesh_render 同级的可选 cpu_max，使用灵活有符号整数解析。缺省/-1 为可用 CPU，其余夹取 1..available；整次运行及 CPU 回退共享一个线程池。环境覆盖规则见 mesh-render-and-vtu.md。
+`MeshRenderConfig` 接受与 `mesh_render` 同级的可选顶层 `cpu_max`，使用灵活的有符号整数反序列化。限制与执行范围见 [mesh-render-and-vtu.md](mesh-render-and-vtu.md#cpu-worker-budget)。
 
-独立 mesh_render 还接受可选 gpu_memory_limit_mb、gpu_min_pixels（缺省 0），策略见 mesh-render-and-vtu.md。
+独立的 `mesh_render` 还接受可选的 `gpu_memory_limit_mb` 与 `gpu_min_pixels`（默认 0），详见 mesh-render-and-vtu.md。
+
+
+## Aggregate configuration
+
+可选的 `placement.aggregates`（未知字段会被拒绝）：
+
+| 字段 | 默认值 | 启用时的含义 / 可接受范围 |
+|---|---|---|
+| enabled | false | 选择启用模板生成与团簇代理放置。 |
+| construction | fcc | `fcc` 或 `contact_growth`；随附的 cluster/mixed 示例选用接触生长。 |
+| contact_directions | 12 | 确定性的插入方向数，4..256。 |
+| contact_orientations | 4 | 每个方向的外部朝向数，1..64；rotation_search=false 时使用 1 个。 |
+| contact_tolerance | 0.00001 | 相对于移动成员的半径，有限值 1e-9..1e-2。 |
+| contact_max_steps | 96 | 每次刚体运动的安全推进步数，8..1024。 |
+| contact_orientation | fixed | `fixed`（原有旋转）或 `principal`（沿接近方向取次/主轴，平面与装配体相接）。 |
+| contact_settle_steps | 0 | 对最佳直线接近施加的向中心滚动步数，0..64；0 表示禁用。 |
+| contact_settle_candidates | 3 | 进行沉降的最佳直线接近数量，1..64。 |
+| neighborhood_sweeps | 2 | 每次插入之后的接触生长松弛，0..128。 |
+| variants | 8 | 模板种类数，整数 1..128 或 `auto`；auto 按阶段估计 ceil(源壳数/主要成员数)，并夹取到 4..32。与实例数量无关。 |
+| particles_per_cluster | 64 | 成员数量，1..1024；variants*members <= 65536。 |
+| shape | sphere | sphere 或 cube；cube 在全局上使用旋转后立方体的世界坐标系外接 AABB。 |
+| internal_gap | 0.1 | 有限的非负成员间隙，以坐标系单位计。 |
+| compaction_sweeps | 32 | 确定性的包围球接触扫描次数，0..1024。 |
+| mesh_refinement_sweeps | 8 | 真实网格的坐标下降扫描次数，0..128；0 表示禁用该细化。 |
+
+
+| target_internal_volume_fraction | null | 可选的真实材料/容器目标，范围 (0,1]；null 仅保留原有细化。 |
+| strategy_rounds | 8 | 目标搜索轮数，0..128；交替正向/反向顺序，并缩小角度/平移步长。 |
+| max_compaction_trials | 6000 | 每个模板的候选预算，0..1000000；接触生长在插入与松弛之间共享该预算；与全局放置预算相互独立。 |
+| rotation_search | true | 尝试绕三个轴的带符号旋转，也与向内位移耦合。 |
+| lateral_rearrangement | true | 尝试绕三个轴的带符号侧向步进，也与向内位移耦合。 |
+| pair_rearrangement | true | 将每个成员与其最近邻一同向原点移动。 |
+| container_shrink_fraction | 0.03 | 范围 (0,0.5) 内的有限比例，用于收缩首选容器及向内步进。 |
+| rotation_step_degrees | 15 | 范围 (0,180] 内的有限起始角度步长。 |
+| mode | clusters | clusters：仅使用完整的主要块；mixed：先放主要块，若全局目标未达成，再放较小的回退块。 |
+| fallback_particles_per_cluster | [16,4,1] | 仅用于 mixed 的序列，1..8 个严格递减且低于主要成员数的正整数。计数为 1 表示单颗粒块。 |
+
+目录成员上限包含所有 mixed 阶段。全局目标 VF 仍为
+`placement.target.volume_fraction`；内部目标 VF 使用不同的分母。
+未达成的内部目标会被明确报告，并使用最佳的有效模板。
+
+要求严格边界、feasible_uniform 位置模式，以及禁止穿越孔隙。
+`PlacementParams::validate` 会在堆积前拒绝不受支持的组合。
+禁用的设置不会改变常规路径。参见
+[聚集体算法](../algorithms/aggregate-placement.md)与
+[配置示例](../examples/pack-aggregates.md)。
+
+## Placement checkpoint and geometry memory settings
+
+两者均为可选的 `placement:` 块，严格拒绝未知字段。
+
+| 键 | 默认值 | 契约 |
+|---|---|---|
+| `checkpoint.enabled` | `true` | 保存周期性、被中断及已完成的状态；禁用后拒绝恢复。 |
+| `checkpoint.interval_seconds` | `60` | 在安全点上的时间触发；0 表示禁用。 |
+| `checkpoint.every_particles` | `1000` | 按已接受的真实颗粒数触发；0 表示禁用。 |
+| `checkpoint.resume_from` | `null` | 显式的检查点路径，相对于 YAML 解析；不会自动重启。 |
+| `checkpoint.extend` | `false` | 已完成的快照加更高的目标会新增一个计划，同时保留此前的颗粒。 |
+| `memory.geometry_cache_mb` | `256` | 估算的保留网格/BVH 字节数，以 MiB 计；0 表示禁用保留。 |
+| `memory.simplified_collision` | `false` | 在精确几何之前启用保守的有向源包围盒三角形筛选。 |
+
+即使两个周期触发器都设为零，仍会保存最终检查点。线程数、
+输出目标以及内存/检查点控制在恢复时可以更改。
+物理参数/输入字节与可执行文件必须一致。总尝试预算
+可以增加，不可减少。更改目标需要显式 extend，且不能
+低于先前的目标。模板数量/形状/内部间隙仍属于物理输入。
+`CheckpointSpec::default` 与 `PlacementMemorySpec::default` 实现这些默认值。
+
+
+### Exact gap filling configuration
+
+`placement.aggregates.exact_fallback` 为布尔值，默认 false。在 mixed 模式下，
+主要阶段之后的各阶段使用精确的成员几何，而不是拒绝
+聚集体代理重叠。随附的 mixed 模板启用了该选项。
+
+`placement.initial_particles` 默认为 null。其字段为 `record`（路径）、
+`report`（路径）和 `existing_gap`（有限的非负距离）。路径相对于
+YAML 目录解析。这是一个新的、经过校验的个体填充任务，
+并保留已有的来源/坐标系/孔隙标识及所有继承的变换。
+该间隙仅在检查继承的颗粒群时适用；新进入的候选
+使用常规的 `gaps.particle_particle`。需要分开的输出与检查点。
+初始文件会参与检查点兼容性哈希。
+
+### Free-space guidance and original-plan transfer
+
+`position.mode: free_space_guided` 启用可选的个体空腔搜索。
+`position.free_space` 接受下列字段；在其他
+位置模式下显式给出该块会被拒绝。所有距离均以域坐标计。
+
+| 字段 | 默认值 | 校验 / 含义 |
+|---|---:|---|
+| `coarse_cell_size` | 8 | 有限正数；初始格点必须满足两个上限。 |
+| `min_cell_size` | 1 | 有限正数，不大于粗单元尺寸。 |
+| `max_cells` | 250000 | 正的单元数上限，包含未激活的父单元。 |
+| `index_memory_mb` | 128 | 正的估算索引上限，每个单元 512 字节。 |
+| `candidates_per_location` | 8 | 正数；失败时尽可能触发局部细分。 |
+| `exploration_fraction` | 0.10 | [0,1] 内的有限概率。 |
+| `local_refinement` | true | 允许有界的八子单元细分。 |
+
+要求启用检查点、严格边界、禁止穿越孔隙且聚集体
+被禁用。真实几何仍是接受与否的最终依据。
+
+`initial_particles.pending_checkpoint` 默认为 null。提供时，转移
+原计划中待处理的尺寸尾部，而不是抽取亏缺的颗粒群。
+`initial_particles.retry_failed` 默认为 true；在待处理尾部之后追加
+已对账的原失败尺寸。转移支持 schema 1/2 的个体
+主要计划，要求目标相同且无扩展/补抽。它会校验校验和、
+原报告/记录以及来源标识。即使
+`size.placement_order` 为 descending，导入顺序也被保留。初始装配体导入支持
+`feasible_uniform` 或 `free_space_guided`。精确恢复仍是
+独立的操作，并需做同一可执行文件检查。参见
+[自由空间设计](../algorithms/free-space-guided-placement.md)。
+
+对于接触生长，strategy_rounds 会增加最终的、由目标驱动的松弛扫描；pair_rearrangement 将成员/邻居的顺序运动作为一个联合事务进行测试。compaction_sweeps、mesh_refinement_sweeps 与 container_shrink_fraction 仅适用于 FCC。参见[接触生长](../algorithms/aggregate-placement.md#contact-growth-construction-contact_growth)。

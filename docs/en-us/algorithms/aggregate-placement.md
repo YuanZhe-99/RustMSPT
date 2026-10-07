@@ -149,3 +149,107 @@ included in plan and size-class counts. Mixed replacement can change the realize
 PSD; it is explicit opt-in behavior. Final global target status is separate from
 internal template target status. Compose world rotation as global * local so all
 flat particle transforms and exported template transforms reconstruct exactly.
+
+Recovery and geometry residency are described in [placement checkpoints and bounded geometry](placement-checkpoints-and-memory.md). Completed templates are reused; only the interrupted current template is deterministically rebuilt. Global cluster attempts and mixed stages resume from their saved cursors.
+
+
+## Exact fallback into remaining material space
+
+Set `aggregates.exact_fallback: true` with mixed mode to refine smaller-stage
+proposals against actual member meshes. The primary stage still uses conservative
+proxies. Subsequent stages query the individual-particle spatial grid and reuse
+the ordinary boundary, pore containment, surface intersection, both containment
+directions, and exact surface-gap checks. A proxy overlap is not a rejection.
+Empty matrix space inside a larger aggregate proxy is available for insertion.
+The incoming member keeps `gaps.particle_particle` against every existing real
+particle; only pairs belonging to the same newly built template use internal_gap.
+The default is false; the mixed example enables it. Member material volume remains
+the only contribution to VF. Report sampler `aggregate_fallback_collision` states
+`exact_members` or `proxies`. Recovery remains tied to the same executable and
+physical config. To retain a population from an older executable, use the
+explicit validated initial-assembly import described in the checkpoint document.
+
+## Contact growth (`construction: contact_growth`)
+
+The default constructor remains `fcc` for compatibility; the shipped aggregate
+and mixed examples explicitly select `contact_growth`. Ordinary Pack remains
+disabled for aggregates unless `enabled: true`.
+
+Contact growth fixes stratified diameter quantiles and source-shape assignments,
+then inserts members in descending bounding-radius order. It enumerates fixed
+spherical directions and deterministic orientations at a provably separated
+exterior location, approaching the centre or an existing member. No random
+positions, particle deletion, rescaling or overlap relaxation are used. Candidate
+ranking first minimizes the actual vertex envelope, then squared centre radii.
+
+Each motion uses conservative advancement: the surface-distance surplus over the
+internal gap bounds safe progress. The displacement bound for a combined rigid
+motion is `|translation| + bounding_radius * |rotation_angle|`, and every step moves
+less than the current surplus, so a swept path cannot cross or tunnel through an
+obstacle whose far-side endpoint would otherwise look feasible. `contact_tolerance`
+is relative to the moving member's bounding radius; an extra numerical guard keeps
+the accepted gap on the separated side. Near-contact tolerance stops approach but
+still permits separating motion. Reaching `contact_max_steps` keeps the last feasible
+pose, not a claim of exact contact or saturation.
+
+### Geometry kernel and cost
+
+Each member's query mesh and bounding hierarchy are built once, in the member's own
+scaled frame, and queried through its rigid pose (an isometry); a move never copies,
+transforms or re-indexes geometry. One step costs one distance query per nearby
+obstacle: a bounding-ball test rejects far pairs, then a simultaneous traversal of
+both hierarchies computes the exact minimum over triangle pairs by branch and bound.
+The query is capped at what the step can use (at most half the moving bounding
+radius), so far node pairs are pruned early; long motions take a few more, cheaper
+steps. The next pose's distance is the next step's bound, so no pose is measured
+twice. Nesting needs no test during motion: every motion starts from a separated
+pose and moves less than the clearance. Envelopes use each body's convex-hull
+vertices, which give exactly the all-vertex envelope.
+
+Independent work runs on the Rayon pool: the direction x orientation approaches of
+one insertion, and the six transactions that relax one member, all start from the
+same arrangement and are ranked in a fixed order, so results do not depend on the
+thread count. Consecutive templates of one stage are generated concurrently (up to
+the thread count) by `run_growth_batch`.
+
+The final template is certified independently with the world-frame exact predicates
+(intersection, nesting and gap) before export.
+
+### Optional search controls
+
+`contact_orientation: principal` replaces the fixed start rotations by orientations
+that lay a member's minor (or major) principal axis along the approach direction,
+spun about it, so flat faces meet the assembly. `contact_settle_steps > 0` rolls the
+best `contact_settle_candidates` straight approaches toward the centre (lift slightly,
+slide tangentially, fall), accepting only strictly closer feasible poses. Both are off
+by default; with them off the method is the original one.
+
+After insertion, `neighborhood_sweeps` visits the current assembly. A transaction
+can retreat, rotate/slide, and approach again, temporarily increasing its envelope
+without allowing overlap. Optional pair rearrangement settles the nearest neighbour
+after the candidate move and judges the combined result. Rotations refine by sweep;
+the entire transaction is accepted only if envelope/centre score improves.
+When an internal VF target is configured, the final assembly also gets up to
+`strategy_rounds` additional sweeps. A deterministic centre search tightens sphere
+or cube bounds; all final vertices are still enclosed. This is geometric packing,
+not a force-equilibrium simulation or a global density optimum certificate.
+
+`max_compaction_trials` bounds insertion and rearrangement candidates together;
+future insertion candidates are reserved before relaxation. If this budget is
+insufficient, remaining planned members get valid exterior fallback placements;
+none disappear and an unmet target is reported. Each candidate has separately
+bounded motion steps. FCC-only controls are `compaction_sweeps`,
+`mesh_refinement_sweeps`, and `container_shrink_fraction`.
+
+Checkpoints carry, for every template of the current concurrent batch, the pending
+member plan, committed members, best arrangement, next insertion, relaxation
+member/sweep and counters. Periodic saves occur at batch boundaries; an interrupt
+rolls back only each template's unfinished insertion or transaction and forces the
+usual checkpoint save. A hard kill loses at most the current batch's progress. Resume replays that unit rather
+than rebuilding the template. Incomplete templates are visualization artifacts
+and never enter global packing. A final independent pair check precedes export.
+The completed-template and global mixed-stage resume contracts are unchanged.
+
+Stop reasons distinguish target attainment, trial exhaustion, interruption and
+completed relaxation sweeps. A higher template VF does not guarantee any global
+Pack target. Finite direction/orientation searches can miss usable contacts.

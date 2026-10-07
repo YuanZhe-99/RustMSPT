@@ -1,29 +1,33 @@
 #[path = "placement_aggregates.rs"]
 mod aggregates;
+#[path = "placement_checkpoint.rs"]
+mod checkpoint;
+#[path = "placement_free_space.rs"]
+mod free_space;
+#[path = "placement_initial.rs"]
+mod initial;
 
 use crate::config::placement::{
     BoundaryMode, OnUnattainable, OrientationMode, PlacementOrder, PositionMode,
     ResolvedDistribution, ResolvedPlacement, TargetBasis, VoidCrossing,
 };
 use crate::error::{Result, RustMsptError};
-use crate::geometry::{
-    mesh_bbox, sample_uniform_quaternion, transform_shell, UnitQuat,
-};
 use crate::geometry::spatial::SpatialGrid;
+use crate::geometry::{mesh_bbox, sample_uniform_quaternion, transform_shell, UnitQuat};
 use crate::geometry::{VoidIndex, VoidVolumeMethod};
 use crate::io::{load_stl, save_stl, sha256_file};
 use crate::pipeline::placement_feasibility::{
-    check_placement, Candidate, FeasibilityContext, PlacedParticle, RejectReason,
-    PAIR_PARALLEL_MIN,
+    check_placement, Candidate, FeasibilityContext, PlacedParticle, RejectReason, PAIR_PARALLEL_MIN,
 };
 use crate::pipeline::placement_library::{load_shape_library, ShapeLibrary};
 use crate::pipeline::placement_outputs::*;
 use crate::pipeline::placement_sizes::{
-    build_classes, order_for_placement, plan_size_multiset, SizeClass, SizeDraw, SizeSource,
+    build_classes, order_for_placement, plan_size_multiset, SizeClass, SizeDraw, SizePlan,
+    SizeSource,
 };
 use crate::pipeline::rng::{seeded_rng, u01, uniform_index, uniform_range};
 use crate::pipeline::Pipeline;
-use crate::types::{Mesh, Triangle, Vec3};
+use crate::types::{Mesh, Vec3};
 use crate::version::build_identity;
 use rand_chacha::ChaCha12Rng;
 use std::collections::BTreeMap;
@@ -77,17 +81,22 @@ pub struct PlacementOutcome {
 // Notes: The testable core: the pipeline's run() is a thin wrapper so tests need not go through
 // stdout. The report is written twice - once as `running` before placement starts, once as
 // `finished` or `interrupted` after output saving. Cooperative stop preserves accepted geometry;
-// force-kill still cannot save it. progress.json provides batch-boundary heartbeats.
+// force-kill cannot trigger final saving; checkpoints preserve earlier safe points.
 pub fn run_placement(config: &ResolvedPlacement) -> Result<PlacementOutcome> {
     with_placement_pool(config.threads, || run_placement_in_pool(config))
 }
 
 // AI-FUNC-SUMMARY: Create and install the placement worker budget for a complete operation; returns its result or InvalidConfig on pool creation failure; side effects: starts and joins Rayon workers.
-fn with_placement_pool<T: Send>(threads: i32, work: impl FnOnce() -> Result<T> + Send) -> Result<T> {
+fn with_placement_pool<T: Send>(
+    threads: i32,
+    work: impl FnOnce() -> Result<T> + Send,
+) -> Result<T> {
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(resolve_threads(threads))
         .build()
-        .map_err(|e| RustMsptError::InvalidConfig(format!("Cannot create placement thread pool: {e}")))?;
+        .map_err(|e| {
+            RustMsptError::InvalidConfig(format!("Cannot create placement thread pool: {e}"))
+        })?;
     pool.install(work)
 }
 
@@ -115,11 +124,7 @@ fn run_placement_in_pool(config: &ResolvedPlacement) -> Result<PlacementOutcome>
         Some(v) => {
             let mesh = load_stl(&v.file)?;
             let index = VoidIndex::build(&mesh)?;
-            if !index
-                .bbox()
-                .expanded(0.0)
-                .intersects_domain(config.domain)
-            {
+            if !index.bbox().expanded(0.0).intersects_domain(config.domain) {
                 return Err(RustMsptError::InvalidConfig(format!(
                     "the void in {} does not meet the domain at all, which is a frame or unit \
                      error rather than an empty pore network",
@@ -156,43 +161,186 @@ fn run_placement_in_pool(config: &ResolvedPlacement) -> Result<PlacementOutcome>
 
     timer.stage("load");
     if config.aggregates.enabled {
-        return aggregates::run(config, &library, &source, &classes, void.as_ref(),
-            void_volume_in_domain, void_volume_method, basis_volume, &tool, started);
+        return aggregates::run(
+            config,
+            &library,
+            &source,
+            &classes,
+            void.as_ref(),
+            void_volume_in_domain,
+            void_volume_method,
+            basis_volume,
+            &tool,
+            started,
+        );
     }
+    let mut store = checkpoint::Store::new(config, &library)?;
+    let resumed = match &store {
+        Some(store) => store.load(config, "individual")?,
+        None => None,
+    };
     let target_volume = basis_volume * config.target_volume_fraction;
+    let mut initial_state = if resumed.is_none() && config.initial_particles.is_some() {
+        let mut state = EngineState::new(config, &library, &classes, &[]);
+        state.grid = SpatialGrid::new(
+            config.domain,
+            (source.quantile(0.5) * library.max_extent_ratio + config.gap_particle_particle)
+                .max(1e-9),
+        );
+        state.basis_volume = basis_volume;
+        initial::load(config, &library, &classes, void.as_ref(), &mut state)?;
+        Some(state)
+    } else {
+        None
+    };
+    let inherited_volume = initial_state.as_ref().map_or(0.0, |s| s.volume_solid);
     let mut rng = seeded_rng(config.seed);
-    let mut plan = plan_size_multiset(
-        &mut rng,
-        &source,
-        &classes,
-        target_volume,
-        MAX_PLANNED_PARTICLES,
-    )?;
-    order_for_placement(
-        &mut plan.draws,
-        config.placement_order == PlacementOrder::Descending,
-    );
+    let mut plan = if resumed.is_none()
+        && config
+            .initial_particles
+            .as_ref()
+            .is_some_and(|p| p.pending_checkpoint.is_some())
+    {
+        checkpoint::import_remaining_plan(config, &library, &classes)?
+    } else if inherited_volume >= target_volume {
+        SizePlan {
+            draws: vec![],
+            planned_volume: 0.0,
+            target_volume: 0.0,
+            planned_volume_error: 0.0,
+        }
+    } else {
+        plan_size_multiset(
+            &mut rng,
+            &source,
+            &classes,
+            (target_volume - inherited_volume).max(0.0),
+            MAX_PLANNED_PARTICLES
+                .saturating_sub(initial_state.as_ref().map_or(0, |s| s.placed.len())),
+        )?
+    };
+    if !config
+        .initial_particles
+        .as_ref()
+        .is_some_and(|p| p.pending_checkpoint.is_some())
+    {
+        order_for_placement(
+            &mut plan.draws,
+            config.placement_order == PlacementOrder::Descending,
+        );
+    }
 
+    let pending_draws = plan.draws.clone();
+    if let Some(initial) = &initial_state {
+        let mut inherited_draws = initial
+            .placed
+            .iter()
+            .map(|p| SizeDraw {
+                diameter: p.equivalent_diameter,
+                class: p.size_class,
+                draw_index: p.acceptance_index,
+            })
+            .collect::<Vec<_>>();
+        inherited_draws.extend_from_slice(&plan.draws);
+        plan.draws = inherited_draws;
+        plan.planned_volume += inherited_volume;
+        plan.target_volume = target_volume;
+        plan.planned_volume_error = plan.planned_volume - target_volume;
+    }
     let threads = rayon::current_num_threads();
     let frame = FrameRecord {
         unit: config.unit.clone(),
-        origin: [config.domain.min.x, config.domain.min.y, config.domain.min.z],
+        origin: [
+            config.domain.min.x,
+            config.domain.min.y,
+            config.domain.min.z,
+        ],
         axis_order: "xyz".to_string(),
         handedness: "right".to_string(),
         domain: DomainRecord {
-            min: [config.domain.min.x, config.domain.min.y, config.domain.min.z],
-            max: [config.domain.max.x, config.domain.max.y, config.domain.max.z],
+            min: [
+                config.domain.min.x,
+                config.domain.min.y,
+                config.domain.min.z,
+            ],
+            max: [
+                config.domain.max.x,
+                config.domain.max.y,
+                config.domain.max.z,
+            ],
         },
     };
 
     // Write the report once before placing anything. A six-hour run that is killed
     // then leaves a file saying what it was, rather than nothing at all.
-    let void_report = build_void_report(
-        config,
-        void.as_ref(),
-        void_volume_in_domain,
-        void_volume_method,
-    )?;
+    timer.stage("plan");
+    let mut state = if let Some(mut state) = initial_state.take() {
+        for draw in &pending_draws {
+            state.drawn_per_class[draw.class] += 1;
+        }
+        state
+    } else {
+        EngineState::new(config, &library, &classes, &plan.draws)
+    };
+    state.basis_volume = basis_volume;
+    state.checkpoint = store.take();
+    if let Some(snap) = &resumed {
+        checkpoint::restore(snap, &library, &mut state, &mut rng)?;
+        plan = state.cursor.plan.clone().ok_or_else(|| {
+            RustMsptError::InvalidConfig("checkpoint missing individual plan".into())
+        })?;
+        if config.checkpoint.extend {
+            let deficit = (target_volume - state.volume_solid).max(0.0);
+            let mut extra = if deficit > 0.0 {
+                plan_size_multiset(
+                    &mut rng,
+                    &source,
+                    &classes,
+                    deficit,
+                    MAX_PLANNED_PARTICLES.saturating_sub(plan.draws.len()),
+                )?
+            } else {
+                crate::pipeline::placement_sizes::SizePlan {
+                    draws: vec![],
+                    planned_volume: 0.0,
+                    target_volume: deficit,
+                    planned_volume_error: 0.0,
+                }
+            };
+            order_for_placement(
+                &mut extra.draws,
+                config.placement_order == PlacementOrder::Descending,
+            );
+            for d in &extra.draws {
+                state.drawn_per_class[d.class] += 1;
+            }
+            plan.draws.extend_from_slice(&extra.draws);
+            plan.planned_volume += extra.planned_volume;
+            plan.target_volume = target_volume;
+            plan.planned_volume_error = plan.planned_volume - target_volume;
+            state.cursor.draws = extra.draws;
+            state.cursor.next = 0;
+            state.cursor.attempts_in_draw = 0;
+            state.cursor.phase = "primary".into();
+            state.cursor.counted_current = false;
+            state.cursor.extensions += 1;
+            state.stopped_early = false;
+        }
+        eprintln!(
+            "[Checkpoint] restored particles={} attempts={} phase={} extensions={}",
+            state.placed.len(),
+            state.attempts,
+            state.cursor.phase,
+            state.cursor.extensions
+        );
+    } else {
+        state.cursor.draws = pending_draws;
+        state.cursor.phase = "primary".into();
+    }
+    state.cursor.plan = Some(plan.clone());
+    if config.position.mode == PositionMode::FreeSpaceGuided && state.free_space.is_none() {
+        state.free_space = Some(free_space::Index::new(config)?);
+    }
     let mut report = blank_report(
         config,
         &tool,
@@ -201,46 +349,62 @@ fn run_placement_in_pool(config: &ResolvedPlacement) -> Result<PlacementOutcome>
         &plan,
         basis_volume,
         threads,
-        void_report,
+        build_void_report(
+            config,
+            void.as_ref(),
+            void_volume_in_domain,
+            void_volume_method,
+        )?,
     );
+    if let Some(initial) = &config.initial_particles {
+        report.samplers.insert(
+            "initial_assembly".into(),
+            "validated_record_exact_geometry".into(),
+        );
+        report.stop_detail.insert(
+            "initial_record".into(),
+            initial.record.display().to_string(),
+        );
+    }
     write_json(&config.outputs.report, &report)?;
-    timer.stage("plan");
-
-    let mut state = EngineState::new(config, &library, &classes, &plan.draws);
-    state.basis_volume = basis_volume;
+    let already_complete = state.cursor.phase == "complete";
+    checkpoint::save(
+        config,
+        &library,
+        &mut state,
+        &rng,
+        "individual",
+        serde_json::Value::Null,
+        already_complete,
+        true,
+    )?;
     state.poll_control(config, true);
-    place_all(
+    place_resumable(
         config,
         &library,
         &classes,
         void.as_ref(),
+        &source,
         &mut rng,
-        &mut plan.draws,
         &mut state,
-    );
-
-    // A top-up is allowed only when every planned size was placed and volume was
-    // lost to the boundary. Drawing one after a failure would re-draw from the
-    // same distribution, mostly produce small particles, and quietly make up the
-    // shortfall - which is the one thing the plan-first design exists to prevent.
-    let mut top_up = TopUpReport {
-        batches: 0,
-        drawn: 0,
-        placed: 0,
+        target_volume,
+    )?;
+    let top_up = TopUpReport {
+        batches: state.cursor.top_up_batches,
+        drawn: state.cursor.top_up_drawn,
+        placed: state.cursor.top_up_placed,
     };
-    if !state.control.interrupted && state.shortfall_total == 0 && !state.budget_spent(config) {
-        run_top_up(
-            config,
-            &library,
-            &classes,
-            void.as_ref(),
-            &source,
-            &mut rng,
-            &mut state,
-            target_volume,
-            &mut top_up,
-        )?;
-    }
+    let complete = state.cursor.phase == "complete";
+    checkpoint::save(
+        config,
+        &library,
+        &mut state,
+        &rng,
+        "individual",
+        serde_json::Value::Null,
+        complete,
+        true,
+    )?;
 
     timer.stage("place");
     println!("{}", state.grid.stats().summary_line("placement"));
@@ -253,7 +417,13 @@ fn run_placement_in_pool(config: &ResolvedPlacement) -> Result<PlacementOutcome>
     let elapsed = started.elapsed().as_secs_f64();
     let stop = decide_stop(config, &state, &plan, target_volume, elapsed);
 
-    state.control.publish(config, "saving", state.placed.len(), state.attempts, state.volume_solid / basis_volume);
+    state.control.publish(
+        config,
+        "saving",
+        state.placed.len(),
+        state.attempts,
+        state.volume_solid / basis_volume,
+    );
     let outputs = write_outputs(
         config,
         &library,
@@ -278,8 +448,20 @@ fn run_placement_in_pool(config: &ResolvedPlacement) -> Result<PlacementOutcome>
     );
     write_json(&config.outputs.report, &report)?;
 
-    state.control.publish(config, &report.status, state.placed.len(), state.attempts, state.volume_solid / basis_volume);
+    state.control.publish(
+        config,
+        &report.status,
+        state.placed.len(),
+        state.attempts,
+        state.volume_solid / basis_volume,
+    );
     timer.stage("report");
+    if let Some(index) = &state.free_space {
+        report
+            .stop_detail
+            .insert("free_space".into(), index.summary().to_string());
+        write_json(&config.outputs.report, &report)?;
+    }
     let summary_lines = summary(config, &state, &stop, target_volume, basis_volume);
     timer.total("total_in_pool");
     timer.report_resources();
@@ -306,6 +488,7 @@ fn resolve_threads(threads: i32) -> usize {
 /// Everything the placement loop accumulates.
 struct EngineState {
     placed: Vec<PlacedParticle>,
+    free_space: Option<free_space::Index>,
     /// Rebuilt as particles are accepted. Cell size comes from the largest planned
     /// particle plus the gap rather than from `estimate_cell_size`, whose 1.0 floor
     /// makes it unit-dependent.
@@ -314,7 +497,11 @@ struct EngineState {
     /// speculative evaluations a serial scan would not have run, and never influence a decision.
     grid_queries: std::sync::atomic::AtomicU64,
     grid_candidates: std::sync::atomic::AtomicU64,
-    merged: Mesh,
+    triangle_count: usize,
+    simplified_collision: bool,
+    checkpoint: Option<checkpoint::Store>,
+    cursor: checkpoint::IndividualCursor,
+    geometry_cache: std::sync::Arc<crate::pipeline::placement_geometry::GeometryCache>,
     /// Running total, accumulated sequentially in acceptance order. A parallel sum
     /// over f64 depends on the reduction tree and therefore on the thread count,
     /// so the number that gates the stop would not be reproducible.
@@ -336,7 +523,13 @@ struct EngineState {
 impl EngineState {
     // AI-FUNC-SUMMARY: Poll cooperative cancellation and publish timed progress at a batch boundary; returns true once stopped; mutates control only, never RNG or geometry.
     fn poll_control(&mut self, config: &ResolvedPlacement, force: bool) -> bool {
-        self.control.poll(config, force, self.placed.len(), self.attempts, self.volume_solid / self.basis_volume)
+        self.control.poll(
+            config,
+            force,
+            self.placed.len(),
+            self.attempts,
+            self.volume_solid / self.basis_volume,
+        )
     }
     fn new(
         config: &ResolvedPlacement,
@@ -353,7 +546,9 @@ impl EngineState {
         let cell_size = if draws.is_empty() {
             let d = config.domain.size();
             d.x.max(d.y).max(d.z)
-        } else { largest * extent_ratio + config.gap_particle_particle };
+        } else {
+            largest * extent_ratio + config.gap_particle_particle
+        };
         let mut drawn_per_class = vec![0usize; classes.len()];
         for d in draws {
             if let Some(slot) = drawn_per_class.get_mut(d.class) {
@@ -365,7 +560,16 @@ impl EngineState {
             grid_queries: std::sync::atomic::AtomicU64::new(0),
             grid_candidates: std::sync::atomic::AtomicU64::new(0),
             placed: Vec::new(),
-            merged: Mesh::empty(),
+            free_space: None,
+            triangle_count: 0,
+            simplified_collision: config.memory.simplified_collision,
+            checkpoint: None,
+            cursor: checkpoint::IndividualCursor::default(),
+            geometry_cache: std::sync::Arc::new(
+                crate::pipeline::placement_geometry::GeometryCache::new(
+                    config.memory.geometry_cache_mb.saturating_mul(1024 * 1024),
+                ),
+            ),
             volume_in_domain: 0.0,
             volume_solid: 0.0,
             attempts: 0,
@@ -393,49 +597,111 @@ impl EngineState {
     }
 }
 
-// AI-FUNC-SUMMARY:
-// Purpose: Attempt every planned size in order, accepting what fits.
-// Inputs: the config, library, classes, generator, the ordered draws, and the mutable state.
-// Returns: None.
-// Side effects: Mutates the state: accepted particles, the merged mesh, the grid, tallies.
-// Notes: The RNG consumption schedule is fixed and lives here: every attempt draws all seven of its
-// variates up front - one for the shell, three for the orientation, three for the position - before
-// any check runs. Drawing them lazily would make the stream depend on which check short-circuited,
-// so reordering the checks later would silently change every placement.
+// AI-FUNC-SUMMARY: Advance saved primary/top-up cursors at proposal-batch safe points; maintain per-draw budgets and the original RNG schedule across interruption/recovery; propagate checkpoint I/O errors.
 #[allow(clippy::too_many_arguments)]
-fn place_all(
+fn place_resumable(
     config: &ResolvedPlacement,
     library: &ShapeLibrary,
     classes: &[SizeClass],
     void: Option<&VoidIndex>,
+    source: &SizeSource,
     rng: &mut ChaCha12Rng,
-    draws: &mut [SizeDraw],
     state: &mut EngineState,
-) {
-    for draw in draws.iter() {
-        if state.poll_control(config, false) || state.budget_spent(config) {
+    target_volume: f64,
+) -> Result<()> {
+    while state.cursor.phase != "complete" {
+        checkpoint::save(
+            config,
+            library,
+            state,
+            rng,
+            "individual",
+            serde_json::Value::Null,
+            false,
+            false,
+        )?;
+        if state.poll_control(config, false) {
             state.stopped_early = true;
             break;
         }
-        let placed = try_place_one(config, library, void, rng, draw, state);
+        if state.cursor.next >= state.cursor.draws.len() {
+            let no_gain =
+                state.cursor.phase == "top_up" && state.placed.len() == state.cursor.batch_before;
+            let deficit = target_volume * (1.0 - config.target_tolerance) - state.volume_solid;
+            if state.shortfall_total > 0
+                || no_gain
+                || deficit <= 0.0
+                || state.cursor.top_up_batches >= config.budget.max_top_up_batches
+            {
+                state.cursor.phase = "complete".into();
+                break;
+            }
+            if state.budget_spent(config) {
+                state.stopped_early = true;
+                break;
+            }
+            let mut batch =
+                plan_size_multiset(rng, source, classes, deficit, MAX_PLANNED_PARTICLES)?;
+            order_for_placement(
+                &mut batch.draws,
+                config.placement_order == PlacementOrder::Descending,
+            );
+            state.cursor.top_up_batches += 1;
+            state.cursor.top_up_drawn += batch.draws.len();
+            state.cursor.draws = batch.draws;
+            state.cursor.phase = "top_up".into();
+            state.cursor.next = 0;
+            state.cursor.attempts_in_draw = 0;
+            state.cursor.batch_before = state.placed.len();
+            state.cursor.counted_current = false;
+            continue;
+        }
+        if state.budget_spent(config)
+            && state.cursor.attempts_in_draw < config.budget.attempts_per_particle
+        {
+            state.stopped_early = true;
+            break;
+        }
+        let draw = state.cursor.draws[state.cursor.next];
+        let top = state.cursor.phase == "top_up";
+        if top && !state.cursor.counted_current {
+            state.top_up_drawn_per_class[draw.class] += 1;
+            state.cursor.counted_current = true;
+        }
+        let placed = try_place_one(config, library, void, rng, &draw, state)?;
+        if !placed
+            && (state.control.interrupted
+                || (state.budget_spent(config)
+                    && state.cursor.attempts_in_draw < config.budget.attempts_per_particle))
+        {
+            state.stopped_early = true;
+            break;
+        }
+        state.cursor.next += 1;
+        state.cursor.attempts_in_draw = 0;
+        state.cursor.counted_current = false;
         if placed {
-            if state.placed.len() == 1 { state.poll_control(config, true); }
-            if let Some(slot) = state.placed_per_class.get_mut(draw.class) {
-                *slot += 1;
+            if top {
+                state.top_up_placed_per_class[draw.class] += 1;
+                state.cursor.top_up_placed += 1;
+            } else {
+                state.placed_per_class[draw.class] += 1;
             }
-        } else {
-            if state.control.interrupted { break; }
+            if state.placed.len() == 1 {
+                state.poll_control(config, true);
+            }
+        } else if !top {
             state.shortfall_total += 1;
-            if state.first_failed_diameter.is_none() {
-                state.first_failed_diameter = Some(draw.diameter);
-            }
+            state.cursor.failed_draws.push(draw.clone());
+            state.first_failed_diameter.get_or_insert(draw.diameter);
             if config.on_unattainable == OnUnattainable::Stop {
                 state.stopped_early = true;
+                state.cursor.phase = "complete".into();
                 break;
             }
         }
     }
-    let _ = classes;
+    Ok(())
 }
 
 /// Largest speculative batch per worker. Each batch ends at a barrier and attempt costs are heavy-tailed
@@ -458,6 +724,7 @@ struct Proposal {
     reach: f64,
     fits_domain: bool,
     stream_after: u128,
+    guided_cell: Option<usize>,
 }
 
 /// An accepted proposal's candidate and check result, boxed because rejections vastly outnumber it.
@@ -527,7 +794,7 @@ fn draw_proposal(
     // outward by a distance in the declared band. This is a deliberate
     // construction, not a random one, and the report names it as such.
     let centre = match config.position.mode {
-        PositionMode::FeasibleUniform => Vec3::new(
+        PositionMode::FeasibleUniform | PositionMode::FreeSpaceGuided => Vec3::new(
             uniform_range(rng, box_for_centre.min.x, box_for_centre.max.x),
             uniform_range(rng, box_for_centre.min.y, box_for_centre.max.y),
             uniform_range(rng, box_for_centre.min.z, box_for_centre.max.z),
@@ -558,6 +825,7 @@ fn draw_proposal(
         reach,
         fits_domain: box_for_centre.volume() > 0.0,
         stream_after: rng.get_word_pos(),
+        guided_cell: None,
     }
 }
 
@@ -565,7 +833,7 @@ fn draw_proposal(
 // Purpose: Run every placement check for one proposal against the current, unchanged placed set.
 // Inputs: the config, library, void index, placed particles, spatial grid, and the proposal.
 // Returns: the first rejection reason, or the accepted candidate with its prepared check result.
-// Side effects: None; reads only immutable state, so proposals of one batch evaluate in parallel.
+// Side effects: May populate the geometry cache; accepted state and RNG remain unchanged.
 fn evaluate_proposal(
     config: &ResolvedPlacement,
     library: &ShapeLibrary,
@@ -585,10 +853,14 @@ fn evaluate_proposal(
     let Some(cand_bbox) = mesh_bbox(&candidate) else {
         return Evaluation::Rejected(RejectReason::ZeroInDomainVolume);
     };
-    let neighbours = grid.query_neighbors_with_margin(cand_bbox, config.gap_particle_particle, usize::MAX);
+    let neighbours =
+        grid.query_neighbors_with_margin(cand_bbox, config.gap_particle_particle, usize::MAX);
     if let Some((queries, candidates)) = counters {
         queries.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        candidates.fetch_add(neighbours.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        candidates.fetch_add(
+            neighbours.len() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
     }
     let ctx = FeasibilityContext {
         domain: config.domain,
@@ -636,7 +908,7 @@ fn evaluate_proposal(
 // AI-FUNC-SUMMARY:
 // Purpose: Try to place one particle of a given size within its per-particle attempt budget.
 // Inputs: the config, library, generator, the size draw, and the mutable state.
-// Returns: true when a placement was accepted.
+// Returns: Ok(true) on acceptance; checkpoint I/O errors propagate.
 // Side effects: Mutates the state and advances the generator exactly as a one-attempt-at-a-time scan would.
 // Notes: Attempts run in speculative batches. A batch draws its proposals serially in the fixed
 // schedule, evaluates them in parallel against the unchanged placed set, then walks them in order:
@@ -655,21 +927,102 @@ fn try_place_one(
     rng: &mut ChaCha12Rng,
     draw: &SizeDraw,
     state: &mut EngineState,
-) -> bool {
+) -> Result<bool> {
     use rayon::prelude::*;
     let workers = rayon::current_num_threads();
-    let max_batch = if workers <= 1 { 1 } else { SPECULATIVE_BATCH_PER_WORKER * workers };
+    let max_batch = if workers <= 1 || config.position.mode == PositionMode::FreeSpaceGuided {
+        1
+    } else {
+        SPECULATIVE_BATCH_PER_WORKER * workers
+    };
+    if let Some(index) = &mut state.free_space {
+        index.begin_draw(format!(
+            "{}:{}:{}",
+            state.cursor.phase, state.cursor.extensions, state.cursor.next
+        ));
+    }
     let mut batch = 1usize;
-    let mut serial_attempts = 0usize;
-    let mut remaining = config.budget.attempts_per_particle;
+    let mut serial_attempts = state.cursor.attempts_in_draw;
+    let mut remaining = config
+        .budget
+        .attempts_per_particle
+        .saturating_sub(state.cursor.attempts_in_draw);
     while remaining > 0 {
-        if state.poll_control(config, false) { return false; }
+        checkpoint::save(
+            config,
+            library,
+            state,
+            rng,
+            "individual",
+            serde_json::Value::Null,
+            false,
+            false,
+        )?;
+        if state.poll_control(config, false) {
+            return Ok(false);
+        }
         let room = remaining.min(config.budget.total_attempts.saturating_sub(state.attempts));
         if room == 0 {
-            return false;
+            return Ok(false);
         }
         let size = batch.min(room);
-        let proposals: Vec<Proposal> = (0..size).map(|_| draw_proposal(config, library, void, rng, draw)).collect();
+        let mut proposals: Vec<Proposal> = Vec::with_capacity(size);
+        for _ in 0..size {
+            let stream_before = rng.get_word_pos();
+            let mut proposal = draw_proposal(config, library, void, rng, draw);
+            if config.position.mode == PositionMode::FreeSpaceGuided {
+                let shell = &library.shells[proposal.shell_index];
+                let local = transform_shell(
+                    &shell.canonical,
+                    proposal.scale,
+                    proposal.rotation,
+                    Vec3::new(0.0, 0.0, 0.0),
+                );
+                let local_box = mesh_bbox(&local).expect("validated source shell");
+                let wall = config.domain.expanded(-config.boundary.min_boundary_dist);
+                let centre_box = crate::types::BoundingBox {
+                    min: wall.min.sub(local_box.min),
+                    max: wall.max.sub(local_box.max),
+                };
+                proposal.fits_domain = centre_box.min.x <= centre_box.max.x
+                    && centre_box.min.y <= centre_box.max.y
+                    && centre_box.min.z <= centre_box.max.z;
+                if proposal.fits_domain {
+                    let mut index = state.free_space.take().expect("guided index");
+                    let vf = state.volume_solid / state.basis_volume;
+                    let previous_phase = state.control.phase;
+                    state.control.phase = "free_space_search";
+                    let point = index.propose(
+                        config,
+                        &state.placed,
+                        &state.grid,
+                        void,
+                        rng,
+                        centre_box,
+                        proposal.reach,
+                        || {
+                            state.control.poll(
+                                config,
+                                false,
+                                state.placed.len(),
+                                state.attempts,
+                                vf,
+                            )
+                        },
+                    );
+                    state.control.phase = previous_phase;
+                    state.free_space = Some(index);
+                    let Some((point, cell)) = point else {
+                        rng.set_word_pos(stream_before);
+                        return Ok(false);
+                    };
+                    proposal.centre = point;
+                    proposal.guided_cell = cell;
+                }
+                proposal.stream_after = rng.get_word_pos();
+            }
+            proposals.push(proposal);
+        }
         let (placed, grid) = (&state.placed, &state.grid);
         let counters = Some((&state.grid_queries, &state.grid_candidates));
         let evaluations: Vec<Evaluation> = if size > 1 {
@@ -685,21 +1038,33 @@ fn try_place_one(
         };
         for (proposal, evaluation) in proposals.iter().zip(evaluations) {
             state.attempts += 1;
+            state.cursor.attempts_in_draw += 1;
             match evaluation {
-                Evaluation::Rejected(reason) => state.reject(reason),
+                Evaluation::Rejected(reason) => {
+                    state.reject(reason);
+                    if let Some(index) = &mut state.free_space {
+                        index.feedback(config, proposal.guided_cell, false);
+                    }
+                }
                 Evaluation::Accepted(hit) => {
-                    let AcceptedProposal { candidate, bbox, volume_full, accepted } = *hit;
+                    let AcceptedProposal {
+                        candidate,
+                        bbox,
+                        volume_full,
+                        accepted,
+                    } = *hit;
                     rng.set_word_pos(proposal.stream_after);
                     // Only measured when crossing is allowed. With crossing forbidden
                     // the particle keeps a gap from the void, so the overlap is zero
                     // by construction and paying for a voxel sweep would be waste.
                     let overlap = match (void, config.void.as_ref()) {
-                        (Some(index), Some(v)) if v.crossing == VoidCrossing::Allowed => index.overlap_volume(
-                            &candidate,
-                            bbox,
-                            config.domain,
-                            v.overlap_voxel_size.unwrap_or(0.0),
-                        ),
+                        (Some(index), Some(v)) if v.crossing == VoidCrossing::Allowed => index
+                            .overlap_volume(
+                                &candidate,
+                                bbox,
+                                config.domain,
+                                v.overlap_voxel_size.unwrap_or(0.0),
+                            ),
                         _ => 0.0,
                     };
                     accept(
@@ -717,7 +1082,11 @@ fn try_place_one(
                         candidate,
                         accepted,
                     );
-                    return true;
+                    if let Some(index) = &mut state.free_space {
+                        index.feedback(config, proposal.guided_cell, true);
+                        index.inserted(config, bbox);
+                    }
+                    return Ok(true);
                 }
             }
         }
@@ -727,15 +1096,15 @@ fn try_place_one(
             batch = (batch * 2).min(max_batch.max(1));
         }
     }
-    false
+    Ok(false)
 }
 
 // AI-FUNC-SUMMARY:
-// Purpose: Commit an accepted candidate: append its geometry, record its transform, update the index.
+// Purpose: Commit an accepted transform and cold geometry handle, then update the spatial index.
 // Inputs: the state, config, the shell it came from, the size draw, its transform, mesh and check result.
 // Returns: None.
 // Side effects: Mutates the state.
-// Notes: The triangle range is the merged mesh's face count before and after appending, so a reader
+// Notes: The triangle range uses cumulative face counts without retaining a merged mesh; a reader
 // can pull one particle's triangles out of the merged STL without reconstructing it. The volume
 // accumulators are sequential, in acceptance order, for the reason given on EngineState.
 #[allow(clippy::too_many_arguments)]
@@ -755,15 +1124,9 @@ fn accept(
     accepted: crate::pipeline::placement_feasibility::Accepted,
 ) {
     let shell = &library.shells[shell_index];
-    let start = state.merged.faces.len();
-    let base = state.merged.vertices.len();
-    state.merged.vertices.extend(mesh.vertices.iter().copied());
-    state.merged.faces.extend(mesh.faces.iter().map(|f| Triangle {
-        a: f.a + base,
-        b: f.b + base,
-        c: f.c + base,
-    }));
-    let end = state.merged.faces.len();
+    let start = state.triangle_count;
+    let end = start + mesh.faces.len();
+    state.triangle_count = end;
 
     let index = state.placed.len();
     let particle = PlacedParticle {
@@ -781,72 +1144,23 @@ fn accept(
         void_overlap_volume,
         clipped_faces: accepted.clipped_faces,
         bbox,
-        mesh,
-        shape: accepted.shape,
+        geometry: Some(crate::pipeline::placement_geometry::GeometryHandle::new(
+            index,
+            shell.canonical.clone(),
+            scale,
+            rotation,
+            translation,
+            state.geometry_cache.clone(),
+            state.simplified_collision,
+        )),
+        mesh: Mesh::empty(),
+        shape: None,
         triangle_range: (start, end),
     };
     state.volume_in_domain += particle.volume_in_domain;
     state.volume_solid += particle.volume_in_domain_solid();
     state.grid.insert(index, particle.bbox);
     state.placed.push(particle);
-}
-
-// AI-FUNC-SUMMARY:
-// Purpose: Draw and place further batches when clipping alone left the target short.
-// Inputs: the config, library, classes, size source, generator, state, target volume, and the top-up tally.
-// Returns: Ok(()).
-// Side effects: Mutates the state and the tally.
-// Notes: Only reached when every planned size was placed. Each batch is a fresh closest-sum multiset
-// for the remaining deficit, and its counts are tallied separately from the target ones so the CSV
-// cannot hide a shortfall behind a top-up.
-#[allow(clippy::too_many_arguments)]
-fn run_top_up(
-    config: &ResolvedPlacement,
-    library: &ShapeLibrary,
-    classes: &[SizeClass],
-    void: Option<&VoidIndex>,
-    source: &SizeSource,
-    rng: &mut ChaCha12Rng,
-    state: &mut EngineState,
-    target_volume: f64,
-    top_up: &mut TopUpReport,
-) -> Result<()> {
-    while top_up.batches < config.budget.max_top_up_batches {
-        let deficit = target_volume * (1.0 - config.target_tolerance) - state.volume_solid;
-        if state.poll_control(config, false) || deficit <= 0.0 || state.budget_spent(config) {
-            break;
-        }
-        let mut batch = plan_size_multiset(rng, source, classes, deficit, MAX_PLANNED_PARTICLES)?;
-        order_for_placement(
-            &mut batch.draws,
-            config.placement_order == PlacementOrder::Descending,
-        );
-        top_up.batches += 1;
-        top_up.drawn += batch.draws.len();
-        let before = state.placed.len();
-        for draw in &batch.draws {
-            if state.poll_control(config, false) || state.budget_spent(config) {
-                state.stopped_early = true;
-                break;
-            }
-            if let Some(slot) = state.top_up_drawn_per_class.get_mut(draw.class) {
-                *slot += 1;
-            }
-            if try_place_one(config, library, void, rng, draw, state) {
-                if let Some(slot) = state.top_up_placed_per_class.get_mut(draw.class) {
-                    *slot += 1;
-                }
-            }
-        }
-        let gained = state.placed.len() - before;
-        top_up.placed += gained;
-        if gained == 0 {
-            // Another batch would draw from the same distribution and fail the
-            // same way; stopping here is what keeps the budget meaningful.
-            break;
-        }
-    }
-    Ok(())
 }
 
 /// Why the run ended, and the detail the report carries with it.
@@ -865,7 +1179,7 @@ struct StopDecision {
 // Unattainable outranks budget-exhausted, because exhausting the per-particle budget is *how* an
 // unattainable size is detected - without this order every distribution failure would report as a
 // budget failure, and the requirement that the run say why it stopped would never be met.
-// Interrupted runs save accepted geometry and explicitly report a partial, non-resumable result.
+// Interrupted runs save accepted geometry and a resumable checkpoint when enabled.
 fn decide_stop(
     config: &ResolvedPlacement,
     state: &EngineState,
@@ -879,9 +1193,12 @@ fn decide_stop(
     detail.insert("attempts".to_string(), state.attempts.to_string());
 
     if state.control.interrupted {
-        detail.insert("message".into(), "User requested stop; accepted particles saved. This is a partial result, not a resumable checkpoint.".into());
+        detail.insert("message".into(), "User requested stop; accepted particles saved. Partial geometry and enabled checkpoints are saved.".into());
         detail.insert("failed_sizes".into(), state.shortfall_total.to_string());
-        return StopDecision { reason: StopReason::Interrupted, detail };
+        return StopDecision {
+            reason: StopReason::Interrupted,
+            detail,
+        };
     }
     if state.placed.is_empty() {
         let (top, count) = state
@@ -905,6 +1222,25 @@ fn decide_stop(
         };
     }
 
+    if state.budget_spent(config) && state.cursor.phase != "complete" {
+        detail.insert("limit".into(), "total_attempts".into());
+        detail.insert("value".into(), config.budget.total_attempts.to_string());
+        detail.insert("failed_sizes".into(), state.shortfall_total.to_string());
+        detail.insert(
+            "pending_sizes".into(),
+            state
+                .cursor
+                .draws
+                .len()
+                .saturating_sub(state.cursor.next)
+                .to_string(),
+        );
+        detail.insert("message".into(), "Global proposal budget exhausted with unfinished planned sizes; geometry saturation was not established.".into());
+        return StopDecision {
+            reason: StopReason::BudgetExhausted,
+            detail,
+        };
+    }
     if state.shortfall_total > 0 {
         detail.insert("shortfall".to_string(), state.shortfall_total.to_string());
         if let Some(d) = state.first_failed_diameter {
@@ -997,11 +1333,19 @@ fn write_outputs(
     void: Option<&VoidIndex>,
 ) -> Result<Vec<FileEntry>> {
     let mut outputs = Vec::new();
+    let checkpoint_path = config.outputs.dir.join("checkpoint.json");
+    if config.checkpoint.enabled && checkpoint_path.exists() {
+        outputs.push(describe_output("checkpoint", &checkpoint_path));
+    }
 
     let wrote_stl = if state.placed.is_empty() {
         false
     } else {
-        save_stl(&config.outputs.particles_stl, &state.merged, "particles")?;
+        crate::pipeline::placement_geometry::write_particles_stl(
+            &config.outputs.particles_stl,
+            &state.placed,
+            state.triangle_count,
+        )?;
         outputs.push(describe_output("particles", &config.outputs.particles_stl));
         true
     };
@@ -1037,18 +1381,20 @@ fn write_outputs(
             },
         ]
         .into_iter()
-        .chain(config.void.as_ref().map(|v| PhaseRecord {
-            id: 2,
-            name: "void".to_string(),
-            geometry: Some(
-                Path::new(&v.path_as_written)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| v.path_as_written.clone()),
-            ),
-            // The void owns any overlap: it is frozen, so a particle that crosses
-            // into it does not take that volume out of the void phase.
-            overlap_owner: Some("void".to_string()),
+        .chain(config.void.as_ref().map(|v| {
+            PhaseRecord {
+                id: 2,
+                name: "void".to_string(),
+                geometry: Some(
+                    Path::new(&v.path_as_written)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| v.path_as_written.clone()),
+                ),
+                // The void owns any overlap: it is frozen, so a particle that crosses
+                // into it does not take that volume out of the void phase.
+                overlap_owner: Some("void".to_string()),
+            }
         }))
         .collect(),
         sources: library
@@ -1073,16 +1419,25 @@ fn write_outputs(
     write_json(&config.outputs.record, &record)?;
     outputs.push(describe_output("record", &config.outputs.record));
 
+    eprintln!("[GeometryCache] {}", state.geometry_cache.summary());
     let rows = size_class_rows(state, classes);
     write_size_distribution_csv(&config.outputs.size_csv, &rows)?;
-    outputs.push(describe_output("size_distribution", &config.outputs.size_csv));
+    outputs.push(describe_output(
+        "size_distribution",
+        &config.outputs.size_csv,
+    ));
 
     if config.outputs.per_particle_stl && !state.placed.is_empty() {
         let dir = config.outputs.dir.join("particles");
         std::fs::create_dir_all(&dir)?;
         for p in &state.placed {
             let path = dir.join(format!("{}.stl", entity_id(p.acceptance_index)));
-            save_stl(&path, &p.mesh, "particle")?;
+            let mesh = p
+                .geometry
+                .as_ref()
+                .map(|g| g.reconstruct())
+                .unwrap_or_else(|| p.mesh.clone());
+            save_stl(&path, &mesh, "particle")?;
         }
         outputs.push(FileEntry {
             role: "per_particle_stl_dir".to_string(),
@@ -1094,7 +1449,10 @@ fn write_outputs(
 
     if let Some(voxel_size) = config.outputs.voxel_labels {
         let written = crate::pipeline::placement_labels::write_voxel_labels(
-            config, voxel_size, &state.placed, void,
+            config,
+            voxel_size,
+            &state.placed,
+            void,
         )?;
         for path in written {
             let role = path
@@ -1148,7 +1506,9 @@ fn particle_record(p: &PlacedParticle, library: &ShapeLibrary) -> ParticleRecord
         acceptance_index: p.acceptance_index,
         source_shape: SourceShapeRecord {
             source_index: p.source_index,
-            path: source.map(|s| s.path_as_written.clone()).unwrap_or_default(),
+            path: source
+                .map(|s| s.path_as_written.clone())
+                .unwrap_or_default(),
             sha256: source.map(|s| s.sha256.clone()).unwrap_or_default(),
             shell_index: p.shell_index,
             shell_sha256: shell.map(|s| s.shell_sha256.clone()).unwrap_or_default(),
@@ -1231,6 +1591,13 @@ fn blank_report(
             bytes: Some(s.bytes),
         })
         .collect();
+    if let Some(initial) = &config.initial_particles {
+        inputs.push(describe_input("initial_record", &initial.record));
+        inputs.push(describe_input("initial_report", &initial.report));
+        if let Some(path) = &initial.pending_checkpoint {
+            inputs.push(describe_input("initial_pending_plan", path));
+        }
+    }
     if let ResolvedDistribution::Histogram { csv, .. } = &config.distribution {
         inputs.push(describe_input("size_histogram", csv));
     }
@@ -1250,6 +1617,7 @@ fn blank_report(
             // configuration, not an equilibrium hard-core one, and the name says
             // so rather than claiming more than the method gives.
             PositionMode::FeasibleUniform => "rejection_uniform_rsa".to_string(),
+            PositionMode::FreeSpaceGuided => "adaptive_real_geometry_cavity_guidance".to_string(),
             // A deliberate construction. Never reported as random.
             PositionMode::VoidNeighbourhood => "void_neighbourhood_band".to_string(),
         },
@@ -1370,7 +1738,12 @@ fn build_void_report(
         sha256_in,
         sha256_out: None,
         shells: index.shells(),
-        orientation: if index.is_outward() { "outward" } else { "inward" }.to_string(),
+        orientation: if index.is_outward() {
+            "outward"
+        } else {
+            "inward"
+        }
+        .to_string(),
         crossing: match v.crossing {
             VoidCrossing::Forbidden => "forbidden".to_string(),
             VoidCrossing::Allowed => "allowed".to_string(),
@@ -1432,8 +1805,16 @@ fn finish_report(
         (logs.iter().map(|l| (l - m) * (l - m)).sum::<f64>() / (n as f64 - 1.0)).sqrt()
     });
 
-    report.status = if stop.reason == StopReason::Interrupted { "interrupted" } else { "finished" }.to_string();
-    report.runtime = RuntimeRecord { threads, elapsed_s: elapsed };
+    report.status = if stop.reason == StopReason::Interrupted {
+        "interrupted"
+    } else {
+        "finished"
+    }
+    .to_string();
+    report.runtime = RuntimeRecord {
+        threads,
+        elapsed_s: elapsed,
+    };
     report.actual = ActualReport {
         particles: n,
         volume_in_domain: state.volume_in_domain,
@@ -1523,10 +1904,7 @@ fn summary(
             config.target_volume_fraction
         ));
     }
-    lines.push(format!(
-        "[Info] Wrote {}",
-        config.outputs.dir.display()
-    ));
+    lines.push(format!("[Info] Wrote {}", config.outputs.dir.display()));
     lines
 }
 
@@ -1536,17 +1914,15 @@ pub use crate::pipeline::placement_outputs::{ParticleRecord, RecordFile, ReportF
 // AI-FUNC-SUMMARY: Read a written record back, for tests and consumers; returns the parsed record; side effects: reads the file.
 pub fn read_record(path: &Path) -> Result<RecordFile> {
     let text = std::fs::read_to_string(path)?;
-    serde_json::from_str(&text).map_err(|e| {
-        RustMsptError::InvalidConfig(format!("cannot parse {}: {e}", path.display()))
-    })
+    serde_json::from_str(&text)
+        .map_err(|e| RustMsptError::InvalidConfig(format!("cannot parse {}: {e}", path.display())))
 }
 
 // AI-FUNC-SUMMARY: Read a written report back, for tests and consumers; returns the parsed report; side effects: reads the file.
 pub fn read_report(path: &Path) -> Result<ReportFile> {
     let text = std::fs::read_to_string(path)?;
-    serde_json::from_str(&text).map_err(|e| {
-        RustMsptError::InvalidConfig(format!("cannot parse {}: {e}", path.display()))
-    })
+    serde_json::from_str(&text)
+        .map_err(|e| RustMsptError::InvalidConfig(format!("cannot parse {}: {e}", path.display())))
 }
 
 #[cfg(test)]
@@ -1564,7 +1940,8 @@ mod performance_tests {
                     assert!(rayon::current_thread_index().unwrap() < threads as usize);
                 });
                 Ok(())
-            }).unwrap();
+            })
+            .unwrap();
         }
     }
 }

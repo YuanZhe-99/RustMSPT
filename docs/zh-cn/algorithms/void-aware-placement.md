@@ -172,9 +172,9 @@ q = ( √u₁·cos 2πu₃,  √(1−u₁)·sin 2πu₂,  √(1−u₁)·cos 2π
 
 ### 6.2 开销
 
-包围盒预筛限定了一切。若没有任何孔隙三角形落在颗粒包围盒的 `g_pv` 范围内，那么该颗粒既远离每一个孔隙
-三角形，**又**不可能嵌套于某个壳之内——因为被嵌套颗粒的包围盒必然与该壳自身的层次叶节点相交。因此，
-对绝大多数候选，一次 `Qbvh::intersect_aabb` 调用就跳过了全部三条判定。
+包围盒预筛**只限定表面工作**。完全位于大孔隙内部的颗粒，其包围盒附近可能没有任何孔隙三角形。因此，在
+`near_box` 之前，无条件地对质心和一个实际的颗粒顶点做孔隙奇偶测试。该顶点用于覆盖非凸形状，因为其体积
+质心不一定位于自身的实体内。只有表面相交/间隙判定与反向包含判定使用表面预筛。
 
 ### 6.3 "在孔隙内"采用射线奇偶
 
@@ -270,9 +270,10 @@ volume.in_domain_solid = volume.in_domain − void_overlap_volume_in_domain
 **"分布不可达"压过"预算耗尽"**，这条最容易搞反。耗尽单颗粒预算正是*检测到*某尺寸不可达的方式。若次
 序颠倒，每一次分布失败都会报成预算失败，而"运行必须说明自己为何停止"这一要求将永远无法满足。
 
-词表固定为四个词。规划的全部尺寸都已放置、只是在域边界损失了体积的运行，是 `target_reached`，并在
-`stop_detail` 中点明亏空，而不是第五个词——使用方的适配器正是按这份清单编写的，第五个取值到达那里就
-是一个未知值。`stop_detail` 恒为对象，且恒带一条适合写进日志的 `message`。
+正常完成使用四个原因；协作式取消增加 `interrupted`（见下文）。规划的全部尺寸都已放置、只是在域边界损失了体积的运行，是 `target_reached`，并在
+`stop_detail` 中点明亏空，而不是额外的正常完成用词。
+使用方现在还必须处理显式的 `interrupted` 原因。
+`stop_detail` 恒为对象，且恒带一条适合写进日志的 `message`。
 
 有一种组合值得知道：`on_unattainable: stop` 配上默认的 `descending` 顺序，若规划中最大的尺寸放不下，
 运行将以**零**颗粒结束，此时的原因按规则 1 是 `no_feasible_placement`，而非
@@ -304,4 +305,33 @@ volume.in_domain_solid = volume.in_domain − void_overlap_volume_in_domain
 报告在池内读取实际 worker 数。随机数消费、接受顺序和浮点累计仍保持串行。
 回归测试在 1、2、8 个 worker 下逐字节比较记录、STL、CSV、相位及粒子 ID TIFF 和体素头文件。
 
-Label generation now uses 1024-voxel tiles, sorted spatial candidates and cached per-particle parity queries. It preserves void precedence and first-particle ownership; full phase/id arrays are still resident.
+标签生成现在使用 1024 体素的分块、排序后的空间候选以及按颗粒缓存的奇偶查询。它保留孔隙优先与首个颗粒占有的规则；完整的相位/id 数组仍然常驻内存。
+
+
+## Cooperative stop and partial-result preservation
+
+对于带 `placement:` 配置的 `pack`，创建 `<outputs.dir>/STOP` 即可请求可移植的协作式停止。在 Unix 上，CLI 还会处理
+SIGINT（Ctrl-C）和 SIGTERM。处理程序只设置一个原子标志；几何与文件 I/O 留在处理程序之外。重复请求仍允许保存。
+SIGKILL、崩溃和断电不会触发最终保存；恢复时使用最近一次成功提交的检查点（若已启用）。
+
+引擎在提议批次之间（以及颗粒/补抽批次之间）观察取消，完成已在运行的几何查询，并使用常规输出写入器导出每一个已接受的颗粒。被中断的候选
+不计为已证实的尺寸失败。取消之后不再启动替换尺寸或新的补抽批次。加载/规划与输出写入不会被抢占；请等待最终报告，因为复杂查询和大型
+STL 文件可能耗时较长。
+
+`particles.stl`（非空时）、`particles.json`、`size_distribution.csv`、冻结孔隙副本以及已配置的可选输出，描述的是已接受的部分结果。
+最终报告带有 `status: interrupted` 与 `stop_reason: interrupted`；仅在输出保存成功之后才写出。I/O 失败作为错误传播，
+而不是作为成功保存的中断。在任何接受之前收到请求，会写出空的记录/报告而不带颗粒 STL。退出码为零表示输出已保存，
+并不表示目标已达成。原有的四个正常停止原因保持其行为。使用方必须接受额外的中断原因。CSV
+中的缺口是规划数减去已放置数，因此在部分运行中包含未尝试的尺寸；`stop_detail.failed_sizes` 则单独统计已耗尽尝试的尺寸。
+
+`progress.json` 在开始时、首次接受时、大约每 10 秒的批次边界处、保存之前以及保存成功之后被原子替换。
+它报告数量、尝试次数、已用时间以及在所配置基准上的体积分数；原始 VF 并不是独立的孔隙筛查认证。同一份摘要
+也打印到 stderr。单次长查询可能推迟心跳。进度 I/O
+错误只发出警告，不会丢弃打包结果。STOP 文件轮询在边界处被限制为 250 ms 一次；信号轮询在每个边界都进行。新运行之前请删除
+STOP。若要保留旧结果，请使用新的输出目录。
+
+中断会保存一个可用的部分装配体。在默认启用检查点时，
+它还会在几何导出之前保存 RNG/引擎状态；见
+[checkpoint and geometry caching](placement-checkpoints-and-memory.md)。它不改变旧版 `packing:` 引擎。CLI 信号处理程序
+在返回时被恢复；进程内调用方使用各输出目录的 STOP 文件，且不安装进程全局处理程序。正常的打包顺序、RNG 流与几何
+检查均不变。

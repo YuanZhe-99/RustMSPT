@@ -1,4 +1,3 @@
-use rayon::prelude::*;
 use crate::config::placement::ShapeFilters;
 use crate::error::{Result, RustMsptError};
 use crate::geometry::{
@@ -7,6 +6,7 @@ use crate::geometry::{
 };
 use crate::io::{load_stl_hashed, sha256_bytes};
 use crate::types::{BoundingBox, Mesh, Vec3};
+use rayon::prelude::*;
 use std::path::PathBuf;
 
 /// One candidate shape: a closed shell from a source file, measured and centred.
@@ -22,7 +22,7 @@ pub struct ShapeShell {
     pub shell_sha256: String,
     /// The shell translated so its volume centroid sits at the origin. Scaling and
     /// rotating this is the placement transform, with no pivot bookkeeping left.
-    pub canonical: Mesh,
+    pub canonical: std::sync::Arc<Mesh>,
     /// The volume centroid in the source file's own coordinates. Recorded, so a
     /// reader reconstructs from the number we used rather than recomputing one.
     pub centroid: Vec3,
@@ -104,8 +104,13 @@ pub fn load_shape_library(
     for (source_index, path) in files.iter().enumerate() {
         let (mesh, sha256, bytes) = load_stl_hashed(path).map_err(|e| {
             if matches!(e, RustMsptError::Io(_)) {
-                RustMsptError::InvalidConfig(format!("placement.shapes.files[{source_index}]: cannot read {}: {e}", path.display()))
-            } else { e }
+                RustMsptError::InvalidConfig(format!(
+                    "placement.shapes.files[{source_index}]: cannot read {}: {e}",
+                    path.display()
+                ))
+            } else {
+                e
+            }
         })?;
         let granules = split_mesh_into_granules(&mesh);
         let shells_found = granules.len();
@@ -120,78 +125,86 @@ pub fn load_shape_library(
         // in shell order: the first error in that order is the one a serial scan would return, and kept and
         // rejected shells keep their order, so the library and its record are unchanged.
         let prepare = |shell_index: usize, shell: Mesh| -> Result<ShellOutcome> {
-                if let Err(reason) = mesh_closedness(&shell) {
-                    return Err(RustMsptError::InvalidMesh(format!(
+            if let Err(reason) = mesh_closedness(&shell) {
+                return Err(RustMsptError::InvalidMesh(format!(
                         "{}, shell {shell_index}: {reason}. Every shape must be a closed solid: its \
                          volume, centroid and equivalent diameter are what the size distribution and \
                          the placement record are built from, so a shell that has none of them cannot \
                          be quietly skipped without changing what the run drew from.",
                         path.display()
                     )));
-                }
-                let signed = mesh_signed_volume(&shell);
-                if signed <= 0.0 {
-                    return Err(RustMsptError::InvalidMesh(format!(
+            }
+            let signed = mesh_signed_volume(&shell);
+            if signed <= 0.0 {
+                return Err(RustMsptError::InvalidMesh(format!(
                         "{}, shell {shell_index}: signed volume is {signed}, so its faces wind inward. \
                          Placement needs outward-facing shells; re-export the file with consistent \
                          outward orientation.",
                         path.display()
                     )));
-                }
-                let Some(metrics) = mesh_metrics(&shell) else {
-                    return Err(RustMsptError::InvalidMesh(format!(
-                        "{}, shell {shell_index}: closed, but its volume or surface area is not a \
+            }
+            let Some(metrics) = mesh_metrics(&shell) else {
+                return Err(RustMsptError::InvalidMesh(format!(
+                    "{}, shell {shell_index}: closed, but its volume or surface area is not a \
                          usable positive number",
-                        path.display()
-                    )));
-                };
-                let Some(centroid) = mesh_volume_centroid(&shell) else {
-                    return Err(RustMsptError::InvalidMesh(format!(
-                        "{}, shell {shell_index}: has no volume centroid",
-                        path.display()
-                    )));
-                };
-                let Some(bbox) = mesh_bbox(&shell) else {
-                    return Err(RustMsptError::InvalidMesh(format!(
-                        "{}, shell {shell_index}: has no bounding box",
-                        path.display()
-                    )));
-                };
+                    path.display()
+                )));
+            };
+            let Some(centroid) = mesh_volume_centroid(&shell) else {
+                return Err(RustMsptError::InvalidMesh(format!(
+                    "{}, shell {shell_index}: has no volume centroid",
+                    path.display()
+                )));
+            };
+            let Some(bbox) = mesh_bbox(&shell) else {
+                return Err(RustMsptError::InvalidMesh(format!(
+                    "{}, shell {shell_index}: has no bounding box",
+                    path.display()
+                )));
+            };
 
-                if let Some(reason) = filter_reason(filters, bbox, &metrics) {
-                    return Ok(ShellOutcome::Rejected(RejectedShell {
-                        source_index,
-                        shell_index,
-                        reason,
-                    }));
-                }
-
-                let mut canonical = shell.clone();
-                translate_mesh(&mut canonical, centroid.scale(-1.0));
-                let bounding_radius = canonical
-                    .vertices
-                    .iter()
-                    .map(|v| v.dot(*v).sqrt())
-                    .fold(0.0f64, f64::max);
-
-                Ok(ShellOutcome::Kept(ShapeShell {
+            if let Some(reason) = filter_reason(filters, bbox, &metrics) {
+                return Ok(ShellOutcome::Rejected(RejectedShell {
                     source_index,
                     shell_index,
-                    shell_sha256: shell_geometry_sha256(&shell),
-                    centroid,
-                    volume: metrics.volume,
-                    surface_area: metrics.surface_area,
-                    equivalent_diameter: metrics.equivalent_diameter,
-                    sphericity: metrics.sphericity,
-                    bounding_radius,
-                    bbox,
-                    canonical,
-                }))
+                    reason,
+                }));
+            }
+
+            let mut canonical = shell.clone();
+            translate_mesh(&mut canonical, centroid.scale(-1.0));
+            let bounding_radius = canonical
+                .vertices
+                .iter()
+                .map(|v| v.dot(*v).sqrt())
+                .fold(0.0f64, f64::max);
+
+            Ok(ShellOutcome::Kept(ShapeShell {
+                source_index,
+                shell_index,
+                shell_sha256: shell_geometry_sha256(&shell),
+                centroid,
+                volume: metrics.volume,
+                surface_area: metrics.surface_area,
+                equivalent_diameter: metrics.equivalent_diameter,
+                sphericity: metrics.sphericity,
+                bounding_radius,
+                bbox,
+                canonical: std::sync::Arc::new(canonical),
+            }))
         };
         let outcomes: Vec<Result<ShellOutcome>> = if granules.len() >= LIBRARY_PARALLEL_MIN_SHELLS {
-            granules.into_par_iter().enumerate().map(|(i, shell)| prepare(i, shell)).collect()
+            granules
+                .into_par_iter()
+                .enumerate()
+                .map(|(i, shell)| prepare(i, shell))
+                .collect()
         } else {
-            granules.into_iter().enumerate().map(|(i, shell)| prepare(i, shell)).collect()
+            granules
+                .into_iter()
+                .enumerate()
+                .map(|(i, shell)| prepare(i, shell))
+                .collect()
         };
         let mut kept = 0usize;
         for outcome in outcomes {
@@ -221,7 +234,12 @@ pub fn load_shape_library(
     if shells.is_empty() {
         let listed = rejected
             .iter()
-            .map(|r| format!("shell {} of file {}: {}", r.shell_index, r.source_index, r.reason))
+            .map(|r| {
+                format!(
+                    "shell {} of file {}: {}",
+                    r.shell_index, r.source_index, r.reason
+                )
+            })
             .collect::<Vec<_>>()
             .join("; ");
         return Err(RustMsptError::InvalidMesh(format!(
@@ -308,6 +326,3 @@ fn shell_geometry_sha256(shell: &Mesh) -> String {
     }
     sha256_bytes(&bytes)
 }
-
-
-

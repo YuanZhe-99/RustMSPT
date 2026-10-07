@@ -582,3 +582,185 @@ fn stop_during_target_search_preserves_valid_best_template() {
         }
     }
 }
+
+#[test]
+// AI-FUNC-SUMMARY: Contact growth improves a sparse bounding-ball fixture, preserves exact gaps/reconstruction and is deterministic across workers.
+fn contact_growth_geometry_density_and_determinism() {
+    let d = tempfile::tempdir().unwrap();
+    let c = fixture(d.path(), "sphere", 3, true);
+    let base = fs::read_to_string(&c).unwrap();
+    // Anisotropic real surfaces leave substantial slack in their bounding balls.
+    let mut shape = icosphere_mesh(Vec3::new(0., 0., 0.), 1., 0);
+    for v in &mut shape.vertices {
+        v.x *= 1.8;
+        v.z *= 0.6;
+    }
+    save_stl(&d.path().join("shape.stl"), &shape, "ellipsoid").unwrap();
+    fs::write(&c,format!("{base}    construction: contact_growth\n    contact_directions: 8\n    contact_orientations: 3\n    neighborhood_sweeps: 1\n    max_compaction_trials: 1000\n    target_internal_volume_fraction: 0.5\n")).unwrap();
+    let mut config = resolve(&c);
+    config.threads = 1;
+    run_placement(&config).unwrap();
+    check_geometry(d.path(), "sphere");
+    let first = json(&d.path().join("out/aggregate_templates.json"));
+    assert_eq!(first["algorithm"], "deterministic_contact_growth_v1");
+    for t in first["templates"].as_array().unwrap() {
+        assert!(
+            t["internal_volume_fraction"].as_f64().unwrap()
+                > 1.1 * t["initial_internal_volume_fraction"].as_f64().unwrap()
+        );
+        eprintln!(
+            "[Contact validation] initial_vf={} final_vf={}",
+            t["initial_internal_volume_fraction"], t["internal_volume_fraction"]
+        );
+        assert!(t["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["rotation"] != serde_json::json!([1., 0., 0., 0.])));
+    }
+    let record = fs::read(d.path().join("out/particles.json")).unwrap();
+    config.threads = 3;
+    run_placement(&config).unwrap();
+    assert_eq!(first, json(&d.path().join("out/aggregate_templates.json")));
+    assert_eq!(
+        record,
+        fs::read(d.path().join("out/particles.json")).unwrap()
+    );
+}
+
+#[test]
+// AI-FUNC-SUMMARY: New controls reject invalid values; zero search budget preserves every member and reports shortfall instead of false success.
+fn contact_growth_controls_and_exhaustion() {
+    let d = tempfile::tempdir().unwrap();
+    let c = fixture(d.path(), "cube", 1, true);
+    let base = fs::read_to_string(&c).unwrap();
+    for extra in [
+        "contact_directions: 0",
+        "contact_orientations: 0",
+        "contact_tolerance: .nan",
+        "contact_tolerance: 0",
+        "contact_max_steps: 0",
+        "neighborhood_sweeps: 129",
+        "construction: random",
+    ] {
+        fs::write(&c, format!("{base}    {extra}\n")).unwrap();
+        let invalid = match load_pack_document(&c) {
+            Err(_) => true,
+            Ok(PackDocument::Placement(p)) => p.validate(&c).is_err(),
+            _ => false,
+        };
+        assert!(invalid, "{extra}");
+    }
+    fs::write(&c,format!("{base}    construction: contact_growth\n    max_compaction_trials: 0\n    target_internal_volume_fraction: 0.99\n")).unwrap();
+    run_placement(&resolve(&c)).unwrap();
+    let catalog = json(&d.path().join("out/aggregate_templates.json"));
+    let t = &catalog["templates"][0];
+    assert_eq!(t["members"].as_array().unwrap().len(), 8);
+    assert_eq!(t["target_reached"], false);
+    assert_eq!(
+        t["compaction_search"]["stop_reason"],
+        "trial_budget_exhausted"
+    );
+    let mesh = load_stl(&d.path().join("out/aggregate_templates/template_0000.stl")).unwrap();
+    let shells = split_mesh_into_granules(&mesh);
+    for (i, a) in shells.iter().enumerate() {
+        for b in &shells[i + 1..] {
+            assert!(mesh_distance_exact(a, b) + 2e-5 >= 0.15);
+        }
+    }
+}
+
+#[test]
+// AI-FUNC-SUMMARY: Stop a CLI during template growth, inspect its saved members, resume and require the uninterrupted final geometry and counters.
+fn contact_growth_cli_stop_resume_matches_uninterrupted() {
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+    let d = tempfile::tempdir().unwrap();
+    let c = fixture(d.path(), "sphere", 1, true);
+    let text = fs::read_to_string(&c)
+        .unwrap()
+        .replace("particles_per_cluster: 8", "particles_per_cluster: 16");
+    fs::write(&c,format!("{text}    construction: contact_growth\n    contact_directions: 64\n    contact_orientations: 8\n    neighborhood_sweeps: 0\n    strategy_rounds: 0\n")).unwrap();
+    let log = d.path().join("contact.log");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_rustmspt"))
+        .args(["pack", "--config"])
+        .arg(&c)
+        .stdout(Stdio::null())
+        .stderr(fs::File::create(&log).unwrap())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(90);
+    while !fs::read_to_string(&log)
+        .unwrap_or_default()
+        .contains("[Aggregate contact] members=1/")
+    {
+        assert!(child.try_wait().unwrap().is_none());
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("contact growth did not start");
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    // The posed-geometry kernel finishes this fixture's template in well under the STOP-file
+    // poll interval, so stop with SIGINT (checked on every poll) as well as the STOP file.
+    fs::write(d.path().join("out/STOP"), "save contact growth").unwrap();
+    let _ = Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status();
+    while child.try_wait().unwrap().is_none() {
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("contact stop timed out");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let checkpoint = d.path().join("out/checkpoint.json");
+    let saved = json(&checkpoint);
+    // Templates are generated in concurrent batches; the first is the interrupted variant 0.
+    let growth = &saved["snapshot"]["aggregate"]["batch"][0];
+    assert!(growth["next"].as_u64().unwrap() > 0);
+    assert!(growth["next"].as_u64().unwrap() < 16);
+    assert_eq!(
+        read_report(&d.path().join("out/run_report.json"))
+            .unwrap()
+            .status,
+        "interrupted"
+    );
+    fs::remove_file(d.path().join("out/STOP")).unwrap();
+    // Resume with the same executable: checkpoints deliberately authenticate binary identity.
+    let mut resume = fs::read_to_string(&c).unwrap();
+    resume.push_str(&format!(
+        "  checkpoint: {{resume_from: '{}'}}\n",
+        checkpoint.display()
+    ));
+    fs::write(&c, &resume).unwrap();
+    let status = Command::new(env!("CARGO_BIN_EXE_rustmspt"))
+        .args(["pack", "--config"])
+        .arg(&c)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let resumed = json(&d.path().join("out/aggregate_templates.json"));
+    let particles = fs::read(d.path().join("out/particles.json")).unwrap();
+    fs::write(&c, resume.split("  checkpoint:").next().unwrap()).unwrap();
+    let status = Command::new(env!("CARGO_BIN_EXE_rustmspt"))
+        .args(["pack", "--config"])
+        .arg(&c)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .unwrap();
+    assert!(status.success());
+    assert_eq!(
+        resumed,
+        json(&d.path().join("out/aggregate_templates.json"))
+    );
+    assert_eq!(
+        particles,
+        fs::read(d.path().join("out/particles.json")).unwrap()
+    );
+}

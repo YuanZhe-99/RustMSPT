@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Vec3 {
     pub x: f64,
     pub y: f64,
@@ -43,7 +43,7 @@ impl Vec3 {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BoundingBox {
     pub min: Vec3,
     pub max: Vec3,
@@ -106,8 +106,16 @@ impl BoundingBox {
 
     pub fn expanded(&self, margin: f64) -> BoundingBox {
         BoundingBox {
-            min: Vec3::new(self.min.x - margin, self.min.y - margin, self.min.z - margin),
-            max: Vec3::new(self.max.x + margin, self.max.y + margin, self.max.z + margin),
+            min: Vec3::new(
+                self.min.x - margin,
+                self.min.y - margin,
+                self.min.z - margin,
+            ),
+            max: Vec3::new(
+                self.max.x + margin,
+                self.max.y + margin,
+                self.max.z + margin,
+            ),
         }
     }
 }

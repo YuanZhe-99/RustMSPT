@@ -160,8 +160,7 @@ fn erfc(x: f64) -> f64 {
                     + t * (-0.18628806
                         + t * (0.27886807
                             + t * (-1.13520398
-                                + t * (1.48851587
-                                    + t * (-0.82215223 + t * 0.17087277))))))));
+                                + t * (1.48851587 + t * (-0.82215223 + t * 0.17087277))))))));
     let ans = t * poly.exp();
     if x >= 0.0 {
         ans
@@ -171,7 +170,7 @@ fn erfc(x: f64) -> f64 {
 }
 
 /// A drawn size, and which reporting class it belongs to.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SizeDraw {
     pub diameter: f64,
     pub class: usize,
@@ -302,7 +301,11 @@ impl SizeSource {
                 let bin = &distribution.bins[index];
                 // Rescale u to the position within this bin, so one draw does both
                 // jobs and the stream stays one-u64-per-size.
-                let lo = if index == 0 { 0.0 } else { cumulative[index - 1] };
+                let lo = if index == 0 {
+                    0.0
+                } else {
+                    cumulative[index - 1]
+                };
                 let span = cumulative[index] - lo;
                 let inner = if span > 0.0 { (u - lo) / span } else { 0.0 };
                 bin.left + inner * (bin.right - bin.left)
@@ -333,15 +336,17 @@ impl SizeSource {
 // not from the untruncated one, or the shares would not sum to one.
 pub fn build_classes(classes: &ResolvedClasses, source: &SizeSource) -> Vec<SizeClass> {
     match (classes, source) {
-        (ResolvedClasses::FromHistogram, SizeSource::Histogram { distribution, .. }) => distribution
-            .bins
-            .iter()
-            .map(|b| SizeClass {
-                lo: b.left,
-                hi: b.right,
-                target_frequency: b.frequency,
-            })
-            .collect(),
+        (ResolvedClasses::FromHistogram, SizeSource::Histogram { distribution, .. }) => {
+            distribution
+                .bins
+                .iter()
+                .map(|b| SizeClass {
+                    lo: b.left,
+                    hi: b.right,
+                    target_frequency: b.frequency,
+                })
+                .collect()
+        }
         (ResolvedClasses::FromHistogram, SizeSource::Lognormal { .. }) => {
             build_equal_width(source, 10)
         }
@@ -364,7 +369,11 @@ fn build_equal_width(source: &SizeSource, count: usize) -> Vec<SizeClass> {
     (0..count)
         .map(|i| {
             let a = lo + width * i as f64;
-            let b = if i + 1 == count { hi } else { lo + width * (i + 1) as f64 };
+            let b = if i + 1 == count {
+                hi
+            } else {
+                lo + width * (i + 1) as f64
+            };
             SizeClass {
                 lo: a,
                 hi: b,
@@ -450,7 +459,7 @@ pub fn class_for_diameter(classes: &[SizeClass], diameter: f64) -> usize {
 }
 
 /// The sizes a run intends to place, drawn before any placement is attempted.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SizePlan {
     pub draws: Vec<SizeDraw>,
     pub planned_volume: f64,

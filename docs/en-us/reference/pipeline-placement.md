@@ -37,55 +37,54 @@ selects the original loop instead, which is documented in
 | `VoidIndex::sample_surface_point` | `src/geometry/void_index.rs:288` | Area-weighted point on the void surface with its outward normal. |
 | `VoidIndex::overlap_volume` | `src/geometry/void_index.rs:330` | Volume of a particle inside the void, by domain-anchored voxel count. |
 | `point_inside_mesh_local` | `src/geometry/void_index.rs:375` | Ray-parity point-in-mesh test for a small mesh with no hierarchy. |
-| `PlacementPipeline` | `src/pipeline/placement.rs:39` | Pipeline struct holding a validated `ResolvedPlacement`. |
-| `PHASE_MATRIX` | `src/pipeline/placement_labels.rs:15` | Phase code 0 in the written label field. |
-| `VoxelLabelsHeader` | `src/pipeline/placement_labels.rs:24` | What the label stacks are: spacing, origin, layout, phase table. |
-| `PhaseLabel` | `src/pipeline/placement_labels.rs:41` | One phase code and its name. |
-| `write_voxel_labels` | `src/pipeline/placement_labels.rs:60` | Writes the three-phase label field and the per-voxel particle id field. |
-| `particle_at` | `src/pipeline/placement_labels.rs:306` | Finds which placed particle, if any, contains a point. |
-| `point_in_particle` | `src/pipeline/placement_labels.rs:318` | Ray-parity containment for one particle mesh. |
+| `PlacementPipeline` | `src/pipeline/placement.rs` | Pipeline struct holding a validated `ResolvedPlacement`. |
+| `PHASE_MATRIX` | `src/pipeline/placement_labels.rs` | Phase code 0 in the written label field. |
+| `VoxelLabelsHeader` | `src/pipeline/placement_labels.rs` | What the label stacks are: spacing, origin, layout, phase table. |
+| `PhaseLabel` | `src/pipeline/placement_labels.rs` | One phase code and its name. |
+| `write_voxel_labels` | `src/pipeline/placement_labels.rs` | Writes the three-phase label field and the per-voxel particle id field. |
+| `particle_at` | `src/pipeline/placement_labels.rs` | Finds which placed particle, if any, contains a point. |
+| `point_in_particle` | `src/pipeline/placement_labels.rs` | Ray-parity containment for one particle mesh. |
 | `VoidReport` | `src/pipeline/placement_outputs.rs:278` | What the run did with the frozen void, and how it measured it. |
-| `build_void_report` | `src/pipeline/placement.rs:1327` | Describes the frozen void for the report, including its volume method. |
-| `PlacementPipeline` | `src/pipeline/placement.rs:39` | Pipeline struct holding a validated `ResolvedPlacement`. |
-| `PlacementOutcome` | `src/pipeline/placement.rs:62` | What a completed run produced, for in-process callers. |
-| `run_placement` | `src/pipeline/placement.rs:77` | Runs the engine in a dedicated configured Rayon pool and writes every output file. |
-| `with_placement_pool` | `src/pipeline/placement.rs:82` | Creates and installs a dedicated Rayon pool for one operation, propagating creation/work errors. |
-| `run_placement_in_pool` | `src/pipeline/placement.rs:91` | Runs all placement stages in the active pool and records its actual worker count. |
-| `resolve_threads` | `src/pipeline/placement.rs:282` | Turns a thread setting into a worker count, at least 1. |
-| `EngineState` | `src/pipeline/placement.rs:294` | Everything the placement loop accumulates. |
-| `place_all` | `src/pipeline/placement.rs:382` | Attempts every planned size in order, accepting what fits. |
-| `try_place_one` | `src/pipeline/placement.rs:625` | Tries one size within its per-particle attempt budget. |
-| `Proposal` | `src/pipeline/placement.rs:427` | One attempt's variates and the stream position after them. |
-| `Evaluation` | `src/pipeline/placement.rs:446` | A proposal's outcome: rejection reason, or the accepted candidate with its check result. |
-| `draw_proposal` | `src/pipeline/placement.rs:459` | Draws one attempt's variates in the fixed schedule and records the stream position. |
-| `evaluate_proposal` | `src/pipeline/placement.rs:543` | Runs every check for one proposal against the unchanged placed set; read-only. |
-| `SPECULATIVE_BATCH_PER_WORKER` / `SERIAL_ATTEMPTS_BEFORE_BATCHING` | `src/pipeline/placement.rs:407` | Speculative batch cap (8 per worker) and serial attempts before batching (4), both measured. |
-| `accept` | `src/pipeline/placement.rs:715` | Commits an accepted candidate into the geometry and the record. |
-| `run_top_up` | `src/pipeline/placement.rs:776` | Draws further batches when clipping alone left the target short. |
-| `decide_stop` | `src/pipeline/placement.rs:843` | Decides normal completion or user interruption; interruption has precedence. |
-| `write_outputs` | `src/pipeline/placement.rs:959` | Writes the geometry, the per-particle record and the size CSV. |
-| `entity_id` | `src/pipeline/placement.rs:1104` | The stable id of a placed particle. |
-| `particle_record` | `src/pipeline/placement.rs:1109` | Turns one placed particle into its record entry. |
-| `size_class_rows` | `src/pipeline/placement.rs:1157` | Builds the per-class target-against-actual rows. |
-| `blank_report` | `src/pipeline/placement.rs:1183` | The report as it stands before placement starts. |
-| `describe_input` | `src/pipeline/placement.rs:1362` | Describes an input file with its digest for the report. |
-| `finish_report` | `src/pipeline/placement.rs:1381` | Fills in everything the finished run knows. |
-| `summary` (placement.rs) | `src/pipeline/placement.rs:1427` | Builds the human-readable stdout summary. |
-| `read_record` | `src/pipeline/placement.rs:1506` | Reads a written per-particle record back. |
-| `read_report` | `src/pipeline/placement.rs:1514` | Reads a written run report back. |
-| `RejectReason` | `src/pipeline/placement_feasibility.rs:28` | Why a proposed placement was not accepted; the report's keys. Ten variants. |
-| `RejectReason::as_str` | `src/pipeline/placement_feasibility.rs:55` | The stable report key for a rejection reason. |
-| `PlacedParticle` | `src/pipeline/placement_feasibility.rs:87` | A particle that cleared every check, with its cached shape. |
-| `PlacedParticle::volume_in_domain_solid` | `src/pipeline/placement_feasibility.rs:117` | The particle volume counting toward the solid phase. |
-| `FeasibilityContext` | `src/pipeline/placement_feasibility.rs:123` | Everything a feasibility check reads. |
-| `Candidate` | `src/pipeline/placement_feasibility.rs:147` | A proposed placement with its cheap quantities precomputed. |
-| `Accepted` | `src/pipeline/placement_feasibility.rs:161` | What a passing check worked out along the way. |
-| `check_placement` | `src/pipeline/placement_feasibility.rs:192` | Runs every feasibility rule in order, returning the one that stopped it. |
-| `PAIR_PARALLEL_MIN` | `src/pipeline/placement_feasibility.rs:20` | Pairs needing an exact distance at which those distances run in parallel; `usize::MAX` (serial) by default because dense end-to-end runs measured no gain (0-10 % slower on a shared 4-core host), although `pair_threshold_benchmark` shows 1.4-2x from two clear pairs. |
-| `pair_needs_exact_test` | `src/pipeline/placement_feasibility.rs:368` | Centre-sphere and box separation tests for one neighbour; true when the exact tests must run. |
-| `first_pair_rejection` | `src/pipeline/placement_feasibility.rs:396` | Serial overlap/enclosure scan to the first failure, then ordered (`find_map_first`) parallel distances for the pairs before it; returns exactly the serial reason. |
-| `solid_pair_rejection` | `src/pipeline/placement_feasibility.rs:435` | Overlap then enclosure test for one pair. |
-| `retained_depth` | `src/pipeline/placement_feasibility.rs:470` | How far a straddling particle still reaches inside the domain. |
+| `build_void_report` | `src/pipeline/placement.rs` | Describes the frozen void for the report, including its volume method. |
+| `PlacementPipeline` | `src/pipeline/placement.rs` | Pipeline struct holding a validated `ResolvedPlacement`. |
+| `PlacementOutcome` | `src/pipeline/placement.rs` | What a completed run produced, for in-process callers. |
+| `run_placement` | `src/pipeline/placement.rs` | Runs the engine in a dedicated configured Rayon pool and writes every output file. |
+| `with_placement_pool` | `src/pipeline/placement.rs` | Creates and installs a dedicated Rayon pool for one operation, propagating creation/work errors. |
+| `run_placement_in_pool` | `src/pipeline/placement.rs` | Runs all placement stages in the active pool and records its actual worker count. |
+| `resolve_threads` | `src/pipeline/placement.rs` | Turns a thread setting into a worker count, at least 1. |
+| `EngineState` | `src/pipeline/placement.rs` | Everything the placement loop accumulates. |
+| `place_resumable` | `src/pipeline/placement.rs` | Resumes primary/top-up plans and current per-size attempts. |
+| `try_place_one` | `src/pipeline/placement.rs` | Tries one size within its per-particle attempt budget. |
+| `Proposal` | `src/pipeline/placement.rs` | One attempt's variates and the stream position after them. |
+| `Evaluation` | `src/pipeline/placement.rs` | A proposal's outcome: rejection reason, or the accepted candidate with its check result. |
+| `draw_proposal` | `src/pipeline/placement.rs` | Draws one attempt's variates in the fixed schedule and records the stream position. |
+| `evaluate_proposal` | `src/pipeline/placement.rs` | Runs every check for one proposal against the unchanged placed set; read-only. |
+| `SPECULATIVE_BATCH_PER_WORKER` / `SERIAL_ATTEMPTS_BEFORE_BATCHING` | `src/pipeline/placement.rs` | Speculative batch cap (8 per worker) and serial attempts before batching (4), both measured. |
+| `accept` | `src/pipeline/placement.rs` | Commits an accepted candidate into the geometry and the record. |
+| `decide_stop` | `src/pipeline/placement.rs` | Decides normal completion or user interruption; interruption has precedence. |
+| `write_outputs` | `src/pipeline/placement.rs` | Writes the geometry, the per-particle record and the size CSV. |
+| `entity_id` | `src/pipeline/placement.rs` | The stable id of a placed particle. |
+| `particle_record` | `src/pipeline/placement.rs` | Turns one placed particle into its record entry. |
+| `size_class_rows` | `src/pipeline/placement.rs` | Builds the per-class target-against-actual rows. |
+| `blank_report` | `src/pipeline/placement.rs` | The report as it stands before placement starts. |
+| `describe_input` | `src/pipeline/placement.rs` | Describes an input file with its digest for the report. |
+| `finish_report` | `src/pipeline/placement.rs` | Fills in everything the finished run knows. |
+| `summary` (placement.rs) | `src/pipeline/placement.rs` | Builds the human-readable stdout summary. |
+| `read_record` | `src/pipeline/placement.rs` | Reads a written per-particle record back. |
+| `read_report` | `src/pipeline/placement.rs` | Reads a written run report back. |
+| `RejectReason` | `src/pipeline/placement_feasibility.rs` | Why a proposed placement was not accepted; the report's keys. Ten variants. |
+| `RejectReason::as_str` | `src/pipeline/placement_feasibility.rs` | The stable report key for a rejection reason. |
+| `PlacedParticle` | `src/pipeline/placement_feasibility.rs` | A particle that cleared every check, with its cached shape. |
+| `PlacedParticle::volume_in_domain_solid` | `src/pipeline/placement_feasibility.rs` | The particle volume counting toward the solid phase. |
+| `FeasibilityContext` | `src/pipeline/placement_feasibility.rs` | Everything a feasibility check reads. |
+| `Candidate` | `src/pipeline/placement_feasibility.rs` | A proposed placement with its cheap quantities precomputed. |
+| `Accepted` | `src/pipeline/placement_feasibility.rs` | What a passing check worked out along the way. |
+| `check_placement` | `src/pipeline/placement_feasibility.rs` | Runs every feasibility rule in order, returning the one that stopped it. |
+| `PAIR_PARALLEL_MIN` | `src/pipeline/placement_feasibility.rs` | Pairs needing an exact distance at which those distances run in parallel; `usize::MAX` (serial) by default because dense end-to-end runs measured no gain (0-10 % slower on a shared 4-core host), although `pair_threshold_benchmark` shows 1.4-2x from two clear pairs. |
+| `pair_needs_exact_test` | `src/pipeline/placement_feasibility.rs` | Centre-sphere and box separation tests for one neighbour; true when the exact tests must run. |
+| `first_pair_rejection` | `src/pipeline/placement_feasibility.rs` | Serial overlap/enclosure scan to the first failure, then ordered (`find_map_first`) parallel distances for the pairs before it; returns exactly the serial reason. |
+| `solid_pair_rejection` | `src/pipeline/placement_feasibility.rs` | Overlap then enclosure test for one pair. |
+| `retained_depth` | `src/pipeline/placement_feasibility.rs` | How far a straddling particle still reaches inside the domain. |
 | `ToolRecord` | `src/pipeline/placement_outputs.rs:15` | The build identity as it appears in a record or report. |
 | `StopReason` | `src/pipeline/placement_outputs.rs:53` | Four normal completion reasons plus `Interrupted` for saved partial output. |
 | `ParticleRecord` | `src/pipeline/placement_outputs.rs:133` | One placed particle's entry in the record file. |
@@ -96,38 +95,38 @@ selects the original loop instead, which is documented in
 | `write_json` | `src/pipeline/placement_outputs.rs:380` | Writes a JSON value to disk, creating parent directories. |
 | `describe_output` | `src/pipeline/placement_outputs.rs:400` | Describes a written output file for the report's manifest. |
 | `write_size_distribution_csv` | `src/pipeline/placement_outputs.rs:424` | Writes the per-size-class comparison CSV. |
-| `inverse_normal_cdf` | `src/pipeline/placement_sizes.rs:21` | Wichura AS241 standard-normal quantile, error below 1e-15. |
-| `poly` (placement_sizes.rs) | `src/pipeline/placement_sizes.rs:133` | Horner evaluation of highest-degree-first coefficients. |
-| `normal_cdf` (placement_sizes.rs) | `src/pipeline/placement_sizes.rs:142` | Standard normal CDF via the complementary error function. |
-| `erfc` | `src/pipeline/placement_sizes.rs:153` | Complementary error function, used to turn truncation bounds into probabilities. |
-| `SizeDraw` | `src/pipeline/placement_sizes.rs:175` | One drawn diameter with its reporting class and draw order. |
-| `SizeClass` | `src/pipeline/placement_sizes.rs:185` | A diameter band and the share of particles it should hold. |
-| `SizeSource` | `src/pipeline/placement_sizes.rs:192` | A prepared target number distribution: truncated lognormal or histogram. |
-| `SizeSource::prepare` | `src/pipeline/placement_sizes.rs:218` | Prepares a source, loading the histogram CSV and precomputing truncation. |
-| `SizeSource::sample` | `src/pipeline/placement_sizes.rs:272` | Draws one diameter, consuming exactly one u64. |
-| `SizeSource::support` | `src/pipeline/placement_sizes.rs:309` | The smallest and largest diameter the source can produce. |
-| `SizeSource::mass_between` | `src/pipeline/placement_sizes.rs:381` | The share of the target distribution between two diameters. |
-| `build_classes` | `src/pipeline/placement_sizes.rs:329` | Builds the reporting classes target and actual are compared over. |
-| `build_equal_width` | `src/pipeline/placement_sizes.rs:355` | Splits a source's support into equal-width classes with their shares. |
-| `class_for_diameter` | `src/pipeline/placement_sizes.rs:430` | Finds a diameter's reporting class; the top edge is inclusive. |
-| `SizePlan` | `src/pipeline/placement_sizes.rs:449` | The sizes a run intends to place, drawn before any placement. |
-| `plan_size_multiset` | `src/pipeline/placement_sizes.rs:473` | Draws the whole multiset, stopping at whichever count lands closer to the target. |
-| `order_for_placement` | `src/pipeline/placement_sizes.rs:534` | Orders a drawn multiset largest-first, or back into draw order. |
-| `ShapeShell` | `src/pipeline/placement_library.rs:14` | One closed shell: measured, centred, and digested. |
-| `ShapeSource` | `src/pipeline/placement_library.rs:42` | A source file the library was built from, with its digest and shell counts. |
-| `RejectedShell` | `src/pipeline/placement_library.rs:54` | A shell read but not kept, and why. |
-| `ShapeLibrary` | `src/pipeline/placement_library.rs:62` | Every shape a run may draw from, plus what was read and not kept. |
-| `load_shape_library` | `src/pipeline/placement_library.rs:95` | Loads, splits, measures and filters the shape files. Shells of a file with at least 32 (`LIBRARY_PARALLEL_MIN_SHELLS`) are prepared in parallel into an indexed buffer walked in shell order, so order, rejections and the first reported defect are those of a serial scan (§79). |
-| `filter_reason` | `src/pipeline/placement_library.rs:259` | Says which library filter a shell failed, if any. |
-| `shell_geometry_sha256` | `src/pipeline/placement_library.rs:299` | Digests a shell's geometry so a re-ordered file is detectable. |
-| `particle_at_prepared` | `src/pipeline/placement_labels.rs:326` | First particle in ordered cached candidates. |
-| `LABEL_SLAB_VOXELS` | `src/pipeline/placement_labels.rs:46` | Target voxels per label slab (4,194,304). |
-| `label_dims` | `src/pipeline/placement_labels.rs:111` | Label grid dimensions with overflow check. |
-| `LabelQuery` | `src/pipeline/placement_labels.rs:124` | Prepared particle queries, bbox grid and void shared by all slabs. |
-| `LabelQuery::new` | `src/pipeline/placement_labels.rs:136` | Prepare the per-run query context once. |
-| `LabelQuery::centre` | `src/pipeline/placement_labels.rs:170` | Voxel-centre world position. |
-| `LabelQuery::fill_slab` | `src/pipeline/placement_labels.rs:184` | Classify one z-slab into phase/id buffers. |
-| `write_label_stacks` | `src/pipeline/placement_labels.rs:257` | Stream both label TIFF stacks slab by slab. |
+| `inverse_normal_cdf` | `src/pipeline/placement_sizes.rs` | Wichura AS241 standard-normal quantile, error below 1e-15. |
+| `poly` (placement_sizes.rs) | `src/pipeline/placement_sizes.rs` | Horner evaluation of highest-degree-first coefficients. |
+| `normal_cdf` (placement_sizes.rs) | `src/pipeline/placement_sizes.rs` | Standard normal CDF via the complementary error function. |
+| `erfc` | `src/pipeline/placement_sizes.rs` | Complementary error function, used to turn truncation bounds into probabilities. |
+| `SizeDraw` | `src/pipeline/placement_sizes.rs` | One drawn diameter with its reporting class and draw order. |
+| `SizeClass` | `src/pipeline/placement_sizes.rs` | A diameter band and the share of particles it should hold. |
+| `SizeSource` | `src/pipeline/placement_sizes.rs` | A prepared target number distribution: truncated lognormal or histogram. |
+| `SizeSource::prepare` | `src/pipeline/placement_sizes.rs` | Prepares a source, loading the histogram CSV and precomputing truncation. |
+| `SizeSource::sample` | `src/pipeline/placement_sizes.rs` | Draws one diameter, consuming exactly one u64. |
+| `SizeSource::support` | `src/pipeline/placement_sizes.rs` | The smallest and largest diameter the source can produce. |
+| `SizeSource::mass_between` | `src/pipeline/placement_sizes.rs` | The share of the target distribution between two diameters. |
+| `build_classes` | `src/pipeline/placement_sizes.rs` | Builds the reporting classes target and actual are compared over. |
+| `build_equal_width` | `src/pipeline/placement_sizes.rs` | Splits a source's support into equal-width classes with their shares. |
+| `class_for_diameter` | `src/pipeline/placement_sizes.rs` | Finds a diameter's reporting class; the top edge is inclusive. |
+| `SizePlan` | `src/pipeline/placement_sizes.rs` | The sizes a run intends to place, drawn before any placement. |
+| `plan_size_multiset` | `src/pipeline/placement_sizes.rs` | Draws the whole multiset, stopping at whichever count lands closer to the target. |
+| `order_for_placement` | `src/pipeline/placement_sizes.rs` | Orders a drawn multiset largest-first, or back into draw order. |
+| `ShapeShell` | `src/pipeline/placement_library.rs` | One closed shell: measured, centred, and digested. |
+| `ShapeSource` | `src/pipeline/placement_library.rs` | A source file the library was built from, with its digest and shell counts. |
+| `RejectedShell` | `src/pipeline/placement_library.rs` | A shell read but not kept, and why. |
+| `ShapeLibrary` | `src/pipeline/placement_library.rs` | Every shape a run may draw from, plus what was read and not kept. |
+| `load_shape_library` | `src/pipeline/placement_library.rs` | Loads, splits, measures and filters the shape files. Shells of a file with at least 32 (`LIBRARY_PARALLEL_MIN_SHELLS`) are prepared in parallel into an indexed buffer walked in shell order, so order, rejections and the first reported defect are those of a serial scan (§79). |
+| `filter_reason` | `src/pipeline/placement_library.rs` | Says which library filter a shell failed, if any. |
+| `shell_geometry_sha256` | `src/pipeline/placement_library.rs` | Digests a shell's geometry so a re-ordered file is detectable. |
+| `particle_at_prepared` | `src/pipeline/placement_labels.rs` | First particle in ordered cached candidates. |
+| `LABEL_SLAB_VOXELS` | `src/pipeline/placement_labels.rs` | Target voxels per label slab (4,194,304). |
+| `label_dims` | `src/pipeline/placement_labels.rs` | Label grid dimensions with overflow check. |
+| `LabelQuery` | `src/pipeline/placement_labels.rs` | Prepared particle queries, bbox grid and void shared by all slabs. |
+| `LabelQuery::new` | `src/pipeline/placement_labels.rs` | Prepare the per-run query context once. |
+| `LabelQuery::centre` | `src/pipeline/placement_labels.rs` | Voxel-centre world position. |
+| `LabelQuery::fill_slab` | `src/pipeline/placement_labels.rs` | Classify one z-slab into phase/id buffers. |
+| `write_label_stacks` | `src/pipeline/placement_labels.rs` | Stream both label TIFF stacks slab by slab. |
 
 ## Reading order
 
@@ -143,12 +142,11 @@ run_placement
 ├── build_classes               the reporting classes
 ├── plan_size_multiset          every size, drawn before anything is placed
 ├── blank_report + write_json   the report, written once as `running`
-├── place_all
+├── place_resumable            primary and clipping top-up plans
 │   └── try_place_one           per size: propose, then check
 │       ├── draw_proposal       serial, fixed schedule; records the stream position
 │       └── evaluate_proposal   parallel within a batch; read-only
 │           └── check_placement every rule, in one fixed order
-├── run_top_up                  only if nothing failed
 ├── decide_stop                 normal completion or interruption
 ├── write_outputs               geometry, record, size CSV, void copy, labels
 └── finish_report + write_json  the report again, as `finished`
@@ -221,9 +219,10 @@ must recognize `interrupted` as saved partial output, never target attainment.
 
 ## Cross-cutting notes
 
-- `PlacedParticle` keeps its `parry` `TriMesh` once built, so an accepted particle never has one
-  rebuilt for it. The original engine rebuilds one per comparison, which dominates its collision
-  loop.
+- Production `PlacedParticle` keeps shared source geometry and immutable transforms,
+  with empty standalone `mesh`/`shape` fields. `prepared()` pins exact world geometry
+  through the run-wide bounded cache; standalone fixtures retain direct fields.
+  `EngineState` counts triangles without accumulating a merged mesh.
 - `RejectReason::ALL` is the report's emission order and reads as a funnel. The exact clip check is
   *evaluated* after the neighbour tests, for cost; the tally order is the documented rule order.
 - `particle_overlap` and `particle_enclosed` are two different failures and the second is the one
@@ -257,7 +256,7 @@ its unit test observes pool size and worker indices inside nested `par_iter` wor
 
 ### Label preparation (PERF-12)
 
-`voxel_labels` prepares immutable per-particle mesh queries and a bounded spatial grid once. Parallel 1024-voxel tiles query their enclosing box once, sort candidate slice indices, and preserve original particle ownership order and void-first classification. Worker scratch retains ray hits. `particle_at_prepared` returns the first acceptance id and bbox-test count, reduced without shared atomics. The test-only original particle scan is the differential oracle. Output phase/id arrays and file schema are unchanged; output is now slab-streamed (below).
+`voxel_labels` builds a bounded spatial grid once and prepares exact mesh queries for each tile using only its pinned candidates. Parallel 1024-voxel tiles query their enclosing box once, sort candidate slice indices, and preserve original particle ownership order and void-first classification. Worker scratch retains ray hits. `particle_at_prepared` returns the first acceptance id and bbox-test count, reduced without shared atomics. The test-only original particle scan is the differential oracle. Output phase/id arrays and file schema are unchanged; output is now slab-streamed (below).
 
 ### Slab-streamed label output (PERF-12, 2026-09-25)
 
@@ -275,8 +274,8 @@ Shape library input now uses `load_stl_hashed` so geometry and source digest com
 For `pack` with a `placement:` config, create `<outputs.dir>/STOP` to request a
 portable cooperative stop. On Unix the CLI also handles SIGINT (Ctrl-C) and
 SIGTERM. Handlers only set an atomic flag; geometry and file I/O stay outside the
-handler. Repeated requests continue to allow saving. SIGKILL, crashes, and loss
-of power cannot save in-memory geometry.
+handler. Repeated requests continue to allow saving. SIGKILL, crashes and loss of power do not trigger final saving; recovery uses
+the last successfully committed checkpoint when enabled.
 
 The engine observes cancellation between proposal batches (and particles/top-up
 batches), finishes already running geometric queries, and uses the normal output
@@ -305,8 +304,8 @@ errors warn without discarding the packing result. STOP-file polling is throttle
 to 250 ms at boundaries; signal polling occurs at every boundary. Remove STOP
 before a new run. Use a new output directory to preserve an older result.
 
-This feature saves a usable partial assembly, **not a resumable RNG/engine
-checkpoint**. It does not change the legacy `packing:` engine. CLI signal handlers
+This feature saves a partial assembly and, by default, a resumable RNG/engine
+checkpoint before exporting geometry. It does not change the legacy `packing:` engine. CLI signal handlers
 are restored on return; in-process callers use the per-output STOP file and do not
 install process-global handlers. Normal packing order, RNG stream and geometry
 checks are unchanged.
@@ -325,7 +324,7 @@ checks are unchanged.
 
 `run_placement` now writes partial outputs on cooperative stop. `decide_stop`
 gives interruption precedence, and `finish_report` distinguishes interrupted from
-finished. `place_all`, `try_place_one` and `run_top_up` check control at boundaries;
+finished. `place_resumable` and `try_place_one` check control at boundaries;
 unaccepted interrupted candidates do not increment exhausted-size counts.
 
 
@@ -337,3 +336,19 @@ still operate on individual particles. Empty-plan `EngineState::new` uses a safe
 single spatial cell. See [aggregate function contracts](pipeline-aggregates.md).
 `SizeSource::sample` now calls deterministic `SizeSource::quantile(u01(rng))`,
 preserving its original random stream and inverse-CDF arithmetic.
+
+## Checkpoint and cache contracts
+
+See [the design](../algorithms/placement-checkpoints-and-memory.md) and
+[function contracts](pipeline-placement-state.md). `place_resumable` replaces
+`place_all` / `run_top_up` with one primary/top-up state machine. `try_place_one`
+returns `Result<bool>` and persists per-draw attempt consumption at safe points;
+checkpoint I/O failures propagate instead of claiming a saved state. Original
+geometry/RNG order remains unchanged except for the corrected pore-containment
+bug and global-budget failures no longer falsely exhausting a size.
+
+
+`run_placement` optionally validates an `initial_particles` assembly before
+planning the missing material volume. Retain inherited order and geometry,
+include it in plan/report accounting, and place only new draws. This starts a
+new task; ordinary checkpoint resume still checks exact executable identity.

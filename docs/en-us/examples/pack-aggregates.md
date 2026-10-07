@@ -5,6 +5,12 @@ Add this block beneath `placement:` in an existing validated placement config:
 ```yaml
   aggregates:
     enabled: true
+    construction: contact_growth # fcc retains legacy construction
+    contact_directions: 12
+    contact_orientations: 4
+    contact_tolerance: 0.00001
+    contact_max_steps: 96
+    neighborhood_sweeps: 2
     mode: mixed                 # clusters or mixed; ignored when disabled
     variants: auto              # Or an explicit integer, e.g. 8
     target_internal_volume_fraction: 0.50
@@ -55,3 +61,5 @@ Repository templates are shipped in data/input/placement_config.yaml (disabled),
 placement_void_config.yaml (disabled), placement_aggregate_config.yaml (clusters)
 and placement_mixed_config.yaml (mixed). All expose the new controls explicitly.
 The configuration-template regression resolves each shipped template.
+
+With contact growth, the checkpoint also retains committed members inside the current template. `max_compaction_trials` includes insertion and relaxation candidates; `strategy_rounds` adds final target-driven sweeps. The two FCC sweep fields and container_shrink_fraction are unused in this constructor. Use an explicit template count when a larger catalog is needed; the existing auto heuristic is unchanged.

@@ -126,13 +126,12 @@ struct LabelQuery<'a> {
     voxel_size: f64,
     dims: [usize; 3],
     placed: &'a [PlacedParticle],
-    prepared: Vec<PreparedMeshQuery<'a>>,
     grid: Option<SpatialGrid>,
     void: Option<&'a VoidIndex>,
 }
 
 impl<'a> LabelQuery<'a> {
-    // AI-FUNC-SUMMARY: Prepare per-particle mesh queries and the particle bbox grid once for all slabs; returns the query context; side effects: None.
+    // AI-FUNC-SUMMARY: Prepare the particle bbox grid once; exact geometry is pinned per tile; returns the query context; side effects: None.
     fn new(
         domain: BoundingBox,
         voxel_size: f64,
@@ -141,10 +140,6 @@ impl<'a> LabelQuery<'a> {
     ) -> Result<Self> {
         let dims = label_dims(domain, voxel_size)?;
         let size = domain.size();
-        let prepared = placed
-            .iter()
-            .map(|p| PreparedMeshQuery::new(&p.mesh))
-            .collect();
         let boxes: Vec<_> = placed.iter().map(|p| p.bbox).collect();
         let cell = estimate_cell_size(&boxes)
             .max(size.x.max(size.y).max(size.z) / (2.0 * (placed.len().max(1) as f64).cbrt()));
@@ -160,7 +155,6 @@ impl<'a> LabelQuery<'a> {
             voxel_size,
             dims,
             placed,
-            prepared,
             grid,
             void,
         })
@@ -222,8 +216,18 @@ impl<'a> LabelQuery<'a> {
                     }
                     let candidates = &mut spatial.neighbors;
                     candidates.sort_unstable();
+                    let geometries: Vec<_> = candidates
+                        .iter()
+                        .map(|&i| self.placed[i].prepared())
+                        .collect();
+                    let prepared: Vec<_> = geometries
+                        .iter()
+                        .map(|g| PreparedMeshQuery::new(&g.mesh))
+                        .collect();
                     let mut checks = 0usize;
-                    for (local, (phase, id)) in phases.iter_mut().zip(indices.iter_mut()).enumerate() {
+                    for (local, (phase, id)) in
+                        phases.iter_mut().zip(indices.iter_mut()).enumerate()
+                    {
                         let flat = base + local;
                         let p = self.centre(flat % nx, (flat / nx) % ny, flat / slab);
                         *id = 0;
@@ -232,7 +236,7 @@ impl<'a> LabelQuery<'a> {
                             continue;
                         }
                         let (hit, point_checks) =
-                            particle_at_prepared(self.placed, &self.prepared, candidates, p, scratch);
+                            particle_at_tile(self.placed, &prepared, candidates, p, scratch);
                         checks += point_checks;
                         if let Some(hit) = hit {
                             *phase = PHASE_PARTICLE as i64;
@@ -271,8 +275,7 @@ pub(crate) fn write_label_stacks(
     let mut id_file = BufWriter::new(File::create(&id_path)?);
     let mut checks = 0usize;
     {
-        let mut phase_pages =
-            TiffPageEncoder::new(&mut phase_file, nx, ny, VolumeNumericType::U8)?;
+        let mut phase_pages = TiffPageEncoder::new(&mut phase_file, nx, ny, VolumeNumericType::U8)?;
         let mut id_pages = TiffPageEncoder::new(&mut id_file, nx, ny, VolumeNumericType::U32)?;
         let mut phase = vec![0i64; slab_slices * nx * ny];
         let mut ids = vec![0i64; slab_slices * nx * ny];
@@ -322,7 +325,25 @@ fn point_in_particle(mesh: &crate::types::Mesh, bbox: BoundingBox, p: Vec3) -> b
     crate::geometry::point_inside_mesh(mesh, p)
 }
 
+// AI-FUNC-SUMMARY: Classify a point with tile-local pinned exact geometry; preserves acceptance ordering without retaining all world meshes.
+fn particle_at_tile(
+    placed: &[PlacedParticle],
+    prepared: &[PreparedMeshQuery<'_>],
+    candidates: &[usize],
+    p: Vec3,
+    scratch: &mut MeshQueryScratch,
+) -> (Option<usize>, usize) {
+    let mut checks = 0;
+    let hit = candidates.iter().zip(prepared).find_map(|(&i, query)| {
+        checks += 1;
+        (placed[i].bbox.contains_point(p) && query.contains_point(p, scratch))
+            .then_some(placed[i].acceptance_index)
+    });
+    (hit, checks)
+}
+
 // AI-FUNC-SUMMARY: Query a tile's sorted particle indices using cached mesh views; return the first acceptance ID and actual bbox checks while preserving original slice-order priority.
+#[cfg(test)]
 fn particle_at_prepared(
     placed: &[PlacedParticle],
     prepared: &[PreparedMeshQuery<'_>],
@@ -359,6 +380,7 @@ mod tests {
             void_overlap_volume: 0.0,
             clipped_faces: Vec::new(),
             bbox,
+            geometry: None,
             mesh: crate::geometry::box_mesh(bbox),
             shape: None,
             triangle_range: (0, 12),
@@ -391,8 +413,12 @@ mod tests {
             )
         })
         .collect();
-        let void = VoidIndex::build(&crate::geometry::icosphere_mesh(Vec3::new(4.0, 3.5, 6.5), 1.3, 2))
-            .unwrap();
+        let void = VoidIndex::build(&crate::geometry::icosphere_mesh(
+            Vec3::new(4.0, 3.5, 6.5),
+            1.3,
+            2,
+        ))
+        .unwrap();
         let temp = tempfile::tempdir().unwrap();
         let [nx, ny, nz] = label_dims(domain, voxel).unwrap();
         assert_eq!([nx, ny, nz], [28, 20, 30]);
@@ -400,10 +426,17 @@ mod tests {
         let mut phase = vec![0i64; nx * ny * nz];
         let mut ids = vec![0i64; nx * ny * nz];
         query.fill_slab(0, &mut phase, &mut ids);
-        for (code, want) in [(PHASE_MATRIX, true), (PHASE_PARTICLE, true), (PHASE_VOID, true)] {
+        for (code, want) in [
+            (PHASE_MATRIX, true),
+            (PHASE_PARTICLE, true),
+            (PHASE_VOID, true),
+        ] {
             assert_eq!(phase.contains(&(code as i64)), want);
         }
-        assert!(phase.iter().zip(&ids).all(|(&p, &i)| (p == PHASE_PARTICLE as i64) == (i != 0)));
+        assert!(phase
+            .iter()
+            .zip(&ids)
+            .all(|(&p, &i)| (p == PHASE_PARTICLE as i64) == (i != 0)));
         let reference = temp.path().join("reference");
         for (name, data, ty) in [
             ("phase.tiff", phase, VolumeNumericType::U8),
@@ -458,6 +491,7 @@ mod tests {
                     void_overlap_volume: 0.0,
                     clipped_faces: Vec::new(),
                     bbox,
+                    geometry: None,
                     mesh: crate::geometry::box_mesh(bbox),
                     shape: None,
                     triangle_range: (0, 12),

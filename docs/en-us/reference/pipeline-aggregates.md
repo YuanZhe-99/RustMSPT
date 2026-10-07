@@ -29,8 +29,8 @@ avoid a degenerate grid after cancellation before generation. `PlacementControl`
 now carries a phase label; polling, signal and saving semantics are unchanged.
 
 Output limit notes: templates have at most 1024 members and 128 variants, with
-at most 65536 catalog members, 1024 bounding-ball sweeps and 128 mesh-refinement sweeps. Memory still scales with accepted
-real geometry for final STL export. Global placement is sequential; the configured
+at most 65536 catalog members, 1024 bounding-ball sweeps and 128 mesh-refinement sweeps. Accepted world geometry is reconstructed through a bounded cache; final particle
+STL streams one reconstructed member at a time. Global placement is sequential; the configured
 worker pool still covers source loading and standard optional output generation.
 
 
@@ -70,3 +70,61 @@ geometry, template STL, template metadata and global flat particle output.
 | `stop_during_target_search_preserves_valid_best_template` | Stop mid-search saves best template, standard interrupted outputs and independent all-pair mesh gap verification. |
 
 These regression contracts are implemented in `tests/placement_aggregate_tests.rs`.
+
+## Resumable aggregate state
+
+`AggregateCursor` stores completed templates/catalogs, generation cursors,
+current mixed stage and its reserved budget, template-ID plan, cluster attempt
+cursor, proxies, membership and stage accounting. `save_aggregate` serializes only
+at committed safe points when due or forced. `run` restores the proxy index in
+acceptance order and re-exports templates into the selected output directory.
+An interrupted current template remains a visualization artifact and is rebuilt
+deterministically; completed templates are not rebuilt. Global attempts resume
+exactly. Completed snapshots remain available for explicit target extension.
+
+
+| Additional item | Contract |
+|---|---|
+| `exact_fallback_check` | For every proposed smaller-stage member, query actual particles and reuse ordinary exact feasibility, preserving member-local internal gaps; never reject merely because proxies overlap. |
+
+Mixed `exact_fallback` queries use a rebuilt individual-particle grid after
+checkpoint restoration. Proxy-only placement remains the default.
+
+## Contact-growth contracts
+
+Implementation: `src/pipeline/placement_aggregate_contact.rs` (search) and `src/pipeline/placement_aggregate_bodies.rs` (posed geometry kernel).
+
+| Item | Contract |
+|---|---|
+| `Growth` | Serializable pending plan, committed/best members and insertion/relaxation cursors; the posed-body cache is not serialized and is rebuilt on resume. |
+| `Body` / `Bodies` | Per-member query mesh/hierarchy in its own scaled frame plus convex-hull vertices, principal axes and volume, keyed by shell and exact scale; built once, never per pose. |
+| `Bodies::ensure` / `pose` | Build missing bodies; pose a member as an isometry without copying or transforming geometry. |
+| `Bodies::envelope` | Sphere/cube envelope from hull vertices; equal to the all-vertex envelope (both norms are convex). |
+| `principal_axes` | Vertex-covariance eigenvectors, longest extent first. |
+| `distance_capped` | min(exact triangle-pair surface distance, cap) by simultaneous branch-and-bound hierarchy traversal through the relative isometry; bounding-ball rejection first. Nesting is not tested (motions start separated and move conservatively). |
+| `clearance_capped` | Smallest capped distance to a set of posed obstacles, tightening the cap as it goes. |
+| `directions` | Return deterministic spherical directions without RNG or thread dependence. |
+| `orientation` | Start orientation per approach: legacy fixed rotations, or (`contact_orientation: principal`) minor/major principal axis along the approach with deterministic spins. |
+| `advance` | Conservative advancement of a translation/rotation: each step moves less than the current exact clearance surplus, one capped distance query per step (cap <= half the bounding radius keeps pruning tight); returns last feasible pose on contact, step limit or cancellation. |
+| `settle` | Optional roll toward the centre (lift, tangential slide, fall); accepts only strictly closer feasible poses. |
+| `insertion_search` | Straight approaches over directions x orientations evaluated in parallel, stable ranking, optional settling of the best `contact_settle_candidates`; always returns a feasible pose. |
+| `parallel` | Run independent motion jobs on the Rayon pool with cancellation-only worker controls; results keep job order, so output is thread-count independent. |
+| `centre_envelope` | Bounding-box centring then deterministic pattern search over hull vertices; rigidly translate all members only when the envelope shrinks. |
+| `score` | Whole-template envelope and squared-centre secondary cost, no mutation. |
+| `better` | Lexicographic acceptance of envelope then centre cost. |
+| `Growth::new` | Fix quantile sizes/source assignments and initialize serializable construction state. |
+| `Growth::step` | Commit one insertion or relaxation transaction (the six relaxation transactions of a member run in parallel from the same arrangement); reserve future insertion budget; rollback unfinished unit on stop; accumulates profiling counters. |
+| `Growth::target_reached` | Compare best-member material volume to the real enclosing proxy volume. |
+| `Growth::snapshot` | Independently validate every pair with the world-frame exact predicates and export committed members with honest target/stop status. |
+| `run_growth_batch` | Advance up to `threads` consecutive contact-growth templates of one stage concurrently; heartbeat thread keeps progress fresh; stop latches into the run control. |
+| `commit_template` | Append a completed template, export it and advance the variant/stage cursor. |
+| `contact::tests::setup` | Build a closed-mesh motion/serialization fixture. |
+| `contact_advance_stops_before_obstacle_even_when_endpoint_is_clear` | Pin first-contact stopping, surface gap and separating-motion escape. |
+| `posed_distance_matches_world_frame_distance` | Posed capped distance equals the world-frame exact distance for rotated/scaled members, respects the cap; hull envelope equals all-vertex envelope. |
+| `contact_growth_serialized_member_boundary_resumes_exactly` | Require identical final transforms/counters (wall time excluded) after serialized intermediate state. |
+| `contact_growth_geometry_density_and_determinism` | Check exported clearances/transforms, density improvement and thread determinism. |
+| `contact_growth_controls_and_exhaustion` | Reject invalid controls and preserve all members at zero search budget. |
+
+`AggregateCursor::batch` holds the concurrently generated in-progress templates (an older single `growth` entry is resumed as the first batch member). `run` saves at batch boundaries and on stop, and admits only completed templates. `AggregateConstruction` selects the legacy FCC or contact-growth path. Old FCC partial-template rebuilding semantics apply only to FCC.
+
+Additional regressions: `contact_rotation_cannot_tunnel_with_clear_endpoints` checks swept bar rotation, and `contact_growth_cli_stop_resume_matches_uninterrupted` checks saved in-template state plus binary-identical resumed geometry.

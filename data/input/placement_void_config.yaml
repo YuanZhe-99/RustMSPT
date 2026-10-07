@@ -6,6 +6,20 @@
 #
 # Every relative path below resolves against the directory holding THIS file.
 placement:
+  # Optional new fill task from a verified flat particle assembly.
+  # Use separate outputs; inherited gap may be smaller inside old clusters.
+  # initial_particles: {record: "previous/particles.json", report: "previous/run_report.json", existing_gap: 0.1}
+  # Optional original-plan transfer for a NEW fill task:
+  # initial_particles: {record: "previous/particles.json", report: "previous/run_report.json",
+  #                     existing_gap: 0.1, pending_checkpoint: "previous/checkpoint.json",
+  #                     retry_failed: true}
+  initial_particles: null
+  # Exact individual gap fill (disable aggregates for this mode):
+  # position:
+  #   mode: free_space_guided
+  #   free_space: {coarse_cell_size: 8, min_cell_size: 1, max_cells: 250000,
+  #                index_memory_mb: 128, candidates_per_location: 8,
+  #                exploration_fraction: 0.10, local_refinement: true}
   seed: 20260910
 
   frame:
@@ -62,20 +76,44 @@ placement:
   # Optional aggregate engine. False (or omitted) keeps individual placement.
   # For enabled examples see placement_aggregate_config.yaml / placement_mixed_config.yaml.
   aggregates:
+    # Mixed fallback tests real members and can enter empty proxy space.
+    exact_fallback: false
     enabled: false
+    construction: fcc           # Set contact_growth for contact-based templates
+    contact_directions: 12
+    contact_orientations: 4
+    contact_tolerance: 0.00001
+    contact_max_steps: 96
+    contact_orientation: fixed   # fixed (original) or principal (flat faces toward the assembly)
+    contact_settle_steps: 0     # Roll toward centre after first contact; 0 disables
+    contact_settle_candidates: 3 # Best straight approaches that are settled
+    neighborhood_sweeps: 2
     mode: clusters               # clusters or mixed (large then smaller blocks)
     variants: auto               # Or an explicit positive integer, e.g. 8
     particles_per_cluster: 64
     fallback_particles_per_cluster: [16, 4, 1]  # Mixed only, decreasing counts
     shape: sphere                # sphere or cube
     internal_gap: 0.1
-    compaction_sweeps: 32
-    mesh_refinement_sweeps: 8
+    compaction_sweeps: 32        # FCC only
+    mesh_refinement_sweeps: 8    # FCC only
     target_internal_volume_fraction: 0.50  # True member volume / container volume
     strategy_rounds: 8
-    max_compaction_trials: 6000   # Per-template additional deterministic trials
+    max_compaction_trials: 6000   # Per-template trials; contact growth includes insertion
     rotation_search: true
     lateral_rearrangement: true
     pair_rearrangement: true
-    container_shrink_fraction: 0.03
+    container_shrink_fraction: 0.03 # FCC only
     rotation_step_degrees: 15
+
+  # Exact geometry is reconstructed from shared f64 source shells on cache misses.
+  memory:
+    geometry_cache_mb: 256        # Estimated retained geometry; 0 disables caching
+    simplified_collision: false  # Optional conservative 12-triangle box screen
+
+  # Save periodically, on interruption and also after target attainment.
+  checkpoint:
+    enabled: true
+    interval_seconds: 60          # 0 disables the time trigger
+    every_particles: 1000         # 0 disables the count trigger
+    resume_from: null            # e.g. ../output/placement/checkpoint.json
+    extend: false                # true + higher target appends to a completed run

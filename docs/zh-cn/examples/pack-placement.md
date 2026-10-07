@@ -287,3 +287,88 @@ sha256sum /tmp/t1/particles.json /tmp/t8/particles.json
 ### 计时行（2026-09-25 新增）
 
 上面的捕获输出早于共享阶段计时器。当前版本还会为每个已完成阶段打印 `[Timing] placement stage=<name> seconds=<f>`，随后打印 `[Timing] placement workers=<n>` 与 `[Timing] placement peak_rss_bytes=<n|unavailable>`。阶段名称见 `../reference/pipeline-core.md`（`pipeline/timing.rs`）；输出文件不变。
+
+
+## Cooperative stop and partial-result preservation
+
+对于带 `placement:` 配置的 `pack`，创建 `<outputs.dir>/STOP` 即可请求可移植的协作式停止。在 Unix 上，CLI 还会处理
+SIGINT（Ctrl-C）和 SIGTERM。处理程序只设置一个原子标志；几何与文件 I/O 留在处理程序之外。重复请求仍允许保存。
+SIGKILL、崩溃和断电无法保存内存中的几何。
+
+引擎在提议批次之间（以及颗粒/补抽批次之间）观察取消，完成已在运行的几何查询，并使用常规输出写入器导出每一个已接受的颗粒。被中断的候选
+不计为已证实的尺寸失败。取消之后不再启动替换尺寸或新的补抽批次。加载/规划与输出写入不会被抢占；请等待最终报告，因为复杂查询和大型
+STL 文件可能耗时较长。
+
+`particles.stl`（非空时）、`particles.json`、`size_distribution.csv`、冻结孔隙副本以及已配置的可选输出，描述的是已接受的部分结果。
+最终报告带有 `status: interrupted` 与 `stop_reason: interrupted`；仅在输出保存成功之后才写出。I/O 失败作为错误传播，
+而不是作为成功保存的中断。在任何接受之前收到请求，会写出空的记录/报告而不带颗粒 STL。退出码为零表示输出已保存，
+并不表示目标已达成。原有的四个正常停止原因保持其行为。使用方必须接受额外的中断原因。CSV
+中的缺口是规划数减去已放置数，因此在部分运行中包含未尝试的尺寸；`stop_detail.failed_sizes` 则单独统计已耗尽尝试的尺寸。
+
+`progress.json` 在开始时、首次接受时、大约每 10 秒的批次边界处、保存之前以及保存成功之后被原子替换。
+它报告数量、尝试次数、已用时间以及在所配置基准上的体积分数；原始 VF 并不是独立的孔隙筛查认证。同一份摘要
+也打印到 stderr。单次长查询可能推迟心跳。进度 I/O
+错误只发出警告，不会丢弃打包结果。STOP 文件轮询在边界处被限制为 250 ms 一次；信号轮询在每个边界都进行。新运行之前请删除
+STOP。若要保留旧结果，请使用新的输出目录。
+
+此功能保存的是一个可用的部分装配体，**而不是可恢复的 RNG/引擎检查点**。它不改变旧版 `packing:` 引擎。CLI 信号处理程序
+在返回时被恢复；进程内调用方使用各输出目录的 STOP 文件，且不安装进程全局处理程序。正常的打包顺序、RNG 流与几何
+检查均不变。
+
+## Recover or append to a saved placement
+
+每次默认启用的运行都会在 STL 导出之前写出 `checkpoint.json`，成功的运行也不例外。把
+`placement.checkpoint.resume_from` 设为该路径，删除旧输出的 `STOP` 标记，然后再次运行
+`rustmspt pack --config CONFIG.yaml`。若要保留先前的可视化/记录产物，请使用新的输出目录。
+保持 `extend: false` 即可用其保存的随机流完成被中断的任务。
+若要在完成之后追加，请设置 `extend: true` 并提高 `target.volume_fraction`。
+必要时增大 `budget.total_attempts`；尝试次数是累计的。旧的
+变换保持固定，旧的失败尺寸计数仍会被报告。
+
+```yaml
+  checkpoint:
+    enabled: true
+    interval_seconds: 60
+    every_particles: 1000
+    resume_from: "../output/previous/checkpoint.json"
+    extend: true
+  memory:
+    geometry_cache_mb: 128
+    simplified_collision: true
+```
+
+请使用相同的可执行文件与源几何。检查点功能出现之前的 `particles.json` 文件
+无法恢复原始随机流。聚集体恢复会复用已完成的
+模板并继续全局打包；被中断的、进行中的模板会被确定性地重新生成。缓存上限涵盖的是保留的几何估计，
+而不是进程的总 RSS。
+
+## Optional guided continuation as a new task
+
+使用独立的输出，禁用聚集体，并保留冻结的记录/报告/计划：
+
+```yaml
+placement:
+  initial_particles:
+    record: previous/particles.json
+    report: previous/run_report.json
+    existing_gap: 0.1
+    pending_checkpoint: previous/checkpoint.json
+    retry_failed: true
+  position:
+    mode: free_space_guided
+    free_space:
+      coarse_cell_size: 8
+      min_cell_size: 1
+      max_cells: 250000
+      index_memory_mb: 128
+      candidates_per_location: 8
+      exploration_fraction: 0.10
+      local_refinement: true
+  aggregates: {enabled: false}
+  boundary: {mode: strict}
+  checkpoint: {enabled: true}
+  outputs: {dir: guided_fill}
+```
+
+这只是一个局部片段：请保留完整的源/域/孔隙/尺寸/目标与间隙设置。目标必须与原先未完成的个体主计划一致。
+不会采样新的尺寸。第一个版本不引导进行中的聚集体放置。阅读[设计文档](../algorithms/free-space-guided-placement.md)。

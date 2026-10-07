@@ -352,3 +352,65 @@ checkpoint**. It does not change the legacy `packing:` engine. CLI signal handle
 are restored on return; in-process callers use the per-output STOP file and do not
 install process-global handlers. Normal packing order, RNG stream and geometry
 checks are unchanged.
+
+## Recover or append to a saved placement
+
+Every default-enabled run writes `checkpoint.json` before STL export, including a
+successful run. Set `placement.checkpoint.resume_from` to that path, remove the
+old output `STOP` marker, and run `rustmspt pack --config CONFIG.yaml` again. Use a
+new output directory to preserve the earlier visualization/record artifacts.
+Leave `extend: false` to finish an interrupted task with its saved random stream.
+To append after completion, set `extend: true` and raise `target.volume_fraction`.
+Increase `budget.total_attempts` if necessary; attempts remain cumulative. Old
+transforms stay fixed and old failed-size counts remain reported.
+
+```yaml
+  checkpoint:
+    enabled: true
+    interval_seconds: 60
+    every_particles: 1000
+    resume_from: "../output/previous/checkpoint.json"
+    extend: true
+  memory:
+    geometry_cache_mb: 128
+    simplified_collision: true
+```
+
+Use the same executable and source geometry. Pre-checkpoint `particles.json` files
+cannot recover the original random stream. Aggregate recovery reuses completed
+templates and resumes global packing; an interrupted in-progress template is
+re-generated deterministically. Cache limits cover retained geometry estimates,
+not total process RSS.
+
+## Optional guided continuation as a new task
+
+Use separate outputs, disable aggregates and retain frozen record/report/plan:
+
+```yaml
+placement:
+  initial_particles:
+    record: previous/particles.json
+    report: previous/run_report.json
+    existing_gap: 0.1
+    pending_checkpoint: previous/checkpoint.json
+    retry_failed: true
+  position:
+    mode: free_space_guided
+    free_space:
+      coarse_cell_size: 8
+      min_cell_size: 1
+      max_cells: 250000
+      index_memory_mb: 128
+      candidates_per_location: 8
+      exploration_fraction: 0.10
+      local_refinement: true
+  aggregates: {enabled: false}
+  boundary: {mode: strict}
+  checkpoint: {enabled: true}
+  outputs: {dir: guided_fill}
+```
+
+This is a partial snippet: retain the complete source/domain/pore/size/target and
+gap settings. Target must match the original unfinished individual primary plan.
+No new sizes are sampled. This first version does not guide active aggregate
+placement. Read [the design](../algorithms/free-space-guided-placement.md).

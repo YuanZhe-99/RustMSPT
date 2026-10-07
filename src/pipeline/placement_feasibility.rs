@@ -1,5 +1,5 @@
-use crate::config::placement::{BoundaryMode, ResolvedBoundary};
 use crate::config::placement::VoidCrossing;
+use crate::config::placement::{BoundaryMode, ResolvedBoundary};
 use crate::geometry::{
     bbox_distance, bbox_overlaps, cut_face_names, mesh_closer_than_prepared,
     mesh_solids_nested_prepared, mesh_surfaces_intersect_prepared, mesh_volume_in_bbox_exact,
@@ -24,7 +24,9 @@ pub const PAIR_PARALLEL_MIN: usize = usize::MAX;
 /// The names are the report's keys, so a rejection tally can be read against the
 /// order the checks actually run in. Each variant is produced by exactly one arm
 /// of `check_placement`, which is what makes the tally attributable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub enum RejectReason {
     /// Strict mode: some part of the particle lies outside the domain.
     OutsideDomain,
@@ -100,15 +102,29 @@ pub struct PlacedParticle {
     pub void_overlap_volume: f64,
     pub clipped_faces: Vec<&'static str>,
     pub bbox: BoundingBox,
+    /// Empty for production particles; retained for direct in-process fixtures.
     pub mesh: Mesh,
-    /// Built once when the particle is accepted and kept for every later query.
-    /// The original engine rebuilds one per comparison, which is the dominant cost
-    /// of its collision loop.
+    pub geometry: Option<crate::pipeline::placement_geometry::GeometryHandle>,
+    /// Standalone fixture shape; production exact shapes live in the bounded cache.
     pub shape: Option<TriMesh>,
     pub triangle_range: (usize, usize),
 }
 
 impl PlacedParticle {
+    // AI-FUNC-SUMMARY: Obtain exact world geometry from the bounded cache, or the standalone fixture; pins it for this query.
+    pub fn prepared(
+        &self,
+    ) -> std::sync::Arc<crate::pipeline::placement_geometry::PreparedGeometry> {
+        if let Some(handle) = &self.geometry {
+            handle.get()
+        } else {
+            std::sync::Arc::new(crate::pipeline::placement_geometry::PreparedGeometry {
+                mesh: self.mesh.clone(),
+                shape: self.shape.clone(),
+            })
+        }
+    }
+
     // AI-FUNC-SUMMARY: The particle volume that counts toward the solid phase; returns f64; side effects: none.
     // Notes: in_domain is gross - it includes any part sitting inside the void. The void owns that
     // overlap, so the solid share is in_domain minus it, clamped at zero because the two numbers
@@ -253,9 +269,8 @@ pub fn check_placement(
     // the separation. A shell strictly inside another has *all* of its vertices
     // inside it, so neither vertex test can miss the case it exists for.
     //
-    // The cost is bounded by the box prefilter: if no void triangle comes within
-    // `gap` of the particle's box, the particle is both far from the void and not
-    // nested in it, and none of the three tests needs to run.
+    // A box/surface query bounds surface work only; unconditional point parity
+    // is required to reject particles wholly enclosed deep inside a pore.
     //
     // The same argument governs a pair of particles, and the neighbour loop below
     // runs it: (b) is `mesh_surfaces_intersect_prepared` plus the distance test,
@@ -272,6 +287,16 @@ pub fn check_placement(
         }
         match ctx.void_crossing {
             VoidCrossing::Forbidden => {
+                // A surface-only box query cannot detect a particle deep inside a pore.
+                if void.contains_point(candidate.centre)
+                    || candidate
+                        .mesh
+                        .vertices
+                        .first()
+                        .is_some_and(|&v| void.contains_point(v))
+                {
+                    return Err(RejectReason::InsideVoid);
+                }
                 if void.near_box(bbox, ctx.void_gap) {
                     if void.any_vertex_inside(candidate.mesh) {
                         return Err(RejectReason::InsideVoid);
@@ -365,7 +390,11 @@ pub fn check_placement(
 // AI-FUNC-SUMMARY: Whether a placed neighbour survives the centre-sphere and box separation tests; returns true when the exact pair tests must run; side effects: none.
 // Notes: Two particles whose centres are farther apart than the sum of their reaches plus the gap
 // cannot be too close whatever their shape; then the boxes, which are tighter than the spheres.
-fn pair_needs_exact_test(ctx: &FeasibilityContext, candidate: &Candidate, other: &PlacedParticle) -> bool {
+fn pair_needs_exact_test(
+    ctx: &FeasibilityContext,
+    candidate: &Candidate,
+    other: &PlacedParticle,
+) -> bool {
     let delta = candidate.centre.sub(other.translation);
     let centre_distance = delta.dot(delta).sqrt();
     if centre_distance > candidate.reach + other.reach + ctx.gap_particle_particle {
@@ -375,6 +404,28 @@ fn pair_needs_exact_test(ctx: &FeasibilityContext, candidate: &Candidate, other:
         && !bbox_overlaps(candidate.bbox, other.bbox)
     {
         return false;
+    }
+    if let Some(handle) = &other.geometry {
+        if handle.simplified_collision {
+            let proxy = handle.proxy();
+            let proxy_box = crate::geometry::mesh_bbox(&proxy.mesh);
+            let candidate_shape = to_parry_trimesh(candidate.mesh);
+            if !crate::geometry::mesh_collision_exact_prepared(
+                Some(candidate.bbox),
+                candidate_shape.as_ref(),
+                proxy_box,
+                proxy.shape.as_ref(),
+            ) && !mesh_closer_than_prepared(
+                Some(candidate.bbox),
+                candidate_shape.as_ref(),
+                proxy_box,
+                proxy.shape.as_ref(),
+                ctx.gap_particle_particle,
+                true,
+            ) {
+                return false;
+            }
+        }
     }
     true
 }
@@ -413,8 +464,16 @@ fn first_pair_rejection(
     if gap > 0.0 {
         let too_close = |index: &usize| {
             let other = &placed[*index];
-            mesh_closer_than_prepared(Some(bbox), shape, Some(other.bbox), other.shape.as_ref(), gap, true)
-                .then_some(RejectReason::ParticleGap)
+            let geometry = other.prepared();
+            mesh_closer_than_prepared(
+                Some(bbox),
+                shape,
+                Some(other.bbox),
+                geometry.shape.as_ref(),
+                gap,
+                true,
+            )
+            .then_some(RejectReason::ParticleGap)
         };
         let before = &survivors[..cut];
         let gap_reason = if before.len() >= parallel_min {
@@ -432,11 +491,21 @@ fn first_pair_rejection(
 // AI-FUNC-SUMMARY: The overlap and enclosure tests for one candidate-neighbour pair, in that order; returns the first failing reason or None; side effects: none.
 // Notes: Surface intersection cannot see one solid wholly inside the other, and the distance reports
 // the gap between the two surfaces as if it were clearance, so the nesting test must run before it.
-fn solid_pair_rejection(bbox: BoundingBox, shape: Option<&TriMesh>, other: &PlacedParticle) -> Option<RejectReason> {
-    if mesh_surfaces_intersect_prepared(Some(bbox), shape, Some(other.bbox), other.shape.as_ref()) {
+fn solid_pair_rejection(
+    bbox: BoundingBox,
+    shape: Option<&TriMesh>,
+    other: &PlacedParticle,
+) -> Option<RejectReason> {
+    let geometry = other.prepared();
+    if mesh_surfaces_intersect_prepared(
+        Some(bbox),
+        shape,
+        Some(other.bbox),
+        geometry.shape.as_ref(),
+    ) {
         return Some(RejectReason::ParticleOverlap);
     }
-    if mesh_solids_nested_prepared(Some(bbox), shape, Some(other.bbox), other.shape.as_ref()) {
+    if mesh_solids_nested_prepared(Some(bbox), shape, Some(other.bbox), geometry.shape.as_ref()) {
         return Some(RejectReason::ParticleEnclosed);
     }
     None
@@ -445,12 +514,23 @@ fn solid_pair_rejection(bbox: BoundingBox, shape: Option<&TriMesh>, other: &Plac
 // AI-FUNC-SUMMARY: The full serial per-pair check order (overlap, enclosure, gap) for one pair; returns the first failing reason or None; side effects: none.
 // Notes: The reference first_pair_rejection must reproduce; used by the fixtures that prove it does.
 #[cfg(test)]
-fn exact_pair_rejection(bbox: BoundingBox, shape: Option<&TriMesh>, other: &PlacedParticle, gap: f64) -> Option<RejectReason> {
+fn exact_pair_rejection(
+    bbox: BoundingBox,
+    shape: Option<&TriMesh>,
+    other: &PlacedParticle,
+    gap: f64,
+) -> Option<RejectReason> {
     if let Some(reason) = solid_pair_rejection(bbox, shape, other) {
         return Some(reason);
     }
     if gap > 0.0 {
-        let d = crate::geometry::mesh_distance_exact_prepared(Some(bbox), shape, Some(other.bbox), other.shape.as_ref());
+        let geometry = other.prepared();
+        let d = crate::geometry::mesh_distance_exact_prepared(
+            Some(bbox),
+            shape,
+            Some(other.bbox),
+            geometry.shape.as_ref(),
+        );
         if d < gap {
             return Some(RejectReason::ParticleGap);
         }
@@ -492,7 +572,9 @@ fn retained_depth(bbox: BoundingBox, domain: BoundingBox, faces: &[&'static str]
 mod tests {
     use super::*;
     use crate::geometry::spatial::SpatialGrid;
-    use crate::geometry::{icosphere_mesh, mesh_bbox, mesh_volume, sample_uniform_quaternion, transform_shell};
+    use crate::geometry::{
+        icosphere_mesh, mesh_bbox, mesh_volume, sample_uniform_quaternion, transform_shell,
+    };
     use crate::pipeline::rng::{seeded_rng, u01, uniform_index, uniform_range};
     use std::collections::BTreeMap;
     use std::time::Instant;
@@ -500,7 +582,10 @@ mod tests {
     #[derive(Debug, PartialEq)]
     enum Outcome {
         Rejected(RejectReason),
-        Accepted { volume_bits: u64, clipped: Vec<&'static str> },
+        Accepted {
+            volume_bits: u64,
+            clipped: Vec<&'static str>,
+        },
     }
 
     type Transform = (u64, [u64; 4], [u64; 3]);
@@ -558,6 +643,7 @@ mod tests {
             clipped_faces,
             bbox,
             mesh,
+            geometry: None,
             shape,
             triangle_range: (0, 0),
         }
@@ -568,7 +654,10 @@ mod tests {
     fn replay(pair_parallel_min: usize, attempts: usize) -> Replay {
         let (canonical, unit_reach) = ellipsoid(1);
         let unit_volume = mesh_volume(&canonical);
-        let domain = BoundingBox { min: Vec3::new(0.0, 0.0, 0.0), max: Vec3::new(24.0, 24.0, 24.0) };
+        let domain = BoundingBox {
+            min: Vec3::new(0.0, 0.0, 0.0),
+            max: Vec3::new(24.0, 24.0, 24.0),
+        };
         let boundary = ResolvedBoundary {
             mode: BoundaryMode::Clip,
             min_boundary_dist: 0.0,
@@ -635,8 +724,18 @@ mod tests {
                 let reference = survivor_list
                     .iter()
                     .find_map(|&i| exact_pair_rejection(bbox, shape.as_ref(), &placed[i], gap));
-                let phased = first_pair_rejection(bbox, shape.as_ref(), &placed, &survivor_list, gap, pair_parallel_min);
-                assert_eq!(phased, reference, "phased pair search disagrees with the per-pair serial scan");
+                let phased = first_pair_rejection(
+                    bbox,
+                    shape.as_ref(),
+                    &placed,
+                    &survivor_list,
+                    gap,
+                    pair_parallel_min,
+                );
+                assert_eq!(
+                    phased, reference,
+                    "phased pair search disagrees with the per-pair serial scan"
+                );
                 replay.oracle_checks += 1;
                 if survivors >= 2 && survivors >= pair_parallel_min {
                     replay.parallel_attempts += 1;
@@ -654,7 +753,12 @@ mod tests {
                     });
                     replay.transforms.push((
                         scale.to_bits(),
-                        [rotation.w.to_bits(), rotation.x.to_bits(), rotation.y.to_bits(), rotation.z.to_bits()],
+                        [
+                            rotation.w.to_bits(),
+                            rotation.x.to_bits(),
+                            rotation.y.to_bits(),
+                            rotation.z.to_bits(),
+                        ],
                         [centre.x.to_bits(), centre.y.to_bits(), centre.z.to_bits()],
                     ));
                     let index = placed.len();
@@ -696,9 +800,21 @@ mod tests {
                 serial.tally
             );
         }
-        assert!(serial.max_survivors >= 4, "fixture too sparse: {}", serial.max_survivors);
-        assert!(serial.transforms.len() > 50, "fixture accepted too little: {}", serial.transforms.len());
-        assert!(serial.oracle_checks > 500, "per-pair oracle ran {} times", serial.oracle_checks);
+        assert!(
+            serial.max_survivors >= 4,
+            "fixture too sparse: {}",
+            serial.max_survivors
+        );
+        assert!(
+            serial.transforms.len() > 50,
+            "fixture accepted too little: {}",
+            serial.transforms.len()
+        );
+        assert!(
+            serial.oracle_checks > 500,
+            "per-pair oracle ran {} times",
+            serial.oracle_checks
+        );
         println!(
             "replay: {} attempts, {} accepted, tally {:?}, max survivors {}, oracle checks {}",
             serial.outcomes.len(),
@@ -713,7 +829,11 @@ mod tests {
                 .build()
                 .unwrap()
                 .install(|| replay(0, 1500));
-            assert!(parallel.parallel_attempts > 100, "{}", parallel.parallel_attempts);
+            assert!(
+                parallel.parallel_attempts > 100,
+                "{}",
+                parallel.parallel_attempts
+            );
             assert_eq!(parallel.outcomes.len(), serial.outcomes.len());
             for (attempt, (a, b)) in serial.outcomes.iter().zip(&parallel.outcomes).enumerate() {
                 assert_eq!(a, b, "attempt {attempt} differs at {threads} workers");
@@ -727,9 +847,15 @@ mod tests {
     #[test]
     #[ignore]
     fn pair_threshold_benchmark() {
-        let level: u32 = std::env::var("PAIR_BENCH_LEVEL").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
+        let level: u32 = std::env::var("PAIR_BENCH_LEVEL")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(2);
         let (canonical, unit_reach) = ellipsoid(level);
-        let domain = BoundingBox { min: Vec3::new(-50.0, -50.0, -50.0), max: Vec3::new(50.0, 50.0, 50.0) };
+        let domain = BoundingBox {
+            min: Vec3::new(-50.0, -50.0, -50.0),
+            max: Vec3::new(50.0, 50.0, 50.0),
+        };
         let boundary = ResolvedBoundary {
             mode: BoundaryMode::Strict,
             min_boundary_dist: 0.0,
@@ -757,7 +883,17 @@ mod tests {
             let centre = dir.scale(2.0 * 0.7 + 1.8 + 0.4);
             let mesh = transform_shell(&canonical, 1.0, rotation, centre);
             let shape = to_parry_trimesh(&mesh);
-            placed.push(placed_particle(index, 1.0, rotation, centre, unit_reach, 1.0, Vec::new(), mesh, shape));
+            placed.push(placed_particle(
+                index,
+                1.0,
+                rotation,
+                centre,
+                unit_reach,
+                1.0,
+                Vec::new(),
+                mesh,
+                shape,
+            ));
         }
         let probe = FeasibilityContext {
             domain,
@@ -773,7 +909,10 @@ mod tests {
         };
         let clear: Vec<usize> = (0..placed.len())
             .filter(|&i| pair_needs_exact_test(&probe, &candidate, &placed[i]))
-            .filter(|&i| exact_pair_rejection(candidate.bbox, candidate_shape.as_ref(), &placed[i], gap).is_none())
+            .filter(|&i| {
+                exact_pair_rejection(candidate.bbox, candidate_shape.as_ref(), &placed[i], gap)
+                    .is_none()
+            })
             .collect();
         let survivors_ok = clear.iter().all(|&i| {
             let ctx = FeasibilityContext {
@@ -796,7 +935,10 @@ mod tests {
             clear.len()
         );
         for threads in [2usize, 4] {
-            let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap();
             for k in [1usize, 2, 3, 4, 6, 8, 12, 16] {
                 if k > clear.len() {
                     continue;

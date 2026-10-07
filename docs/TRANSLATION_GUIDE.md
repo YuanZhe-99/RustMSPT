@@ -147,7 +147,6 @@ This list is a starting point, not exhaustive — the translator should extend i
 
 **Flag this explicitly before starting the translation pass.** The anchor convention used throughout `docs/en-us/` relies on GitHub-flavored Markdown's automatic heading-to-anchor slugification (e.g. `#### mesh_metrics` → `#mesh_metrics`). Because function/struct headings are intentionally left untranslated (see above), `zh-cn/` documents will have **English-language anchors on Chinese-language pages** — this is intended and should work correctly on GitHub's renderer. However, if any other Markdown renderer is used to host `docs/zh-cn/` (e.g. a static site generator, IDE preview, or documentation platform other than GitHub), verify its CJK slugification behavior before relying on cross-links — some renderers strip, transliterate, or hash CJK characters differently, and mixed English/CJK headings can produce different slugs across tools. If any *prose* subheadings within the algorithm docs (which are not part of the fixed function-anchor convention) are translated to Chinese, their anchors will need separate verification against whatever renderer is actually used.
 
-Pending translation (2026-10-04): aggregate target compaction and mixed mode updates
-in en-us/algorithms/aggregate-placement.md, reference/pipeline-aggregates.md,
-reference/config.md, reference/function-index.md and examples/pack-aggregates.md.
-Authoritative field contracts and algorithm are in the linked English files.
+## Translation status (2026-10-07)
+
+The aggregate, contact-growth, checkpoint/memory, free-space guidance and placement updates are mirrored in `zh-cn/` (algorithms/aggregate-placement.md, free-space-guided-placement.md, placement-checkpoints-and-memory.md, void-aware-placement.md; examples/pack-aggregates.md, pack-placement.md; reference/config.md, function-index.md, pipeline-aggregates.md, pipeline-placement.md, pipeline-placement-state.md). No translation is pending.

@@ -1,13 +1,19 @@
-//! Deterministic FCC/contact-settled templates followed by proxy-only global RSA.
+//! Deterministic FCC or contact-growth templates with optional exact mixed fallback.
 use super::*;
-use crate::config::placement::{AggregateMode, AggregateShape, AggregateSpec};
+#[path = "placement_aggregate_bodies.rs"]
+mod bodies;
+#[path = "placement_aggregate_contact.rs"]
+mod contact;
+use crate::config::placement::{
+    AggregateConstruction, AggregateMode, AggregateShape, AggregateSpec, ContactOrientation,
+};
 use crate::geometry::{bbox_distance, box_mesh, merge_meshes, to_parry_trimesh, vec_norm};
 use crate::pipeline::placement_control::PlacementControl;
 use crate::pipeline::placement_sizes::{class_for_diameter, SizePlan};
 use crate::types::BoundingBox;
 use serde_json::{json, Value};
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct Member {
     shell: usize,
     diameter: f64,
@@ -16,6 +22,7 @@ struct Member {
     centre: Vec3,
     rotation: UnitQuat,
 }
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct Template {
     members: Vec<Member>,
     half: f64,
@@ -25,11 +32,149 @@ struct Template {
     sweeps: usize,
     search: SearchStats,
 }
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 struct Proxy {
     centre: Vec3,
     radius: f64,
     bbox: BoundingBox,
+}
+
+/// Every global cluster attempt and mixed-stage boundary is resumable. Template
+/// construction commits completed templates. Contact growth saves its member-level
+/// cursor; FCC rebuilds only its interrupted current template.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct AggregateCursor {
+    phase: String,
+    /// Single in-progress template written by older checkpoints; resumed as batch[0].
+    #[serde(default)]
+    growth: Option<contact::Growth>,
+    /// Contact-growth templates generated concurrently, for consecutive variants from
+    /// generation_variant; each keeps its own member-level cursor.
+    #[serde(default)]
+    batch: Vec<contact::Growth>,
+    templates: Vec<Template>,
+    catalog: Vec<Value>,
+    stage_ranges: Vec<std::ops::Range<usize>>,
+    generation_stage: usize,
+    generation_variant: usize,
+    stage: usize,
+    initialized: bool,
+    stage_ids: Vec<usize>,
+    next: usize,
+    attempts_in_cluster: usize,
+    stage_limit: usize,
+    before: usize,
+    before_attempts: usize,
+    proxies: Vec<Proxy>,
+    clusters: Vec<Value>,
+    failed: usize,
+    processed: usize,
+    planned: usize,
+    stages: Vec<Value>,
+    plan: Option<PlanReport>,
+    extensions: usize,
+}
+// AI-FUNC-SUMMARY: Append one completed template to the catalog and advance the variant/stage cursor; writes its STL via export_template.
+fn commit_template(
+    cursor: &mut AggregateCursor,
+    t: Template,
+    members: usize,
+    variants: usize,
+    library: &ShapeLibrary,
+    config: &ResolvedPlacement,
+) -> Result<()> {
+    let id = cursor.templates.len();
+    let mut entry = export_template(id, &t, library, config)?;
+    entry["stage"] = json!(cursor.generation_stage);
+    entry["variant"] = json!(cursor.generation_variant);
+    eprintln!(
+        "[Aggregate] template={id} stage={} members={members} internal_vf={} seconds={:.1}",
+        cursor.generation_stage, entry["internal_volume_fraction"], t.search.seconds
+    );
+    cursor.catalog.push(entry);
+    cursor.templates.push(t);
+    cursor.generation_variant += 1;
+    if cursor.generation_variant == variants {
+        let end = cursor.templates.len();
+        cursor.stage_ranges.push(end - variants..end);
+        cursor.generation_variant = 0;
+        cursor.generation_stage += 1;
+    }
+    Ok(())
+}
+
+// AI-FUNC-SUMMARY: Advance independent contact-growth templates concurrently until each finishes or a stop is requested; workers use cancellation-only controls while a heartbeat thread keeps progress.json fresh. Each template is deterministic, so results do not depend on batch width or thread count. Returns the first construction error.
+fn run_growth_batch(
+    batch: &mut [contact::Growth],
+    spec: &AggregateSpec,
+    library: &ShapeLibrary,
+    config: &ResolvedPlacement,
+    control: &mut PlacementControl,
+) -> Result<()> {
+    use rayon::prelude::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let base = control.worker();
+    let finished = AtomicBool::new(false);
+    let outcomes: Vec<(Result<()>, bool)> = std::thread::scope(|scope| {
+        let heartbeat = scope.spawn(|| {
+            while !finished.load(Ordering::Relaxed) {
+                control.poll(config, false, 0, 0, 0.0);
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+        });
+        let outcomes = batch
+            .par_iter_mut()
+            .map(|g| {
+                let mut c = base.worker();
+                loop {
+                    match g.step(spec, library, config, &mut c) {
+                        Ok(true) => return (Ok(()), false),
+                        Ok(false) if c.interrupted => return (Ok(()), true),
+                        Ok(false) => {}
+                        Err(e) => return (Err(e), false),
+                    }
+                }
+            })
+            .collect();
+        finished.store(true, Ordering::Relaxed);
+        let _ = heartbeat.join();
+        outcomes
+    });
+    for (result, interrupted) in outcomes {
+        result?;
+        control.interrupted |= interrupted;
+    }
+    Ok(())
+}
+
+// AI-FUNC-SUMMARY: Persist aggregate catalog and global cursor at safe points without serializing geometry; only builds the JSON payload when a save is due.
+fn save_aggregate(
+    config: &ResolvedPlacement,
+    library: &ShapeLibrary,
+    state: &mut EngineState,
+    rng: &ChaCha12Rng,
+    cursor: &AggregateCursor,
+    force: bool,
+) -> Result<()> {
+    if state
+        .checkpoint
+        .as_ref()
+        .is_some_and(|s| force || s.due(config, state.placed.len()))
+    {
+        let value = serde_json::to_value(cursor)
+            .map_err(|e| RustMsptError::InvalidConfig(e.to_string()))?;
+        checkpoint::save(
+            config,
+            library,
+            state,
+            rng,
+            "aggregate",
+            value,
+            cursor.phase == "complete",
+            true,
+        )?;
+    }
+    Ok(())
 }
 
 // AI-FUNC-SUMMARY: Return a vector as JSON-friendly XYZ; no mutation.
@@ -325,7 +470,7 @@ fn refine_meshes(
     Ok(completed)
 }
 
-#[derive(Default, serde::Serialize)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 struct SearchStats {
     rounds: usize,
     trials: usize,
@@ -335,6 +480,14 @@ struct SearchStats {
     shrink_steps: usize,
     accepted_moves: usize,
     stop_reason: String,
+    /// Contact growth profiling: motions, conservative-advancement steps and wall time.
+    #[serde(default)]
+    advances: usize,
+    #[serde(default)]
+    advance_steps: usize,
+    /// Wall time is printed, never serialized: exported templates must stay reproducible.
+    #[serde(skip)]
+    seconds: f64,
 }
 
 // AI-FUNC-SUMMARY: Compose global and local unit rotations in application order; returns canonical normalized quaternion, no mutation.
@@ -685,6 +838,43 @@ fn proxy_check(
     Ok(())
 }
 
+// AI-FUNC-SUMMARY: Check every fallback member against real accepted particles and pores; a proxy overlap triggers exact refinement rather than rejection. Internal pairs were validated during template construction.
+fn exact_fallback_check(
+    template: &Template,
+    rotation: UnitQuat,
+    centre: Vec3,
+    config: &ResolvedPlacement,
+    library: &ShapeLibrary,
+    void: Option<&VoidIndex>,
+    state: &EngineState,
+) -> std::result::Result<(), RejectReason> {
+    for member in &template.members {
+        let proposal = Proposal {
+            shell_index: member.shell,
+            scale: member.scale,
+            rotation: compose_rotation(rotation, member.rotation),
+            centre: centre.add(rotation.rotate_point(member.centre)),
+            reach: member.radius,
+            fits_domain: true,
+            stream_after: 0,
+            guided_cell: None,
+        };
+        match evaluate_proposal(
+            config,
+            library,
+            void,
+            &state.placed,
+            &state.grid,
+            None,
+            &proposal,
+        ) {
+            Evaluation::Rejected(reason) => return Err(reason),
+            Evaluation::Accepted(_) => {}
+        }
+    }
+    Ok(())
+}
+
 // AI-FUNC-SUMMARY: Export one template's actual particles and reconstruction/proxy statistics; writes STL, returns JSON metadata, never counts proxy volume as material.
 fn export_template(
     id: usize,
@@ -776,7 +966,7 @@ fn plan_templates(
     ))
 }
 
-// AI-FUNC-SUMMARY: Two-stage aggregate pack; deterministic templates, seeded global proxy RSA, flat per-member output and cluster membership sidecars; cooperatively saves accepted clusters on interruption.
+// AI-FUNC-SUMMARY: Generate/reuse deterministic catalogs, resume global cluster attempts/mixed stages, commit whole clusters and save final checkpoints even on target success; export flattened exact particle geometry.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run(
     config: &ResolvedPlacement,
@@ -790,65 +980,134 @@ pub(super) fn run(
     tool: &ToolRecord,
     started: Instant,
 ) -> Result<PlacementOutcome> {
-    let mut resolved_spec = config.aggregates.clone();
-    if resolved_spec.variants == 0 {
-        resolved_spec.variants = library
+    let mut spec = config.aggregates.clone();
+    if spec.variants == 0 {
+        spec.variants = library
             .shells
             .len()
-            .div_ceil(resolved_spec.particles_per_cluster)
+            .div_ceil(spec.particles_per_cluster)
             .clamp(4, 32);
     }
-    let spec = &resolved_spec;
     let mut counts = vec![spec.particles_per_cluster];
     if spec.mode == AggregateMode::Mixed {
         counts.extend_from_slice(&spec.fallback_particles_per_cluster);
     }
-    let mut control = PlacementControl::new();
-    control.phase = "generating_templates";
-    control.poll(config, true, 0, 0, 0.0);
-    let mut templates = Vec::new();
-    let mut catalog = Vec::new();
-    let mut stage_ranges = Vec::new();
-    'generation: for (stage, &count) in counts.iter().enumerate() {
-        let start = templates.len();
+    let store = checkpoint::Store::new(config, library)?;
+    let resumed = match &store {
+        Some(store) => store.load(config, "aggregate")?,
+        None => None,
+    };
+    let mut cursor: AggregateCursor = match &resumed {
+        Some(snap) => serde_json::from_value(snap.aggregate.clone()).map_err(|e| {
+            RustMsptError::InvalidConfig(format!("invalid aggregate checkpoint: {e}"))
+        })?,
+        None => AggregateCursor {
+            phase: "generating".into(),
+            ..Default::default()
+        },
+    };
+    let mut state = EngineState::new(config, library, classes, &[]);
+    state.basis_volume = basis;
+    state.checkpoint = store;
+    let mut rng = seeded_rng(config.seed);
+    if let Some(snap) = &resumed {
+        checkpoint::restore(snap, library, &mut state, &mut rng)?;
+    }
+    state.control.phase = "generating_templates";
+    state.poll_control(config, true);
+    // Re-export restored templates under this run's output directory.
+    for (id, t) in cursor.templates.iter().enumerate() {
+        let mut entry = export_template(id, t, library, config)?;
+        entry["stage"] = json!(id / spec.variants);
+        entry["variant"] = json!(id % spec.variants);
+        cursor.catalog[id] = entry;
+    }
+    let mut partial_entry = None;
+    save_aggregate(config, library, &mut state, &rng, &cursor, true)?;
+    while cursor.phase == "generating" && cursor.generation_stage < counts.len() {
+        save_aggregate(config, library, &mut state, &rng, &cursor, false)?;
+        if state.poll_control(config, false) {
+            break;
+        }
+        let stage = cursor.generation_stage;
+        let variant = cursor.generation_variant;
         let mut stage_spec = spec.clone();
-        stage_spec.particles_per_cluster = count;
-        for variant in 0..spec.variants {
-            if control.poll(config, true, 0, 0, 0.0) {
-                break 'generation;
+        stage_spec.particles_per_cluster = counts[stage];
+        if stage_spec.construction == AggregateConstruction::ContactGrowth {
+            if let Some(g) = cursor.growth.take() {
+                cursor.batch.insert(0, g);
             }
-            let t = build_template(variant, &stage_spec, library, source, config, &mut control)?;
-            let id = templates.len();
-            let mut entry = export_template(id, &t, library, config)?;
+            let width = rayon::current_num_threads()
+                .min(spec.variants - variant)
+                .max(cursor.batch.len())
+                .max(1);
+            while cursor.batch.len() < width {
+                let v = variant + cursor.batch.len();
+                cursor
+                    .batch
+                    .push(contact::Growth::new(v, &stage_spec, library, source));
+            }
+            run_growth_batch(&mut cursor.batch, &stage_spec, library, config, &mut state.control)?;
+            if state.control.interrupted {
+                // The feasible partial first template is exported for inspection only.
+                let t = cursor.batch[0].snapshot(&stage_spec, library, true)?;
+                let mut entry = export_template(cursor.templates.len(), &t, library, config)?;
+                entry["stage"] = json!(stage);
+                entry["variant"] = json!(variant);
+                partial_entry = Some(entry);
+                break;
+            }
+            for g in std::mem::take(&mut cursor.batch) {
+                let t = g.snapshot(&stage_spec, library, false)?;
+                commit_template(&mut cursor, t, counts[stage], spec.variants, library, config)?;
+            }
+            continue;
+        }
+        let t = build_template(
+            variant,
+            &stage_spec,
+            library,
+            source,
+            config,
+            &mut state.control,
+        )?;
+        if state.control.interrupted {
+            // Export the feasible partial template, but do not mark it fully generated.
+            let mut entry = export_template(cursor.templates.len(), &t, library, config)?;
             entry["stage"] = json!(stage);
             entry["variant"] = json!(variant);
-            eprintln!(
-                "[Aggregate] template={id} stage={stage} members={count} internal_vf={}",
-                entry["internal_volume_fraction"]
-            );
-            catalog.push(entry);
-            templates.push(t);
+            partial_entry = Some(entry);
+            break;
         }
-        stage_ranges.push(start..templates.len());
+        commit_template(&mut cursor, t, counts[stage], spec.variants, library, config)?;
+    }
+    if cursor.phase == "generating" && cursor.generation_stage == counts.len() {
+        cursor.phase = "packing".into();
     }
     let template_path = config.outputs.dir.join("aggregate_templates.json");
+    let mut exported_catalog = cursor.catalog.clone();
+    if let Some(entry) = partial_entry {
+        exported_catalog.push(entry);
+    }
     write_json(
         &template_path,
-        &json!({"algorithm":"fcc_deterministic_target_compaction_v2","config":spec,"requested_variants":config.aggregates.variants,"resolved_variants":spec.variants,"templates":catalog}),
+        &json!({"algorithm":if spec.construction == AggregateConstruction::ContactGrowth { "deterministic_contact_growth_v1" } else { "fcc_deterministic_target_compaction_v2" }, "config":spec,"requested_variants":config.aggregates.variants,"resolved_variants":spec.variants,"templates":exported_catalog}),
     )?;
     let target = basis * config.target_volume_fraction;
-    let (ids, plan) = if control.interrupted {
-        (
-            Vec::new(),
-            SizePlan {
-                draws: Vec::new(),
-                planned_volume: 0.0,
-                target_volume: target,
-                planned_volume_error: -target,
-            },
-        )
+    let primary_plan = if cursor.stage_ranges.is_empty() {
+        SizePlan {
+            draws: vec![],
+            planned_volume: 0.0,
+            target_volume: target,
+            planned_volume_error: -target,
+        }
     } else {
-        plan_templates(&templates[stage_ranges[0].clone()], target, classes)?
+        plan_templates(
+            &cursor.templates[cursor.stage_ranges[0].clone()],
+            target,
+            classes,
+        )?
+        .1
     };
     let frame = FrameRecord {
         unit: config.unit.clone(),
@@ -866,14 +1125,26 @@ pub(super) fn run(
         tool,
         &frame,
         library,
-        &plan,
+        &primary_plan,
         basis,
         threads,
         build_void_report(config, void, void_volume, void_method)?,
     );
+    if let Some(plan) = &cursor.plan {
+        report.plan = plan.clone();
+    }
     report
         .samplers
         .insert("position".into(), "aggregate_proxy_rejection_rsa".into());
+    report.samplers.insert(
+        "aggregate_fallback_collision".into(),
+        if spec.exact_fallback {
+            "exact_members"
+        } else {
+            "proxies"
+        }
+        .into(),
+    );
     report.samplers.insert(
         "sizes".into(),
         "deterministic_stratified_quantiles_repeated_templates".into(),
@@ -881,180 +1152,235 @@ pub(super) fn run(
     report
         .samplers
         .insert("attempt_unit".into(), "cluster_proposal".into());
-    write_json(&config.outputs.report, &report)?;
-    let mut state = EngineState::new(config, library, classes, &plan.draws);
-    state.basis_volume = basis;
-    state.control = control;
-    state.control.phase = "packing";
-    let max_half = templates.iter().map(|t| t.half).fold(1.0, f64::max);
+    if config.checkpoint.extend {
+        cursor.phase = "packing".into();
+        cursor.stage = 0;
+        cursor.initialized = false;
+        cursor.extensions += 1;
+        state.stopped_early = false;
+    }
+    // Target generation cannot start a global population before the complete catalog exists.
+    if cursor.phase == "packing" && cursor.plan.is_none() {
+        for d in &primary_plan.draws {
+            state.drawn_per_class[d.class] += 1;
+        }
+        cursor.plan = Some(report.plan.clone());
+    }
+    // Exact fallback queries individual material, never solid aggregate proxies.
+    state.grid = SpatialGrid::new(
+        config.domain,
+        (source.quantile(0.5) * library.max_extent_ratio + config.gap_particle_particle).max(1e-9),
+    );
+    for (id, particle) in state.placed.iter().enumerate() {
+        state.grid.insert(id, particle.bbox);
+    }
+    let max_half = cursor.templates.iter().map(|t| t.half).fold(1.0, f64::max);
     let mut grid = SpatialGrid::new(
         config.domain,
         2.0 * 3.0_f64.sqrt() * max_half + config.gap_particle_particle,
     );
-    let mut proxies = Vec::new();
-    let mut clusters = Vec::new();
-    let mut rng = seeded_rng(config.seed);
-    let mut failed_clusters = 0;
-    let mut processed_clusters = 0;
-    state.poll_control(config, true);
-    let mut planned_clusters = ids.len();
-    let mut stages_report = Vec::new();
-    for (stage, range) in stage_ranges.iter().enumerate() {
-        if state.control.interrupted || state.budget_spent(config) {
+    for (i, p) in cursor.proxies.iter().enumerate() {
+        grid.insert(i, p.bbox);
+    }
+    if let Some(snap) = &resumed {
+        if config.budget.total_attempts > snap.total_budget && cursor.initialized {
+            cursor.stage_limit += (config.budget.total_attempts - snap.total_budget)
+                / (counts.len() - cursor.stage).max(1);
+        }
+        eprintln!("[Checkpoint] restored aggregate particles={} clusters={} attempts={} phase={} stage={}", state.placed.len(), cursor.clusters.len(), state.attempts, cursor.phase, cursor.stage);
+    }
+    write_json(&config.outputs.report, &report)?;
+    state.control.phase = if cursor.phase == "generating" {
+        "generating_templates"
+    } else {
+        "packing"
+    };
+    save_aggregate(config, library, &mut state, &rng, &cursor, true)?;
+    while cursor.phase == "packing" && cursor.stage < cursor.stage_ranges.len() {
+        save_aggregate(config, library, &mut state, &rng, &cursor, false)?;
+        if state.poll_control(config, false) {
+            state.stopped_early = true;
             break;
         }
-        if stage > 0 && state.volume_solid >= target * (1.0 - config.target_tolerance) {
-            break;
-        }
-        let stage_ids = if stage == 0 {
-            ids.clone()
-        } else {
-            let (local, extra) = plan_templates(
-                &templates[range.clone()],
-                (target - state.volume_solid).max(0.0),
-                classes,
-            )?;
-            if report.plan.planned_particles + extra.draws.len() > MAX_PLANNED_PARTICLES {
-                return Err(RustMsptError::InvalidConfig(
-                    "mixed aggregate plan exceeds total member cap".into(),
-                ));
+        let stage = cursor.stage;
+        let range = cursor.stage_ranges[stage].clone();
+        if !cursor.initialized {
+            if stage > 0 && state.volume_solid >= target * (1.0 - config.target_tolerance) {
+                cursor.phase = "complete".into();
+                break;
             }
-            for d in &extra.draws {
-                state.drawn_per_class[d.class] += 1;
-            }
-            report.plan.planned_particles += extra.draws.len();
-            report.plan.planned_volume += extra.planned_volume;
-            report.plan.planned_volume_error = report.plan.planned_volume - target;
-            planned_clusters += local.len();
-            local.into_iter().map(|id| id + range.start).collect()
-        };
-        let before = clusters.len();
-        let before_attempts = state.attempts;
-        let remaining_stages = stage_ranges.len() - stage;
-        // Reserve a share of finite global proposal budget for every smaller fallback stage.
-        let stage_limit =
-            state.attempts + (config.budget.total_attempts - state.attempts) / remaining_stages;
-        'clusters: for &id in &stage_ids {
-            if state.poll_control(config, false)
-                || state.budget_spent(config)
-                || state.attempts >= stage_limit
-            {
+            if state.budget_spent(config) {
                 state.stopped_early = true;
                 break;
             }
-            let t = &templates[id];
-            let mut placed = false;
-            for _ in 0..config.budget.attempts_per_particle {
-                if state.poll_control(config, false)
-                    || state.budget_spent(config)
-                    || state.attempts >= stage_limit
-                {
-                    state.stopped_early = true;
-                    break 'clusters;
-                }
-                let rotation = match config.orientation {
-                    OrientationMode::UniformSo3 => sample_uniform_quaternion(&mut rng),
-                    OrientationMode::Fixed => {
-                        let _ = (u01(&mut rng), u01(&mut rng), u01(&mut rng));
-                        UnitQuat::identity()
-                    }
-                };
-                // Orientation-independent erosion; cubes use their circumsphere to avoid position/orientation bias.
-                let reach = t.half
-                    * if spec.shape == AggregateShape::Cube {
-                        3.0_f64.sqrt()
-                    } else {
-                        1.0
-                    };
-                let domain = config
-                    .domain
-                    .expanded(-(reach + config.boundary.min_boundary_dist));
-                let centre = Vec3::new(
-                    uniform_range(&mut rng, domain.min.x, domain.max.x),
-                    uniform_range(&mut rng, domain.min.y, domain.max.y),
-                    uniform_range(&mut rng, domain.min.z, domain.max.z),
-                );
-                state.attempts += 1;
-                let candidate = world_proxy(t, spec.shape, rotation, centre);
-                let neighbours = grid.query_neighbors_with_margin(
-                    candidate.bbox,
-                    config.gap_particle_particle,
-                    usize::MAX,
-                );
-                let valid = if domain.min.x > domain.max.x
-                    || domain.min.y > domain.max.y
-                    || domain.min.z > domain.max.z
-                {
-                    Err(RejectReason::OutsideDomain)
+            let initial_primary = stage == 0 && cursor.extensions == 0 && cursor.processed == 0;
+            let (local, extra) = plan_templates(
+                &cursor.templates[range.clone()],
+                if initial_primary {
+                    target
                 } else {
-                    proxy_check(candidate, spec.shape, config, void, &proxies, &neighbours)
-                };
-                if let Err(reason) = valid {
-                    state.reject(reason);
-                    continue;
+                    (target - state.volume_solid).max(0.0)
+                },
+                classes,
+            )?;
+            if !initial_primary {
+                if report.plan.planned_particles + extra.draws.len() > MAX_PLANNED_PARTICLES {
+                    return Err(RustMsptError::InvalidConfig(
+                        "mixed aggregate plan exceeds total member cap".into(),
+                    ));
                 }
-                let first = state.placed.len();
-                // Commit a whole cluster without checking cancellation between its members.
-                for m in &t.members {
-                    let shell = &library.shells[m.shell];
-                    let translation = centre.add(rotation.rotate_point(m.centre));
-                    let member_rotation = compose_rotation(rotation, m.rotation);
-                    let mesh =
-                        transform_shell(&shell.canonical, m.scale, member_rotation, translation);
-                    let bbox = mesh_bbox(&mesh).expect("validated nonempty source");
-                    let volume = shell.volume * m.scale.powi(3);
-                    let draw = SizeDraw {
-                        diameter: m.diameter,
-                        class: class_for_diameter(classes, m.diameter),
-                        draw_index: state.placed.len(),
-                    };
-                    accept(
-                        &mut state,
-                        m.shell,
-                        library,
-                        &draw,
-                        m.scale,
-                        member_rotation,
-                        translation,
-                        m.radius,
-                        volume,
-                        bbox,
-                        0.0,
-                        mesh,
-                        crate::pipeline::placement_feasibility::Accepted {
-                            volume_in_domain: volume,
-                            clipped_faces: Vec::new(),
-                            shape: None,
-                        },
-                    );
-                    state.placed_per_class[draw.class] += 1;
+                for d in &extra.draws {
+                    state.drawn_per_class[d.class] += 1;
                 }
-                grid.insert(proxies.len(), candidate.bbox);
-                proxies.push(candidate);
-                clusters.push(json!({"cluster_id":clusters.len(),"stage":stage,"template_id":id,"first_particle":first,
-                "particle_count":t.members.len(),"material_volume":t.volume,"translation":xyz(centre),"rotation":rotation.to_wxyz(),
-                "proxy_bbox":{"min":xyz(candidate.bbox.min),"max":xyz(candidate.bbox.max)}}));
-                if clusters.len() == 1 {
-                    state.poll_control(config, true);
-                }
-                placed = true;
+                report.plan.planned_particles += extra.draws.len();
+                report.plan.planned_volume += extra.planned_volume;
+                report.plan.planned_volume_error = report.plan.planned_volume - target;
+            }
+            cursor.stage_ids = local.into_iter().map(|id| id + range.start).collect();
+            cursor.planned += cursor.stage_ids.len();
+            cursor.next = 0;
+            cursor.attempts_in_cluster = 0;
+            cursor.before = cursor.clusters.len();
+            cursor.before_attempts = state.attempts;
+            cursor.stage_limit = state.attempts
+                + (config.budget.total_attempts - state.attempts)
+                    / (cursor.stage_ranges.len() - stage);
+            cursor.initialized = true;
+            cursor.plan = Some(report.plan.clone());
+        }
+        if cursor.next < cursor.stage_ids.len()
+            && cursor.attempts_in_cluster >= config.budget.attempts_per_particle
+        {
+            let t = &cursor.templates[cursor.stage_ids[cursor.next]];
+            cursor.failed += 1;
+            cursor.processed += 1;
+            cursor.next += 1;
+            cursor.attempts_in_cluster = 0;
+            state.shortfall_total += t.members.len();
+            state
+                .first_failed_diameter
+                .get_or_insert(t.members[0].diameter);
+            if config.on_unattainable == OnUnattainable::Stop {
+                cursor.next = cursor.stage_ids.len();
+            }
+            continue;
+        }
+        if cursor.next >= cursor.stage_ids.len() || state.attempts >= cursor.stage_limit {
+            // Finish a fully processed stage even when its final acceptance uses
+            // the last global attempt; only unfinished clusters require resume.
+            if cursor.next < cursor.stage_ids.len() && state.budget_spent(config) {
+                state.stopped_early = true;
                 break;
             }
-            processed_clusters += 1;
-            if !placed {
-                failed_clusters += 1;
-                state.shortfall_total += t.members.len();
-                state
-                    .first_failed_diameter
-                    .get_or_insert(t.members[0].diameter);
-                if config.on_unattainable == OnUnattainable::Stop {
-                    break;
-                }
-            }
+            cursor.stages.push(json!({"stage":stage,"extension":cursor.extensions,"particles_per_cluster":counts[stage],"planned_clusters":cursor.stage_ids.len(),"placed_clusters":cursor.clusters.len()-cursor.before,"attempts":state.attempts-cursor.before_attempts,"volume_fraction_solid":state.volume_solid/basis}));
+            cursor.stage += 1;
+            cursor.initialized = false;
+            continue;
         }
-        stages_report.push(json!({"stage":stage,"particles_per_cluster":counts[stage],"planned_clusters":stage_ids.len(),"placed_clusters":clusters.len()-before,"attempts":state.attempts-before_attempts,"volume_fraction_solid":state.volume_solid/basis}));
+        let id = cursor.stage_ids[cursor.next];
+        let t = &cursor.templates[id];
+        let rotation = match config.orientation {
+            OrientationMode::UniformSo3 => sample_uniform_quaternion(&mut rng),
+            OrientationMode::Fixed => {
+                let _ = (u01(&mut rng), u01(&mut rng), u01(&mut rng));
+                UnitQuat::identity()
+            }
+        };
+        let reach = t.half
+            * if spec.shape == AggregateShape::Cube {
+                3.0_f64.sqrt()
+            } else {
+                1.0
+            };
+        let domain = config
+            .domain
+            .expanded(-(reach + config.boundary.min_boundary_dist));
+        let centre = Vec3::new(
+            uniform_range(&mut rng, domain.min.x, domain.max.x),
+            uniform_range(&mut rng, domain.min.y, domain.max.y),
+            uniform_range(&mut rng, domain.min.z, domain.max.z),
+        );
+        state.attempts += 1;
+        cursor.attempts_in_cluster += 1;
+        let candidate = world_proxy(t, spec.shape, rotation, centre);
+        let neighbours = grid.query_neighbors_with_margin(
+            candidate.bbox,
+            config.gap_particle_particle,
+            usize::MAX,
+        );
+        let valid = if domain.min.x > domain.max.x
+            || domain.min.y > domain.max.y
+            || domain.min.z > domain.max.z
+        {
+            Err(RejectReason::OutsideDomain)
+        } else {
+            if spec.exact_fallback && stage > 0 {
+                exact_fallback_check(t, rotation, centre, config, library, void, &state)
+            } else {
+                proxy_check(
+                    candidate,
+                    spec.shape,
+                    config,
+                    void,
+                    &cursor.proxies,
+                    &neighbours,
+                )
+            }
+        };
+        if let Err(reason) = valid {
+            state.reject(reason);
+            continue;
+        }
+        let first = state.placed.len();
+        for m in &t.members {
+            let shell = &library.shells[m.shell];
+            let translation = centre.add(rotation.rotate_point(m.centre));
+            let member_rotation = compose_rotation(rotation, m.rotation);
+            let mesh = transform_shell(&shell.canonical, m.scale, member_rotation, translation);
+            let bbox = mesh_bbox(&mesh).expect("validated nonempty source");
+            let volume = shell.volume * m.scale.powi(3);
+            let draw = SizeDraw {
+                diameter: m.diameter,
+                class: class_for_diameter(classes, m.diameter),
+                draw_index: state.placed.len(),
+            };
+            accept(
+                &mut state,
+                m.shell,
+                library,
+                &draw,
+                m.scale,
+                member_rotation,
+                translation,
+                m.radius,
+                volume,
+                bbox,
+                0.0,
+                mesh,
+                crate::pipeline::placement_feasibility::Accepted {
+                    volume_in_domain: volume,
+                    clipped_faces: vec![],
+                    shape: None,
+                },
+            );
+            state.placed_per_class[draw.class] += 1;
+        }
+        grid.insert(cursor.proxies.len(), candidate.bbox);
+        cursor.proxies.push(candidate);
+        cursor.clusters.push(json!({"cluster_id":cursor.clusters.len(),"stage":stage,"template_id":id,"first_particle":first,"particle_count":t.members.len(),"material_volume":t.volume,"translation":xyz(centre),"rotation":rotation.to_wxyz(),"proxy_bbox":{"min":xyz(candidate.bbox.min),"max":xyz(candidate.bbox.max)}}));
+        cursor.next += 1;
+        cursor.processed += 1;
+        cursor.attempts_in_cluster = 0;
+        if cursor.clusters.len() == 1 {
+            state.poll_control(config, true);
+        }
+    }
+    if cursor.phase == "packing" && cursor.stage >= cursor.stage_ranges.len() {
+        cursor.phase = "complete".into();
     }
     state.poll_control(config, true);
+    cursor.plan = Some(report.plan.clone());
+    save_aggregate(config, library, &mut state, &rng, &cursor, true)?;
     let global_target_reached =
         (state.volume_solid - target).abs() <= target * config.target_tolerance;
     let reason = if state.control.interrupted {
@@ -1063,25 +1389,44 @@ pub(super) fn run(
         StopReason::NoFeasiblePlacement
     } else if spec.mode == AggregateMode::Mixed && global_target_reached {
         StopReason::TargetReached
-    } else if state.budget_spent(config) && processed_clusters < planned_clusters {
+    } else if state.budget_spent(config) && cursor.processed < cursor.planned {
         StopReason::BudgetExhausted
-    } else if failed_clusters > 0 {
+    } else if cursor.failed > 0 {
         StopReason::DistributionUnattainable
-    } else if (state.volume_solid - target).abs() <= target * config.target_tolerance {
+    } else if global_target_reached {
         StopReason::TargetReached
     } else {
         StopReason::DistributionUnattainable
     };
-    let unmet_templates = catalog
+    let unmet_templates = exported_catalog
         .iter()
         .filter(|t| t["target_reached"] == json!(false))
         .count();
-    let stop = StopDecision { reason,detail:BTreeMap::from([
-        ("message".into(),"Aggregate pack: only true member volume counts; proxy empty space is matrix. Partial results preserve complete accepted clusters.".into()),
-        ("planned_clusters".into(),planned_clusters.to_string()),("placed_clusters".into(),clusters.len().to_string()),
-        ("failed_clusters".into(),failed_clusters.to_string()),("failed_sizes".into(),state.shortfall_total.to_string()),
-        ("attempt_unit".into(),"cluster proposal".into()),("templates_below_internal_target".into(),unmet_templates.to_string()),
-        ("aggregate_mode".into(),format!("{:?}",spec.mode)),("global_target_reached".into(),global_target_reached.to_string())]) };
+    let stop = StopDecision {
+        reason,
+        detail: BTreeMap::from([
+            (
+                "message".into(),
+                "Aggregate pack preserves whole accepted clusters and resumable global cursors."
+                    .into(),
+            ),
+            ("planned_clusters".into(), cursor.planned.to_string()),
+            ("placed_clusters".into(), cursor.clusters.len().to_string()),
+            ("failed_clusters".into(), cursor.failed.to_string()),
+            ("failed_sizes".into(), state.shortfall_total.to_string()),
+            ("attempt_unit".into(), "cluster proposal".into()),
+            (
+                "templates_below_internal_target".into(),
+                unmet_templates.to_string(),
+            ),
+            ("aggregate_mode".into(), format!("{:?}", spec.mode)),
+            (
+                "global_target_reached".into(),
+                global_target_reached.to_string(),
+            ),
+            ("extensions".into(), cursor.extensions.to_string()),
+        ]),
+    };
     state.control.publish(
         config,
         "saving",
@@ -1089,7 +1434,8 @@ pub(super) fn run(
         state.attempts,
         state.volume_solid / basis,
     );
-    let proxy_volume: f64 = proxies
+    let proxy_volume: f64 = cursor
+        .proxies
         .iter()
         .map(|p| match spec.shape {
             AggregateShape::Sphere => 4.0 / 3.0 * std::f64::consts::PI * p.radius.powi(3),
@@ -1099,11 +1445,7 @@ pub(super) fn run(
     let clusters_path = config.outputs.dir.join("aggregates.json");
     write_json(
         &clusters_path,
-        &json!({"schema_version":"rustmspt.aggregates/1","config":spec,"clusters":clusters,
-        "planned_clusters":planned_clusters,"processed_clusters":processed_clusters,"stages":stages_report,"global_target_reached":global_target_reached,
-        "proxy_volume":proxy_volume,"material_volume":state.volume_solid,
-        "proxy_fraction_domain":proxy_volume/config.domain.volume(),
-        "template_catalog":"aggregate_templates.json","internal_gap":spec.internal_gap,"global_proxy_gap":config.gap_particle_particle}),
+        &json!({"schema_version":"rustmspt.aggregates/1","config":spec,"clusters":cursor.clusters,"planned_clusters":cursor.planned,"processed_clusters":cursor.processed,"stages":cursor.stages,"global_target_reached":global_target_reached,"proxy_volume":proxy_volume,"material_volume":state.volume_solid,"proxy_fraction_domain":proxy_volume/config.domain.volume(),"template_catalog":"aggregate_templates.json","internal_gap":spec.internal_gap,"global_proxy_gap":config.gap_particle_particle}),
     )?;
     let mut outputs = write_outputs(config, library, &state, tool, &frame, classes, void)?;
     outputs.push(describe_output("aggregate_templates", &template_path));
@@ -1132,10 +1474,146 @@ pub(super) fn run(
         state.attempts,
         state.volume_solid / basis,
     );
-    Ok(PlacementOutcome {
-        placed: state.placed.len(),
-        stop_reason: reason,
-        volume_fraction_solid: state.volume_solid / basis,
-        summary_lines: vec![format!("[Aggregate] mode={:?} particles={} clusters={} VF={:.8} stop={:?} templates_below_internal_target={unmet_templates}",spec.mode,state.placed.len(),clusters.len(),state.volume_solid/basis,reason)],
-    })
+    Ok(PlacementOutcome { placed: state.placed.len(), stop_reason: reason, volume_fraction_solid: state.volume_solid/basis, summary_lines: vec![format!("[Aggregate] mode={:?} particles={} clusters={} VF={:.8} stop={:?} templates_below_internal_target={unmet_templates}",spec.mode,state.placed.len(),cursor.clusters.len(),state.volume_solid/basis,reason)] })
+}
+
+#[cfg(test)]
+mod gapfill_tests {
+    use super::*;
+
+    use crate::geometry::icosphere_mesh;
+
+    #[test]
+    fn exact_fallback_can_enter_a_proxy_but_rejects_real_overlap_gap_and_pore() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("sphere.stl");
+        save_stl(
+            &file,
+            &icosphere_mesh(Vec3::new(0.0, 0.0, 0.0), 1.0, 1),
+            "sphere",
+        )
+        .unwrap();
+        let path = temp.path().join("config.yaml");
+        std::fs::write(&path, "placement:\n  seed: 1\n  frame: {unit: um}\n  domain: {min: [-10,-10,-10], max: [10,10,10]}\n  shapes: {files: [sphere.stl]}\n  size:\n    distribution: {kind: lognormal, median: 2, sigma_log: 0.1, min: 1.5, max: 2.5}\n  target: {volume_fraction: 0.02}\n  gaps: {particle_particle: 0.2}\n  outputs: {dir: out}\n").unwrap();
+        let config = match crate::config::load_pack_document(&path).unwrap() {
+            crate::config::PackDocument::Placement(p) => p.validate(&path).unwrap(),
+            _ => panic!(),
+        };
+        let library =
+            load_shape_library(&config.shape_files, &config.shape_paths_as_written, None).unwrap();
+        let source = SizeSource::prepare(&config.distribution).unwrap();
+        let classes = build_classes(&config.classes, &source);
+        let shell = &library.shells[0];
+        let draw = SizeDraw {
+            diameter: shell.equivalent_diameter,
+            class: class_for_diameter(&classes, shell.equivalent_diameter),
+            draw_index: 0,
+        };
+        let mut state = EngineState::new(&config, &library, &classes, &[draw.clone()]);
+        for x in [-3.0, 3.0] {
+            let centre = Vec3::new(x, 0.0, 0.0);
+            let mesh = transform_shell(&shell.canonical, 1.0, UnitQuat::identity(), centre);
+            let bbox = mesh_bbox(&mesh).unwrap();
+            accept(
+                &mut state,
+                0,
+                &library,
+                &draw,
+                1.0,
+                UnitQuat::identity(),
+                centre,
+                shell.bounding_radius,
+                shell.volume,
+                bbox,
+                0.0,
+                mesh,
+                crate::pipeline::placement_feasibility::Accepted {
+                    volume_in_domain: shell.volume,
+                    clipped_faces: vec![],
+                    shape: None,
+                },
+            );
+        }
+        let template = Template {
+            members: vec![Member {
+                shell: 0,
+                diameter: shell.equivalent_diameter,
+                scale: 1.0,
+                radius: shell.bounding_radius,
+                centre: Vec3::new(0.0, 0.0, 0.0),
+                rotation: UnitQuat::identity(),
+            }],
+            half: shell.bounding_radius,
+            volume: shell.volume,
+            initial_half: shell.bounding_radius,
+            sweeps: 0,
+            mesh_sweeps: 0,
+            search: SearchStats::default(),
+        };
+        let origin = Vec3::new(0.0, 0.0, 0.0);
+        let occupied_proxy = Proxy {
+            centre: origin,
+            radius: 5.0,
+            bbox: BoundingBox {
+                min: Vec3::new(-5.0, -5.0, -5.0),
+                max: Vec3::new(5.0, 5.0, 5.0),
+            },
+        };
+        let candidate = world_proxy(
+            &template,
+            AggregateShape::Sphere,
+            UnitQuat::identity(),
+            origin,
+        );
+        assert!(proxy_check(
+            candidate,
+            AggregateShape::Sphere,
+            &config,
+            None,
+            &[occupied_proxy],
+            &[0]
+        )
+        .is_err());
+        assert!(exact_fallback_check(
+            &template,
+            UnitQuat::identity(),
+            origin,
+            &config,
+            &library,
+            None,
+            &state
+        )
+        .is_ok());
+        assert!(exact_fallback_check(
+            &template,
+            UnitQuat::identity(),
+            Vec3::new(3.0, 0.0, 0.0),
+            &config,
+            &library,
+            None,
+            &state
+        )
+        .is_err());
+        assert!(exact_fallback_check(
+            &template,
+            UnitQuat::identity(),
+            Vec3::new(1.0, 0.0, 0.0),
+            &config,
+            &library,
+            None,
+            &state
+        )
+        .is_err());
+        let pore = VoidIndex::build(&icosphere_mesh(origin, 1.2, 1)).unwrap();
+        assert!(exact_fallback_check(
+            &template,
+            UnitQuat::identity(),
+            origin,
+            &config,
+            &library,
+            Some(&pore),
+            &state
+        )
+        .is_err());
+    }
 }

@@ -342,10 +342,10 @@ that path -- `{kind: lognormal, mediann: 12}` would be accepted with `median` si
 | `size.distribution.{median,sigma_log,min,max}` | `f64` | with `lognormal` | — | Truncated lognormal in diameter. |
 | `size.distribution.csv` | `String` | with `histogram` | — | A `bin,right,frequency` CSV, the same format the legacy engine reads. |
 | `size.classes` | struct | no | 10 equal-width bands (lognormal); the histogram's own bins | Reporting classes for target-against-actual. |
-| `size.on_unattainable` | `skip_reported` \| `stop` | no | `skip_reported` | What to do when a drawn size cannot be placed. Either way the run ends `distribution_unattainable`; neither draws a replacement. |
+| `size.on_unattainable` | `skip_reported` \| `stop` | no | `skip_reported` | What to do when a drawn size cannot be placed. Neither draws a replacement; an unfinished global-budget stop takes precedence over earlier failed sizes. |
 | `size.placement_order` | `descending` \| `drawn` | no | `descending` | Large particles are the ones that stop fitting, so they go first. |
 | `orientation.mode` | `uniform_so3` \| `fixed` | no | `uniform_so3` | Shoemake's uniform unit quaternion, Haar-uniform on SO(3). |
-| `position.mode` | `feasible_uniform` \| `void_neighbourhood` | no | `feasible_uniform` | The second is a deliberate construction and is never reported as random. |
+| `position.mode` | `feasible_uniform` \| `void_neighbourhood` \| `free_space_guided` | no | `feasible_uniform` | Guided and pore-neighbourhood modes are explicit constructions. |
 | `position.band` | `[f64; 2]` | with `void_neighbourhood` | — | Distance band from the void surface. |
 | `boundary.mode` | `strict` \| `clip` \| `periodic` | no | `strict` | Whether a particle may straddle the domain boundary. |
 | `boundary.min_boundary_dist` | `f64` | no | `0.0` | Clearance from the domain wall. |
@@ -534,6 +534,15 @@ Optional `placement.aggregates` (unknown fields are rejected):
 | Field | Default | Meaning / accepted range when enabled |
 |---|---|---|
 | enabled | false | Opt into template generation and cluster proxy placement. |
+| construction | fcc | `fcc` or `contact_growth`; shipped cluster/mixed examples select contact growth. |
+| contact_directions | 12 | Deterministic insertion directions, 4..256. |
+| contact_orientations | 4 | Exterior orientations per direction, 1..64; rotation_search=false uses one. |
+| contact_tolerance | 0.00001 | Relative to moving member radius, finite 1e-9..1e-2. |
+| contact_max_steps | 96 | Safe advancement steps per rigid motion, 8..1024. |
+| contact_orientation | fixed | `fixed` (original rotations) or `principal` (minor/major principal axis along the approach, flat faces meet the assembly). |
+| contact_settle_steps | 0 | Roll steps toward the centre applied to the best straight approaches, 0..64; 0 disables. |
+| contact_settle_candidates | 3 | Number of best straight approaches settled, 1..64. |
+| neighborhood_sweeps | 2 | Contact-growth relaxation after each insertion, 0..128. |
 | variants | 8 | Template kinds, integer 1..128 or `auto`; auto estimates ceil(source shells/primary member count), clamped to 4..32, per stage. Independent of instance count. |
 | particles_per_cluster | 64 | Member count, 1..1024; variants*members <= 65536. |
 | shape | sphere | sphere or cube; cube globally uses rotated cube's enclosing world AABB. |
@@ -544,7 +553,7 @@ Optional `placement.aggregates` (unknown fields are rejected):
 
 | target_internal_volume_fraction | null | Optional real material/container target in (0,1]; null retains the original refinement only. |
 | strategy_rounds | 8 | Target-search rounds, 0..128; alternate forward/reverse order and reduce angular/translation steps. |
-| max_compaction_trials | 6000 | Per-template target-search candidate budget, 0..1000000; separate from global placement budget. |
+| max_compaction_trials | 6000 | Per-template candidate budget, 0..1000000; contact growth shares it across insertion and relaxation; separate from global placement budget. |
 | rotation_search | true | Try signed rotations about three axes, also coupled with inward displacement. |
 | lateral_rearrangement | true | Try signed lateral steps about three axes, also coupled with inward displacement. |
 | pair_rearrangement | true | Move each member and its nearest neighbour together toward the origin. |
@@ -562,3 +571,71 @@ Requires strict boundaries, feasible_uniform position, and forbidden void crossi
 Disabled settings do not change the ordinary path. See
 [aggregate algorithm](../algorithms/aggregate-placement.md) and
 [configuration example](../examples/pack-aggregates.md).
+
+## Placement checkpoint and geometry memory settings
+
+Both are optional `placement:` blocks with strict unknown-field rejection.
+
+| Key | Default | Contract |
+|---|---|---|
+| `checkpoint.enabled` | `true` | Save periodic, interrupted and completed states; disabling refuses resume. |
+| `checkpoint.interval_seconds` | `60` | Time trigger at safe points; 0 disables. |
+| `checkpoint.every_particles` | `1000` | Accepted-real-particle trigger; 0 disables. |
+| `checkpoint.resume_from` | `null` | Explicit checkpoint path, resolved relative to YAML; no automatic restart. |
+| `checkpoint.extend` | `false` | Completed snapshot + higher target adds a new plan while preserving previous particles. |
+| `memory.geometry_cache_mb` | `256` | Estimated retained mesh/BVH bytes in MiB; 0 disables retention. |
+| `memory.simplified_collision` | `false` | Enable conservative oriented source-box triangle screen before exact geometry. |
+
+Final checkpoints are still saved with both periodic triggers set to zero. Thread
+count, output destinations and memory/checkpoint controls may change on recovery.
+Physical parameters/input bytes and executable must match. Total attempt budget
+may increase, never decrease. Target changes require explicit extend and cannot
+lower the prior target. Template count/shape/internal gap remain physical inputs.
+`CheckpointSpec::default` and `PlacementMemorySpec::default` implement these defaults.
+
+
+### Exact gap filling configuration
+
+`placement.aggregates.exact_fallback` is a boolean, default false. In mixed mode,
+stages after the primary use exact member geometry instead of rejecting
+aggregate proxy overlaps. Shipped mixed template enables this option.
+
+`placement.initial_particles` defaults to null. Its fields are `record` (path),
+`report` (path), and `existing_gap` (finite nonnegative distance). Paths resolve
+against the YAML directory. This is a new validated individual fill task, with
+the existing source/frame/pore identities and all inherited transforms preserved.
+The gap applies only when checking the inherited population; incoming candidates
+use the normal `gaps.particle_particle`. Separate outputs and checkpoints are
+required. Initial files enter checkpoint compatibility hashing.
+
+### Free-space guidance and original-plan transfer
+
+`position.mode: free_space_guided` enables optional individual cavity search.
+`position.free_space` accepts the following fields; an explicit block in another
+position mode is refused. All distances are in domain coordinates.
+
+| Field | Default | Validation / meaning |
+|---|---:|---|
+| `coarse_cell_size` | 8 | Finite positive; initial lattice must fit both caps. |
+| `min_cell_size` | 1 | Finite positive, no greater than coarse size. |
+| `max_cells` | 250000 | Positive cell cap, including inactive parents. |
+| `index_memory_mb` | 128 | Positive estimated index cap, 512 bytes per cell. |
+| `candidates_per_location` | 8 | Positive; failures trigger local subdivision when possible. |
+| `exploration_fraction` | 0.10 | Finite probability in [0,1]. |
+| `local_refinement` | true | Allow bounded eight-child subdivision. |
+
+Requires checkpoints, strict boundaries, forbidden pore crossing and aggregates
+disabled. Real geometry remains the acceptance authority.
+
+`initial_particles.pending_checkpoint` defaults to null. When supplied, transfer
+the original pending size tail rather than drawing a deficit population.
+`initial_particles.retry_failed` defaults to true; append reconciled original
+failed sizes after the pending tail. Transfer supports schema 1/2 individual
+primary plans with the same target and no extension/top-up. It verifies checksum,
+original report/record and source identity. Imported order is preserved even if
+`size.placement_order` is descending. Initial assembly import supports either
+`feasible_uniform` or `free_space_guided`. Exact recovery remains a separate
+operation with same-executable checks. See
+[free-space design](../algorithms/free-space-guided-placement.md).
+
+For contact growth, strategy_rounds adds final target-driven relaxation sweeps; pair_rearrangement tests sequential member/neighbour motions as a joint transaction. compaction_sweeps, mesh_refinement_sweeps and container_shrink_fraction apply only to FCC. See [contact growth](../algorithms/aggregate-placement.md#contact-growth-construction-contact_growth).

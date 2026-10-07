@@ -79,3 +79,7 @@ Each walkthrough shows a realistic config, the exact CLI command, and output cap
 ## Chinese translation
 
 `docs/zh-cn/` mirrors this tree: the same 40 files at the same relative paths. See [../TRANSLATION_GUIDE.md](../TRANSLATION_GUIDE.md) for the terminology glossary and the conventions that govern it.
+
+Placement recovery, completed-run extension and bounded geometry caching: [design](algorithms/placement-checkpoints-and-memory.md), [function reference](reference/pipeline-placement-state.md).
+
+Optional individual [free-space-guided placement](algorithms/free-space-guided-placement.md) preserves exact geometry, bounded search state and validated original-plan transfer.

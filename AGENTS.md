@@ -67,6 +67,7 @@ Documentation lives in three tiers, each answering a different question:
 | Mesh generation numerics (exact predicates, C1/C2 DD escalation, later GPU certificates) | `SPEC_meshgen_numerics.md` — **normative frozen spec**, companion to the geometry spec; lists the predicate and arithmetic class of every decision site | `reference/meshgen.md`, `reference/mesh-verify.md` |
 | Mesh generation data contracts (VTU schema v1, snapshot naming, verifier check catalog + JSON schema, accuracy gates) | `SPEC_meshgen_contracts.md` — **normative frozen spec**; fixture VTUs at `data/fixtures/meshgen/` (regenerate with `uv run data/fixtures/meshgen/generate_fixtures.py data/fixtures/meshgen`) | `reference/mesh-render-and-vtu.md` |
 | Seeded, recorded, void-aware placement (`pack` with a `placement:` block) | `algorithms/void-aware-placement.md` | `reference/pipeline-placement.md`, `reference/config.md` (`placement.rs`) |
+| Placement recovery, completed extension and bounded geometry caching | `algorithms/placement-checkpoints-and-memory.md` | `reference/pipeline-placement-state.md` |
 | Build identity (`version`, `--version`, the `tool` block in placement outputs) | — | `reference/core-and-compute.md` |
 | Config / YAML deserialization | — | `reference/config.md` |
 | STL / TIFF / RAW I/O | — | `reference/io.md` |
@@ -1165,7 +1166,10 @@ A `Volume3D { ... }` literal whose `data` does not fix the element type (e.g. `v
 - Placement cancellation uses atomic-only Unix signal handlers or `outputs.dir/STOP`.
   Finish an accepted batch or whole cluster, save geometry, then report interruption.
   Repeated signals must not abort saving. Progress and final reports are separate;
-  cancellation does not provide resumable checkpoints. Legacy packing is unchanged.
+  default-enabled checkpoints preserve RNG, current attempt budgets and stage cursors.
+  Save final checkpoints even after target success; explicit extend retains all old
+  transforms. Refuse changed physical inputs/executables and reduced total budgets.
+  Legacy packing is unchanged.
 - Aggregates are disabled by default. Keep primary-only and explicit mixed modes,
   positive/auto variant counts and decreasing fallback member counts configurable.
   Template construction and target compaction remain deterministic. Preserve member
@@ -1179,5 +1183,32 @@ A `Volume3D { ... }` literal whose `data` does not fix the element type (e.g. `v
   `docs/en-us/algorithms/aggregate-placement.md` and
   `docs/en-us/reference/pipeline-aggregates.md` before changes. Shipped templates
   live in `data/input/placement*_config.yaml`; update them when config types change.
+- Cold placement particles share source geometry and keep transforms/bounds;
+  exact world meshes live in a byte-accounted LRU. Simplified collision models must
+  conservatively enclose the original solid. Preserve exact containment/gap tests.
+  Stream particle STL output; do not recreate an all-particle merged mesh.
+  Always test pore containment independently of the near-surface bbox filter.
 - Format changed Rust files only; repository-wide formatting rewrites unrelated
   legacy sources. Run the relevant placement tests for behavioral changes.
+
+
+- Mixed aggregate `exact_fallback` must refine against actual accepted member
+  meshes, including both solid containment directions and pore exclusion.
+  Empty proxy interiors are matrix space, not solid material. Initial assembly
+  import is a new validated task; do not bypass exact checkpoint executable
+  compatibility. Preserve source identity, inherited order/transforms and real
+  material accounting; incoming and inherited gaps are distinct.
+
+- Optional `free_space_guided` placement ranks real geometry but never treats
+  AABB/proxy overlap, a centre score or circumsphere mismatch as solid occupancy.
+  First version is individual-only with strict walls, checkpoints and forbidden
+  pore crossing. Keep cell/memory caps, stable queue IDs, serial committed
+  feedback and exact recoverable search state. Read
+  `docs/en-us/algorithms/free-space-guided-placement.md` and state/config
+  references first. Explicit remaining-plan import must conserve original
+  pending/failed size multiplicities; never infer replacements or relax exact
+  same-executable checkpoint compatibility.
+
+## Aggregate contact-growth maintenance
+
+`src/pipeline/placement_aggregate_contact.rs` owns deterministic contact growth, conservative swept translation/rotation, neighborhood transactions and serializable template progress. Read `docs/en-us/algorithms/aggregate-placement.md` and `reference/pipeline-aggregates.md` before changes. Keep aggregate packing opt-in, keep the FCC constructor selectable, preserve member identities/PSD and do not replace real solid gap checks with proxy acceptance. Validate with release-mode contact unit tests and placement aggregate/checkpoint integration tests; geometry-heavy debug tests can exceed their CLI polling deadlines.

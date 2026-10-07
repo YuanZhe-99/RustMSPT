@@ -61,6 +61,8 @@ pub(crate) struct PlacementControl {
     started: Instant,
     last_poll: Instant,
     last_progress: Instant,
+    /// Worker copies poll for cancellation but never publish progress.
+    quiet: bool,
 }
 impl PlacementControl {
     // AI-FUNC-SUMMARY: Initialize per-run cancellation/progress clocks; returns control state; no I/O.
@@ -72,7 +74,21 @@ impl PlacementControl {
             started: now,
             last_poll: now,
             last_progress: now,
+            quiet: false,
         }
+    }
+    // AI-FUNC-SUMMARY: Cancellation-only copy for a parallel worker: same latched state, no progress publishing.
+    pub fn worker(&self) -> Self {
+        Self {
+            quiet: true,
+            ..Self::new()
+        }
+        .latched(self.interrupted)
+    }
+    // AI-FUNC-SUMMARY: Builder helper carrying an existing interruption latch; returns self.
+    fn latched(mut self, interrupted: bool) -> Self {
+        self.interrupted = interrupted;
+        self
     }
     // AI-FUNC-SUMMARY: Check signal every batch, STOP file at most four times/sec, progress every 10 sec; returns latched cancellation; never modifies placement/RNG state.
     pub fn poll(
@@ -89,10 +105,10 @@ impl PlacementControl {
             self.interrupted |= config.outputs.dir.join("STOP").exists();
             self.last_poll = Instant::now();
         }
-        if self.interrupted && !previously_interrupted {
+        if self.interrupted && !previously_interrupted && !self.quiet {
             eprintln!("[Info] Stop requested; finishing the current batch and saving accepted particles. Do not force-kill while saving.");
         }
-        if force || self.last_progress.elapsed() >= Duration::from_secs(10) {
+        if !self.quiet && (force || self.last_progress.elapsed() >= Duration::from_secs(10)) {
             self.publish(config, self.phase, placed, attempts, vf);
         }
         self.interrupted
@@ -110,7 +126,8 @@ impl PlacementControl {
             "state": state, "particles": placed, "attempts": attempts,
             "volume_fraction_basis": vf, "target_volume_fraction": config.target_volume_fraction,
             "elapsed_s": self.started.elapsed().as_secs_f64(),
-            "stop_requested": self.interrupted, "resumable": false
+            "stop_requested": self.interrupted, "checkpoint_enabled": config.checkpoint.enabled,
+            "resumable": config.checkpoint.enabled && config.outputs.dir.join("checkpoint.json").is_file()
         });
         let temporary = config.outputs.dir.join("progress.json.tmp");
         let result =

@@ -79,3 +79,7 @@ RustMSPT（Rust Microstructure Processing Toolbox，Rust 微结构处理工具�
 ## 中文翻译
 
 本文档现已提供简体中文版本。术语表和翻译约定参见 [../TRANSLATION_GUIDE.md](../TRANSLATION_GUIDE.md)，其规范了 `docs/zh-cn/` 镜像文档的翻译方式。
+
+放置恢复、已完成运行的追加以及有界几何缓存：[设计](algorithms/placement-checkpoints-and-memory.md)、[函数参考](reference/pipeline-placement-state.md)。
+
+可选的单颗粒[空闲空间引导放置](algorithms/free-space-guided-placement.md)保留精确几何、有界搜索状态，并对原计划迁移进行校验。

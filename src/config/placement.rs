@@ -43,17 +43,92 @@ pub struct PlacementParams {
     pub outputs: OutputsSpec,
     #[serde(default)]
     pub aggregates: AggregateSpec,
+    #[serde(default)]
+    pub memory: PlacementMemorySpec,
+    #[serde(default)]
+    pub checkpoint: CheckpointSpec,
+    #[serde(default)]
+    pub initial_particles: Option<InitialParticlesSpec>,
+}
+
+/// Explicitly import a frozen accepted assembly into a new exact-geometry fill task.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InitialParticlesSpec {
+    pub record: PathBuf,
+    pub report: PathBuf,
+    /// Existing cluster interiors may have a smaller gap than incoming particles.
+    pub existing_gap: f64,
+    #[serde(default)]
+    pub pending_checkpoint: Option<PathBuf>,
+    #[serde(default = "default_true")]
+    pub retry_failed: bool,
+}
+
+/// Durable placement state; final checkpoints are saved even after target attainment.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CheckpointSpec {
+    pub enabled: bool,
+    pub interval_seconds: u64,
+    pub every_particles: usize,
+    pub resume_from: Option<String>,
+    pub extend: bool,
+}
+impl Default for CheckpointSpec {
+    // AI-FUNC-SUMMARY: Enable final/interrupt and periodic checkpoints by default; continuation remains explicitly requested.
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval_seconds: 60,
+            every_particles: 1000,
+            resume_from: None,
+            extend: false,
+        }
+    }
+}
+
+/// Resident exact geometry is a cache, never the authoritative particle record.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PlacementMemorySpec {
+    pub geometry_cache_mb: usize,
+    pub simplified_collision: bool,
+}
+impl Default for PlacementMemorySpec {
+    // AI-FUNC-SUMMARY: Default to a bounded 256 MiB estimated geometry cache; proxies are opt-in until benchmarked.
+    fn default() -> Self {
+        Self {
+            geometry_cache_mb: 256,
+            simplified_collision: false,
+        }
+    }
 }
 
 /// Optional hierarchical packing; disabled unless explicitly enabled.
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AggregateSpec {
+    pub construction: AggregateConstruction,
+    pub contact_directions: usize,
+    pub contact_orientations: usize,
+    /// Relative to the moving member radius.
+    pub contact_tolerance: f64,
+    pub contact_max_steps: usize,
+    /// Start orientations: fixed rotations, or principal axes laid against the approach direction.
+    pub contact_orientation: ContactOrientation,
+    /// Roll steps (lift, slide, fall toward the centre) applied to the best straight approaches; 0 disables.
+    pub contact_settle_steps: usize,
+    /// How many best straight approaches are settled.
+    pub contact_settle_candidates: usize,
+    pub neighborhood_sweeps: usize,
     pub enabled: bool,
     #[serde(deserialize_with = "deserialize_aggregate_variants")]
     pub variants: usize,
     pub mode: AggregateMode,
     pub fallback_particles_per_cluster: Vec<usize>,
+    /// Refine proxy collisions using real member geometry for mixed fallback stages.
+    pub exact_fallback: bool,
     pub particles_per_cluster: usize,
     pub shape: AggregateShape,
     pub internal_gap: f64,
@@ -72,10 +147,20 @@ impl Default for AggregateSpec {
     // AI-FUNC-SUMMARY: Defaults for opt-in deterministic aggregate generation; no I/O.
     fn default() -> Self {
         Self {
+            construction: AggregateConstruction::Fcc,
+            contact_directions: 12,
+            contact_orientations: 4,
+            contact_tolerance: 1e-5,
+            contact_max_steps: 96,
+            contact_orientation: ContactOrientation::Fixed,
+            contact_settle_steps: 0,
+            contact_settle_candidates: 3,
+            neighborhood_sweeps: 2,
             enabled: false,
             variants: 8,
             mode: AggregateMode::Clusters,
             fallback_particles_per_cluster: vec![16, 4, 1],
+            exact_fallback: false,
             particles_per_cluster: 64,
             shape: AggregateShape::Sphere,
             internal_gap: 0.1,
@@ -92,6 +177,23 @@ impl Default for AggregateSpec {
         }
     }
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AggregateConstruction {
+    Fcc,
+    ContactGrowth,
+}
+
+/// Contact-growth start orientations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContactOrientation {
+    /// Identity plus fixed axis rotations (the original method).
+    Fixed,
+    /// Minor or major principal axis along the approach, spun about it: flat faces meet the assembly.
+    Principal,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AggregateShape {
@@ -304,6 +406,34 @@ pub struct PositionSpec {
     pub mode: PositionMode,
     #[serde(default)]
     pub band: Option<Vec<f64>>,
+    #[serde(default)]
+    pub free_space: Option<FreeSpaceSpec>,
+}
+
+/// Bounded geometry-guided position search; it never relaxes real collision rules.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct FreeSpaceSpec {
+    pub coarse_cell_size: f64,
+    pub min_cell_size: f64,
+    pub max_cells: usize,
+    pub index_memory_mb: usize,
+    pub candidates_per_location: usize,
+    pub exploration_fraction: f64,
+    pub local_refinement: bool,
+}
+impl Default for FreeSpaceSpec {
+    fn default() -> Self {
+        Self {
+            coarse_cell_size: 8.0,
+            min_cell_size: 1.0,
+            max_cells: 250000,
+            index_memory_mb: 128,
+            candidates_per_location: 8,
+            exploration_fraction: 0.10,
+            local_refinement: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
@@ -315,6 +445,8 @@ pub enum PositionMode {
     /// Positions drawn within a declared distance band of the void surface. A
     /// deliberate construction, and never reported as random.
     VoidNeighbourhood,
+    /// Geometric cavity guidance with explicit global exploration.
+    FreeSpaceGuided,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -489,6 +621,9 @@ pub struct ResolvedPlacement {
     pub threads: i32,
     pub outputs: ResolvedOutputs,
     pub aggregates: AggregateSpec,
+    pub memory: PlacementMemorySpec,
+    pub checkpoint: CheckpointSpec,
+    pub initial_particles: Option<InitialParticlesSpec>,
     pub config_path: PathBuf,
 }
 
@@ -528,6 +663,7 @@ pub enum ResolvedClasses {
 pub struct ResolvedPosition {
     pub mode: PositionMode,
     pub band: Option<(f64, f64)>,
+    pub free_space: FreeSpaceSpec,
 }
 
 #[derive(Debug, Clone)]
@@ -666,7 +802,28 @@ impl PlacementParams {
     // decide the meaning of. Paths resolve against the config's own directory, never the working
     // directory; a path given on the command line is resolved by the caller against the CWD instead,
     // which is what a shell argument means.
-    pub fn validate(self, config_path: &Path) -> Result<ResolvedPlacement> {
+    pub fn validate(mut self, config_path: &Path) -> Result<ResolvedPlacement> {
+        if self.checkpoint.extend && self.checkpoint.resume_from.is_none() {
+            return Err(RustMsptError::InvalidConfig(
+                "placement.checkpoint.extend requires resume_from".into(),
+            ));
+        }
+        if self.checkpoint.resume_from.is_some() && !self.checkpoint.enabled {
+            return Err(RustMsptError::InvalidConfig(
+                "placement.checkpoint.resume_from requires enabled=true".into(),
+            ));
+        }
+        if let Some(path) = &mut self.checkpoint.resume_from {
+            let p = Path::new(path);
+            if !p.is_absolute() {
+                *path = config_path
+                    .parent()
+                    .unwrap_or(Path::new("."))
+                    .join(p)
+                    .to_string_lossy()
+                    .into_owned();
+            }
+        }
         let dir = config_dir(config_path);
 
         if self.domain.min.len() != 3 || self.domain.max.len() != 3 {
@@ -872,12 +1029,12 @@ impl PlacementParams {
                 }
                 Some((b[0], b[1]))
             }
-            (PositionMode::FeasibleUniform, Some(_)) => {
+            (PositionMode::FeasibleUniform | PositionMode::FreeSpaceGuided, Some(_)) => {
                 return Err(RustMsptError::InvalidConfig(
                     "placement.position.band is only read for mode: void_neighbourhood".to_string(),
                 ))
             }
-            (PositionMode::FeasibleUniform, None) => None,
+            (PositionMode::FeasibleUniform | PositionMode::FreeSpaceGuided, None) => None,
         };
 
         if self.boundary.mode == BoundaryMode::Periodic && void.is_some() {
@@ -963,6 +1120,17 @@ impl PlacementParams {
 
         if self.aggregates.enabled {
             let a = &self.aggregates;
+            if !(4..=256).contains(&a.contact_directions)
+                || !(1..=64).contains(&a.contact_orientations)
+                || !(8..=1024).contains(&a.contact_max_steps)
+                || a.neighborhood_sweeps > 128
+                || !a.contact_tolerance.is_finite()
+                || !(1e-9..=1e-2).contains(&a.contact_tolerance)
+                || a.contact_settle_steps > 64
+                || !(1..=64).contains(&a.contact_settle_candidates)
+            {
+                return Err(RustMsptError::InvalidConfig("aggregate contact controls: directions 4..256, orientations 1..64, max_steps 8..1024, neighborhood_sweeps <=128, relative tolerance 1e-9..1e-2, settle_steps <=64, settle_candidates 1..64 required".into()));
+            }
             if a.variants > 128
                 || a.particles_per_cluster == 0
                 || a.particles_per_cluster > 1024
@@ -1019,6 +1187,79 @@ impl PlacementParams {
                 return Err(RustMsptError::InvalidConfig("placement.aggregates currently requires strict boundary, feasible_uniform position and forbidden void crossing".into()));
             }
         }
+        let free_space = self.position.free_space.clone().unwrap_or_default();
+        if self.position.free_space.is_some() && self.position.mode != PositionMode::FreeSpaceGuided
+        {
+            return Err(RustMsptError::InvalidConfig(
+                "position.free_space requires free_space_guided mode".into(),
+            ));
+        }
+        if self.position.mode == PositionMode::FreeSpaceGuided {
+            if boundary.mode != BoundaryMode::Strict
+                || self.aggregates.enabled
+                || void
+                    .as_ref()
+                    .is_some_and(|v| v.crossing != VoidCrossing::Forbidden)
+                || !self.checkpoint.enabled
+                || !free_space.coarse_cell_size.is_finite()
+                || free_space.coarse_cell_size <= 0.0
+                || !free_space.min_cell_size.is_finite()
+                || free_space.min_cell_size <= 0.0
+                || free_space.min_cell_size > free_space.coarse_cell_size
+                || free_space.max_cells == 0
+                || free_space.max_cells > 4_000_000
+                || free_space.index_memory_mb == 0
+                || free_space.index_memory_mb > 8192
+                || free_space.candidates_per_location == 0
+                || free_space.candidates_per_location > 1024
+                || !free_space.exploration_fraction.is_finite()
+                || !(0.0..=1.0).contains(&free_space.exploration_fraction)
+            {
+                return Err(RustMsptError::InvalidConfig("invalid free_space_guided settings: requires individual/strict/forbidden/checkpointed placement and bounded finite search parameters".into()));
+            }
+            let ext = domain.size();
+            let cells = [ext.x, ext.y, ext.z].into_iter().try_fold(1usize, |n, v| {
+                n.checked_mul((v / free_space.coarse_cell_size).ceil() as usize)
+            });
+            let capacity = free_space
+                .max_cells
+                .min(free_space.index_memory_mb.saturating_mul(1024 * 1024) / 512);
+            if cells.is_none_or(|n| n == 0 || n > capacity) {
+                return Err(RustMsptError::InvalidConfig(
+                    "free-space coarse lattice exceeds memory/cell cap".into(),
+                ));
+            }
+        }
+        let initial_particles = self.initial_particles.as_ref().map(|spec| {
+            let mut spec = spec.clone();
+            spec.record = resolve_against(&dir, &spec.record.to_string_lossy());
+            spec.report = resolve_against(&dir, &spec.report.to_string_lossy());
+            spec.pending_checkpoint = spec
+                .pending_checkpoint
+                .as_ref()
+                .map(|p| resolve_against(&dir, &p.to_string_lossy()));
+            spec
+        });
+        if let Some(spec) = &initial_particles {
+            if !spec.existing_gap.is_finite()
+                || spec.existing_gap < 0.0
+                || self.aggregates.enabled
+                || boundary.mode != BoundaryMode::Strict
+                || void
+                    .as_ref()
+                    .is_some_and(|v| v.crossing != VoidCrossing::Forbidden)
+                || !self.checkpoint.enabled
+                || !matches!(
+                    self.position.mode,
+                    PositionMode::FeasibleUniform | PositionMode::FreeSpaceGuided
+                )
+                || spec.record == outputs.record
+                || spec.report == outputs.report
+            {
+                return Err(RustMsptError::InvalidConfig(
+                    "initial_particles requires finite existing_gap>=0, exact individual placement, strict boundary, feasible_uniform, forbidden void crossing, checkpoints, and separate output files".into()));
+            }
+        }
         Ok(ResolvedPlacement {
             seed: self.seed,
             unit: self.frame.unit.clone(),
@@ -1036,6 +1277,7 @@ impl PlacementParams {
             position: ResolvedPosition {
                 mode: self.position.mode,
                 band,
+                free_space,
             },
             boundary,
             gap_particle_particle,
@@ -1047,6 +1289,9 @@ impl PlacementParams {
             outputs,
             config_path: config_path.to_path_buf(),
             aggregates: self.aggregates.clone(),
+            memory: self.memory.clone(),
+            checkpoint: self.checkpoint.clone(),
+            initial_particles,
         })
     }
 }
