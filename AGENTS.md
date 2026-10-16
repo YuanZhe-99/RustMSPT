@@ -30,6 +30,12 @@
 
 RustMSPT (Rust Microstructure Processing Toolbox) is a standalone Rust toolkit for STL-based microstructure processing. It provides end-to-end pipelines for splitting, packing, optimizing, forging, scaling, measuring, and cropping microstructural geometries.
 
+**This is the `meshgen` branch (since 2026-10-16).** Mesh generation (`mesh`, `mesh-verify`, `src/meshgen/`, the `SPEC_meshgen_*` specs, `PLAN_mesh_generation.md`, the acceptance cases) was taken off `main` while it is under heavy development and lives here, checked out in the worktree `~/workspace/src/RustMSPT-meshgen` (`main` stays in `~/workspace/src/RustMSPT`). Branch rules:
+- **Merge `main` in, never rebase.** `git merge main` regularly. `main`'s removal commit (`6208875`) is recorded here with `git merge -s ours` (`ce0d7da`), which is why merging `main` does not delete the mesher; a rebase would replay that deletion.
+- **Shared files change on `main` first**, then merge: `io/vtu.rs`, `geometry/render_scene.rs`, the `mesh-render` pipeline/config/renderers and `data/fixtures/vtu/`. Changing them only here makes the eventual return conflict.
+- **Returning to `main`** is `git checkout main && git merge meshgen` (in the main worktree): the mesher comes back as additions, nothing else changes. Verified by `git merge-tree` on 2026-10-16.
+- Commit and push this branch to both remotes (`origin`, `github`) as before.
+
 `PLAN.md` tracks implementation progress for portable GPU acceleration and target-aware packing. Feature-gated `wgpu` paths coexist with CPU `rayon`/`rustfft`/`parry3d-f64` reference implementations and CPU fallback.
 
 The codebase has a full documentation tree under `docs/en-us/` (conceptual algorithm docs, per-function reference docs, and captured-output pipeline walkthroughs). See [Documentation Map](#2-documentation-map) below for how it's organized and, critically, the order in which it must be consulted.

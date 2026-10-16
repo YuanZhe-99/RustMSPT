@@ -12,6 +12,13 @@ GPU/CPU split, the scale envelope, the synthetic test suite, the acceptance-case
 GPU phases — in **Appendix B**. An implementer needs this document, the three `SPEC_*.md` freezes
 and `AGENTS.md`'s meshgen lessons; nothing else.
 
+**Branch, 2026-10-16.** At the owner's request mesh generation left `main` and continues on the
+`meshgen` branch, in the worktree `~/workspace/src/RustMSPT-meshgen`; `AGENTS.md` (§1) has the
+merge rules. Experiment outputs (`data/output/`, every `acceptance_*`, `bin_*` and
+`data/output/patches/`) moved with it, so relative paths in this plan resolve from the worktree root.
+Nothing in the mesher changed in the move (a2/a4 byte-identical apart from `ConfigHash`); the next
+step is still M-2.6.
+
 Written after a review of the record, the three specification freezes, the shipped code at
 `0a8eb1c`, and a fresh measurement of all nine acceptance cases and the reference dataset on both
 S8 paths (§2). The review's findings are §6; the work is §7.
