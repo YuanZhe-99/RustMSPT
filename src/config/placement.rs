@@ -44,6 +44,10 @@ pub struct PlacementParams {
     #[serde(default)]
     pub aggregates: AggregateSpec,
     #[serde(default)]
+    pub settle: SettleSpec,
+    #[serde(default)]
+    pub compress: CompressSpec,
+    #[serde(default)]
     pub memory: PlacementMemorySpec,
     #[serde(default)]
     pub checkpoint: CheckpointSpec,
@@ -101,6 +105,150 @@ impl Default for PlacementMemorySpec {
         Self {
             geometry_cache_mb: 256,
             simplified_collision: false,
+        }
+    }
+}
+
+/// Optional gravity deposition of enlarged particles, shrunk back before the ordinary exact
+/// feasibility filter; disabled unless explicitly enabled.
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SettleSpec {
+    pub enabled: bool,
+    /// Deposition enlargement s: particles settle at s times their size and are shrunk back
+    /// about their centroids, which opens a gap of roughly d*(s-1) at every contact.
+    pub scale: f64,
+    /// Bed floor below the domain bottom; null = five median enlarged diameters.
+    pub floor_margin: Option<f64>,
+    /// Deposition continues until the whole bed surface is this far above the domain top;
+    /// null = five median enlarged diameters.
+    pub top_margin: Option<f64>,
+    /// Drop positions tried per particle; the lowest resting pose wins.
+    pub drop_candidates: usize,
+    /// Maximum slides (contact-to-contact moves) after first contact.
+    pub roll_moves: usize,
+    /// Maximum horizontal travel while rolling, in particle bounding radii.
+    pub roll_reach: f64,
+    /// Contact detection band above `gap`, relative to the particle bounding radius.
+    pub contact_tolerance: f64,
+    /// Surface separation every cast keeps between enlarged pieces, relative to the median
+    /// enlarged diameter.
+    pub gap: f64,
+    /// Hard cap on deposited particles.
+    pub max_particles: usize,
+    /// Accepted particles sampled for the nearest-neighbour surface gap report; 0 disables.
+    pub measure_gaps: usize,
+    /// Deposition geometry: each particle's convex hull, or an approximate convex decomposition
+    /// whose parts enclose the true surface (fills most of the hull's concavity volume). True
+    /// shapes lie inside either, so they never overlap.
+    pub geometry: SettleGeometry,
+    /// VHACD concavity threshold for `geometry: parts` (smaller = more, tighter parts).
+    pub concavity: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SettleGeometry {
+    Hull,
+    Parts,
+}
+impl Default for SettleSpec {
+    // AI-FUNC-SUMMARY: Defaults for opt-in deposition; no I/O.
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            scale: 1.1,
+            floor_margin: None,
+            top_margin: None,
+            drop_candidates: 1,
+            roll_moves: 64,
+            roll_reach: 2.0,
+            contact_tolerance: 1e-3,
+            gap: 1e-5,
+            max_particles: 2_000_000,
+            measure_gaps: 0,
+            geometry: SettleGeometry::Parts,
+            concavity: 0.03,
+        }
+    }
+}
+
+/// Optional dense packing by force-biased relaxation: scatter every particle at a common
+/// fraction of its size with overlaps allowed, push overlapping particles apart (with rotation)
+/// and grow them until full size with no overlap, or jammed; disabled unless explicitly enabled.
+/// Gaps come from `gaps.particle_particle` and `void.gap`.
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CompressSpec {
+    pub enabled: bool,
+    /// Particle geometry: convex hull, or convex parts enclosing the true surface.
+    pub geometry: SettleGeometry,
+    /// VHACD concavity threshold for particle parts.
+    pub concavity: f64,
+    /// VHACD concavity threshold for the void shells.
+    pub void_concavity: f64,
+    /// Volume fraction of the space outside the void the particles fill when scattered.
+    pub start_fraction: f64,
+    /// Random positions tried per particle while scattering without overlap.
+    pub scatter_attempts: usize,
+    /// Initial, smallest and largest relative size growth per growth step.
+    pub growth: f64,
+    pub growth_min: f64,
+    pub growth_max: f64,
+    /// Growth speeds up while the mean overlap is below this (relative to the median diameter)
+    /// and slows down above it.
+    pub overlap_tolerance: f64,
+    /// Fraction of each computed push applied per iteration, and the extra push past contact.
+    pub relaxation: f64,
+    pub overshoot: f64,
+    /// Largest turn per iteration in radians.
+    pub max_turn: f64,
+    pub max_iterations: usize,
+    /// Growth time limit in seconds (0 = none); reaching it counts as jammed, so the run thins
+    /// once and finishes at full size.
+    pub max_seconds: f64,
+    /// Jammed when the size grew by less than 1e-4 (relative) over this many iterations; at full
+    /// size, the iterations allowed to clear the last overlaps.
+    pub stall_iterations: usize,
+    /// When jammed below full size, remove a random share of particles equal to the missing
+    /// volume plus this relative margin, then keep growing; at most this many rounds.
+    pub thinning_margin: f64,
+    pub max_thinning_rounds: usize,
+    /// At full size, relaxation stops once the mean overlap is below this (relative to the
+    /// median diameter); the final shrink clears the rest.
+    pub final_overlap: f64,
+    /// Largest final shrink of one particle (relative scale) to clear residual overlap; a
+    /// particle needing more is deleted.
+    pub max_shrink: f64,
+    /// Accepted particles sampled for the nearest-neighbour surface gap report; 0 disables.
+    pub measure_gaps: usize,
+}
+
+impl Default for CompressSpec {
+    // AI-FUNC-SUMMARY: Defaults for opt-in compression; no I/O.
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            geometry: SettleGeometry::Hull,
+            concavity: 0.03,
+            void_concavity: 0.01,
+            start_fraction: 0.25,
+            scatter_attempts: 200,
+            growth: 2e-3,
+            growth_min: 1e-5,
+            growth_max: 1e-2,
+            overlap_tolerance: 1e-2,
+            relaxation: 0.8,
+            overshoot: 0.05,
+            max_turn: 0.05,
+            max_iterations: 100_000,
+            max_seconds: 0.0,
+            stall_iterations: 300,
+            thinning_margin: 0.02,
+            max_thinning_rounds: 20,
+            final_overlap: 2e-4,
+            max_shrink: 0.02,
+            measure_gaps: 0,
         }
     }
 }
@@ -621,6 +769,8 @@ pub struct ResolvedPlacement {
     pub threads: i32,
     pub outputs: ResolvedOutputs,
     pub aggregates: AggregateSpec,
+    pub settle: SettleSpec,
+    pub compress: CompressSpec,
     pub memory: PlacementMemorySpec,
     pub checkpoint: CheckpointSpec,
     pub initial_particles: Option<InitialParticlesSpec>,
@@ -1187,6 +1337,73 @@ impl PlacementParams {
                 return Err(RustMsptError::InvalidConfig("placement.aggregates currently requires strict boundary, feasible_uniform position and forbidden void crossing".into()));
             }
         }
+        if self.settle.enabled {
+            let t = &self.settle;
+            let margin_ok = |m: Option<f64>| m.is_none_or(|v| v.is_finite() && v >= 0.0);
+            if !(t.scale.is_finite() && (1.0..=2.0).contains(&t.scale))
+                || !margin_ok(t.floor_margin)
+                || !margin_ok(t.top_margin)
+                || !(1..=16).contains(&t.drop_candidates)
+                || t.roll_moves > 4096
+                || !(t.roll_reach.is_finite() && (0.0..=16.0).contains(&t.roll_reach))
+                || !(t.contact_tolerance.is_finite() && (1e-8..=1e-2).contains(&t.contact_tolerance))
+                || !(t.gap.is_finite() && (0.0..=1e-2).contains(&t.gap))
+                || !(t.concavity.is_finite() && (1e-4..=1.0).contains(&t.concavity))
+                || !(1..=20_000_000).contains(&t.max_particles)
+                || t.measure_gaps > 1_000_000
+            {
+                return Err(RustMsptError::InvalidConfig("placement.settle: scale in [1,2], finite margins >= 0, drop_candidates 1..16, roll_moves <= 4096, roll_reach in [0,16], contact_tolerance in [1e-8,1e-2], gap in [0,1e-2], concavity in [1e-4,1], max_particles 1..20000000, measure_gaps <= 1000000 required".into()));
+            }
+            if self.aggregates.enabled
+                || self.initial_particles.is_some()
+                || boundary.mode != BoundaryMode::Strict
+                || self.position.mode != PositionMode::FeasibleUniform
+                || self.checkpoint.resume_from.is_some()
+                || self.checkpoint.extend
+                || void
+                    .as_ref()
+                    .is_some_and(|v| v.crossing != VoidCrossing::Forbidden)
+            {
+                return Err(RustMsptError::InvalidConfig("placement.settle requires strict boundary, feasible_uniform position, forbidden void crossing, no aggregates, no initial_particles and no checkpoint resume/extend".into()));
+            }
+        }
+        if self.compress.enabled {
+            let t = &self.compress;
+            let unit = |v: f64| v.is_finite() && v > 0.0 && v <= 1.0;
+            if !(t.concavity.is_finite() && (1e-4..=1.0).contains(&t.concavity))
+                || !(t.void_concavity.is_finite() && (1e-4..=1.0).contains(&t.void_concavity))
+                || !unit(t.start_fraction)
+                || !(1..=1_000_000).contains(&t.scatter_attempts)
+                || !(unit(t.growth_min) && unit(t.growth) && unit(t.growth_max) && t.growth_min <= t.growth && t.growth <= t.growth_max)
+                || !unit(t.overlap_tolerance)
+                || !unit(t.relaxation)
+                || !(t.overshoot.is_finite() && (0.0..=1.0).contains(&t.overshoot))
+                || !(t.max_turn.is_finite() && t.max_turn > 0.0 && t.max_turn <= 1.0)
+                || t.max_iterations > 100_000_000
+                || !(t.max_seconds.is_finite() && t.max_seconds >= 0.0)
+                || !(1..=100_000_000).contains(&t.stall_iterations)
+                || !(t.thinning_margin.is_finite() && (0.0..=0.5).contains(&t.thinning_margin))
+                || t.max_thinning_rounds > 1000
+                || !unit(t.final_overlap)
+                || !(t.max_shrink.is_finite() && (0.0..0.5).contains(&t.max_shrink))
+                || t.measure_gaps > 1_000_000
+            {
+                return Err(RustMsptError::InvalidConfig("placement.compress: concavity and void_concavity in [1e-4,1]; start_fraction, overlap_tolerance, relaxation in (0,1]; scatter_attempts 1..1000000; 0 < growth_min <= growth <= growth_max <= 1; overshoot in [0,1]; max_turn in (0,1]; max_iterations <= 1e8; max_seconds >= 0; stall_iterations 1..1e8; thinning_margin in [0,0.5]; max_thinning_rounds <= 1000; max_shrink in [0,0.5); measure_gaps <= 1000000 required".into()));
+            }
+            if self.settle.enabled
+                || self.aggregates.enabled
+                || self.initial_particles.is_some()
+                || boundary.mode != BoundaryMode::Strict
+                || self.position.mode != PositionMode::FeasibleUniform
+                || self.checkpoint.resume_from.is_some()
+                || self.checkpoint.extend
+                || void
+                    .as_ref()
+                    .is_some_and(|v| v.crossing != VoidCrossing::Forbidden)
+            {
+                return Err(RustMsptError::InvalidConfig("placement.compress requires strict boundary, feasible_uniform position, forbidden void crossing, and no settle, aggregates, initial_particles or checkpoint resume/extend".into()));
+            }
+        }
         let free_space = self.position.free_space.clone().unwrap_or_default();
         if self.position.free_space.is_some() && self.position.mode != PositionMode::FreeSpaceGuided
         {
@@ -1289,6 +1506,8 @@ impl PlacementParams {
             outputs,
             config_path: config_path.to_path_buf(),
             aggregates: self.aggregates.clone(),
+            settle: self.settle.clone(),
+            compress: self.compress.clone(),
             memory: self.memory.clone(),
             checkpoint: self.checkpoint.clone(),
             initial_particles,

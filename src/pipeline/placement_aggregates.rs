@@ -1,7 +1,7 @@
 //! Deterministic FCC or contact-growth templates with optional exact mixed fallback.
 use super::*;
 #[path = "placement_aggregate_bodies.rs"]
-mod bodies;
+pub(super) mod bodies;
 #[path = "placement_aggregate_contact.rs"]
 mod contact;
 use crate::config::placement::{

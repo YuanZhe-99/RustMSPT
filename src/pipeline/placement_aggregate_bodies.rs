@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 /// One member geometry in its local scaled frame (centroid at the origin).
-pub(super) struct Body {
+pub(in crate::pipeline::placement) struct Body {
     mesh: TriMesh,
     /// Convex-hull vertices: container envelopes are maxima of convex functions, so they are
     /// attained on these points and equal the all-vertex envelope.
@@ -22,6 +22,32 @@ pub(super) struct Body {
     pub(super) axes: [Vec3; 3],
     /// True solid volume at this scale.
     volume: f64,
+}
+
+impl Body {
+    // AI-FUNC-SUMMARY: Build one shell's query mesh/hierarchy, hull and principal axes at one scale in its local frame (centroid at the origin); returns error on an unusable mesh; no other side effects.
+    pub(in crate::pipeline::placement) fn build(canonical: &crate::types::Mesh, scale: f64, volume: f64) -> Result<Body> {
+        let mesh = transform_shell(canonical, scale, UnitQuat::identity(), Vec3::new(0., 0., 0.));
+        let shape = crate::geometry::to_parry_trimesh(&mesh)
+            .ok_or_else(|| RustMsptError::InvalidMesh("cannot prepare a rigid body".into()))?;
+        let points: Vec<na::Point3<f64>> = mesh
+            .vertices
+            .iter()
+            .map(|v| na::Point3::new(v.x, v.y, v.z))
+            .collect();
+        let (hull_points, _) = parry3d_f64::transformation::convex_hull(&points);
+        let hull = if hull_points.is_empty() {
+            mesh.vertices.clone()
+        } else {
+            hull_points.iter().map(|p| Vec3::new(p.x, p.y, p.z)).collect()
+        };
+        Ok(Body {
+            mesh: shape,
+            hull,
+            axes: principal_axes(&mesh.vertices),
+            volume,
+        })
+    }
 }
 
 /// Cache keyed by shell and exact scale; never serialized, rebuilt on demand after resume.
@@ -40,34 +66,9 @@ impl Bodies {
             if self.0.contains_key(&key) {
                 continue;
             }
-            let mesh = transform_shell(
-                &library.shells[m.shell].canonical,
-                m.scale,
-                UnitQuat::identity(),
-                Vec3::new(0., 0., 0.),
-            );
-            let shape = crate::geometry::to_parry_trimesh(&mesh)
-                .ok_or_else(|| RustMsptError::InvalidMesh("cannot prepare aggregate member".into()))?;
-            let points: Vec<na::Point3<f64>> = mesh
-                .vertices
-                .iter()
-                .map(|v| na::Point3::new(v.x, v.y, v.z))
-                .collect();
-            let (hull_points, _) = parry3d_f64::transformation::convex_hull(&points);
-            let hull = if hull_points.is_empty() {
-                mesh.vertices.clone()
-            } else {
-                hull_points.iter().map(|p| Vec3::new(p.x, p.y, p.z)).collect()
-            };
-            self.0.insert(
-                key,
-                Arc::new(Body {
-                    mesh: shape,
-                    hull,
-                    axes: principal_axes(&mesh.vertices),
-                    volume: library.shells[m.shell].volume * m.scale.powi(3),
-                }),
-            );
+            let shell = &library.shells[m.shell];
+            let body = Body::build(&shell.canonical, m.scale, shell.volume * m.scale.powi(3))?;
+            self.0.insert(key, Arc::new(body));
         }
         Ok(())
     }
@@ -75,17 +76,7 @@ impl Bodies {
     // AI-FUNC-SUMMARY: Pose a member whose body was ensured; panics only on a caller bug (missing ensure).
     pub(super) fn pose(&self, m: &Member) -> Posed {
         let body = self.0[&(m.shell, m.scale.to_bits())].clone();
-        let [w, x, y, z] = m.rotation.to_wxyz();
-        let iso = Isometry::from_parts(
-            na::Translation3::new(m.centre.x, m.centre.y, m.centre.z),
-            na::UnitQuaternion::new_unchecked(na::Quaternion::new(w, x, y, z)),
-        );
-        Posed {
-            body,
-            iso,
-            centre: m.centre,
-            radius: m.radius,
-        }
+        Posed::at(body, m.rotation, m.centre, m.radius)
     }
 
     // AI-FUNC-SUMMARY: Origin-centred sphere/cube envelope from hull vertices; equals the all-vertex envelope; no mutation.
@@ -126,11 +117,27 @@ impl Bodies {
 
 /// A body at a rigid pose; cheap to build.
 #[derive(Clone)]
-pub(super) struct Posed {
+pub(in crate::pipeline::placement) struct Posed {
     body: Arc<Body>,
     iso: Isometry<Real>,
     centre: Vec3,
     radius: f64,
+}
+
+impl Posed {
+    // AI-FUNC-SUMMARY: Pose a body by rotation and centre with its bounding radius; no geometry copy.
+    pub(in crate::pipeline::placement) fn at(body: Arc<Body>, rotation: UnitQuat, centre: Vec3, radius: f64) -> Posed {
+        let [w, x, y, z] = rotation.to_wxyz();
+        Posed {
+            body,
+            iso: Isometry::from_parts(
+                na::Translation3::new(centre.x, centre.y, centre.z),
+                na::UnitQuaternion::new_unchecked(na::Quaternion::new(w, x, y, z)),
+            ),
+            centre,
+            radius,
+        }
+    }
 }
 
 // AI-FUNC-SUMMARY: Eigenvectors of the vertex covariance, sorted by decreasing variance; deterministic; no mutation.
@@ -151,7 +158,7 @@ fn principal_axes(vertices: &[Vec3]) -> [Vec3; 3] {
 }
 
 // AI-FUNC-SUMMARY: min(exact surface distance, cap) between two posed bodies; 0 for intersecting surfaces. Nesting is not detected (callers move continuously from separated poses). No mutation besides profiling counters.
-pub(super) fn distance_capped(a: &Posed, b: &Posed, cap: f64) -> f64 {
+pub(in crate::pipeline::placement) fn distance_capped(a: &Posed, b: &Posed, cap: f64) -> f64 {
     if vec_norm(a.centre.sub(b.centre)) - a.radius - b.radius >= cap {
         return cap;
     }

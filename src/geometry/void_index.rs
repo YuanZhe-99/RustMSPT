@@ -114,6 +114,11 @@ impl VoidIndex {
         })
     }
 
+    // AI-FUNC-SUMMARY: The validated void mesh; returns a reference; side effects: none.
+    pub fn mesh(&self) -> &Mesh {
+        &self.mesh
+    }
+
     // AI-FUNC-SUMMARY: The void's bounding box; returns BoundingBox; side effects: none.
     pub fn bbox(&self) -> BoundingBox {
         self.bbox

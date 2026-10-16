@@ -6,6 +6,10 @@ mod checkpoint;
 mod free_space;
 #[path = "placement_initial.rs"]
 mod initial;
+#[path = "placement_settle.rs"]
+mod settle;
+#[path = "placement_compress.rs"]
+mod compress;
 
 use crate::config::placement::{
     BoundaryMode, OnUnattainable, OrientationMode, PlacementOrder, PositionMode,
@@ -160,6 +164,35 @@ fn run_placement_in_pool(config: &ResolvedPlacement) -> Result<PlacementOutcome>
     };
 
     timer.stage("load");
+    if config.compress.enabled {
+        return compress::run(
+            config,
+            &library,
+            &source,
+            &classes,
+            void.as_ref(),
+            void.as_ref().map(|v| v.mesh()),
+            void_volume_in_domain,
+            void_volume_method,
+            basis_volume,
+            &tool,
+            started,
+        );
+    }
+    if config.settle.enabled {
+        return settle::run(
+            config,
+            &library,
+            &source,
+            &classes,
+            void.as_ref(),
+            void_volume_in_domain,
+            void_volume_method,
+            basis_volume,
+            &tool,
+            started,
+        );
+    }
     if config.aggregates.enabled {
         return aggregates::run(
             config,
