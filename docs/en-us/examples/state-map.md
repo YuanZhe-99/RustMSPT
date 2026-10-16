@@ -45,12 +45,13 @@ and an integrated GPU:
 
 ```
 [Info] GPU adapter: name=Intel(R) Iris(R) Plus Graphics 655 (CFL GT3) backend=Vulkan type=IntegratedGpu class=hardware
-[state-map] 15230340 points: 15123531 contained, 106809 fallback, 0 unlocated; backend gpu; 8 workers; locate 2.57 s
-[Timing] gpu init_seconds=0.083453 upload_bytes=182764320 upload_calls=30 readback_bytes=1523034000 readback_calls=15 readback_wait_seconds=0.669724
+[state-map] 15230340 points: 15123531 contained, 106809 fallback, 0 unlocated; backend gpu; 8 workers; locate 2.73 s
+[Timing] gpu init_seconds=0.080907 upload_bytes=182764320 upload_calls=30 readback_bytes=1523034000 readback_calls=15 readback_wait_seconds=0.687726
 ```
 
 The same run with `mode: cpu` located the points in 4.9 s on eight workers,
-with identical donors and distances.
+with identical donors and distances, and simHelper's mapping of the state from
+these donors was byte-identical to the one its own Python search produced.
 
 ## Outputs
 
@@ -68,6 +69,7 @@ leading axes — here `(1015356, 15)` — and `report.json`:
  },
  "barycentric_tolerance": 1e-12,
  "box_relative_pad": 1e-09,
+ "distance_tie": 1e-12,
  "bvh": {"depth": 19, "nodes": 524287},
  "counts": {
   "contained": 15123531,
@@ -77,13 +79,13 @@ leading axes — here `(1015356, 15)` — and `report.json`:
   "unlocated": 0
  },
  "fallback_distance": 0.0026666666666666666,
- "method_version": "state-map-locate-v1",
+ "method_version": "state-map-locate-v2",
  "query_shape": [1015356, 15],
- "rule": "a containing source tet wins (nearest centroid among several, then lower index); else the nearest tet within fallback_distance (then lower index); else none",
+ "rule": "a containing source tet wins (nearest centroid among several, then lower index); else the nearest tet within fallback_distance, where tets within distance_tie (relative) of the nearest tie and the lowest index wins; else none",
  "source_cells": 913080,
  "source_points": 199835,
  "tool": {"name": "rustmspt", "version": "0.2.1", "...": "the build identity, as `version --json`"},
- "wall_time_s": {"build": 0.633, "locate": 2.565, "read": 0.234, "total": 3.661, "write": 0.227},
+ "wall_time_s": {"build": 0.588, "locate": 2.732, "read": 0.249, "total": 3.821, "write": 0.246},
  "workers": 8
 }
 ```

@@ -20,26 +20,27 @@ built this way, is [`algorithms/state-map-location.md`](../algorithms/state-map-
 | `BARYCENTRIC_TOLERANCE` | `src/transfer/locate.rs:5` | `1e-12`: how far outside a tet a barycentric coordinate may sit and still count (simHelper's value). |
 | `BOX_RELATIVE_PAD` | `src/transfer/locate.rs:6` | `1e-9`: each tet box's padding, as a fraction of its largest extent. |
 | `LEAF_SIZE` | `src/transfer/locate.rs:7` | `4`: most tets per hierarchy leaf. |
-| `TetMesh` | `src/transfer/locate.rs:10` | Source tets with corners, centroid, inverse edge matrix and invertibility. |
-| `TetMesh::new` | `src/transfer/locate.rs:24` | Gather corners and precompute centroids and inverses; refuses ragged arrays and missing points. |
-| `TetMesh::contains` | `src/transfer/locate.rs:98` | Barycentric containment within the tolerance; a singular tet contains nothing. |
-| `TetMesh::centroid_distance2` | `src/transfer/locate.rs:117` | Squared distance to a tet's centroid (rule 1's tie-break). |
-| `TetMesh::distance` | `src/transfer/locate.rs:127` | Exact point-to-tet distance, simHelper's formula. |
-| `TetBvh` | `src/transfer/locate.rs:198` | Static hierarchy over padded tet boxes, laid out so the GPU walks the same arrays. |
-| `TetBvh::build` | `src/transfer/locate.rs:215` | Deterministic median-split build. |
-| `TetBvh::containing` | `src/transfer/locate.rs:287` | Rule 1: the containing tet with the nearest centroid. |
-| `TetBvh::nearest` | `src/transfer/locate.rs:316` | Rule 2: branch and bound for the nearest tet within the bound. |
-| `LocateCounts` | `src/transfer/locate.rs:383` | Points, contained, fallback, unlocated, GPU overflow. |
-| `Located` | `src/transfer/locate.rs:392` | Donors (`-1` none), distances (`NaN` none), counts. |
-| `locate_cpu` | `src/transfer/locate.rs:415` | Every point on the CPU, in parallel over the current pool. |
-| `locate_from_candidates` | `src/transfer/locate.rs:430` | Finish from GPU candidate slots; identical to `locate_cpu`. |
+| `DISTANCE_TIE` | `src/transfer/locate.rs:8` | `1e-12`: fallback distances within this fraction of the nearest tie; the lowest index wins (simHelper's value). |
+| `TetMesh` | `src/transfer/locate.rs:11` | Source tets with corners, centroid, inverse edge matrix and invertibility. |
+| `TetMesh::new` | `src/transfer/locate.rs:25` | Gather corners and precompute centroids and inverses; refuses ragged arrays and missing points. |
+| `TetMesh::contains` | `src/transfer/locate.rs:99` | Barycentric containment within the tolerance; a singular tet contains nothing. |
+| `TetMesh::centroid_distance2` | `src/transfer/locate.rs:118` | Squared distance to a tet's centroid (rule 1's tie-break). |
+| `TetMesh::distance` | `src/transfer/locate.rs:128` | Exact point-to-tet distance, simHelper's formula. |
+| `TetBvh` | `src/transfer/locate.rs:199` | Static hierarchy over padded tet boxes, laid out so the GPU walks the same arrays. |
+| `TetBvh::build` | `src/transfer/locate.rs:216` | Deterministic median-split build. |
+| `TetBvh::containing` | `src/transfer/locate.rs:288` | Rule 1: the containing tet with the nearest centroid. |
+| `TetBvh::nearest` | `src/transfer/locate.rs:317` | Rule 2: the lowest-index tet within the tie band of the nearest distance, inside the bound. |
+| `LocateCounts` | `src/transfer/locate.rs:407` | Points, contained, fallback, unlocated, GPU overflow. |
+| `Located` | `src/transfer/locate.rs:416` | Donors (`-1` none), distances (`NaN` none), counts. |
+| `locate_cpu` | `src/transfer/locate.rs:439` | Every point on the CPU, in parallel over the current pool. |
+| `locate_from_candidates` | `src/transfer/locate.rs:454` | Finish from GPU candidate slots; identical to `locate_cpu`. |
 | `GpuTetCandidatePipeline` | `src/gpu/tet_candidates.rs:38` | The compiled candidate kernel on the shared device. |
 | `GpuTetCandidatePipeline::new` | `src/gpu/tet_candidates.rs:52` | Compile or reuse the kernel. |
 | `GpuTetCandidatePipeline::adapter` | `src/gpu/tet_candidates.rs:120` | Adapter name and backend, for the report. |
 | `GpuTetCandidatePipeline::candidates` | `src/gpu/tet_candidates.rs:130` | Per-point leaf slots whose outward-rounded box holds the point, batched to device limits. |
 | `StateMapParams` | `src/config/state_map.rs:11` | The `state_map` YAML block. |
 | `StateMapConfig` | `src/config/state_map.rs:30` | The document: `state_map` plus optional `acceleration`. |
-| `METHOD_VERSION` | `src/pipeline/state_map.rs:10` | `state-map-locate-v1`, written in every report. |
+| `METHOD_VERSION` | `src/pipeline/state_map.rs:10` | `state-map-locate-v2` (v2: the fallback tie band), written in every report. |
 | `StateMapPipeline` | `src/pipeline/state_map.rs:12` | The subcommand's pipeline. |
 | `StateMapPipeline::run` | `src/pipeline/state_map.rs:32` | Read, build, locate, write donors/distances/report. |
 
@@ -92,8 +93,8 @@ built this way, is [`algorithms/state-map-location.md`](../algorithms/state-map-
 
 ### `TetBvh::nearest(&self, mesh, p, bound) -> Option<(u32, f64)>`
 - **Purpose:** rule 2.
-- **Returns:** the tet at the smallest exact distance `<= bound`, ties to the lower index, with its distance; `None` when none is that close.
-- **Notes:** a node is skipped only when its box is strictly farther than the best so far or the bound, so equal-distance ties are all examined.
+- **Returns:** among the tets whose exact distance is `<= bound` and within `DISTANCE_TIE` (relative) of the smallest such distance, the lowest index, with its own distance; `None` when none is within the bound.
+- **Notes:** two branch-and-bound passes over the padded boxes: the first finds the smallest distance, the second visits only boxes within the tie band. The band is what makes simHelper's Python search, which applies the same one, choose the same tet when a point is equally far from several.
 
 ### `locate_cpu(mesh, bvh, points, bound) -> Result<Located>`
 - **Purpose:** locate every point on the CPU.

@@ -1216,25 +1216,26 @@ run_placement_in_pool 分派及 PlacementControl 阶段标签也在该处记录�
 | `BARYCENTRIC_TOLERANCE` | State map | `src/transfer/locate.rs:5` | `1e-12`: how far outside a tet a barycentric coordinate may sit and still count (simHelper's value). |
 | `BOX_RELATIVE_PAD` | State map | `src/transfer/locate.rs:6` | `1e-9`: each tet box's padding, as a fraction of its largest extent. |
 | `LEAF_SIZE` | State map | `src/transfer/locate.rs:7` | `4`: most tets per hierarchy leaf. |
-| `TetMesh` | State map | `src/transfer/locate.rs:10` | Source tets with corners, centroid, inverse edge matrix and invertibility. |
-| `TetMesh::new` | State map | `src/transfer/locate.rs:24` | Gather corners and precompute centroids and inverses; refuses ragged arrays and missing points. |
-| `TetMesh::contains` | State map | `src/transfer/locate.rs:98` | Barycentric containment within the tolerance; a singular tet contains nothing. |
-| `TetMesh::centroid_distance2` | State map | `src/transfer/locate.rs:117` | Squared distance to a tet's centroid (rule 1's tie-break). |
-| `TetMesh::distance` | State map | `src/transfer/locate.rs:127` | Exact point-to-tet distance, simHelper's formula. |
-| `TetBvh` | State map | `src/transfer/locate.rs:198` | Static hierarchy over padded tet boxes, laid out so the GPU walks the same arrays. |
-| `TetBvh::build` | State map | `src/transfer/locate.rs:215` | Deterministic median-split build. |
-| `TetBvh::containing` | State map | `src/transfer/locate.rs:287` | Rule 1: the containing tet with the nearest centroid. |
-| `TetBvh::nearest` | State map | `src/transfer/locate.rs:316` | Rule 2: branch and bound for the nearest tet within the bound. |
-| `LocateCounts` | State map | `src/transfer/locate.rs:383` | Points, contained, fallback, unlocated, GPU overflow. |
-| `Located` | State map | `src/transfer/locate.rs:392` | Donors (`-1` none), distances (`NaN` none), counts. |
-| `locate_cpu` | State map | `src/transfer/locate.rs:415` | Every point on the CPU, in parallel over the current pool. |
-| `locate_from_candidates` | State map | `src/transfer/locate.rs:430` | Finish from GPU candidate slots; identical to `locate_cpu`. |
+| `DISTANCE_TIE` | State map | `src/transfer/locate.rs:8` | `1e-12`: fallback distances within this fraction of the nearest tie; the lowest index wins (simHelper's value). |
+| `TetMesh` | State map | `src/transfer/locate.rs:11` | Source tets with corners, centroid, inverse edge matrix and invertibility. |
+| `TetMesh::new` | State map | `src/transfer/locate.rs:25` | Gather corners and precompute centroids and inverses; refuses ragged arrays and missing points. |
+| `TetMesh::contains` | State map | `src/transfer/locate.rs:99` | Barycentric containment within the tolerance; a singular tet contains nothing. |
+| `TetMesh::centroid_distance2` | State map | `src/transfer/locate.rs:118` | Squared distance to a tet's centroid (rule 1's tie-break). |
+| `TetMesh::distance` | State map | `src/transfer/locate.rs:128` | Exact point-to-tet distance, simHelper's formula. |
+| `TetBvh` | State map | `src/transfer/locate.rs:199` | Static hierarchy over padded tet boxes, laid out so the GPU walks the same arrays. |
+| `TetBvh::build` | State map | `src/transfer/locate.rs:216` | Deterministic median-split build. |
+| `TetBvh::containing` | State map | `src/transfer/locate.rs:288` | Rule 1: the containing tet with the nearest centroid. |
+| `TetBvh::nearest` | State map | `src/transfer/locate.rs:317` | Rule 2: the lowest-index tet within the tie band of the nearest distance, inside the bound. |
+| `LocateCounts` | State map | `src/transfer/locate.rs:407` | Points, contained, fallback, unlocated, GPU overflow. |
+| `Located` | State map | `src/transfer/locate.rs:416` | Donors (`-1` none), distances (`NaN` none), counts. |
+| `locate_cpu` | State map | `src/transfer/locate.rs:439` | Every point on the CPU, in parallel over the current pool. |
+| `locate_from_candidates` | State map | `src/transfer/locate.rs:454` | Finish from GPU candidate slots; identical to `locate_cpu`. |
 | `GpuTetCandidatePipeline` | State map | `src/gpu/tet_candidates.rs:38` | The compiled candidate kernel on the shared device. |
 | `GpuTetCandidatePipeline::new` | State map | `src/gpu/tet_candidates.rs:52` | Compile or reuse the kernel. |
 | `GpuTetCandidatePipeline::adapter` | State map | `src/gpu/tet_candidates.rs:120` | Adapter name and backend, for the report. |
 | `GpuTetCandidatePipeline::candidates` | State map | `src/gpu/tet_candidates.rs:130` | Per-point leaf slots whose outward-rounded box holds the point, batched to device limits. |
 | `StateMapParams` | State map | `src/config/state_map.rs:11` | The `state_map` YAML block. |
 | `StateMapConfig` | State map | `src/config/state_map.rs:30` | The document: `state_map` plus optional `acceleration`. |
-| `METHOD_VERSION` | State map | `src/pipeline/state_map.rs:10` | `state-map-locate-v1`, written in every report. |
+| `METHOD_VERSION` | State map | `src/pipeline/state_map.rs:10` | `state-map-locate-v2` (v2: the fallback tie band), written in every report. |
 | `StateMapPipeline` | State map | `src/pipeline/state_map.rs:12` | The subcommand's pipeline. |
 | `StateMapPipeline::run` | State map | `src/pipeline/state_map.rs:32` | Read, build, locate, write donors/distances/report. |

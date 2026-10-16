@@ -39,11 +39,11 @@ cargo build --release --features gpu
 
 ```
 [Info] GPU adapter: name=Intel(R) Iris(R) Plus Graphics 655 (CFL GT3) backend=Vulkan type=IntegratedGpu class=hardware
-[state-map] 15230340 points: 15123531 contained, 106809 fallback, 0 unlocated; backend gpu; 8 workers; locate 2.57 s
-[Timing] gpu init_seconds=0.083453 upload_bytes=182764320 upload_calls=30 readback_bytes=1523034000 readback_calls=15 readback_wait_seconds=0.669724
+[state-map] 15230340 points: 15123531 contained, 106809 fallback, 0 unlocated; backend gpu; 8 workers; locate 2.73 s
+[Timing] gpu init_seconds=0.080907 upload_bytes=182764320 upload_calls=30 readback_bytes=1523034000 readback_calls=15 readback_wait_seconds=0.687726
 ```
 
-同一输入用 `mode: cpu` 在 8 个线程上定位耗时 4.9 s，供体与距离完全相同。
+同一输入用 `mode: cpu` 在 8 个线程上定位耗时 4.9 s，供体与距离完全相同；simHelper 用这些供体映射出的状态，与其自身 Python 搜索得到的状态逐字节相同。
 
 ## 输出
 

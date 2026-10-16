@@ -5,6 +5,7 @@ use rayon::prelude::*;
 pub const BARYCENTRIC_TOLERANCE: f64 = 1.0e-12;
 pub const BOX_RELATIVE_PAD: f64 = 1.0e-9;
 pub const LEAF_SIZE: usize = 4;
+pub const DISTANCE_TIE: f64 = 1.0e-12;
 
 // AI-FUNC-SUMMARY: A source tetrahedral mesh prepared for point location: per-tet corners, centroid, inverse edge matrix and invertibility; carries no I/O.
 pub struct TetMesh {
@@ -308,18 +309,45 @@ impl TetBvh {
     }
 
     // AI-FUNC-SUMMARY:
-    // Purpose: The nearest tet within `bound` of an outside point (ties: lower tet index).
+    // Purpose: The nearest tet within `bound` of an outside point; tets within DISTANCE_TIE (relative) of the nearest distance tie, and the lowest index among them wins.
     // Inputs: mesh, point, bound.
-    // Returns: Some((tet, distance)) or None when no tet lies within the bound.
+    // Returns: Some((tet, its own distance)) or None when no tet lies within the bound.
     // Side effects: None.
-    // Notes: Branch and bound on padded boxes, which hold their tets, so a box farther than the best or the bound cannot hold a nearer tet.
+    // Notes: Two branch-and-bound passes on padded boxes (which hold their tets): the first finds the nearest distance, the second the lowest index within the tie band. The band makes the answer independent of last-bit differences in how a distance is computed, so simHelper's Python search, which uses the same band, gives the same donor.
     pub fn nearest(&self, mesh: &TetMesh, p: &[f64; 3], bound: f64) -> Option<(u32, f64)> {
-        let mut best: Option<(f64, u32)> = None;
+        let mut nearest = f64::INFINITY;
+        self.visit_within(mesh, p, |limit| limit.min(bound), &mut |_, d, best| {
+            if d <= bound && d < *best {
+                *best = d;
+            }
+        }, &mut nearest);
+        if !nearest.is_finite() {
+            return None;
+        }
+        let band = (nearest * (1.0 + DISTANCE_TIE)).min(bound);
+        let mut chosen: Option<(u32, f64)> = None;
+        let mut fixed = band;
+        self.visit_within(mesh, p, |_| band, &mut |t, d, _| {
+            if d <= band && chosen.is_none_or(|(ct, _)| t < ct) {
+                chosen = Some((t, d));
+            }
+        }, &mut fixed);
+        chosen
+    }
+
+    // AI-FUNC-SUMMARY: Visit every tet whose padded box is within `limit(state)` of `p`, calling `seen(tet, exact distance, state)`; returns nothing; side effects: calls the closure, which may tighten the state.
+    fn visit_within(
+        &self,
+        mesh: &TetMesh,
+        p: &[f64; 3],
+        limit: impl Fn(f64) -> f64,
+        seen: &mut dyn FnMut(u32, f64, &mut f64),
+        state: &mut f64,
+    ) {
         let mut stack = Vec::with_capacity(64);
         stack.push(0usize);
         while let Some(node) = stack.pop() {
-            let limit = best.map_or(bound, |(d, _)| d.min(bound));
-            if box_distance(p, &self.node_min[node], &self.node_max[node]) > limit {
+            if box_distance(p, &self.node_min[node], &self.node_max[node]) > limit(*state) {
                 continue;
             }
             let [first, count] = self.link[node];
@@ -337,18 +365,14 @@ impl TetBvh {
                 continue;
             }
             for slot in first as usize..(first + count) as usize {
-                let limit = best.map_or(bound, |(d, _)| d.min(bound));
-                if box_distance(p, &self.slot_min[slot], &self.slot_max[slot]) > limit {
+                if box_distance(p, &self.slot_min[slot], &self.slot_max[slot]) > limit(*state) {
                     continue;
                 }
                 let t = self.order[slot];
                 let d = mesh.distance(t as usize, p);
-                if d <= bound && best.is_none_or(|(bd, bt)| d < bd || (d == bd && t < bt)) {
-                    best = Some((d, t));
-                }
+                seen(t, d, state);
             }
         }
-        best.map(|(d, t)| (t, d))
     }
 }
 
@@ -558,7 +582,7 @@ pub(crate) mod tests {
         (points, cells)
     }
 
-    // AI-FUNC-SUMMARY: The location rule by exhaustive search over every tet; returns (donor, distance) for one point.
+    // AI-FUNC-SUMMARY: The location rule by exhaustive search over every tet (fallback ties within DISTANCE_TIE to the lowest index); returns (donor, distance) for one point.
     pub(crate) fn brute(mesh: &TetMesh, p: &[f64; 3], bound: f64) -> (i64, f64) {
         let mut best: Option<(f64, u32)> = None;
         for t in 0..mesh.len() as u32 {
@@ -567,14 +591,14 @@ pub(crate) mod tests {
         if let Some((_, t)) = best {
             return (i64::from(t), 0.0);
         }
-        let mut near: Option<(f64, u32)> = None;
-        for t in 0..mesh.len() as u32 {
-            let d = mesh.distance(t as usize, p);
-            if d <= bound && near.is_none_or(|(bd, bt)| d < bd || (d == bd && t < bt)) {
-                near = Some((d, t));
-            }
+        let all: Vec<f64> = (0..mesh.len()).map(|t| mesh.distance(t, p)).collect();
+        let nearest = all.iter().copied().filter(|&d| d <= bound).fold(f64::INFINITY, f64::min);
+        if !nearest.is_finite() {
+            return (-1, f64::NAN);
         }
-        near.map_or((-1, f64::NAN), |(d, t)| (i64::from(t), d))
+        let band = (nearest * (1.0 + DISTANCE_TIE)).min(bound);
+        let t = (0..all.len()).find(|&t| all[t] <= band).unwrap();
+        (t as i64, all[t])
     }
 
     // AI-FUNC-SUMMARY: Random points inside, on the hole, just outside and far outside a size-n mesh, plus every mesh vertex; returns flat xyz.

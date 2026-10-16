@@ -7,7 +7,7 @@ use crate::transfer::npy::{read_npy, write_npy_f64, write_npy_i64};
 use std::path::Path;
 use std::time::Instant;
 
-pub const METHOD_VERSION: &str = "state-map-locate-v1";
+pub const METHOD_VERSION: &str = "state-map-locate-v2";
 
 pub struct StateMapPipeline {
     pub config: StateMapConfig,
@@ -67,7 +67,8 @@ impl Pipeline for StateMapPipeline {
         let report = serde_json::json!({
             "method_version": METHOD_VERSION,
             "tool": serde_json::to_value(&identity).unwrap_or(serde_json::Value::Null),
-            "rule": "a containing source tet wins (nearest centroid among several, then lower index); else the nearest tet within fallback_distance (then lower index); else none",
+            "rule": "a containing source tet wins (nearest centroid among several, then lower index); else the nearest tet within fallback_distance, where tets within distance_tie (relative) of the nearest tie and the lowest index wins; else none",
+            "distance_tie": crate::transfer::locate::DISTANCE_TIE,
             "barycentric_tolerance": BARYCENTRIC_TOLERANCE,
             "box_relative_pad": BOX_RELATIVE_PAD,
             "fallback_distance": p.fallback_distance,

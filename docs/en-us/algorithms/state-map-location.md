@@ -17,8 +17,13 @@ For each query point `p`, against the source tetrahedra:
    whose centroid is nearest `p` (squared distance), ties to the lower tet
    index. Distance `0`.
 2. **Bounded fallback.** Otherwise the donor is the tet at the smallest exact
-   point-to-tet distance, if that distance is `<= fallback_distance`, ties to
-   the lower index. Its distance is recorded.
+   point-to-tet distance, if that distance is `<= fallback_distance`. Tets
+   within `DISTANCE_TIE` = `1e-12` (relative) of that smallest distance tie,
+   and the lowest index among them wins; its own distance is recorded. A point
+   outside the mesh is often equally far from several tets — its nearest
+   feature is an edge or a corner they share — and without the band the last
+   bit of how each distance was computed would choose between them, so two
+   correct implementations would disagree.
 3. **None.** Otherwise donor `-1`, distance `NaN`. A point beyond the bound is
    not given a value; whether that is acceptable is the caller's decision.
 
@@ -40,9 +45,10 @@ million sampling points, 106,818 of them outside the old mesh, spent
 2 h 22 min there.
 
 `TetBvh` is a static hierarchy over each tet's own axis-aligned box. Rule 1
-descends only into boxes that hold the point. Rule 2 is branch and bound: a box
-farther than the best distance so far (or than the bound) cannot hold a nearer
-tet, so it is skipped, and each tet is reached through its own box rather than
+descends only into boxes that hold the point. Rule 2 is branch and bound in two
+passes: the first finds the nearest distance, skipping any box farther than the
+best so far (or than the bound), and the second visits only boxes within the
+tie band to pick the lowest index, and each tet is reached through its own box rather than
 through a global radius.
 
 Each tet's box is padded by `1e-9` of its largest extent, so it holds every
@@ -80,7 +86,7 @@ functions. Arrays travel as `.npy` files (C order, little endian):
 `source_points` `(n, 3)` f64, `source_cells` `(m, 4)` integer,
 `query_points` `(..., 3)` f64. The outputs are `donors.npy` (int64) and
 `distances.npy` (f64), shaped as the query's leading axes, and `report.json`
-(`method_version` `state-map-locate-v1`, the tool's build identity, the rule,
-both tolerances, counts of contained, fallback and unlocated points and of GPU
+(`method_version` `state-map-locate-v2`, the tool's build identity, the rule,
+the three tolerances, counts of contained, fallback and unlocated points and of GPU
 overflows, the backend, the worker count, the hierarchy's depth and node
 count, and wall times for read, build, locate and write).

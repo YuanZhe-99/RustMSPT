@@ -9,12 +9,12 @@
 | 项 | 源码 | 概述 |
 |---|---|---|
 | `read_npy` / `write_npy_f64` / `write_npy_i64` | `src/transfer/npy.rs` | 读写 `.npy`（读：v1–3，小端数值；写：f64、i64）。 |
-| `TetMesh` | `src/transfer/locate.rs:10` | 源四面体：角点、形心、边矩阵之逆、是否可逆。 |
-| `TetBvh` | `src/transfer/locate.rs:198` | 填充后四面体包围盒上的静态层次结构，GPU 遍历同一组数组。 |
-| `TetBvh::containing` | `src/transfer/locate.rs:287` | 规则 1：包含该点且形心最近的四面体。 |
-| `TetBvh::nearest` | `src/transfer/locate.rs:316` | 规则 2：界限内最近四面体的分支定界。 |
-| `locate_cpu` | `src/transfer/locate.rs:415` | 在 CPU 上并行定位所有点。 |
-| `locate_from_candidates` | `src/transfer/locate.rs:430` | 由 GPU 候选槽完成定位；结果与 `locate_cpu` 相同。 |
+| `TetMesh` | `src/transfer/locate.rs:11` | 源四面体：角点、形心、边矩阵之逆、是否可逆。 |
+| `TetBvh` | `src/transfer/locate.rs:199` | 填充后四面体包围盒上的静态层次结构，GPU 遍历同一组数组。 |
+| `TetBvh::containing` | `src/transfer/locate.rs:288` | 规则 1：包含该点且形心最近的四面体。 |
+| `TetBvh::nearest` | `src/transfer/locate.rs:317` | 规则 2：界限内、与最近距离相差在并列容差带（`DISTANCE_TIE` = 1e-12，相对）以内的四面体中编号最小者。 |
+| `locate_cpu` | `src/transfer/locate.rs:439` | 在 CPU 上并行定位所有点。 |
+| `locate_from_candidates` | `src/transfer/locate.rs:454` | 由 GPU 候选槽完成定位；结果与 `locate_cpu` 相同。 |
 | `GpuTetCandidatePipeline::candidates` | `src/gpu/tet_candidates.rs:130` | 每个点的、向外取整盒包含该点的叶槽（超集），按设备上限分批。 |
 | `StateMapParams` / `StateMapConfig` | `src/config/state_map.rs` | `state_map` YAML 块与可选的 `acceleration` 块。 |
 | `StateMapPipeline::run` | `src/pipeline/state_map.rs:32` | 读入、构建、定位，写出 donors/distances/report。 |
