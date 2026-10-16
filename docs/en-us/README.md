@@ -1,6 +1,6 @@
 # RustMSPT Documentation (English)
 
-RustMSPT (Rust Microstructure Processing Toolbox) is a Rust toolkit for STL/CT-volume microstructure processing, providing pipelines for `split-filter`, `pack`, `optimize`, `measure`, `forge`, `scale`, `crop`, `render`, `mesh-render`, `mesh-verify`, `mesh` and `state-map`, plus a `version` subcommand, built on shared geometry, I/O, and (optionally GPU-accelerated) compute-kernel modules.
+RustMSPT (Rust Microstructure Processing Toolbox) is a Rust toolkit for STL/CT-volume microstructure processing, providing pipelines for `split-filter`, `pack`, `optimize`, `measure`, `forge`, `scale`, `crop`, `render`, `mesh-render` and `state-map`, plus a `version` subcommand, built on shared geometry, I/O, and (optionally GPU-accelerated) compute-kernel modules.
 
 This directory documents the codebase at the function level, explains its core algorithms conceptually, and walks through each pipeline with real, captured example output. It complements, and is built from the same source as, the `// AI-FUNC-SUMMARY` comments that already annotate almost every function in `src/` — see [AGENTS.md](../../AGENTS.md) for that convention and the "Function Reading Policy" it defines.
 
@@ -29,9 +29,7 @@ Mirrors the `src/` module layout. Each document opens with an `## Index` table (
 | [pipeline-placement.md](reference/pipeline-placement.md) | `pipeline/placement*.rs`, `geometry/void_index.rs` — the seeded, recorded, void-aware engine |
 | [pipeline-optimize.md](reference/pipeline-optimize.md) | `pipeline/optimize.rs` |
 | [mesh-render-and-vtu.md](reference/mesh-render-and-vtu.md) | `io/vtu.rs`, `geometry/render_scene.rs`, `geometry/scene_render.rs`, `pipeline/mesh_render.rs`, `config/mesh_render.rs` |
-| [mesh-verify.md](reference/mesh-verify.md) | `meshgen/{predicates,verify}.rs`, `pipeline/mesh_verify.rs`, `config/mesh_verify.rs` |
 | [pipeline-state-map.md](reference/pipeline-state-map.md) | `transfer/{npy,locate}.rs`, `gpu/tet_candidates.rs`, `pipeline/state_map.rs`, `config/state_map.rs` |
-| [meshgen.md](reference/meshgen.md) | `config/meshgen.rs`, `pipeline/meshgen.rs`, `meshgen/{surface,features,predicates,arrange,topo,gapfield,sizing,lattice,snapshot}.rs` - S0/S1/G2/G3/G4 |
 
 ## Algorithms (conceptual explanations)
 
@@ -70,7 +68,6 @@ Each walkthrough shows a realistic config, the exact CLI command, and output cap
 | [render.md](examples/render.md) | `render` |
 | [mesh-render.md](examples/mesh-render.md) | `mesh-render` (VTU volume-mesh renderer) |
 | [state-map.md](examples/state-map.md) | `state-map` (locating sampling points for a state mapping) |
-| [mesh.md](examples/mesh.md) | `mesh` (tetrahedral mesh generation, S0/S1/G2-1..G2-3) |
 
 ## Conventions used throughout
 

@@ -69,7 +69,7 @@ This page documents `src/io/mod.rs`, content hashing in `hash.rs`, PNG output in
   - `bytes` — the content to hash.
 - **Returns:** The digest as 64 lowercase hexadecimal characters.
 - **Side effects:** None.
-- **Notes:** Content identity for the placement record and run report. This is a cryptographic digest, unrelated to the crate's other "hash" -- `pipeline/meshgen.rs`'s `config_hash`, which is a non-cryptographic `u64` used only for change detection.
+- **Notes:** Content identity for the placement record and run report. This is a cryptographic digest.
 
 #### sha256_file
 

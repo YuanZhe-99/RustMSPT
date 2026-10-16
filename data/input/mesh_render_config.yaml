@@ -1,7 +1,7 @@
 # Configuration for the mesh-render subcommand (VTU volume-mesh renderer).
 # See docs/en-us/examples/mesh-render.md for a walkthrough of every field.
 mesh_render:
-  input: data/output/mesh.vtu
+  input: data/fixtures/vtu/good_cube.vtu
   output_dir: data/output/mesh_render
   # Named presets (front/back/left/right/top/bottom/iso_ne/iso_nw/iso_se/iso_sw)
   # and/or custom camera blocks: {name, view_direction, focus_point?, up_vector?}.

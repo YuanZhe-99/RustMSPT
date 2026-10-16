@@ -1,6 +1,6 @@
 # 网格生成工具 — VTU 读写与 `mesh-render` 渲染管线
 
-网格生成工具阶段（`PLAN_mesh_generation.md` 的 GA 阶段）目前已实现部分的参考文档：契约
+留在 `main` 上的网格生成工具的参考文档（网格生成器本身位于 `meshgen` 分支）：契约
 VTU 读写器（`src/io/vtu.rs`）、场景抽取层（`src/geometry/render_scene.rs`）、CPU 场景渲染器
 （`src/geometry/scene_render.rs`），以及 `mesh-render` 子命令
 （`src/pipeline/mesh_render.rs`、`src/config/mesh_render.rs`）。
@@ -71,7 +71,7 @@ VTU 读写器（`src/io/vtu.rs`）、场景抽取层（`src/geometry/render_scen
 
 ## 契约 VTU 概要
 
-权威规格文档为 `PLAN_mesh_generation.md` §7。目前已实现的子集：单个 `UnstructuredGrid`
+权威规格文档为 `meshgen` 分支上的 `SPEC_meshgen_contracts.md`。目前已实现的子集：单个 `UnstructuredGrid`
 piece；共享同一点数组的混合单元（四面体、带标签的三角面、折线曲线，读取器还接受体素单元）；
 单元数组 `cell_kind`、`region_key`、`partition_id`、`regime`、`face_tag_key`、`curve_id`；
 点数组 `n_id_key`、`constraint_kind`、`constraint_ref`；字段数据集合表

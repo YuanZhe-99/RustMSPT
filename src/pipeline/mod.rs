@@ -2,8 +2,6 @@ pub mod crop;
 pub mod forge;
 pub mod measure;
 pub mod mesh_render;
-pub mod mesh_verify;
-pub mod meshgen;
 pub mod optimize;
 mod optimize_execution;
 mod optimize_volume;

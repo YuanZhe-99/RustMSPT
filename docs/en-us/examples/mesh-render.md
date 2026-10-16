@@ -1,11 +1,11 @@
 # `mesh-render` — Render a VTU volume mesh to PNG views
 
-Renders a contract VTU (see `docs/en-us/reference/mesh-render-and-vtu.md` and
-`PLAN_mesh_generation.md` §7) — or any plain tet VTU in the supported subset —
+Renders a contract VTU (see `docs/en-us/reference/mesh-render-and-vtu.md`)
+— or any plain tet VTU in the supported subset —
 to one PNG per configured view, with filters, per-region transparency, and
-feature-curve overlays. This is the debugging/visualization tool of the
-mesh-generation module (PLAN phase GA); it exists ahead of the `mesh` pipeline
-itself so intermediate snapshots and external meshes can be inspected.
+feature-curve overlays. It was built as the visualization tool of the
+mesh-generation module, which now lives on the `meshgen` branch; on `main` it
+renders any VTU in the supported subset, such as `data/fixtures/vtu/good_cube.vtu`.
 
 ## Run
 
@@ -65,14 +65,6 @@ color_by: region_key
 opacity_overrides: { "0": 0.12 }
 show_faces: true
 show_curves: true
-```
-
-Quality triage (after `mesh-verify --annotate` adds quality arrays):
-
-```yaml
-color_by: min_dihedral_deg
-filters:
-  - { kind: array_range, array: aspect_ratio, min: 5.0, max: 1.0e30 }
 ```
 
 ## Verifying the output

@@ -1,10 +1,10 @@
 # `mesh-render` — 将 VTU 体网格渲染为多视角 PNG
 
-渲染契约 VTU（参见 `docs/en-us/reference/mesh-render-and-vtu.md` 与
-`PLAN_mesh_generation.md` §7）——或任何符合受支持子集的普通四面体 VTU——
+渲染契约 VTU（参见 `docs/en-us/reference/mesh-render-and-vtu.md`）
+——或任何符合受支持子集的普通四面体 VTU——
 为每个配置的视角输出一张 PNG，支持过滤器、逐区域透明度以及特征曲线叠加。
-这是网格生成模块（PLAN GA 阶段）的调试/可视化工具；它先于 `mesh` 主管线本身
-实现，以便在开发过程中检查中间快照和外部网格。
+它最初是网格生成模块的可视化工具，该模块现位于 `meshgen` 分支；在 `main` 上它可渲染
+任何受支持子集内的 VTU，例如 `data/fixtures/vtu/good_cube.vtu`。
 
 ## 运行方式
 
@@ -62,14 +62,6 @@ color_by: region_key
 opacity_overrides: { "0": 0.12 }
 show_faces: true
 show_curves: true
-```
-
-质量排查（在 `mesh-verify --annotate` 添加质量数组之后）：
-
-```yaml
-color_by: min_dihedral_deg
-filters:
-  - { kind: array_range, array: aspect_ratio, min: 5.0, max: 1.0e30 }
 ```
 
 ## 验证输出

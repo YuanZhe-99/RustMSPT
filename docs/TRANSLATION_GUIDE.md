@@ -21,8 +21,6 @@ docs/zh-cn/
     gpu.md
     io.md
     mesh-render-and-vtu.md
-    mesh-verify.md
-    meshgen.md
     pipeline-core.md
     pipeline-crop-and-splitfilter.md
     pipeline-optimize.md
@@ -45,7 +43,6 @@ docs/zh-cn/
     forge.md
     measure.md
     mesh-render.md
-    mesh.md
     state-map.md
     optimize.md
     pack-placement.md

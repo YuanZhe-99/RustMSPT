@@ -221,7 +221,7 @@ Shared rotation-axis utilities used by the `pack` and `optimize` pipelines when 
 | `peak_rss_bytes` | `src/pipeline/timing.rs:67` | VmHWM from `/proc/self/status` in bytes, `None` when unavailable. |
 | `parse_vm_hwm` | `src/pipeline/timing.rs:73` | Parse a `VmHWM: <n> kB` line; `None` when absent, malformed or not kB. |
 
-Every non-meshgen pipeline prints wall-clock stage lines in one format, `[Timing] <pipeline> stage=<name> seconds=<f>`, then `[Timing] <pipeline> workers=<n>` (the Rayon worker count of the pool the stages ran in — the configured pool for pipelines that build one, the global pool for `forge`/`scale`, which honour `RAYON_NUM_THREADS`) and `[Timing] <pipeline> peak_rss_bytes=<n|unavailable>`. Peak RSS is the process high-water mark read from `VmHWM`; it covers the whole process, not only the timed stages, and is never estimated: a platform without `/proc` prints `unavailable`. Stage lines are emitted only for stages that completed; an error returns before any fabricated measurement.
+Every pipeline prints wall-clock stage lines in one format, `[Timing] <pipeline> stage=<name> seconds=<f>`, then `[Timing] <pipeline> workers=<n>` (the Rayon worker count of the pool the stages ran in — the configured pool for pipelines that build one, the global pool for `forge`/`scale`, which honour `RAYON_NUM_THREADS`) and `[Timing] <pipeline> peak_rss_bytes=<n|unavailable>`. Peak RSS is the process high-water mark read from `VmHWM`; it covers the whole process, not only the timed stages, and is never estimated: a platform without `/proc` prints `unavailable`. Stage lines are emitted only for stages that completed; an error returns before any fabricated measurement.
 
 | Pipeline | Stages (in order) | Final line |
 |---|---|---|

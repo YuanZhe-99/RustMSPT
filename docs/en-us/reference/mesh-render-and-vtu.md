@@ -1,7 +1,7 @@
 # Mesh Generation Tooling — VTU I/O and the `mesh-render` Pipeline
 
-Reference for the first implemented slice of the mesh-generation tooling phase
-(`PLAN_mesh_generation.md` phase GA): the contract VTU reader/writer
+Reference for the mesh-generation tooling that stays on `main` (the mesher itself
+lives on the `meshgen` branch): the contract VTU reader/writer
 (`src/io/vtu.rs`), the scene-extraction layer (`src/geometry/render_scene.rs`),
 the CPU scene renderer (`src/geometry/scene_render.rs`), and the `mesh-render`
 subcommand (`src/pipeline/mesh_render.rs`, `src/config/mesh_render.rs`).
@@ -79,7 +79,8 @@ projections, and skips gracefully when no adapter exists.
 
 ## The contract VTU (summary)
 
-The authoritative specification is `PLAN_mesh_generation.md` §7. The subset
+The authoritative specification is `SPEC_meshgen_contracts.md` on the `meshgen`
+branch. The subset
 implemented today: one `UnstructuredGrid` piece; mixed cells (tets, tagged
 triangle faces, poly-line curves, voxels accepted by the reader) sharing one
 point array; cell arrays `cell_kind`, `region_key`, `partition_id`, `regime`,

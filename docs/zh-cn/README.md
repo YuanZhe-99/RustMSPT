@@ -29,8 +29,6 @@ RustMSPT（Rust Microstructure Processing Toolbox，Rust 微结构处理工具�
 | [pipeline-packing.md](reference/pipeline-packing.md) | `pipeline/{pack,pack_targets}.rs` |
 | [mesh-render-and-vtu.md](reference/mesh-render-and-vtu.md) | `io/vtu.rs`、`geometry/render_scene.rs`、`geometry/scene_render.rs`、`pipeline/mesh_render.rs`、`config/mesh_render.rs` |
 | [pipeline-state-map.md](reference/pipeline-state-map.md) | `transfer/{npy,locate}.rs`、`gpu/tet_candidates.rs`、`pipeline/state_map.rs`、`config/state_map.rs` |
-| [mesh-verify.md](reference/mesh-verify.md) | `meshgen/{predicates,verify}.rs`、`pipeline/mesh_verify.rs`、`config/mesh_verify.rs` |
-| [meshgen.md](reference/meshgen.md) | `config/meshgen.rs`、`pipeline/meshgen.rs`、`meshgen/{surface,features,predicates,arrange,topo,gapfield,sizing,lattice,snapshot}.rs` - S0/S1/G2/G3/G4 |
 | [pipeline-optimize.md](reference/pipeline-optimize.md) | `pipeline/optimize.rs` |
 
 ## 算法（概念性说明）
@@ -70,7 +68,6 @@ RustMSPT（Rust Microstructure Processing Toolbox，Rust 微结构处理工具�
 | [render.md](examples/render.md) | `render` |
 | [mesh-render.md](examples/mesh-render.md) | `mesh-render`（VTU 体网格渲染器） |
 | [state-map.md](examples/state-map.md) | `state-map`（为状态映射定位采样点） |
-| [mesh.md](examples/mesh.md) | `mesh`（四面体网格生成，S0/S1/G2-1..G2-3） |
 
 ## 全文使用的约定
 

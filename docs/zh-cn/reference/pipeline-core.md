@@ -221,7 +221,7 @@
 | `peak_rss_bytes` | `src/pipeline/timing.rs:67` | 从 `/proc/self/status` 读取 VmHWM（字节），不可用时返回 `None`。 |
 | `parse_vm_hwm` | `src/pipeline/timing.rs:73` | 解析 `VmHWM: <n> kB` 行；缺失、格式错误或单位不是 kB 时返回 `None`。 |
 
-除 meshgen 外的每条流水线都以统一格式 `[Timing] <pipeline> stage=<name> seconds=<f>` 打印各阶段墙钟时间，随后打印 `[Timing] <pipeline> workers=<n>`（阶段实际运行所在池的 Rayon worker 数：自建池的流水线为配置的池，`forge`/`scale` 为全局池，受 `RAYON_NUM_THREADS` 控制）和 `[Timing] <pipeline> peak_rss_bytes=<n|unavailable>`。峰值 RSS 为从 `VmHWM` 读取的进程高水位，覆盖整个进程而非仅计时阶段，且从不估算：没有 `/proc` 的平台打印 `unavailable`。只为已完成的阶段输出计时行；出错时直接返回，不伪造测量值。
+每条流水线都以统一格式 `[Timing] <pipeline> stage=<name> seconds=<f>` 打印各阶段墙钟时间，随后打印 `[Timing] <pipeline> workers=<n>`（阶段实际运行所在池的 Rayon worker 数：自建池的流水线为配置的池，`forge`/`scale` 为全局池，受 `RAYON_NUM_THREADS` 控制）和 `[Timing] <pipeline> peak_rss_bytes=<n|unavailable>`。峰值 RSS 为从 `VmHWM` 读取的进程高水位，覆盖整个进程而非仅计时阶段，且从不估算：没有 `/proc` 的平台打印 `unavailable`。只为已完成的阶段输出计时行；出错时直接返回，不伪造测量值。
 
 | 流水线 | 阶段（按顺序） | 最后一行 |
 |---|---|---|

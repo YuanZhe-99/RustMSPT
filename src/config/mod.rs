@@ -4,8 +4,6 @@ pub mod deserialize;
 pub mod forging;
 pub mod measurement;
 pub mod mesh_render;
-pub mod mesh_verify;
-pub mod meshgen;
 pub mod optimization;
 pub mod packing;
 pub mod placement;
@@ -81,13 +79,6 @@ pub use crop::{CropConfig, CropInput, CropOutput, CropRawParams};
 pub use forging::{ForgingConfig, ForgingParams};
 pub use measurement::{MeasurementConfig, MeasurementParams};
 pub use mesh_render::{FilterSpec, MeshRenderConfig, MeshRenderParams, ViewSpec};
-pub use mesh_verify::{MeshVerifyConfig, MeshVerifyParams, VerifyGateParams};
-pub use meshgen::{
-    CoincidencePolicy, DeterminismMode, FemProfile, InputKind, MeshGenConfig, MeshGenDomain,
-    MeshGenEnvelope, MeshGenGaps, MeshGenInput, MeshGenMaterials, MeshGenOutput, MeshGenParams,
-    MeshGenRepair, MeshGenSizing, MeshGenThin, RepairLevel, SnapshotMode, UnmappedPolicy,
-    BackgroundForm, BackgroundSpec, CellCounts, Ladder, LevelSpec, Resolution, RESOLUTION_MAX_LEVEL,
-};
 pub use optimization::{OptimizationConfig, OptimizationParams, TargetConfig};
 pub use packing::{PackingConfig, PackingFilters, PackingParams};
 pub use placement::{
