@@ -84,7 +84,7 @@ RGBA; when `background` has alpha 0, exterior pixels are fully transparent
 (`tests/mesh_render_tests.rs`) exercises round-trip I/O, extraction counts,
 filter errors, analytic transparency compositing, named views, and this
 pipeline end-to-end. GA-5 adds committed CPU PNG baselines in
-`data/fixtures/meshgen/render_baselines/cpu/` for `good_cube.vtu` across four
+`data/fixtures/vtu/render_baselines/cpu/` for `good_cube.vtu` across four
 diagnostic variants and all ten named views. Normal test runs compare against
 those files; regenerate them only deliberately:
 

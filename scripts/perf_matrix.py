@@ -188,7 +188,7 @@ def case_definitions(repo, chain, large=False):
     def mesh_render(run, workers):
         t = load("mesh_render_config.yaml")
         t = set_yaml_key(t, "cpu_max", workers)
-        t = set_yaml_key(t, "mesh_render.input", str(repo / "data" / "fixtures" / "meshgen" / "good_cube.vtu"))
+        t = set_yaml_key(t, "mesh_render.input", str(repo / "data" / "fixtures" / "vtu" / "good_cube.vtu"))
         t = set_yaml_key(t, "mesh_render.output_dir", str(run / "mesh_render"))
         if large:
             t = set_yaml_key(t, "mesh_render.width", 3072)

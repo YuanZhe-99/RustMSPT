@@ -139,7 +139,7 @@ cargo run --release -- mesh-verify --input data/output/mesh.vtu
 
 # 显式指定输出；门限不通过时退出码非零
 cargo run --release -- mesh-verify \
-  --input data/fixtures/meshgen/good_cube.vtu \
+  --input data/fixtures/vtu/good_cube.vtu \
   --report data/output/mesh_verification.log \
   --json   data/output/mesh_verification.json \
   --annotate data/output/mesh_annotated.vtu
@@ -170,7 +170,7 @@ cargo run --release -- mesh-verify \
 
 ## 夹具套件
 
-`data/fixtures/meshgen/` 保存 `SPEC_meshgen_contracts.md` §6 冻结的十一个手写
+`data/fixtures/vtu/` 保存 `SPEC_meshgen_contracts.md` §6 冻结的十一个手写
 夹具 —— 一个基准网格，以及十个各自注入单一缺陷的网格。
 `tests/mesh_verify_tests.rs` 对每个夹具同时断言：它触发的检查代码**精确集合**，
 以及它所对应的具名检查确实触发。因此新出现的误报与漏报同样会让测试失败。
@@ -178,7 +178,7 @@ cargo run --release -- mesh-verify \
 重新生成（模式与夹具一致时差异为空）：
 
 ```bash
-uv run data/fixtures/meshgen/generate_fixtures.py data/fixtures/meshgen
+uv run data/fixtures/vtu/generate_fixtures.py data/fixtures/vtu
 ```
 
 ## 相关文档

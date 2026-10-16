@@ -3131,7 +3131,7 @@ BASE = pathlib.Path('/tmp/rustmspt-mesh-review')
 BASE.mkdir(parents=True, exist_ok=True)
 OUT = pathlib.Path(tempfile.mkdtemp(prefix='run-', dir=BASE))
 BIN = ROOT / 'target/release/rustmspt'
-FIX = ROOT / 'data/fixtures/meshgen'
+FIX = ROOT / 'data/fixtures/vtu'
 RUN_ENV = {key: value for key, value in os.environ.items() if not key.startswith('RUSTMSPT_')}
 print('artifacts:', OUT, flush=True)
 

@@ -9,7 +9,6 @@ pub mod gapfield;
 pub mod junction;
 pub mod lattice;
 pub mod predicates;
-pub mod render_scene;
 pub mod sizing;
 pub mod snap;
 pub mod snapshot;
@@ -52,7 +51,7 @@ pub use gapfield::{
     FLAG_OPPOSITE_PATCH, FLAG_ORIENTATION,
 };
 pub use predicates::{node_key, orient2d_3d, orient3d, tet_quality, tet_signed_volume, TetQuality};
-pub use render_scene::{
+pub use crate::geometry::render_scene::{
     build_scene, ColorMode, RenderScene, SceneFilter, SceneMarker, SceneSegment, SceneSpec,
     SceneTri, SetKind,
 };

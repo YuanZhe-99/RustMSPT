@@ -15,7 +15,7 @@ files round-trip through the real reader byte-stably.
 """
 import os, sys
 
-OUT = sys.argv[1] if len(sys.argv) > 1 else "data/fixtures/meshgen"
+OUT = sys.argv[1] if len(sys.argv) > 1 else "data/fixtures/vtu"
 
 SCHEMA_VERSION = 1
 GENERATOR_VERSION = (0, 1, 0)

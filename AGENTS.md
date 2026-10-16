@@ -66,7 +66,7 @@ Documentation lives in three tiers, each answering a different question:
 | Snapshot framework (GA-4: stage names, metadata stamping, size WARN, [V12] cross-check) | (contract: `SPEC_meshgen_contracts.md` §2.4/§3) | `reference/meshgen.md` |
 | Mesh generation geometry/topology (S2 registry/CDT/overlay, lattice, cut, band k-templates; later labels) | `SPEC_meshgen_geometry.md` — **normative frozen spec**, read before touching `src/meshgen/`; it supersedes `PLAN_mesh_generation.md` prose where they differ | `reference/meshgen.md` for implemented G2-1..G2-3 |
 | Mesh generation numerics (exact predicates, C1/C2 DD escalation, later GPU certificates) | `SPEC_meshgen_numerics.md` — **normative frozen spec**, companion to the geometry spec; lists the predicate and arithmetic class of every decision site | `reference/meshgen.md`, `reference/mesh-verify.md` |
-| Mesh generation data contracts (VTU schema v1, snapshot naming, verifier check catalog + JSON schema, accuracy gates) | `SPEC_meshgen_contracts.md` — **normative frozen spec**; fixture VTUs at `data/fixtures/meshgen/` (regenerate with `uv run data/fixtures/meshgen/generate_fixtures.py data/fixtures/meshgen`) | `reference/mesh-render-and-vtu.md` |
+| Mesh generation data contracts (VTU schema v1, snapshot naming, verifier check catalog + JSON schema, accuracy gates) | `SPEC_meshgen_contracts.md` — **normative frozen spec**; fixture VTUs at `data/fixtures/vtu/` (regenerate with `uv run data/fixtures/vtu/generate_fixtures.py data/fixtures/vtu`) | `reference/mesh-render-and-vtu.md` |
 | Seeded, recorded, void-aware placement (`pack` with a `placement:` block) | `algorithms/void-aware-placement.md` | `reference/pipeline-placement.md`, `reference/config.md` (`placement.rs`) |
 | Placement recovery, completed extension and bounded geometry caching | `algorithms/placement-checkpoints-and-memory.md` | `reference/pipeline-placement-state.md` |
 | Build identity (`version`, `--version`, the `tool` block in placement outputs) | — | `reference/core-and-compute.md` |
@@ -253,6 +253,7 @@ src/
     void_index.rs      VoidIndex: parity point-in-void over a hierarchy, box prefilter, surface distance, exact in-domain volume, area-weighted surface sampling, voxel overlap
     quaternion.rs      UnitQuat (scalar-first w,x,y,z), Shoemake uniform-on-SO(3) sampler, and transform_shell - the one definition of the placement transform
     render.rs          Shared camera model and CPU QBVH ray-cast renderer
+    render_scene.rs    VTU -> RenderScene extraction: AND-composed filters, boundary-face extraction, colormaps
     scene_render.rs    CPU scene renderer: all-hits transparency compositing, line overlays, markers, named view presets
     s2.rs              S2 (two-point correlation): calculate_s2, approximate_s2, l2_norm, build_bbox_occupancy, FFT-based exact S2, Monte Carlo S2
     spatial.rs         SpatialGrid for O(k) neighbor queries in collision detection
@@ -281,7 +282,6 @@ src/
     junction.rs        S8 escalated cells (G6-0/G6-4): conforming face triangulation + centroid fan
     lattice.rs         S5 (G4-2): strong 2:1 balance, Freudenthal 6-tet table, centroid-fan transition templates, node dedup, s05 writer
     sizing.rs          S4: the G3-2 coupling driver (update rule, hysteresis, locking, oscillation/cap guards, G-8 assertion) plus G4-1's sizing sources, graded (Lipschitz) field, background octree, C(R), and s04 writer
-    render_scene.rs    VTU -> RenderScene extraction: AND-composed filters, boundary-face extraction, colormaps
     snapshot.rs        GA-4 snapshot framework: Stage enum, naming, metadata stamping, size WARN
     thin.rs            S8b (G7-1/G7-2): frozen §8.2 band k-templates, per-pair rim collapse, the §4.4 runtime ladder with its pairwise flip and Steiner fallback, regional [THIN-SKIP] demotion, the §10.11 FEM-aware ladder, the doubly-cut face-split rule, the three-slab split of a sandwiched cell, and ThinContext - the S3->S8b bridge (thin region per arranged face, effective regime, pair class)
     verify.rs          Check catalog ([V1]-[V12]), JSON + human report, annotate
@@ -346,7 +346,7 @@ tests/
   meshgen_quality_gate_tests.rs  G6-6 post-snap/post-cut quality by cell template, against the corrected 35.264 deg baseline
 
 data/
-  fixtures/meshgen/    Contract VTUs plus GA-5 CPU render baselines under render_baselines/cpu/
+  fixtures/vtu/        Contract VTUs (shared by mesh-render and mesh-verify), their generator, and GA-5 CPU render baselines under render_baselines/cpu/
   fixtures/placement/  make_void.py: regenerates data/input/placement/void_spheres.stl (stdlib only, --check verifies the committed file)
   input/               Default YAML configs, sample inputs, and gu2019_fig7b_pore_distribution.csv
   fixtures/meshgen/acceptance/  Acceptance runners and fixtures: the nine cases, their rotated copies (`*_r.stl`, `generate_rotated_cases.py`) and `p1/` (a metal body with ten gas cavities, mm)

@@ -1,7 +1,7 @@
 # 网格生成工具 — VTU 读写与 `mesh-render` 渲染管线
 
 网格生成工具阶段（`PLAN_mesh_generation.md` 的 GA 阶段）目前已实现部分的参考文档：契约
-VTU 读写器（`src/io/vtu.rs`）、场景抽取层（`src/meshgen/render_scene.rs`）、CPU 场景渲染器
+VTU 读写器（`src/io/vtu.rs`）、场景抽取层（`src/geometry/render_scene.rs`）、CPU 场景渲染器
 （`src/geometry/scene_render.rs`），以及 `mesh-render` 子命令
 （`src/pipeline/mesh_render.rs`、`src/config/mesh_render.rs`）。
 
@@ -17,15 +17,15 @@ VTU 读写器（`src/io/vtu.rs`）、场景抽取层（`src/meshgen/render_scene
 | `VtuEncoding` | `src/io/vtu.rs:255` | `Ascii`（经最短形式浮点数实现精确回环）或 `AppendedRaw`（小端序，UInt64 头）。 |
 | `save_vtu` | `src/io/vtu.rs:273` | 将已校验的 `VtuDoc` 写为 VTK XML UnstructuredGrid；自动创建父目录。 |
 | `load_vtu` | `src/io/vtu.rs:479` | 读取契约子集（ascii + appended-raw，UInt32/UInt64 头）；对压缩或 base64 文件返回明确命名的错误。 |
-| `SetKind` | `src/meshgen/render_scene.rs:8` | 渲染集合归属（`Volume` 边界面 vs 带标签的 `Face` 单元）；重合命中去重时 Face 优先。 |
-| `SceneTri`/`SceneSegment`/`SceneMarker` | `src/meshgen/render_scene.rs:15` | 抽取阶段产出的世界坐标图元，携带颜色/不透明度。 |
-| `RenderScene` | `src/meshgen/render_scene.rs:46` | 抽取结果：三角形、叠加线段、标记点、用于取景的整文档包围盒。 |
-| `SceneFilter` | `src/meshgen/render_scene.rs:57` | 以"与"组合的过滤器：cell_kind、component、region_key、partition、regime、background、array_range、bbox、clip_plane（波浪形裁剪）。 |
-| `ColorMode` | `src/meshgen/render_scene.rs:72` | 单色 / 分类调色板（整型数组）/ viridis 标量色带（浮点数组）三种着色方式；指定**点**数组时，单元取其非哨兵点值的均值。 |
-| `point_array_cell_value` | `src/meshgen/render_scene.rs:281` | 将点数组归约为每单元一个值（非哨兵点值的均值）以供着色。 |
-| `SceneSpec` | `src/meshgen/render_scene.rs:88` | 完整抽取规格：过滤器、着色模式、逐集合不透明度 + 按区域覆盖、叠加开关、高亮点。 |
-| `categorical_color` / `scalar_color` | `src/meshgen/render_scene.rs:132` | 12 色分类调色板（哨兵值 → 灰色）与紧凑型 viridis 色带。 |
-| `build_scene` | `src/meshgen/render_scene.rs:437` | VtuDoc + SceneSpec → RenderScene：过滤链、确定性的边界面/线框输出、带标签的面、曲线线段、标记点。缺失数组时的错误会指明数组名。 |
+| `SetKind` | `src/geometry/render_scene.rs:8` | 渲染集合归属（`Volume` 边界面 vs 带标签的 `Face` 单元）；重合命中去重时 Face 优先。 |
+| `SceneTri`/`SceneSegment`/`SceneMarker` | `src/geometry/render_scene.rs:15` | 抽取阶段产出的世界坐标图元，携带颜色/不透明度。 |
+| `RenderScene` | `src/geometry/render_scene.rs:46` | 抽取结果：三角形、叠加线段、标记点、用于取景的整文档包围盒。 |
+| `SceneFilter` | `src/geometry/render_scene.rs:57` | 以"与"组合的过滤器：cell_kind、component、region_key、partition、regime、background、array_range、bbox、clip_plane（波浪形裁剪）。 |
+| `ColorMode` | `src/geometry/render_scene.rs:72` | 单色 / 分类调色板（整型数组）/ viridis 标量色带（浮点数组）三种着色方式；指定**点**数组时，单元取其非哨兵点值的均值。 |
+| `point_array_cell_value` | `src/geometry/render_scene.rs:281` | 将点数组归约为每单元一个值（非哨兵点值的均值）以供着色。 |
+| `SceneSpec` | `src/geometry/render_scene.rs:88` | 完整抽取规格：过滤器、着色模式、逐集合不透明度 + 按区域覆盖、叠加开关、高亮点。 |
+| `categorical_color` / `scalar_color` | `src/geometry/render_scene.rs:132` | 12 色分类调色板（哨兵值 → 灰色）与紧凑型 viridis 色带。 |
+| `build_scene` | `src/geometry/render_scene.rs:437` | VtuDoc + SceneSpec → RenderScene：过滤链、确定性的边界面/线框输出、带标签的面、曲线线段、标记点。缺失数组时的错误会指明数组名。 |
 | `SceneRenderSettings` | `src/geometry/scene_render.rs:12` | 场景渲染外观设置；背景为 RGBA（alpha 为 0 表示透明 PNG）。 |
 | `render_scene_cpu` | `src/geometry/scene_render.rs:116` | CPU 参考渲染器：每条像素射线做全命中 QBVH 遍历、前到后 alpha 合成、重合命中去重（Face 优先于 Volume）、带深度测试的线叠加、标记点。 |
 | `named_view` | `src/geometry/scene_render.rs:343` | 将 front/back/left/right/top/bottom/iso_ne/iso_nw/iso_se/iso_sw 解析为 (view_direction, up)。 |
@@ -104,7 +104,7 @@ appended-raw；`load_vtu` 二者皆可读取，并兼容常见的外部变体（
   明显稀疏的线框。`RenderScene` 报告 `wireframe_edges_total` 与
   `wireframe_edges_emitted`，`mesh-render` 在两者不同时打印 WARNING。旧的 200,000
   上限静默截断了 A-6b 和 A-7b——这正是 A-7b 渲染看起来不对的原因。
-- **GA-5 回归基线**位于 `data/fixtures/meshgen/render_baselines/cpu/`：
+- **GA-5 回归基线**位于 `data/fixtures/vtu/render_baselines/cpu/`：
   `good_cube.vtu` x 四个变体（`opaque`、`filtered_region_1`、
   `transparent_exterior`、`clipped_x`）x 全部十个具名视角，尺寸为 96x96。
   CPU 比较允许最多 2% 的像素超过 2 LSB。显式更新方式为：

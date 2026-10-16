@@ -5,14 +5,14 @@ use rustmspt::io::vtu::{
     load_vtu, save_vtu, ArrayData, DataArray, VtuDoc, VtuEncoding, VTK_POLY_LINE, VTK_TETRA,
     VTK_TRIANGLE,
 };
-use rustmspt::meshgen::render_scene::{
+use rustmspt::geometry::render_scene::{
     build_scene, RenderScene, SceneFilter, SceneSpec, SceneTri, SetKind,
 };
 use rustmspt::pipeline::mesh_render::MeshRenderPipeline;
 use rustmspt::pipeline::Pipeline;
 use rustmspt::types::{Mesh, Vec3};
 #[cfg(feature = "gpu")]
-use rustmspt::meshgen::render_scene::SceneSegment;
+use rustmspt::geometry::render_scene::SceneSegment;
 
 fn contract_doc() -> VtuDoc {
     let points = vec![

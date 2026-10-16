@@ -1,6 +1,6 @@
 use super::collision::to_parry_trimesh;
 use super::render::{RenderCamera, RenderProjection};
-use crate::meshgen::render_scene::{RenderScene, SetKind};
+use crate::geometry::render_scene::{RenderScene, SetKind};
 use crate::types::{Mesh, RenderedImage, Triangle, Vec3};
 use parry3d_f64::math::{Point, Vector};
 use parry3d_f64::query::visitors::RayIntersectionsVisitor;
@@ -361,7 +361,7 @@ pub fn named_view(name: &str) -> Option<([f64; 3], [f64; 3])> {
 mod tile_tests {
     use super::*;
     use crate::geometry::render::tile_tests::fixture_camera;
-    use crate::meshgen::render_scene::{SceneTri,SceneSegment};
+    use crate::geometry::render_scene::{SceneTri,SceneSegment};
 
     // AI-FUNC-SUMMARY: Compare nearest-group and full-hit selection at coincidence boundaries, triangle-order ties, misses, and a moved Face anchor.
     #[test]

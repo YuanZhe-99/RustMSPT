@@ -6,6 +6,7 @@ pub mod mesh_query;
 pub mod metrics;
 pub mod quaternion;
 pub mod render;
+pub mod render_scene;
 pub mod s2;
 pub mod scene_render;
 pub mod spatial;
@@ -34,6 +35,10 @@ pub use render::{
     RenderCamera, RenderCameraSpec, RenderProjection, RenderSettings,
 };
 pub use s2::{approximate_s2, calculate_s2, calculate_s2_seeded, l2_norm, point_inside_mesh, shell_offsets_for_distance};
+pub use render_scene::{
+    build_scene, ColorMode, RenderScene, SceneFilter, SceneMarker, SceneSegment, SceneSpec,
+    SceneTri, SetKind,
+};
 pub use scene_render::{named_view, render_scene_cpu, SceneRenderSettings};
 #[cfg(feature = "gpu")]
 pub use s2::{calculate_s2_with_gpu, calculate_s2_gpu_exact};

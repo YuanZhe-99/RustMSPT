@@ -1,7 +1,7 @@
 # SPEC — Mesh generation: data contracts freeze (subtask G0-3)
 
 **Status:** frozen (rev 1.3.1, schema v1, 2026-09-26 — plan M-1.0 builds the verifier half of §4.2–§4.4 and §4.1's determinism clause, and adds four `[V3]` codes, `V6.undeclared_boundary`, `V12.contract`, and the delivered-file skips D-18 asked for; D-8..D-11, D-17 and D-18 are closed and D-22..D-25 record what the build found. rev 1.3, schema v1, 2026-09-23 — audited against the code at `891badc`: §4's severities and gates are stated as normative with every as-built departure recorded; §4.2 (contract validation), §4.3 (the item cap and the exit status) and §4.4 (the domain at the final stage) are new; §5's P3 row is re-stated as containment with the corner test as its necessary half; §2.5 lists the non-contract diagnostic arrays; §6 brings the fixture table to the fourteen committed files; §8 gains the audit record; §9 gains D-8..D-17. `SchemaVersion` stays 1 — no array name, type, sentinel or encoding changed. rev 1.2, schema v1; additive G2 diagnostic orientation field recorded 2026-07-28; **rev 1.2 2026-08-15: §4 gains `[V13]` and §5 the P3 rows (plan P-1.1); §1 changes which file is the deliverable (plan P-2.1 / R4)** — the contract document's schema is untouched by both, so `SchemaVersion` stays 1). Normative for `src/io/vtu.rs`,
-`src/meshgen/verify.rs`, `src/meshgen/render_scene.rs`, and every producer of a
+`src/meshgen/verify.rs`, `src/geometry/render_scene.rs`, and every producer of a
 contract VTU.
 **Date:** 2026-07-28 (rev 1.3: 2026-09-23)
 **Subtask:** G0-3 (Phase G0, tier T2) of [`PLAN_mesh_generation.md`](PLAN_mesh_generation.md); the rev 1.3 audit is that plan's M-0.1.
@@ -21,7 +21,7 @@ hand-written to it.*
 > 2026-09-11 review's findings) and `X-n` (measured-and-closed routes).
 
 The fixture suite required by the acceptance criterion is committed at
-[`data/fixtures/meshgen/`](data/fixtures/meshgen) — 11 files at rev 1.0, **14** at rev 1.3
+[`data/fixtures/vtu/`](data/fixtures/vtu) — 11 files at rev 1.0, **14** at rev 1.3
 (§6), hand-written to this schema, all verified to load through the real GA-1 reader, pass
 structural validation, and re-emit byte-identically (§8). Writing them found two genuine
 schema/implementation mismatches before any mesher code exists (§12 D-1, D-3).
@@ -560,7 +560,7 @@ surface" as the effective surface once D-6 is decided.
 
 ## 6. Fixture suite
 
-Committed at `data/fixtures/meshgen/` — **fourteen** files at rev 1.3. The reference fixture is
+Committed at `data/fixtures/vtu/` — **fourteen** files at rev 1.3. The reference fixture is
 one unit cube under the **Freudenthal 6-tet decomposition of G0-1 §2.2**, split into region
 `{0}` (tets K0–K2) and region `{1}` (K3–K5), with the two shared faces emitted as
 tagged interface cells and one 3-node polyline declared as a component-1 feature curve along
@@ -670,12 +670,12 @@ Executed 2026-07-25 against the real GA-1 reader/writer
 - Both schema/implementation mismatches found this way, before any mesher code:
   D-1 and D-3 below.
 
-Generator: [`data/fixtures/meshgen/generate_fixtures.py`](data/fixtures/meshgen/generate_fixtures.py)
+Generator: [`data/fixtures/vtu/generate_fixtures.py`](data/fixtures/vtu/generate_fixtures.py)
 — committed alongside the fixtures per the plan's "generators committed"
 convention (Appendix B.8). It is a self-contained `uv` script with no dependencies:
 
 ```bash
-uv run data/fixtures/meshgen/generate_fixtures.py data/fixtures/meshgen
+uv run data/fixtures/vtu/generate_fixtures.py data/fixtures/vtu
 ```
 
 Deterministic and re-runnable; because the fixtures are byte-canonical,

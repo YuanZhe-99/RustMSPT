@@ -14,7 +14,7 @@ use rustmspt::types::Vec3;
 use std::path::PathBuf;
 
 fn fixture(name: &str) -> PathBuf {
-    PathBuf::from("data/fixtures/meshgen").join(format!("{name}.vtu"))
+    PathBuf::from("data/fixtures/vtu").join(format!("{name}.vtu"))
 }
 
 /// One named metric out of one section, or `-1.0` when the section or the metric is absent -

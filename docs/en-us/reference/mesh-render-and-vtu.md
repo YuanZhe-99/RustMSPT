@@ -2,7 +2,7 @@
 
 Reference for the first implemented slice of the mesh-generation tooling phase
 (`PLAN_mesh_generation.md` phase GA): the contract VTU reader/writer
-(`src/io/vtu.rs`), the scene-extraction layer (`src/meshgen/render_scene.rs`),
+(`src/io/vtu.rs`), the scene-extraction layer (`src/geometry/render_scene.rs`),
 the CPU scene renderer (`src/geometry/scene_render.rs`), and the `mesh-render`
 subcommand (`src/pipeline/mesh_render.rs`, `src/config/mesh_render.rs`).
 
@@ -18,15 +18,15 @@ subcommand (`src/pipeline/mesh_render.rs`, `src/config/mesh_render.rs`).
 | `VtuEncoding` | `src/io/vtu.rs:255` | `Ascii` (exact round-trip via shortest-form floats) or `AppendedRaw` (LittleEndian, UInt64 headers). |
 | `save_vtu` | `src/io/vtu.rs:273` | Write a validated `VtuDoc` as VTK XML UnstructuredGrid; creates parent dirs. |
 | `load_vtu` | `src/io/vtu.rs:479` | Read the contract subset (ascii + appended-raw, UInt32/UInt64 headers); rejects compressed/base64 files with a named error. |
-| `SetKind` | `src/meshgen/render_scene.rs:8` | Render-set membership (`Volume` boundary faces vs tagged `Face` cells); Face wins coincident-hit dedup. |
-| `SceneTri`/`SceneSegment`/`SceneMarker` | `src/meshgen/render_scene.rs:15` | World-space primitives with color/opacity emitted by extraction. |
-| `RenderScene` | `src/meshgen/render_scene.rs:46` | Extraction result: triangles, overlay segments, markers, full-document framing bbox. |
-| `SceneFilter` | `src/meshgen/render_scene.rs:57` | AND-composed filters: cell_kind, component, region_key, partition, regime, background, array_range, bbox, clip_plane (crinkle). |
-| `ColorMode` | `src/meshgen/render_scene.rs:72` | Uniform / categorical (integer arrays) / scalar-viridis (float arrays) coloring; a named **point** array colours a cell by the mean of its non-sentinel point values. |
-| `point_array_cell_value` | `src/meshgen/render_scene.rs:281` | Reduce a point array to one value per cell (mean of non-sentinel point values) for coloring. |
-| `SceneSpec` | `src/meshgen/render_scene.rs:88` | Full extraction spec: filters, color mode, per-set opacities + region overrides, overlay toggles, highlight points. |
-| `categorical_color` / `scalar_color` | `src/meshgen/render_scene.rs:132` | 12-color categorical palette (sentinel → grey) and compact viridis ramp. |
-| `build_scene` | `src/meshgen/render_scene.rs:437` | VtuDoc + SceneSpec → RenderScene: filter chain, deterministic boundary-face/wireframe emission, tagged faces, curve segments, markers. Missing-array errors name the array. |
+| `SetKind` | `src/geometry/render_scene.rs:8` | Render-set membership (`Volume` boundary faces vs tagged `Face` cells); Face wins coincident-hit dedup. |
+| `SceneTri`/`SceneSegment`/`SceneMarker` | `src/geometry/render_scene.rs:15` | World-space primitives with color/opacity emitted by extraction. |
+| `RenderScene` | `src/geometry/render_scene.rs:46` | Extraction result: triangles, overlay segments, markers, full-document framing bbox. |
+| `SceneFilter` | `src/geometry/render_scene.rs:57` | AND-composed filters: cell_kind, component, region_key, partition, regime, background, array_range, bbox, clip_plane (crinkle). |
+| `ColorMode` | `src/geometry/render_scene.rs:72` | Uniform / categorical (integer arrays) / scalar-viridis (float arrays) coloring; a named **point** array colours a cell by the mean of its non-sentinel point values. |
+| `point_array_cell_value` | `src/geometry/render_scene.rs:281` | Reduce a point array to one value per cell (mean of non-sentinel point values) for coloring. |
+| `SceneSpec` | `src/geometry/render_scene.rs:88` | Full extraction spec: filters, color mode, per-set opacities + region overrides, overlay toggles, highlight points. |
+| `categorical_color` / `scalar_color` | `src/geometry/render_scene.rs:132` | 12-color categorical palette (sentinel → grey) and compact viridis ramp. |
+| `build_scene` | `src/geometry/render_scene.rs:437` | VtuDoc + SceneSpec → RenderScene: filter chain, deterministic boundary-face/wireframe emission, tagged faces, curve segments, markers. Missing-array errors name the array. |
 | `SceneRenderSettings` | `src/geometry/scene_render.rs:12` | Scene appearance; background is RGBA (alpha 0 = transparent PNG). |
 | `render_scene_cpu` | `src/geometry/scene_render.rs:116` | CPU reference renderer: all-hits QBVH traversal per pixel ray, front-to-back alpha compositing, coincident-hit dedup (Face > Volume), depth-tested line overlay, markers. |
 | `named_view` | `src/geometry/scene_render.rs:343` | Resolve front/back/left/right/top/bottom/iso_ne/iso_nw/iso_se/iso_sw to (view_direction, up). |
@@ -132,7 +132,7 @@ headers). Compressed and base64 VTUs are rejected with explicit errors.
   WARNING whenever they differ. The old 200,000 cap silently amputated A-6b and
   A-7b, which is what made A-7b's render look wrong.
 - **GA-5 regression baselines** live under
-  `data/fixtures/meshgen/render_baselines/cpu/`: `good_cube.vtu` x four variants
+  `data/fixtures/vtu/render_baselines/cpu/`: `good_cube.vtu` x four variants
   (`opaque`, `filtered_region_1`, `transparent_exterior`, `clipped_x`) x all ten
   named views at 96x96. CPU comparisons allow no more than 2% of pixels to differ
   by more than 2 LSB. Regenerate deliberately with

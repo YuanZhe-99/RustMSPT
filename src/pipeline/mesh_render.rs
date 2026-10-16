@@ -9,7 +9,7 @@ use crate::geometry::render::{
 use crate::geometry::scene_render::{named_view, PreparedScene, SceneRenderSettings};
 use crate::io::save_image;
 use crate::io::vtu::{load_vtu, ArrayData};
-use crate::meshgen::render_scene::{
+use crate::geometry::render_scene::{
     build_scene, ColorMode, SceneFilter, SceneSpec, DEFAULT_MAX_WIREFRAME_EDGES,
 };
 use crate::types::{BoundingBox, Mesh, Vec3};
@@ -153,7 +153,7 @@ fn build_filters(specs: &[FilterSpec]) -> Result<Vec<SceneFilter>> {
 //   `backend: auto` degrades to the CPU renderer exactly as it does on a machine with no adapter.
 #[cfg(feature = "gpu")]
 fn render_views_gpu(
-    scene: &crate::meshgen::render_scene::RenderScene,
+    scene: &crate::geometry::render_scene::RenderScene,
     cameras: &[(String, crate::geometry::render::RenderCamera)],
     width: usize,
     height: usize,
@@ -173,7 +173,7 @@ fn render_views_gpu(
 
 #[cfg(not(feature = "gpu"))]
 fn render_views_gpu(
-    _scene: &crate::meshgen::render_scene::RenderScene,
+    _scene: &crate::geometry::render_scene::RenderScene,
     _cameras: &[(String, crate::geometry::render::RenderCamera)],
     _width: usize,
     _height: usize,

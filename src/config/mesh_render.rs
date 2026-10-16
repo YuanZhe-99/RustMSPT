@@ -16,7 +16,7 @@ pub enum ViewSpec {
     },
 }
 
-// AI-FUNC-SUMMARY: YAML form of one scene filter (kind-tagged), mapped 1:1 onto meshgen::SceneFilter by the pipeline; side effects: none.
+// AI-FUNC-SUMMARY: YAML form of one scene filter (kind-tagged), mapped 1:1 onto geometry::render_scene::SceneFilter by the pipeline; side effects: none.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FilterSpec {

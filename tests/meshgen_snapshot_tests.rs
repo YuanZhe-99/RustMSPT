@@ -7,7 +7,7 @@
 
 use rustmspt::config::meshgen::{MeshGenConfig, SnapshotMode};
 use rustmspt::io::vtu::{load_vtu, VtuEncoding, VTK_TETRA, VTK_TRIANGLE};
-use rustmspt::meshgen::render_scene::{build_scene, SceneSpec};
+use rustmspt::geometry::render_scene::{build_scene, SceneSpec};
 use rustmspt::meshgen::snapshot::{
     emit_snapshot, should_emit, snapshot_path, warn_if_large, SnapshotMeta, Stage,
 };
@@ -18,7 +18,7 @@ use rustmspt::types::Vec3;
 use std::path::PathBuf;
 
 fn fixture() -> PathBuf {
-    PathBuf::from("data/fixtures/meshgen/good_cube.vtu")
+    PathBuf::from("data/fixtures/vtu/good_cube.vtu")
 }
 
 /// The full s-series with its (stage, round) emission plan. `Quality` carries an

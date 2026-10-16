@@ -3,7 +3,7 @@ use crate::compute::render_memory::{
 };
 use crate::geometry::render::{RenderCamera, RenderProjection};
 use crate::geometry::scene_render::SceneRenderSettings;
-use crate::meshgen::render_scene::RenderScene;
+use crate::geometry::render_scene::RenderScene;
 use crate::types::{RenderedImage, Vec3};
 use super::runtime::CountedWrite;
 

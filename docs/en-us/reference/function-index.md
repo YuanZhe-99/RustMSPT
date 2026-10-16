@@ -580,15 +580,15 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `VtuEncoding` | Mesh Tooling | `src/io/vtu.rs:255` | VTU output encoding: Ascii or AppendedRaw (LittleEndian, UInt64 headers). |
 | `save_vtu` | Mesh Tooling | `src/io/vtu.rs:273` | Write a VtuDoc as VTK XML UnstructuredGrid (ascii or appended raw). |
 | `load_vtu` | Mesh Tooling | `src/io/vtu.rs:479` | Read the contract VTU subset; rejects compressed/base64 files explicitly. |
-| `SetKind` | Mesh Tooling | `src/meshgen/render_scene.rs:8` | Render-set membership; Face outranks Volume in coincident-hit dedup. |
-| `RenderScene` | Mesh Tooling | `src/meshgen/render_scene.rs:46` | Extraction result: triangles, segments, markers, framing bbox. |
-| `SceneFilter` | Mesh Tooling | `src/meshgen/render_scene.rs:57` | AND-composed cell filters (kind/component/region/partition/regime/background/range/bbox/clip). |
-| `ColorMode` | Mesh Tooling | `src/meshgen/render_scene.rs:72` | Uniform, categorical (integer arrays), or scalar-viridis (float arrays) coloring. |
-| `point_array_cell_value` | Mesh Tooling | `src/meshgen/render_scene.rs:281` | Reduce a point array to one value per cell (mean of non-sentinel point values) for coloring. |
-| `SceneSpec` | Mesh Tooling | `src/meshgen/render_scene.rs:88` | Full extraction specification (filters, colors, opacities, overlays, highlights). |
-| `categorical_color` | Mesh Tooling | `src/meshgen/render_scene.rs:148` | 12-color categorical palette lookup; sentinel values map to grey. |
-| `scalar_color` | Mesh Tooling | `src/meshgen/render_scene.rs:157` | Compact viridis ramp over a clamped scalar range. |
-| `build_scene` | Mesh Tooling | `src/meshgen/render_scene.rs:437` | VtuDoc + SceneSpec -> RenderScene (boundary-face extraction, tagged faces, curves, wireframe). |
+| `SetKind` | Mesh Tooling | `src/geometry/render_scene.rs:8` | Render-set membership; Face outranks Volume in coincident-hit dedup. |
+| `RenderScene` | Mesh Tooling | `src/geometry/render_scene.rs:46` | Extraction result: triangles, segments, markers, framing bbox. |
+| `SceneFilter` | Mesh Tooling | `src/geometry/render_scene.rs:57` | AND-composed cell filters (kind/component/region/partition/regime/background/range/bbox/clip). |
+| `ColorMode` | Mesh Tooling | `src/geometry/render_scene.rs:72` | Uniform, categorical (integer arrays), or scalar-viridis (float arrays) coloring. |
+| `point_array_cell_value` | Mesh Tooling | `src/geometry/render_scene.rs:281` | Reduce a point array to one value per cell (mean of non-sentinel point values) for coloring. |
+| `SceneSpec` | Mesh Tooling | `src/geometry/render_scene.rs:88` | Full extraction specification (filters, colors, opacities, overlays, highlights). |
+| `categorical_color` | Mesh Tooling | `src/geometry/render_scene.rs:148` | 12-color categorical palette lookup; sentinel values map to grey. |
+| `scalar_color` | Mesh Tooling | `src/geometry/render_scene.rs:157` | Compact viridis ramp over a clamped scalar range. |
+| `build_scene` | Mesh Tooling | `src/geometry/render_scene.rs:437` | VtuDoc + SceneSpec -> RenderScene (boundary-face extraction, tagged faces, curves, wireframe). |
 | `SceneRenderSettings` | Mesh Tooling | `src/geometry/scene_render.rs:12` | Scene render appearance; RGBA background with real alpha support. |
 | `render_scene_cpu` | Mesh Tooling | `src/geometry/scene_render.rs:116` | CPU all-hits renderer with front-to-back transparency compositing, line overlays, markers. |
 | `named_view` | Mesh Tooling | `src/geometry/scene_render.rs:343` | Resolve a named view preset to (view_direction, up_vector). |
@@ -882,7 +882,7 @@ Master index of every documented function, struct, enum, and constant across `sr
 | `declare_contact_components` | `src/meshgen/cut.rs:7110` | Declare every mesh face lying on a coincident arranged patch for ALL the components that patch belongs to. |
 | `point_on_triangle` | `src/meshgen/cut.rs:7073` | Whether a point lies within `eps` of a triangle (plane distance plus barycentric containment). |
 | `contact_patches` | `src/pipeline/meshgen.rs:1519` | S2's multi-tagged arranged faces as triangles paired with their component set - the only route the arrangement's coincidence takes into S8. |
-| `DEFAULT_MAX_WIREFRAME_EDGES` | `src/meshgen/render_scene.rs:121` | Default ceiling on emitted wireframe segments; past it the frame is stride-thinned, never cut short. |
+| `DEFAULT_MAX_WIREFRAME_EDGES` | `src/geometry/render_scene.rs:121` | Default ceiling on emitted wireframe segments; past it the frame is stride-thinned, never cut short. |
 
 | `PreparedMeshQuery` | Geometry Analysis | `src/geometry/mesh_query.rs:20` | Immutable cached CPU parity query. |
 | `PreparedMeshQuery::new` | Geometry Analysis | `src/geometry/mesh_query.rs:29` | Prepare bbox and triangle BVH. |

@@ -156,7 +156,7 @@ cargo run --release -- mesh-verify --input data/output/mesh.vtu
 
 # with explicit outputs; exit status is nonzero when a gate fails
 cargo run --release -- mesh-verify \
-  --input data/fixtures/meshgen/good_cube.vtu \
+  --input data/fixtures/vtu/good_cube.vtu \
   --report data/output/mesh_verification.log \
   --json   data/output/mesh_verification.json \
   --annotate data/output/mesh_annotated.vtu
@@ -198,7 +198,7 @@ cells), `RUSTMSPT_FACET_DIAG`, `RUSTMSPT_FLAT_DIAG`, `RUSTMSPT_HULL_DIAG`, `RUST
 
 ## Fixture suite
 
-`data/fixtures/meshgen/` holds the eleven hand-written fixtures frozen in
+`data/fixtures/vtu/` holds the eleven hand-written fixtures frozen in
 `SPEC_meshgen_contracts.md` §6 — one reference mesh and ten carrying a single
 injected defect each. `tests/mesh_verify_tests.rs` asserts, for every fixture,
 both the **exact** set of codes it fires and the presence of the check it is named
@@ -207,7 +207,7 @@ for, so a new false positive fails the suite as loudly as a missed defect.
 Regenerate them (a no-op diff when the schema and fixtures agree):
 
 ```bash
-uv run data/fixtures/meshgen/generate_fixtures.py data/fixtures/meshgen
+uv run data/fixtures/vtu/generate_fixtures.py data/fixtures/vtu
 ```
 
 ## Related documents

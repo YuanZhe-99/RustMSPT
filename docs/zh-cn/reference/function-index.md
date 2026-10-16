@@ -580,15 +580,15 @@
 | `VtuEncoding` | 网格工具 | `src/io/vtu.rs:255` | VTU 输出编码：Ascii 或 AppendedRaw（LittleEndian，UInt64 头）。 |
 | `save_vtu` | 网格工具 | `src/io/vtu.rs:273` | 将 VtuDoc 写为 VTK XML UnstructuredGrid（ascii 或 appended raw）。 |
 | `load_vtu` | 网格工具 | `src/io/vtu.rs:479` | 读取契约 VTU 子集；明确拒绝压缩/base64 文件。 |
-| `SetKind` | 网格工具 | `src/meshgen/render_scene.rs:8` | 渲染集合成员关系；在重合命中去重中 Face 优先于 Volume。 |
-| `RenderScene` | 网格工具 | `src/meshgen/render_scene.rs:46` | 提取结果：三角形、线段、标记、取景包围盒。 |
-| `SceneFilter` | 网格工具 | `src/meshgen/render_scene.rs:57` | 以 AND 组合的单元过滤器（kind/component/region/partition/regime/background/range/bbox/clip）。 |
-| `ColorMode` | 网格工具 | `src/meshgen/render_scene.rs:72` | 统一色、分类（整数数组）或标量 viridis（浮点数组）着色。 |
-| `point_array_cell_value` | 网格工具 | `src/meshgen/render_scene.rs:281` | 将点数组归约为每单元一个值（非哨兵点值的均值）以供着色。 |
-| `SceneSpec` | 网格工具 | `src/meshgen/render_scene.rs:88` | 完整的提取规格（过滤器、颜色、不透明度、叠加、高亮）。 |
-| `categorical_color` | 网格工具 | `src/meshgen/render_scene.rs:148` | 12 色分类调色板查找；哨兵值映射为灰色。 |
-| `scalar_color` | 网格工具 | `src/meshgen/render_scene.rs:157` | 在截断的标量范围上的紧凑 viridis 色带。 |
-| `build_scene` | 网格工具 | `src/meshgen/render_scene.rs:437` | VtuDoc + SceneSpec -> RenderScene（边界面提取、带标签面、曲线、线框）。 |
+| `SetKind` | 网格工具 | `src/geometry/render_scene.rs:8` | 渲染集合成员关系；在重合命中去重中 Face 优先于 Volume。 |
+| `RenderScene` | 网格工具 | `src/geometry/render_scene.rs:46` | 提取结果：三角形、线段、标记、取景包围盒。 |
+| `SceneFilter` | 网格工具 | `src/geometry/render_scene.rs:57` | 以 AND 组合的单元过滤器（kind/component/region/partition/regime/background/range/bbox/clip）。 |
+| `ColorMode` | 网格工具 | `src/geometry/render_scene.rs:72` | 统一色、分类（整数数组）或标量 viridis（浮点数组）着色。 |
+| `point_array_cell_value` | 网格工具 | `src/geometry/render_scene.rs:281` | 将点数组归约为每单元一个值（非哨兵点值的均值）以供着色。 |
+| `SceneSpec` | 网格工具 | `src/geometry/render_scene.rs:88` | 完整的提取规格（过滤器、颜色、不透明度、叠加、高亮）。 |
+| `categorical_color` | 网格工具 | `src/geometry/render_scene.rs:148` | 12 色分类调色板查找；哨兵值映射为灰色。 |
+| `scalar_color` | 网格工具 | `src/geometry/render_scene.rs:157` | 在截断的标量范围上的紧凑 viridis 色带。 |
+| `build_scene` | 网格工具 | `src/geometry/render_scene.rs:437` | VtuDoc + SceneSpec -> RenderScene（边界面提取、带标签面、曲线、线框）。 |
 | `SceneRenderSettings` | 网格工具 | `src/geometry/scene_render.rs:12` | 场景渲染外观；带真实 alpha 支持的 RGBA 背景。 |
 | `render_scene_cpu` | 网格工具 | `src/geometry/scene_render.rs:116` | CPU 全命中渲染器，含由前向后透明合成、线叠加与标记。 |
 | `named_view` | 网格工具 | `src/geometry/scene_render.rs:343` | 将具名视图预设解析为 (view_direction, up_vector)。 |
@@ -882,7 +882,7 @@
 | `declare_contact_components` | `src/meshgen/cut.rs:7110` | 为落在重合排布面片上的每个网格面声明该面片所属的全部分量。 |
 | `point_on_triangle` | `src/meshgen/cut.rs:7073` | 判断一点是否落在三角形的 `eps` 之内（平面距离加重心坐标包含性）。 |
 | `contact_patches` | `src/pipeline/meshgen.rs:1519` | S2 的多标记排布面，作为三角形与其分量集合的配对——排布阶段的重合信息进入 S8 的唯一通道。 |
-| `DEFAULT_MAX_WIREFRAME_EDGES` | `src/meshgen/render_scene.rs:121` | 输出线框线段数的默认上限；超出后按步长细化，绝不截断。 |
+| `DEFAULT_MAX_WIREFRAME_EDGES` | `src/geometry/render_scene.rs:121` | 输出线框线段数的默认上限；超出后按步长细化，绝不截断。 |
 
 | `PreparedMeshQuery` | Geometry Analysis | `src/geometry/mesh_query.rs:20` | Immutable cached CPU parity query. |
 | `PreparedMeshQuery::new` | Geometry Analysis | `src/geometry/mesh_query.rs:29` | Prepare bbox and triangle BVH. |

@@ -6106,7 +6106,7 @@ mod tests {
     #[test]
     fn mg02_an_interface_through_the_body_is_not_contained() {
         let doc = crate::io::vtu::load_vtu(std::path::Path::new(
-            "data/fixtures/meshgen/good_cube.vtu",
+            "data/fixtures/vtu/good_cube.vtu",
         ))
         .unwrap();
         let unit = slab(1.0);

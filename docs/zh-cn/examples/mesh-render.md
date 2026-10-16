@@ -79,7 +79,7 @@ filters:
 当 `background` 的 alpha 为 0 时，外部像素完全透明（可用任意图像工具核实）。
 集成测试套件（`tests/mesh_render_tests.rs`）覆盖了 I/O 回环、抽取计数、
 过滤器报错、透明度合成的解析验证、命名视角，以及本管线的端到端流程。GA-5
-另外在 `data/fixtures/meshgen/render_baselines/cpu/` 中提交了 `good_cube.vtu`
+另外在 `data/fixtures/vtu/render_baselines/cpu/` 中提交了 `good_cube.vtu`
 的 CPU PNG 基线，覆盖四个诊断变体和全部十个具名视角。普通测试会比较这些文件；
 只有在明确需要时才重新生成：
 

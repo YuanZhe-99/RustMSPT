@@ -9,7 +9,7 @@
 use rustmspt::geometry::render::{build_render_camera, RenderCameraSpec, RenderProjection};
 use rustmspt::geometry::scene_render::{named_view, render_scene_cpu, SceneRenderSettings};
 use rustmspt::io::{load_vtu, save_image, VtuDoc};
-use rustmspt::meshgen::{build_scene, ColorMode, SceneFilter, SceneSpec};
+use rustmspt::geometry::render_scene::{build_scene, ColorMode, SceneFilter, SceneSpec};
 use rustmspt::types::{BoundingBox, Mesh, RenderedImage, Vec3};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -101,7 +101,7 @@ const VARIANTS: [Variant; 4] = [
 
 // AI-FUNC-SUMMARY: Path to the committed GA-5 CPU reference PNG directory; returns PathBuf; side effects: none.
 fn baseline_dir() -> PathBuf {
-    PathBuf::from("data/fixtures/meshgen/render_baselines/cpu")
+    PathBuf::from("data/fixtures/vtu/render_baselines/cpu")
 }
 
 // AI-FUNC-SUMMARY: Stable path for one variant/view baseline PNG; returns PathBuf; side effects: none.
@@ -204,7 +204,7 @@ fn assert_image_matches(
 
 #[test]
 fn cpu_images_match_committed_visual_baselines() {
-    let doc = load_vtu(Path::new("data/fixtures/meshgen/good_cube.vtu")).expect("good_cube loads");
+    let doc = load_vtu(Path::new("data/fixtures/vtu/good_cube.vtu")).expect("good_cube loads");
     let update = std::env::var_os("RUSTMSPT_UPDATE_RENDER_BASELINES").is_some();
     for variant in VARIANTS {
         for view in VIEWS {
@@ -222,7 +222,7 @@ fn cpu_images_match_committed_visual_baselines() {
 
 #[test]
 fn every_contract_fixture_extracts_and_renders_nonblank() {
-    for entry in std::fs::read_dir("data/fixtures/meshgen").expect("fixture dir") {
+    for entry in std::fs::read_dir("data/fixtures/vtu").expect("fixture dir") {
         let path = entry.expect("dir entry").path();
         if path.extension().and_then(|e| e.to_str()) != Some("vtu") {
             continue;
@@ -255,7 +255,7 @@ fn every_contract_fixture_extracts_and_renders_nonblank() {
 
 #[test]
 fn visual_variants_are_materially_distinct() {
-    let doc = load_vtu(Path::new("data/fixtures/meshgen/good_cube.vtu")).expect("good_cube loads");
+    let doc = load_vtu(Path::new("data/fixtures/vtu/good_cube.vtu")).expect("good_cube loads");
     let images: Vec<_> = VARIANTS
         .iter()
         .map(|&variant| render_cpu_case(&doc, variant, "iso_ne"))
@@ -278,7 +278,7 @@ fn visual_variants_are_materially_distinct() {
 
 #[test]
 fn transparent_baseline_render_is_deterministic() {
-    let doc = load_vtu(Path::new("data/fixtures/meshgen/good_cube.vtu")).expect("good_cube loads");
+    let doc = load_vtu(Path::new("data/fixtures/vtu/good_cube.vtu")).expect("good_cube loads");
     let first = render_cpu_case(&doc, Variant::Transparent, "front");
     let second = render_cpu_case(&doc, Variant::Transparent, "front");
     assert_eq!(first.rgba, second.rgba);
@@ -287,7 +287,7 @@ fn transparent_baseline_render_is_deterministic() {
 #[test]
 #[cfg(feature = "gpu")]
 fn gpu_opaque_variants_match_committed_cpu_references() {
-    let doc = load_vtu(Path::new("data/fixtures/meshgen/good_cube.vtu")).expect("good_cube loads");
+    let doc = load_vtu(Path::new("data/fixtures/vtu/good_cube.vtu")).expect("good_cube loads");
     let mut pipeline = match rustmspt::gpu::GpuScenePipeline::new() {
         Ok(pipeline) => pipeline,
         Err(e) => {
