@@ -28,6 +28,7 @@ docs/zh-cn/
     pipeline-optimize.md
     pipeline-packing.md
     pipeline-placement.md
+    pipeline-state-map.md
   algorithms/
     ffd-forging.md
     mesh-clipping-volume-fraction.md
@@ -38,12 +39,14 @@ docs/zh-cn/
     spatial-grid-collision.md
     stl-rendering.md
     void-aware-placement.md
+    state-map-location.md
   examples/
     crop.md
     forge.md
     measure.md
     mesh-render.md
     mesh.md
+    state-map.md
     optimize.md
     pack-placement.md
     pack-target-distribution.md
@@ -150,3 +153,5 @@ This list is a starting point, not exhaustive — the translator should extend i
 ## Translation status (2026-10-07)
 
 The aggregate, contact-growth, checkpoint/memory, free-space guidance and placement updates are mirrored in `zh-cn/` (algorithms/aggregate-placement.md, free-space-guided-placement.md, placement-checkpoints-and-memory.md, void-aware-placement.md; examples/pack-aggregates.md, pack-placement.md; reference/config.md, function-index.md, pipeline-aggregates.md, pipeline-placement.md, pipeline-placement-state.md). No translation is pending.
+
+The `state-map` pages are mirrored in `zh-cn/` (algorithms/state-map-location.md, examples/state-map.md, reference/pipeline-state-map.md). **Pending translation:** the per-function entries of `reference/pipeline-state-map.md`; the Chinese page carries the index and points to the English entries.

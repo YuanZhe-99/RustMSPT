@@ -28,6 +28,7 @@ RustMSPT（Rust Microstructure Processing Toolbox，Rust 微结构处理工具�
 | [pipeline-placement.md](reference/pipeline-placement.md) | `pipeline/placement*.rs`、`geometry/void_index.rs` —— 带种子、可复原、感知孔隙的引擎 |
 | [pipeline-packing.md](reference/pipeline-packing.md) | `pipeline/{pack,pack_targets}.rs` |
 | [mesh-render-and-vtu.md](reference/mesh-render-and-vtu.md) | `io/vtu.rs`、`meshgen/render_scene.rs`、`geometry/scene_render.rs`、`pipeline/mesh_render.rs`、`config/mesh_render.rs` |
+| [pipeline-state-map.md](reference/pipeline-state-map.md) | `transfer/{npy,locate}.rs`、`gpu/tet_candidates.rs`、`pipeline/state_map.rs`、`config/state_map.rs` |
 | [mesh-verify.md](reference/mesh-verify.md) | `meshgen/{predicates,verify}.rs`、`pipeline/mesh_verify.rs`、`config/mesh_verify.rs` |
 | [meshgen.md](reference/meshgen.md) | `config/meshgen.rs`、`pipeline/meshgen.rs`、`meshgen/{surface,features,predicates,arrange,topo,gapfield,sizing,lattice,snapshot}.rs` - S0/S1/G2/G3/G4 |
 | [pipeline-optimize.md](reference/pipeline-optimize.md) | `pipeline/optimize.rs` |
@@ -46,6 +47,7 @@ RustMSPT（Rust Microstructure Processing Toolbox，Rust 微结构处理工具�
 | [spatial-grid-collision.md](algorithms/spatial-grid-collision.md) | 邻域查询加速以及精确/周期性碰撞检测 |
 | [void-aware-placement.md](algorithms/void-aware-placement.md) | 确定性、尺寸集合、孔隙判据及其完备性、停止原因的优先级 |
 | [mesh-clipping-volume-fraction.md](algorithms/mesh-clipping-volume-fraction.md) | Sutherland-Hodgman 网格裁剪与体积分数统计 |
+| [state-map-location.md](algorithms/state-map-location.md) | 在旧网格中定位重网格化采样点：规则、BVH、rayon，以及为什么 GPU 只提出候选 |
 | [stl-rendering.md](algorithms/stl-rendering.md) | 共享相机取景、CPU 光线投射与 GPU 离屏光栅化 |
 
 ## 示例（各流水线走查）
@@ -67,6 +69,7 @@ RustMSPT（Rust Microstructure Processing Toolbox，Rust 微结构处理工具�
 | [pack-target-distribution.md](examples/pack-target-distribution.md) | `pack`（带目标粒径分布导向） |
 | [render.md](examples/render.md) | `render` |
 | [mesh-render.md](examples/mesh-render.md) | `mesh-render`（VTU 体网格渲染器） |
+| [state-map.md](examples/state-map.md) | `state-map`（为状态映射定位采样点） |
 | [mesh.md](examples/mesh.md) | `mesh`（四面体网格生成，S0/S1/G2-1..G2-3） |
 
 ## 全文使用的约定

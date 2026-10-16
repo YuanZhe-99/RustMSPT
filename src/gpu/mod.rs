@@ -5,6 +5,7 @@ pub mod render;
 pub mod s2;
 pub mod s2_shell;
 pub mod scene_render;
+pub mod tet_candidates;
 pub mod volume_transform;
 pub mod voxel;
 
@@ -19,4 +20,5 @@ pub use s2::{GpuS2Pipeline, GpuUploadStats};
 pub use s2_shell::GpuShellS2Pipeline;
 pub use scene_render::{GpuClipPlane, GpuSceneOptions, GpuScenePipeline};
 pub use volume_transform::GpuVolumeTransformPipeline;
+pub use tet_candidates::GpuTetCandidatePipeline;
 pub use voxel::GpuVoxelPipeline;

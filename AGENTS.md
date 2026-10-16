@@ -60,6 +60,7 @@ Documentation lives in three tiers, each answering a different question:
 | GPU compute pipelines (wgpu/WGSL) | (covered within each algorithm doc's own GPU section) | `reference/gpu.md` |
 | Mesh rendering / STL-to-image | `algorithms/stl-rendering.md` | `reference/geometry-core.md` (render section), `reference/gpu.md`, `reference/pipeline-core.md` |
 | VTU I/O / volume-mesh rendering (`mesh-render`) | (design: `PLAN_mesh_generation.md` §7/§9) | `reference/mesh-render-and-vtu.md` |
+| State-map point location (`state-map`: where a remesh's sampling points sit in the last frame's tets; BVH, rayon, GPU candidate pass) | `algorithms/state-map-location.md` | `reference/pipeline-state-map.md` |
 | Mesh verification (`mesh-verify`, check catalog, fixtures) | (contract: `SPEC_meshgen_contracts.md` §4/§6) | `reference/mesh-verify.md` |
 | Mesh generation pipeline (`mesh` subcommand config + S0/S1/G2-1..G2-5/G3) | (design: `PLAN_mesh_generation.md` §6.3/§10.1-10.6) | `reference/meshgen.md` |
 | Snapshot framework (GA-4: stage names, metadata stamping, size WARN, [V12] cross-check) | (contract: `SPEC_meshgen_contracts.md` §2.4/§3) | `reference/meshgen.md` |
@@ -137,7 +138,7 @@ cargo run --release -- <subcommand> [--config <path>] [--input <path>] [--output
 ./target/release/rustmspt <subcommand> --config data/input/<subcommand>_config.yaml
 ```
 
-Available subcommands: `split-filter`, `pack`, `optimize`, `measure`, `forge`, `scale`, `crop`, `render`, `mesh-render`, `mesh-verify`, `mesh`, `version`
+Available subcommands: `split-filter`, `pack`, `optimize`, `measure`, `forge`, `scale`, `crop`, `render`, `mesh-render`, `mesh-verify`, `mesh`, `state-map`, `version`
 
 `pack` selects an engine from the config it is given: a top-level `placement:` block runs the seeded, recorded, void-aware engine; a `packing:` block runs the original one, unchanged. Exactly one must be present. `--seed` and `--threads` apply to the placement engine only, and passing either with a `packing:` config is an error rather than a silent no-op -- ignoring a determinism flag would report a run as reproducible when it is not.
 
@@ -218,6 +219,7 @@ src/
     meshgen.rs         MeshGenConfig and the meshgen: YAML block (PLAN §6.3) for the mesh subcommand
     scale.rs           ScaleConfig, ScalingParams
     split_filter.rs    SplitFilterConfig, SplitFilterOutput, SplitFilterRules
+    state_map.rs       StateMapConfig, StateMapParams for state-map
 
   compute/             Compute backend abstraction (always compiled)
     mod.rs             Re-exports, unit tests for backend selection
@@ -232,12 +234,14 @@ src/
     voxel.rs           GpuVoxelPipeline: wgpu compute pipeline for mesh voxelization
     volume_transform.rs GpuVolumeTransformPipeline: wgpu compute pipeline for volume rotate-and-crop
     render.rs           GpuRenderPipeline: offscreen triangle rasterization and RGBA readback
+    tet_candidates.rs   GpuTetCandidatePipeline: state-map's BVH walk proposing candidate tets per point (outward-rounded f32, a superset)
     shaders/
       s2_monte_carlo.wgsl  WGSL compute shader for MC S2 (ray-casting point containment)
       voxelize.wgsl        WGSL compute shader for voxelization (ray-casting per voxel)
       s2_shell_pairs.wgsl  WGSL compute shader for direct shell pair counting
       volume_transform.wgsl WGSL compute shader for volume rotate-and-crop transform
       render.wgsl           WGSL vertex/fragment shader for STL rendering
+      tet_candidates.wgsl   WGSL compute shader for state-map's candidate tets
 
   geometry/            Geometry and computation kernels
     mod.rs             Re-exports public API
@@ -282,6 +286,10 @@ src/
     thin.rs            S8b (G7-1/G7-2): frozen §8.2 band k-templates, per-pair rim collapse, the §4.4 runtime ladder with its pairwise flip and Steiner fallback, regional [THIN-SKIP] demotion, the §10.11 FEM-aware ladder, the doubly-cut face-split rule, the three-slab split of a sandwiched cell, and ThinContext - the S3->S8b bridge (thin region per arranged face, effective regime, pair class)
     verify.rs          Check catalog ([V1]-[V12]), JSON + human report, annotate
 
+  transfer/            Carrying a solved state across a remesh (state-map)
+    npy.rs             .npy read (v1-3, little-endian numeric) and write (f64, i64)
+    locate.rs          TetMesh, TetBvh, the location rule, locate_cpu, locate_from_candidates
+
   pipeline/            Pipeline implementations (all implement Pipeline trait)
     mod.rs             Pipeline trait, create_progress_bar helper
     crop.rs            CropPipeline: CT volume PCA-alignment and crop
@@ -289,6 +297,7 @@ src/
     measure.rs         MeasurePipeline: S2 measurement of STL
     mesh_render.rs     MeshRenderPipeline: VTU volume-mesh multi-view renderer (mesh-render subcommand)
     mesh_verify.rs     MeshVerifyPipeline: standalone mesh-verify catalog runner (mesh-verify subcommand)
+    state_map.rs       StateMapPipeline: locate sampling points in a tet mesh, write donors/distances/report (state-map subcommand)
     meshgen.rs         MeshGenPipeline: S0/S1/G2-1..G2-5/G3/G4/G5 orchestration; emits s02+s03+s04+s05+s06, returns NotAvailable for S7+
     optimize.rs        OptimizePipeline: simulated annealing with bounded island batches and coherent migration
     optimize_execution.rs  Fixed S2 method/backend selection, one optional shared GPU MC instance, and bounded Rayon island scheduling
@@ -428,6 +437,7 @@ When inspecting code:
 - SA optimization state (temperature, acceptance window) is per-island; do not share mutable SA state across threads.
 - wgpu's `enumerate_adapters()` returns a `Vec`, not an iterator — do not call `.collect()` on it.
 - `wgpu::Limits::max_storage_buffer_binding_size` is `u32`; cast to `u64` when comparing with `BackendCaps`.
+- `state-map`'s GPU pass must stay a **superset** filter: boxes rounded outward (`round_down`/`round_up`), points to nearest, and every decision taken in f64 on the host. Moving the barycentric test into WGSL (f32) would make GPU and CPU answers differ; `gpu_location_equals_cpu` fails if they do. Its rule (nearest centroid among containing tets, then nearest within the bound, ties to the lower index) is simHelper's `transfer/state_mapper.py` and must change only together with it.
 - When `gpu` feature is disabled, `ComputeBackend::Gpu` variant does not exist — use `#[cfg(feature = "gpu")]` guards in match arms and `is_gpu()` instead of `matches!`.
 - The `acceleration` config field uses `#[serde(default)]` so existing YAML configs without it continue to work. Tests constructing config structs manually must include `acceleration: Default::default()`.
 - `Volume3D` uses z-major indexing: `idx = z * width * height + y * width + x`. GPU shaders must match this layout, not x-major.

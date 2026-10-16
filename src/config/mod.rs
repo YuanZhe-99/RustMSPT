@@ -12,6 +12,7 @@ pub mod placement;
 pub mod render;
 pub mod scale;
 pub mod split_filter;
+pub mod state_map;
 
 use crate::error::{Result, RustMsptError};
 use serde::Deserialize;
@@ -95,4 +96,5 @@ pub use placement::{
 };
 pub use render::{RenderConfig, RenderParams};
 pub use scale::{ScaleConfig, ScalingParams};
+pub use state_map::{StateMapConfig, StateMapParams};
 pub use split_filter::{SplitFilterConfig, SplitFilterOutput, SplitFilterRules, SplitFilterVolume};

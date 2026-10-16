@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use rustmspt::config::{
     load_pack_document, load_yaml, CropConfig, ForgingConfig,
     MeasurementConfig, MeshGenConfig, MeshRenderConfig, MeshVerifyConfig, OptimizationConfig,
-    PackDocument, RenderConfig, ScaleConfig, SplitFilterConfig,
+    PackDocument, RenderConfig, ScaleConfig, SplitFilterConfig, StateMapConfig,
 };
 use rustmspt::pipeline::crop::CropPipeline;
 use rustmspt::pipeline::forge::ForgePipeline;
@@ -16,6 +16,7 @@ use rustmspt::pipeline::placement::PlacementPipeline;
 use rustmspt::pipeline::render::RenderPipeline;
 use rustmspt::pipeline::scale::ScalePipeline;
 use rustmspt::pipeline::split_filter::SplitFilterPipeline;
+use rustmspt::pipeline::state_map::StateMapPipeline;
 use rustmspt::pipeline::Pipeline;
 use rustmspt::version::{build_identity, identity_json};
 use std::path::{Path, PathBuf};
@@ -100,6 +101,14 @@ enum Commands {
         #[arg(long)]
         input: Option<PathBuf>,
         /// Replace `meshgen.output.vtu`.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    /// Locate a remesh's sampling points in the last frame's tetrahedral mesh (state mapping).
+    StateMap {
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Replace `state_map.output_dir`.
         #[arg(long)]
         output: Option<PathBuf>,
     },
@@ -380,6 +389,14 @@ fn run_cli() -> anyhow::Result<()> {
                 conf.meshgen.output.vtu = output.to_string_lossy().to_string();
             }
             MeshGenPipeline { config: conf }.run()?;
+        }
+        Commands::StateMap { config, output } => {
+            let path = pick_config_path(config, "state_map_config.yaml");
+            let mut conf: StateMapConfig = load_yaml(&path)?;
+            if let Some(output) = output {
+                conf.state_map.output_dir = output.to_string_lossy().to_string();
+            }
+            StateMapPipeline { config: conf }.run()?;
         }
         Commands::MeshVerify {
             config,
