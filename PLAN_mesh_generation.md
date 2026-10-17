@@ -2111,7 +2111,15 @@ cell's boundary without being a trace point of that face, where no Steiner point
   a8_r 16 -> **7**, p1 30 -> **29** - the fan half of the acceptance is open. p1's 250,058
   "misattributed" cells were the verifier: inside the metal but in a cavity that outranks it (their
   volume summed to the cavities' own); `[V5]` now masks a body by any higher-priority body holding the
-  point (p1 349). p1 `[V9]` (20 nodes) is open.
+  point (p1 336). p1 `[V9]` (20 nodes) is open.
+  **The whole-cell fans left (`RUSTMSPT_SPLIT_DIAG`, `data/output/acceptance_z14/diag`)**: a6a_r 1,
+  a6b_r 1 and four of a8_r's 7 are the facet-split fan's "the soup has an edge carried three times or
+  more"; the other three a8_r cells are "a piece is not star-shaped from its centre". Dumped a6b_r cell
+  164194: the limb's surface grazes a cell face, its clipped facet `[9, 8, 4, 6]` comes out of the rim
+  matching warped (`dev/tol` 1.2e7, covered twice), and the cap fanned over its outline shares the
+  face edge 4-8 with two boundary triangles - a piece pinched along an edge that `manifold_components`
+  cannot separate into closed sectors. Next: a facet whose adopted rim no longer lies in one plane is
+  re-split into planar triangles before it becomes a cap.
 - **M-2.3. Delete the whole-cell centroid fan (R1).** When M-2.1 reports 0 on the matrix, the arm is
   removed: a cell neither §7.4 nor the facet-split fan can mesh is `Err` naming the cell, with the
   per-cell dump `RUSTMSPT_PLC_DUMP` already writes. Not "kept for safety": a fallback that abandons
@@ -2701,12 +2709,12 @@ without the stated fallback.
 | M-2.0 | J1 fingerprint mismatch is a hard error; fingerprint = constraint entity ids (MG-06) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ● landed `9b9c1a2` |
 | M-2.1 | Facet recovery by Steiner points on the constraint — gate | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — cutaway renders at a3's cube edges and an a8 strut junction, before/after | ◐ 2026-09-29: the facet-split fan's non-star refusal answered by a kernel apex - gated a1 **100.000** and a7b **100.000** (`[V13]` PASS), a8 99.942, a4 99.971, a3 99.716, reference cases 99.597 / 99.789 / 99.939 %; whole-cell fans 0 on a1/a2/a7a/a7b, and after D-12 (one piece where no cap is left) a3 23, a4 11, a6a 4, a6b 1, a8 96 (earlier: move (d) on D-11 (a), +1–8 % tets, slivers for M-5) |
 | M-2.2 | Boundary consistency: facet vertices on the cell boundary are trace points | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ● landed 2026-09-29: a rim vertex on a cell edge adopts the edge's K2 representative; hull classes 0 on a3/a4/a8; a4 99.911, a8 99.833, ref 3 99.854 |
-| M-2.6 | Inclined geometry: the rotated cases and p1 pass `[V1]`/`[V2]`/`[V3]` | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** | ◐ 2026-10-17: `[V1]`/`[V2]`/`[V3]` PASS on all fifteen (near-coplanar overlay in S2, M1); whole-cell fans a6a_r 1, a6b_r 1, a8_r 7, p1 29 and p1 `[V9]` 20 open |
+| M-2.6 | Inclined geometry: the rotated cases and p1 pass `[V1]`/`[V2]`/`[V3]` | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** | ◐ 2026-10-17 (`b7d8c5a`): `[V1]`/`[V2]`/`[V3]` PASS on all fifteen (near-coplanar overlay in S2, M1); whole-cell fans a6a_r 1, a6b_r 1, a8_r 7, p1 29 and p1 `[V9]` 20 open |
 | M-2.3 | Delete the whole-cell fan | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ blocked by M-2.1 on the reference cases (2 / 8 / 0 whole-cell fans) and by M-2.6 on the rotated cases (a6a_r 5, a6b_r 6, a8_r 16, p1 30); 0 on all nine acceptance cases since 2026-09-30; the deletion is written and tested (`data/output/patches/m23_delete_whole_cell_fan.patch`, nine cases byte-identical) |
 | M-2.4 | Retire `contact_chamfered_by` | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ◐ counted (a6a 895, a6b 2,396 gated); blocked: the limb's contact strip is thinner than a lattice face, so the faces it declares are genuine rim chamfer |
 | M-2.5 | P3 residual audit | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — the same cutaways | ○ |
 | M-3.1 | The control | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ● all twelve cases, re-held 2026-09-29 after every M-2 step: gated FAIL sets equal the default's, gated `[V13]` better everywhere (gated a1/a2/a7b 100.000 PASS, a4 100.000, a3 99.927, a8 99.971; reference cases 99.936 / 99.935 / 99.958 % against the default's 95.248 / 96.097 / 96.831 %) |
-| M-3.2 | Delete the five handles | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ○ |
+| M-3.2 | Delete the five handles | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ● 2026-10-17 (`b7d8c5a`): all five deleted with `subdivide_cell`; matrix byte-identical to the gated column (`acceptance_z12` vs `z13`, 30 files); runners take `--path gated` only |
 | M-3.3 | Refactor `cut_lattice`, tests for the trace and the junction module | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ |
 | M-4.0a | One X per connected closed component; the source map (MG-04) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ |
 | M-4.0b | Closure per component, no borrowed faces (MG-05) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ |
