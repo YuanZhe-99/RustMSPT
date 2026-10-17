@@ -30,23 +30,13 @@
 //! never costs correctness. Bounding the cut to the fragment is what a true CDT buys and is the
 //! next question this kernel makes askable, not one it answers.
 //!
-//! **INTEGRATION STATUS (2026-08-15): the kernel is sound; wiring it in cell-by-cell is NOT.**
-//! `subdivide_cell` is reachable under `RUSTMSPT_CDT=1`, a gate handle and not a setting. Measured
-//! there: a7b +0.249 pp of on-surface area, a7a +0.030, a3 +0.014, a8 +0.020, `[V3]` clean on all
-//! of them **except a8**, which fails with 12 boundary leaks, 6 hanging nodes and 2 non-manifold
-//! edges out of 555,204 interior faces. Two safety rules were added and neither is sufficient:
-//! refusing to intern a new node, then requiring the cell's boundary to come back triangle-for-
-//! triangle. The residue is small but it is real, and small conformity failures are the expensive
-//! kind.
-//!
-//! The reason is structural, not a bug to chase. A cell that clips puts an edge on its boundary
-//! that its neighbour - which did not clip - does not have, and *whether to clip is decided per
-//! cell*. Invariant J1 says the triangulation of a face must be a pure function of the face, so
-//! the crease trace has to enter the shared face's triangulation **once, agreed by both cells,
-//! before either meshes its interior**. That is exactly what SPEC §7.3's `FaceTriCache` is
-//! specified for, and it is not implemented. Until it is, this kernel can only take cells whose
-//! boundary it does not need to re-cut - which is a bound, not a tuning parameter, and it is why
-//! the gains above are fractions of a point rather than the ~75 % of crease damage on offer.
+//! **Integration status.** The plane-clipping route through the cut-node planes (`subdivide_cell`,
+//! once reachable under a `RUSTMSPT_CDT` gate handle) measured worse - a cell that clips puts an
+//! edge on its boundary its unclipped neighbour lacks - and was deleted with the handle (plan
+//! M-3.2). What ships is `constrained_tets_with_steiner` driven by the fragment's facets inside
+//! `plc_attempt`, against boundaries whose faces SPEC §7.3's `FaceTriCache` (`facecache.rs`) has
+//! already triangulated once for both owners - which is the J1 answer the clip route lacked - plus
+//! the fragment-driven `subdivide_cell_by` and the facet-split fan as the declined arm.
 //!
 //! Determinism (R-P2, §7.4): planes are consumed in the caller's order, which is canonical by
 //! construction; every vertex is interned through a `NodeKey` so a point computed twice is one
@@ -512,42 +502,6 @@ pub struct CellSubdivision {
 }
 
 // AI-FUNC-SUMMARY:
-// Purpose: Subdivide one escalated cell by the planes its crossing components leave on it, and
-//   hand back pieces and caps in the shape the existing §7.6 path uses.
-// Inputs: the cell's closed boundary soup, the cut nodes per component, the global node table, the
-//   key quantum and the coplanarity/on-plane tolerance.
-// Returns: the subdivision, or the named reason the kernel declined it.
-// Side effects: None - it interns into a *local* arena and returns nothing new.
-// Notes: **It declines rather than inventing a node, and that is the integration's safety rule.**
-//   A plane fitted through cut nodes re-derives the nodes already on every shared face, so the
-//   common case interns nothing; but a plane extends past the bounded patch that defined it, and
-//   where it leaves the patch it can cross a face edge somewhere new. A node invented there exists
-//   in this cell and not in the neighbour, which is a crack - the one failure mode that would not
-//   show up in the kernel's own tests, because those mesh a cell in isolation. So the arena is
-//   checked afterwards: if it grew, the cell is refused and the caller's existing path takes it.
-//   That keeps the kernel to the cells where it is provably conforming, and makes the refusal rate
-//   a number to report rather than a risk to argue about.
-pub fn subdivide_cell(
-    boundary: &[[u32; 3]],
-    cut_nodes: &[(i32, Vec<u32>)],
-    nodes: &[Vec3],
-    quantum: f64,
-    tol: f64,
-) -> Result<CellSubdivision, &'static str> {
-    subdivide_cell_by(boundary, nodes, quantum, tol, &[], |arena, to_local| {
-        let mut planes: Vec<(Plane, i32)> = Vec::new();
-        for (component, ids) in cut_nodes {
-            let mapped: Vec<u32> =
-                ids.iter().filter_map(|id| to_local.get(id).copied()).collect();
-            for plane in planes_through_cut_nodes(&mapped, arena, tol) {
-                planes.push((plane, *component));
-            }
-        }
-        planes
-    })
-}
-
-// AI-FUNC-SUMMARY:
 // Purpose: Subdivide one escalated cell by the planes its surface FRAGMENT lies in, rather than by
 //   the planes its edge crossings fit - §7.2's stated input, and the one case crossings cannot
 //   express.
@@ -556,7 +510,7 @@ pub fn subdivide_cell(
 // Returns: the subdivision, or the named reason it declined - the refusal rate per reason is
 //   what says which capability is still missing, so it is data rather than a bool.
 // Side effects: None.
-// Notes: Identical to `subdivide_cell` in everything except where the planes come from, which is
+// Notes: Identical to the deleted cut-node route (plan M-3.2) in everything except where the planes come from, which is
 //   the whole point: a body that crosses no edge of the cell leaves no crossing to fit a plane to
 //   (PLAN §6.14), while its triangles lie in perfectly good planes. The refusals are the same and
 //   they are what keep it conforming - most importantly, **the boundary must come back triangle for
@@ -3856,8 +3810,26 @@ pub fn facet_split_fan(
                         && signs[0] != 0
                         && signs.iter().all(|s| *s == signs[0])
                 };
+                // **Seen from the right side is not enough; it must be seen from above `tol`.** An
+                // apex a few ULP off a boundary triangle's plane passes the exact sign test and gives
+                // a fan tet of height ~1e-23, whose orientation the write's denormalisation then
+                // flips (a6b_r's cell 70169: `[V1]` -1.5e-23 and four folded faces around it). Same
+                // bound as §7.4's thin-tet rule: height below `tol` is not an element.
+                let clear_of = |apex: Vec3| -> bool {
+                    piece.iter().all(|t| {
+                        let (a, b, c) = (
+                            points[t[0] as usize],
+                            points[t[1] as usize],
+                            points[t[2] as usize],
+                        );
+                        let n = b.sub(a).cross(c.sub(a));
+                        let area2 = n.dot(n).sqrt();
+                        area2 > 0.0 && (n.dot(apex.sub(a)) / area2).abs() > tol
+                    })
+                };
+                let sees_all_clear = |apex: Vec3| sees_all(&sign_of(apex)) && clear_of(apex);
                 let mut centre = centroid;
-                if !sees_all(&sign_of(centroid)) {
+                if !sees_all_clear(centroid) {
                     let mut candidates: Vec<Vec3> = nodes
                         .iter()
                         .map(|n| centroid.add(points[*n as usize]).scale(0.5))
@@ -3880,11 +3852,11 @@ pub fn facet_split_fan(
                             }
                         }
                     }
-                    if let Some(found) = candidates.into_iter().find(|c| sees_all(&sign_of(*c))) {
+                    if let Some(found) = candidates.into_iter().find(|c| sees_all_clear(*c)) {
                         note_split("a non-star piece was fanned from a kernel point, not its centre");
                         centre = found;
                     } else if let Some(found) = kernel_vertex_mean(piece, points)
-                        .filter(|c| sees_all(&sign_of(*c)))
+                        .filter(|c| sees_all_clear(*c))
                     {
                         // The grid can step over a thin kernel; the kernel polytope's own vertices
                         // cannot. Their mean is interior whenever the kernel has an interior.
@@ -3921,7 +3893,7 @@ pub fn facet_split_fan(
                     note_split("a fan tet is degenerate");
                     return None;
                 }
-                if signs.iter().any(|s| *s != signs[0]) {
+                if signs.iter().any(|s| *s != signs[0]) || !clear_of(centre) {
                     // No apex sees the whole piece: tetrahedralise its hull with the piece as a
                     // constraint and carve off the outside (`fill_non_convex`). When that stalls on
                     // piece edges that are all inside the cell, ask the caller to split them.
@@ -4818,8 +4790,22 @@ pub fn constrained_tets_with_steiner(
                 if len <= 0.0 || longest <= 4.0 * tol {
                     continue;
                 }
-                let x = mid.add(inward.scale((0.25 * longest).min(0.5 * len) / len));
+                let step = (0.25 * longest).min(0.5 * len);
+                let x = mid.add(inward.scale(step / len));
                 if cell_planes.iter().any(|(n, o)| (n.dot(x) - o).abs() <= plane_tol.max(tol)) {
+                    continue;
+                }
+                // **A Steiner point beside an existing node is a sliver, not a repair.** a6b_r's cell
+                // 71647 took one 7e-7 from a node the previous round had added: the two are one
+                // point by `[V2]` and the tets between them are 1e-13 thick. Keep a new point at
+                // least a tenth of its own step from every node and every other new point.
+                let crowded = |y: Vec3| {
+                    let d = y.sub(x);
+                    d.dot(d) < (0.1 * step) * (0.1 * step)
+                };
+                if used.iter().any(|id| crowded(arena.points[*id as usize]))
+                    || points_to_add.iter().any(|y| crowded(*y))
+                {
                     continue;
                 }
                 let near_facet = facets.iter().any(|facet| {
@@ -4836,7 +4822,7 @@ pub fn constrained_tets_with_steiner(
                         return false;
                     }
                     let normal = want.scale(1.0 / l);
-                    (normal.dot(x) - normal.dot(corner(0))).abs() <= 4.0 * tol
+                    (normal.dot(x) - normal.dot(corner(0))).abs() <= (4.0 * tol).max(0.1 * step)
                         && inside_polygon(x, facet, &arena.points, normal, tol)
                 });
                 if !near_facet {
@@ -4920,8 +4906,22 @@ pub fn constrained_tets_with_steiner(
                 if len <= 0.0 || shortest <= 4.0 * tol {
                     continue;
                 }
-                let x = mid.add(inward.scale((0.25 * longest).min(0.5 * len) / len));
+                let step = (0.25 * longest).min(0.5 * len);
+                let x = mid.add(inward.scale(step / len));
                 if cell_planes.iter().any(|(n, o)| (n.dot(x) - o).abs() <= plane_tol.max(tol)) {
+                    continue;
+                }
+                // **A Steiner point beside an existing node is a sliver, not a repair.** a6b_r's cell
+                // 71647 took one 7e-7 from a node the previous round had added: the two are one
+                // point by `[V2]` and the tets between them are 1e-13 thick. Keep a new point at
+                // least a tenth of its own step from every node and every other new point.
+                let crowded = |y: Vec3| {
+                    let d = y.sub(x);
+                    d.dot(d) < (0.1 * step) * (0.1 * step)
+                };
+                if used.iter().any(|id| crowded(arena.points[*id as usize]))
+                    || points_to_add.iter().any(|y| crowded(*y))
+                {
                     continue;
                 }
                 let near_facet = facets.iter().any(|facet| {
@@ -4938,7 +4938,7 @@ pub fn constrained_tets_with_steiner(
                         return false;
                     }
                     let normal = want.scale(1.0 / l);
-                    (normal.dot(x) - normal.dot(corner(0))).abs() <= 4.0 * tol
+                    (normal.dot(x) - normal.dot(corner(0))).abs() <= (4.0 * tol).max(0.1 * step)
                         && inside_polygon(x, facet, &arena.points, normal, tol)
                 });
                 if near_facet {
@@ -5005,6 +5005,7 @@ pub fn constrained_tets_with_steiner(
                 if arena.points.len() == before {
                     continue;
                 }
+                if DIAG_CELL.with(|c| c.get()) { eprintln!("[STEINER-E] split {:?} at {:?}", [a, b], arena.points[mid as usize]); }
                 for facet in facets.iter_mut() {
                     let n = facet.len();
                     let mut at = None;
@@ -5055,6 +5056,16 @@ pub fn constrained_tets_with_steiner(
                     }) {
                         continue;
                     }
+                    // Two crossing edges meeting near the facet cross it at nearly one point: keep
+                    // one, or the pair is a `[V2]` duplicate with a 1e-13 sliver between (a6b_r's
+                    // cell 71647, 7e-7 apart). A twentieth of the edge it was built on.
+                    let sep = 0.05 * pv.sub(pu).dot(pv.sub(pu)).sqrt();
+                    if points_to_add.iter().any(|y: &Vec3| {
+                        let d = y.sub(x);
+                        d.dot(d) < sep * sep
+                    }) {
+                        continue;
+                    }
                     points_to_add.push(x);
                 }
             }
@@ -5063,6 +5074,7 @@ pub fn constrained_tets_with_steiner(
                 arena.intern(x);
                 if arena.points.len() > before {
                     inserted += 1;
+                    if DIAG_CELL.with(|c| c.get()) { eprintln!("[STEINER-F] add {:?}", x); }
                 }
             }
         }

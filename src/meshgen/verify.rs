@@ -3813,7 +3813,17 @@ fn check_v5(
                 }
                 continue;
             }
-            if inside {
+            // **Inside a body is not owed to it when a higher-priority body also holds the point**
+            // (R-A4: the winner takes the overlap). p1's ten cavities outrank the metal around them,
+            // and every cavity cell read as metal missing - 249,772 cells whose volume summed to the
+            // cavities' own, to the digit.
+            let masked = surfaces.iter().enumerate().any(|(other, rival)| {
+                other != index
+                    && rival.closed
+                    && rival.priority < component.priority
+                    && centroid_inside[other][slot]
+            });
+            if inside && !masked {
                 misattributed += 1;
                 let volume = p[1]
                     .sub(p[0])

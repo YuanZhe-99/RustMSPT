@@ -24,9 +24,9 @@ Usage:
     python3 data/fixtures/meshgen/acceptance/run_acceptance.py --json baseline.json
     python3 data/fixtures/meshgen/acceptance/run_acceptance.py --path gated --focus a3 a8
 
-`--path default|gated` (plan M-1.1) selects the S8 path: `gated` sets `RUSTMSPT_PLC_PASS=1`,
-`default` removes it from the environment, so the path is always the one named and never
-inherited from the shell. Each path writes to `data/output/acceptance/<path>/`, keeping the
+`--path gated` names the output directory. Since plan M-3.2 there is one S8 path (the local PLC
+pass that `RUSTMSPT_PLC_PASS=1` used to gate); the name is kept so earlier work directories still
+read the same way. Each path writes to `data/output/acceptance/<path>/`, keeping the
 mesher's and the verifier's logs per case, so the two paths no longer overwrite each other.
 Stage wall times (`RUSTMSPT_TIME_STAGES`) are parsed from the mesher log into a timing table.
 `--focus` renders the input-versus-output comparison (render_focus.py, plan R9) after each case.
@@ -49,7 +49,7 @@ import sys
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
 HERE = os.path.dirname(os.path.abspath(__file__))
 WORK = os.environ.get("RUSTMSPT_ACCEPTANCE_WORK", os.path.join(ROOT, "data", "output", "acceptance"))
-PATH = "default"
+PATH = "gated"
 BIN = os.environ.get("RUSTMSPT_BIN", os.path.join(ROOT, "target", "release", "rustmspt"))
 
 # (case, input STLs, sizing overrides). A-6's h_max_frac 0.04 is not a taste: the limb
@@ -269,10 +269,7 @@ def run(case, stls, overrides):
         if os.path.exists(stale):
             os.remove(stale)
     env = dict(os.environ, RUSTMSPT_CUT_DIAG="1", RUSTMSPT_TIME_STAGES="1")
-    env.pop("RUSTMSPT_PLC_PASS", None)
-    if PATH == "gated":
-        env["RUSTMSPT_PLC_PASS"] = "1"
-        env["RUSTMSPT_PLC_DIAG"] = "1"
+    env["RUSTMSPT_PLC_DIAG"] = "1"
     started = time.monotonic()
     mesh = subprocess.run(
         [BIN, "mesh", "--config", config], capture_output=True, text=True, env=env
@@ -414,8 +411,8 @@ def main():
         at = argv.index("--path")
         PATH = argv[at + 1]
         del argv[at : at + 2]
-        if PATH not in ("default", "gated"):
-            sys.exit(f"--path must be default or gated, not {PATH}")
+        if PATH != "gated":
+            sys.exit(f"--path must be gated (the one S8 path since plan M-3.2), not {PATH}")
     focus = "--focus" in argv
     if focus:
         argv.remove("--focus")

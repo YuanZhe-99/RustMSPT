@@ -2079,6 +2079,39 @@ cell's boundary without being a trace point of that face, where no Steiner point
   cell each, as M-2.1 did. Then p1's misattributed cells.
   *Acceptance:* `[V1]`/`[V2]`/`[V3]` PASS on all fifteen cases, whole-cell fans 0 on the five rotated
   cases. *Tier T3. Multimodal: yes - the rotated cases' cutaways beside the originals.*
+  **Conformity half landed 2026-10-17 (`data/output/acceptance_z12`): `[V1]`/`[V2]`/`[V3]` PASS on all
+  fifteen cases, gated path.** One upstream cause and four local ones, each found by dumping one cell.
+  (1) *S2 lost every contact on a rotated scene.* A float32 rotation cannot keep a contact plane exactly
+  planar, so the exact sign test read a6a/a6b's flush limb-on-cube contact and a8's flush strut faces
+  as surfaces crossing at ~1e-7 rad: coplanar overlays a6a_r/a6b_r 4 -> **0**, a8_r 144 -> **0**,
+  replaced by proper intersections and slivers along the whole contact. `near_coplanar` (arrange.rs)
+  is Invariant M1 applied at the pair test: two triangles, not neighbours in one tessellation, whose
+  planes agree within 0.8 deg and whose vertices all lie within the weld quantum `q = 0.1 eps` of
+  each other's plane are overlaid as coplanar; a pair the exact test calls disjoint tries C7 first
+  (at `eps` the rule took C7's near-coincidences and five arrange tests failed). Overlays come back to exactly the axis-aligned counts (4, 4, 144; proper 72 on
+  a8_r as on a8). (2) A facet-split fan apex a few ULP off a boundary triangle's plane passes the
+  exact sign test and gives a 1e-23-thick tet whose sign the write's denormalisation flips (a6b_r cell
+  70169: `[V1]` and four folded faces); the apex must clear every face by `tol` (`clear_of`, cdt.rs).
+  (3) Steiner points beside an existing node or within a tenth of their own step of a facet
+  (a6b_r cell 71647: round-0 thin-tet point 7e-7 from a facet, round-1 facet crossing beside it) -
+  `[V2]` duplicates with 1e-13 slivers between; both Steiner placements keep that clearance and the
+  facet-crossing pass keeps one point per near-coincident pair. (4) S7 snapped two lattice nodes onto
+  one point (a6a_r 76370/97049); the cut rebinds every cell to the first and the second stayed in the
+  node table - `[V2]` duplicate + unreferenced, `[V3]` 21 hanging. `compact_unreferenced_nodes` drops
+  every node no tet uses at the end of S8 (cure the class). (5) a6a_r cell 216374: the limb's corner
+  pokes 5.6e-5 (< `eps`) through a face whose other facet vertices are all ON it; the corner alone was
+  interned and carried no limb material - `[V9]`. Such a component's facets are dropped for the cell
+  with rollback. A broader version (every vertex within `eps` of a face plane) was measured first and
+  **refuted** (a6a_r misattributed 23 -> 433), as was welding interior facet vertices to boundary nodes
+  within `eps` (a3 `[V6]` PASS -> FAIL, a8 on-surface 1 -> 0.999996, p1 99.990 -> 99.899).
+  Numbers, gated, against `acceptance_m27c`: statuses unchanged on all nine axis-aligned cases; a3
+  on-surface 99.99133 -> 99.99091 % (the one cost, from (2)/(3)), the rest equal to 1e-8; tets down
+  slightly everywhere (a8 -15k); a8_r 98.941 -> **99.959 %**, misattributed 1,631 -> 49, S8 700 -> 213 s;
+  a6a_r/a6b_r 99.985/99.989 -> 99.991/99.995 %. Whole-cell fans a6a_r 5 -> **1**, a6b_r 6 -> **1**,
+  a8_r 16 -> **7**, p1 30 -> **29** - the fan half of the acceptance is open. p1's 250,058
+  "misattributed" cells were the verifier: inside the metal but in a cavity that outranks it (their
+  volume summed to the cavities' own); `[V5]` now masks a body by any higher-priority body holding the
+  point (p1 349). p1 `[V9]` (20 nodes) is open.
 - **M-2.3. Delete the whole-cell centroid fan (R1).** When M-2.1 reports 0 on the matrix, the arm is
   removed: a cell neither §7.4 nor the facet-split fan can mesh is `Err` naming the cell, with the
   per-cell dump `RUSTMSPT_PLC_DUMP` already writes. Not "kept for safety": a fallback that abandons
@@ -2668,7 +2701,7 @@ without the stated fallback.
 | M-2.0 | J1 fingerprint mismatch is a hard error; fingerprint = constraint entity ids (MG-06) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ● landed `9b9c1a2` |
 | M-2.1 | Facet recovery by Steiner points on the constraint — gate | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — cutaway renders at a3's cube edges and an a8 strut junction, before/after | ◐ 2026-09-29: the facet-split fan's non-star refusal answered by a kernel apex - gated a1 **100.000** and a7b **100.000** (`[V13]` PASS), a8 99.942, a4 99.971, a3 99.716, reference cases 99.597 / 99.789 / 99.939 %; whole-cell fans 0 on a1/a2/a7a/a7b, and after D-12 (one piece where no cap is left) a3 23, a4 11, a6a 4, a6b 1, a8 96 (earlier: move (d) on D-11 (a), +1–8 % tets, slivers for M-5) |
 | M-2.2 | Boundary consistency: facet vertices on the cell boundary are trace points | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ● landed 2026-09-29: a rim vertex on a cell edge adopts the edge's K2 representative; hull classes 0 on a3/a4/a8; a4 99.911, a8 99.833, ref 3 99.854 |
-| M-2.6 | Inclined geometry: the rotated cases and p1 pass `[V1]`/`[V2]`/`[V3]` | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** | ○ next (2026-10-01): a6a_r/a6b_r/a8_r/p1 fail `[V1]`/`[V3]`; a7a_r/a7b_r pass |
+| M-2.6 | Inclined geometry: the rotated cases and p1 pass `[V1]`/`[V2]`/`[V3]` | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** | ◐ 2026-10-17: `[V1]`/`[V2]`/`[V3]` PASS on all fifteen (near-coplanar overlay in S2, M1); whole-cell fans a6a_r 1, a6b_r 1, a8_r 7, p1 29 and p1 `[V9]` 20 open |
 | M-2.3 | Delete the whole-cell fan | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ blocked by M-2.1 on the reference cases (2 / 8 / 0 whole-cell fans) and by M-2.6 on the rotated cases (a6a_r 5, a6b_r 6, a8_r 16, p1 30); 0 on all nine acceptance cases since 2026-09-30; the deletion is written and tested (`data/output/patches/m23_delete_whole_cell_fan.patch`, nine cases byte-identical) |
 | M-2.4 | Retire `contact_chamfered_by` | T1 | GPT 5.6 Luna Max / DeepSeek V4 Pro Max | no | ◐ counted (a6a 895, a6b 2,396 gated); blocked: the limb's contact strip is thinner than a lattice face, so the faces it declares are genuine rim chamfer |
 | M-2.5 | P3 residual audit | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — the same cutaways | ○ |

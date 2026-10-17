@@ -1316,12 +1316,7 @@ pub fn cut_lattice(
     // Two hypotheses tested and refuted along the way: the cells need no new escalation rule
     // (all 288 already escalate on `multi_crossing`), and it is not the four-position chord
     // pairing (disabling that leaves every count bit-identical).
-    // `RUSTMSPT_NO_K1_SECOND_CUT=1` turns it back off as a bisection handle.
-    let second_cuts = std::env::var_os("RUSTMSPT_NO_K1_SECOND_CUT").is_none();
     for (key, crossing) in &second_crossing {
-        if !second_cuts {
-            continue;
-        }
         // A collapsed or contact edge already answers with one shared node by design;
         // a second node there would re-open the gap the collapse just welded shut.
         if collapsed_edges.contains(&key.0) || contact_edges.contains(&key.0) {
@@ -1614,8 +1609,9 @@ pub fn cut_lattice(
         (0..lattice.tets.len()).map(|_| None).collect();
     let mut plc_edge_points: BTreeMap<[u32; 2], Vec<u32>> = BTreeMap::new();
     let mut plc_decline: Vec<Option<&'static str>> = vec![None; lattice.tets.len()];
-    let plc_pass = std::env::var_os("RUSTMSPT_PLC_PASS").is_some();
-    if plc_pass {
+    // §7.1 as amended (rev 1.5): the local PLC pass is THE path (plan M-3.2 deleted the
+    // `RUSTMSPT_PLC_PASS` handle and the §6-table-only path it gated).
+    {
         // The arena quantum has to be the one the node keys were built with, or a point that
         // coincides with an existing node interns as a second node at the same place.
         let tol = order_quantum;
@@ -5764,7 +5760,95 @@ pub fn cut_lattice(
             .push(format!("{tag} {count} cell(s) {text}"));
     }
     refresh_split_interfaces(&mut mesh);
+    compact_unreferenced_nodes(&mut mesh);
     mesh
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Drop every node no tet references and renumber the rest, keeping their order.
+// Inputs: the finished cut mesh.
+// Returns: None.
+// Side effects: Rewrites `nodes`, the per-node constraint arrays, `n_lattice_nodes` and every node reference (tets, interfaces, rim and curve edges); records the count in `warnings`.
+// Notes: **Cure the class, not the producer** (the same rule that made the PLC arena intern only the
+//   points a tet uses). On a6a_r S7 put two lattice nodes on one point; the cut's key map rebinds
+//   every cell to the first, and the second stays in the node table touching nothing - `[V2]` reads
+//   a duplicate and an unreferenced node, `[V3]` 21 hanging nodes on the faces it lies in. A node no
+//   element uses is not part of the mesh whatever produced it. Lattice indices below
+//   `n_lattice_nodes` stay in S5 order but are no longer S5's ids once one is dropped.
+fn compact_unreferenced_nodes(mesh: &mut CutMesh) {
+    let mut used = vec![false; mesh.nodes.len()];
+    for tet in &mesh.tets {
+        for n in tet {
+            used[*n as usize] = true;
+        }
+    }
+    let dropped = used.iter().filter(|u| !**u).count();
+    if dropped == 0 {
+        return;
+    }
+    let mut map = vec![u32::MAX; mesh.nodes.len()];
+    let mut next = 0u32;
+    let mut lattice = 0u32;
+    for (old, keep) in used.iter().enumerate() {
+        if *keep {
+            map[old] = next;
+            next += 1;
+            if (old as u32) < mesh.n_lattice_nodes {
+                lattice += 1;
+            }
+        }
+    }
+    fn keep<T>(v: &mut Vec<T>, used: &[bool]) {
+        let mut at = 0usize;
+        v.retain(|_| {
+            at += 1;
+            used[at - 1]
+        });
+    }
+    keep(&mut mesh.nodes, &used);
+    if mesh.constraint_kind.len() == used.len() {
+        keep(&mut mesh.constraint_kind, &used);
+    }
+    if mesh.constraint_ref.len() == used.len() {
+        keep(&mut mesh.constraint_ref, &used);
+    }
+    mesh.n_lattice_nodes = lattice;
+    for tet in &mut mesh.tets {
+        for n in tet.iter_mut() {
+            *n = map[*n as usize];
+        }
+    }
+    let remap_all = |ids: &mut [u32]| ids.iter().all(|n| map[*n as usize] != u32::MAX);
+    mesh.interfaces.retain_mut(|f| {
+        let ok = remap_all(&mut f.nodes);
+        if ok {
+            for n in f.nodes.iter_mut() {
+                *n = map[*n as usize];
+            }
+        }
+        ok
+    });
+    mesh.rim_curve.retain_mut(|e| {
+        let ok = remap_all(e);
+        if ok {
+            for n in e.iter_mut() {
+                *n = map[*n as usize];
+            }
+        }
+        ok
+    });
+    mesh.curve_edges.retain_mut(|(_, e)| {
+        let ok = remap_all(e);
+        if ok {
+            for n in e.iter_mut() {
+                *n = map[*n as usize];
+            }
+        }
+        ok
+    });
+    mesh.warnings.push(format!(
+        "[S8/NODES] {dropped} node(s) no element references dropped from the node table"
+    ));
 }
 
 // AI-FUNC-SUMMARY:
@@ -8611,6 +8695,8 @@ fn plc_attempt(
     let mut facet_of: Vec<i32> = Vec::new();
     for component in all_components {
         let Some(slot) = classifier.slot_of(*component) else { continue };
+        let component_start = arena.points.len();
+        let facets_start = facets.len();
         for facet in crate::meshgen::cdt::fragment_facets_in_cell(
             corners,
             classifier.triangles_of(slot),
@@ -8804,6 +8890,30 @@ fn plc_attempt(
             }
             facets.push(ids);
             facet_of.push(*component);
+        }
+        // **A corner that enters the cell by less than `eps` has not entered it.** a6a_r's limb
+        // corner pokes 5.6e-5 through one face of cell 216374: every other vertex of the limb's
+        // facets there lies ON that face, the corner alone is interned inside, and no region sample
+        // can find material that thin - so the node sits on two of the limb's curves with N_ID [0]
+        // (`[V9]`). Only that shape: every vertex the cell already had on one face plane, and each
+        // vertex this component added within `eps` of it. The face carries the trace either way.
+        if facets.len() > facets_start && arena.points.len() > component_start {
+            let mine = &facets[facets_start..];
+            let protrudes = planes.iter().any(|(normal, offset)| {
+                mine.iter().flatten().all(|id| {
+                    let d = (normal.dot(arena.points[*id as usize]) - offset).abs();
+                    if (*id as usize) < component_start {
+                        d <= edge * 1.0e-6
+                    } else {
+                        d <= weld
+                    }
+                })
+            });
+            if protrudes {
+                facets.truncate(facets_start);
+                facet_of.truncate(facets_start);
+                arena.truncate(component_start);
+            }
         }
     }
     // **An empty facet list is not a refusal.** A cell whose faces the trace changed but whose
@@ -9322,9 +9432,7 @@ fn split_escalated_cell(
             crossing.push((*component, here));
         }
     }
-    // `RUSTMSPT_NO_JCT_CUT=1` falls the whole cell back to the centroid fan, which is what
-    // shipped before §7.6 was implemented - kept as a bisection handle, not as a default.
-    if crossing.is_empty() || std::env::var_os("RUSTMSPT_NO_JCT_CUT").is_some() {
+    if crossing.is_empty() {
         if std::env::var_os("RUSTMSPT_JCT_DIAG").is_some() {
             println!("[JCT-DIAG] cell {index}: only {} crossing component(s)", crossing.len());
         }
@@ -9705,46 +9813,6 @@ fn split_escalated_cell(
         }
         if let Some(out) = accepted {
             return Some(out);
-        }
-    }
-
-    // **P-3 gate handle (`RUSTMSPT_CDT=1`): route the cell through the §7.2-§7.4 kernel.**
-    // Not a setting - which mesher a cell gets is not a matter of taste (R3) - and it must not
-    // survive the gate. It sits here rather than replacing the path below because the kernel
-    // declines any cell that would need a node the neighbour does not have, so the soup split
-    // stays the answer for everything it turns down.
-    if std::env::var_os("RUSTMSPT_CDT").is_some() {
-        let cut_nodes: Vec<(i32, Vec<u32>)> = crossing
-            .iter()
-            .map(|(component, set)| (*component, set.iter().copied().collect()))
-            .collect();
-        if let Ok(subdivision) = crate::meshgen::cdt::subdivide_cell(
-            boundary,
-            &cut_nodes,
-            nodes,
-            volume_tolerance.max(f64::MIN_POSITIVE) * 1.0e-6,
-            1.0e-9,
-        ) {
-            let pieces: Vec<SmallVec<[[u32; 3]; 16]>> = subdivision
-                .pieces
-                .iter()
-                .map(|soup| soup.iter().copied().collect())
-                .collect();
-            // The same guard §6 puts on every cut: the pieces must add up to the parent.
-            let total: f64 = pieces
-                .iter()
-                .map(|piece| fan_volume(piece, polygon_soup_centroid(piece, nodes), nodes))
-                .sum();
-            if (total - parent_volume).abs() <= volume_tolerance * parent_volume {
-                if std::env::var_os("RUSTMSPT_JCT_DIAG").is_some() {
-                    println!(
-                        "[CDT] cell {index}: {} piece(s), {} cap triangle(s)",
-                        pieces.len(),
-                        subdivision.caps.len()
-                    );
-                }
-                return Some((pieces, subdivision.caps));
-            }
         }
     }
 

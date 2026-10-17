@@ -114,6 +114,11 @@ Design points worth knowing:
   priority was derived from the *list index*, which silently absorbed a contained
   body: an acceptance case with a cube inside a sphere reported the cube as owning no
   elements at all, and the suite stayed green.
+- **[V5]'s misattribution count honours priority too.** A cell whose centroid is inside a body
+  but which does not carry it is not misattributed when a higher-priority body (lower number) also
+  holds the point (R-A4). p1's ten cavities outrank the metal around them and every cavity cell
+  read as missing metal - 249,772 cells whose volume summed to the cavities' own - until the
+  check masked by priority (plan M-2.6; p1 now 349).
 - **[V5] switches denominators on self-intersecting input.** The divergence-theorem
   volume of a surface is exact only if the surface does not intersect itself. A body
   exported as a *union of overlapping parts* — a strut lattice, a bolted assembly —
@@ -182,11 +187,11 @@ Scripts under `data/fixtures/meshgen/acceptance/` (all read a finished work dire
 
 | Script | What it answers |
 |---|---|
-| `run_acceptance.py --path default\|gated [--focus] [--jobs N]` | The fifteen-case matrix on one S8 path - the nine originals, their five rotated copies (`a6a_r` ... `a8_r`) and `p1`: P3 table (`cont%`, `cover%`, `on%`), P2 table, check statuses, per-stage timing; `--focus` runs `render_focus.py` per case. Meshing is serial; each case's `mesh-verify` and renders overlap the next case's meshing on up to `N` workers (default 3, `--jobs 1` fully serial). `RUSTMSPT_ACCEPTANCE_WORK` redirects the work directory. |
+| `run_acceptance.py [--path gated] [--focus] [--jobs N]` | The fifteen-case matrix on the S8 path (one since plan M-3.2) - the nine originals, their five rotated copies (`a6a_r` ... `a8_r`) and `p1`: P3 table (`cont%`, `cover%`, `on%`), P2 table, check statuses, per-stage timing; `--focus` runs `render_focus.py` per case. Meshing is serial; each case's `mesh-verify` and renders overlap the next case's meshing on up to `N` workers (default 3, `--jobs 1` fully serial). `RUSTMSPT_ACCEPTANCE_WORK` redirects the work directory. |
 | `generate_rotated_cases.py` | Writes `<name>_r.stl`: a6a, a6b, a7a, a7b and a8 turned 23 degrees about (1, 2, 3) through the domain centre, unscaled, so no face, edge or contact plane lies along a lattice direction. Refuses if anything leaves the unit domain. |
 | `p1/` | A metal body and its ten gas cavities, in millimetres (largest cavity with a 0.35 um waist); the cavities take priority 0 over the body's 1, the domain is the body's box plus 2 %. CASES entries accept `(path, priority)` and a `domain` override for this. |
 | `render_focus.py <work> <case>` | Input STL beside the output material boundary, same camera, output coloured by deviation; defects clustered, ranked and rendered head-on / oblique (R9). A component whose input box lies strictly inside another component's (a pore in a body, a cube in a sphere) is hidden by the overview, so each such body also gets its own input / output / overlay panels from two corners, and when there are several a combined view with the outer body removed. |
-| `run_reference.py` | The three reference cases at the reference tool's own background and per-section levels; element ratio and P3. Path follows `RUSTMSPT_PLC_PASS` in the environment. Each case's `mesh-verify` overlaps the next case's meshing. |
+| `run_reference.py` | The three reference cases at the reference tool's own background and per-section levels; element ratio and P3. One S8 path since plan M-3.2. Each case's `mesh-verify` overlaps the next case's meshing. |
 | `check_determinism.py <work> --path P [--out table]` | R-P2 on the matrix: each case re-meshed at `RAYON_NUM_THREADS=1`, delivered and contract files compared by SHA-256 with run-naming lines excluded. Tables: `determinism_{gated,default,reference}.txt`. |
 | `p2_equal_fidelity.py <work> [--out table]` | M-1.4: the default path's element count at the `h` that reaches the gated path's on-surface share (halving `h_max_frac`, `h_min_frac`, `eps_frac` together), stopping at the sizing leaf budget or 2 GB. Table: `p2_equal_fidelity.md`. |
 | `node_dump.py <contract.vtu> <node>` | One node's coordinates, `constraint_kind`, `node_origin` and every incident tet with region set, provenance, `parent_cell`, `escalation_reason`, `plc_path` (the last three need `RUSTMSPT_CUT_DIAG=1` when meshing). |

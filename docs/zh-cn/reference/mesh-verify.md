@@ -106,6 +106,7 @@ P3 违规；这一对数字用于诊断，绝不用于把其中之一评为可�
   `surfaces:` 的每个条目为裸路径（优先级 0）或 `{stl, priority}`。在 2026-08-07 之前，
   优先级取自**列表下标**，这会静默吞掉被包含的实体：某个「立方体位于球体内部」的
   验收用例把该立方体报告为完全不占有任何单元，而测试套件依然全绿。
+- **[V5] 的错归属计数同样遵守优先级。** 质心在某实体内但不携带该实体的单元，若该点同时被一个更高优先级（数值更小）的实体占据，则不算错归属（R-A4）。p1 的十个孔优先于周围金属，此前每个孔内单元都被读成缺失的金属——249,772 个单元，体积之和恰为孔的总体积——直到检查按优先级掩蔽（计划 M-2.6；p1 现为 349）。
 - **[V5] 在自相交输入上会切换分母。** 散度定理算出的曲面体积，只有在曲面不自相交时
   才是精确的。若某实体是作为**若干相互重叠部件的并集**导出的——例如支柱点阵、螺栓
   装配体——则每个重叠区域会被每个部件各计一次，于是精确求和得到的是各部件之和，而
@@ -157,11 +158,11 @@ cargo run --release -- mesh-verify \
 
 | 脚本 | 回答的问题 |
 |---|---|
-| `run_acceptance.py --path default\|gated [--focus] [--jobs N]` | 在一条 S8 路径上跑十五个算例的矩阵（原有九个、它们的五个旋转版本 `a6a_r` … `a8_r`，以及 `p1`）：P3 表（`cont%`、`cover%`、`on%`）、P2 表、检查状态、各阶段耗时；`--focus` 为每个算例运行 `render_focus.py`。网格生成串行执行；每个算例的 `mesh-verify` 与渲染在最多 `N` 个工作线程上与下一个算例的网格生成重叠（默认 3，`--jobs 1` 完全串行）。`RUSTMSPT_ACCEPTANCE_WORK` 可改工作目录。 |
+| `run_acceptance.py [--path gated] [--focus] [--jobs N]` | 在 S8 路径（自计划 M-3.2 起唯一）上跑十五个算例的矩阵（原有九个、它们的五个旋转版本 `a6a_r` … `a8_r`，以及 `p1`）：P3 表（`cont%`、`cover%`、`on%`）、P2 表、检查状态、各阶段耗时；`--focus` 为每个算例运行 `render_focus.py`。网格生成串行执行；每个算例的 `mesh-verify` 与渲染在最多 `N` 个工作线程上与下一个算例的网格生成重叠（默认 3，`--jobs 1` 完全串行）。`RUSTMSPT_ACCEPTANCE_WORK` 可改工作目录。 |
 | `generate_rotated_cases.py` | 写出 `<name>_r.stl`：a6a、a6b、a7a、a7b、a8 绕过定义域中心的 (1, 2, 3) 轴转 23 度，不缩放，使任何面、棱和接触面都不沿点阵方向。若有部分离开单位定义域则拒绝。 |
 | `p1/` | 一块金属体与其中十个气孔，单位毫米（最大气孔有 0.35 µm 的细颈）；气孔优先级 0 高于金属体的 1，定义域为金属体包围盒外扩 2 %。为此 CASES 条目支持 `(路径, 优先级)` 与 `domain` 覆盖。 |
 | `render_focus.py <work> <case>` | 同一相机下输入 STL 与输出材料边界并排，输出按偏离着色；缺陷聚类、排序并以正视/斜视渲染（R9）。输入包围盒严格位于另一组分包围盒内的组分（金属体中的气孔、球内的立方体）在总览中被挡住，因此每个这样的组分另有自己的输入/输出/叠加两角视图；若有多个，另加一张去掉外部组分的合并视图。 |
-| `run_reference.py` | 三个参考算例，按参考工具自身的背景网格与分段层级运行；报告单元比与 P3。路径跟随环境中的 `RUSTMSPT_PLC_PASS`。每个算例的 `mesh-verify` 与下一个算例的网格生成重叠。 |
+| `run_reference.py` | 三个参考算例，按参考工具自身的背景网格与分段层级运行；报告单元比与 P3。自计划 M-3.2 起只有一条 S8 路径。每个算例的 `mesh-verify` 与下一个算例的网格生成重叠。 |
 | `check_determinism.py <work> --path P [--out table]` | 矩阵上的 R-P2：每个算例在 `RAYON_NUM_THREADS=1` 下重跑，按 SHA-256 比较交付文件与契约文件（排除标识运行的行）。表格：`determinism_{gated,default,reference}.txt`。 |
 | `p2_equal_fidelity.py <work> [--out table]` | M-1.4：默认路径达到门控路径贴面比例所需 `h` 下的单元数（`h_max_frac`、`h_min_frac`、`eps_frac` 一起减半），在尺寸叶子预算或 2 GB 处停止。表格：`p2_equal_fidelity.md`。 |
 | `node_dump.py <contract.vtu> <node>` | 单个节点的坐标、`constraint_kind`、`node_origin`，以及所有相邻四面体的区域集、来源、`parent_cell`、`escalation_reason`、`plc_path`（后三者需要网格化时设置 `RUSTMSPT_CUT_DIAG=1`）。 |

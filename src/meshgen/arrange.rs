@@ -489,21 +489,33 @@ pub fn arrange_surface(
         }
         stats.candidate_pairs += 1;
         let pair_key = (a.id.min(b.id), a.id.max(b.id));
-        match intersect_source_triangles(a, b, &normalized, weld_step, &mut c1_cache)? {
-            PairIntersection::Disjoint => {
-                if let Some(near) = near_coincidence_match(
-                    a,
-                    b,
-                    &normalized,
-                    eps_normalized,
-                    weld_step,
-                    &mut degraded,
-                ) {
-                    push_pair_event(&mut events, CoincidenceCase::C7, a, b, &component_by_x);
-                    push_full_semantic_events(&mut events, a, b, &component_by_x);
-                    near_coincidences.push(near);
-                }
+        let mut intersection =
+            intersect_source_triangles(a, b, &normalized, weld_step, &mut c1_cache)?;
+        if matches!(intersection, PairIntersection::Disjoint) {
+            if let Some(near) = near_coincidence_match(
+                a,
+                b,
+                &normalized,
+                eps_normalized,
+                weld_step,
+                &mut degraded,
+            ) {
+                push_pair_event(&mut events, CoincidenceCase::C7, a, b, &component_by_x);
+                push_full_semantic_events(&mut events, a, b, &component_by_x);
+                near_coincidences.push(near);
+                continue;
             }
+            // Not C7 (no one-to-one vertex match) yet one interface within `eps`: Invariant M1
+            // overlays it. A contact on an inclined input has triangles on both sides of the exact
+            // test - this keeps the ones that happen not to touch on the same footing.
+            let atri = a.nodes.map(|node| normalized[node]);
+            let btri = b.nodes.map(|node| normalized[node]);
+            if near_coplanar_pair(a, b, atri, btri, weld_step) {
+                intersection = PairIntersection::Coplanar;
+            }
+        }
+        match intersection {
+            PairIntersection::Disjoint => {}
             PairIntersection::Coplanar => {
                 if let Some((relation, case)) = classify_coplanar_pair(
                     a,
@@ -3010,6 +3022,11 @@ fn intersect_source_triangles(
     if all_one_side(signs_a) || all_one_side(signs_b) {
         return Ok(PairIntersection::Disjoint);
     }
+    // Touching or crossing, and one interface at mesh scale: overlay, never corefine. A pair the
+    // exact test calls disjoint is C7's first (`near_coplanar_pair` in the caller).
+    if near_coplanar_pair(a, b, atri, btri, weld_step) {
+        return Ok(PairIntersection::Coplanar);
+    }
     if signs_a.iter().all(|sign| *sign == 0) && signs_b.iter().all(|sign| *sign == 0) {
         return Ok(PairIntersection::Coplanar);
     }
@@ -3204,6 +3221,44 @@ fn collect_edge_candidates(
     }
     deferred
 }
+
+// AI-FUNC-SUMMARY: `near_coplanar` for a source pair, never for two neighbours of one tessellation (same component, a shared vertex); returns bool; side effects: none.
+fn near_coplanar_pair(
+    a: &SourceTriangle,
+    b: &SourceTriangle,
+    atri: [Vec3; 3],
+    btri: [Vec3; 3],
+    tol: f64,
+) -> bool {
+    // Same component too (a8's struts overlap flush with themselves), but never two triangles of
+    // one tessellation that share a vertex: those are neighbours on one surface, not two surfaces.
+    let neighbours = a.component == b.component && a.nodes.iter().any(|n| b.nodes.contains(n));
+    !neighbours && near_coplanar(atri, btri, tol)
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Decide whether two triangles lie in one plane up to the weld quantum (Invariant M1 at the identity scale): parallel planes and every vertex of each within `tol` of the other's plane.
+// Inputs: the two triangles in the normalized frame and the tolerance - the weld step `q = 0.1 eps`, the scale coordinates are already identified at; C7 owns everything coarser up to `eps`.
+// Returns: true when they must be overlaid as coplanar rather than intersected.
+// Side effects: None.
+// Notes: An input turned off the lattice axes (or stored in float32) cannot keep a contact plane exactly planar, so the exact sign test reads a flush contact as two surfaces crossing at an angle of 1e-7 and corefines a sliver along it. The angle bound keeps a triangle smaller than `eps` from being called coplanar with anything it happens to lie near; the projection the overlay then works in needs the planes to agree.
+fn near_coplanar(atri: [Vec3; 3], btri: [Vec3; 3], tol: f64) -> bool {
+    let na = atri[1].sub(atri[0]).cross(atri[2].sub(atri[0]));
+    let nb = btri[1].sub(btri[0]).cross(btri[2].sub(btri[0]));
+    let (la, lb) = (na.dot(na).sqrt(), nb.dot(nb).sqrt());
+    if !(la > 0.0 && lb > 0.0) {
+        return false;
+    }
+    let (na, nb) = (na.scale(1.0 / la), nb.scale(1.0 / lb));
+    if na.dot(nb).abs() < NEAR_COPLANAR_COS {
+        return false;
+    }
+    atri.iter().all(|p| nb.dot(p.sub(btri[0])).abs() <= tol)
+        && btri.iter().all(|p| na.dot(p.sub(atri[0])).abs() <= tol)
+}
+
+/// Normals within ~0.8 degrees: the widest a contact can bend and still be overlaid in one projection.
+const NEAR_COPLANAR_COS: f64 = 0.9999;
 
 // AI-FUNC-SUMMARY: True when three exact plane signs are strictly all positive or all negative; returns bool; side effects: none.
 fn all_one_side(signs: [i8; 3]) -> bool {
@@ -5042,6 +5097,36 @@ pub fn clip_arranged_to_box(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // AI-FUNC-SUMMARY: Pin Invariant M1's near-coplanar rule: a contact tilted by float32 rounding is coplanar, a gap wider than the weld quantum or a crossing at an angle is not; returns nothing; side effects: none.
+    #[test]
+    fn a_contact_within_eps_is_coplanar_and_a_gap_or_an_angle_is_not() {
+        let a = [
+            Vec3::new(0.0, 0.0, 0.5),
+            Vec3::new(0.1, 0.0, 0.5),
+            Vec3::new(0.0, 0.1, 0.5),
+        ];
+        let tilted = [
+            Vec3::new(0.02, 0.02, 0.5 + 1.0e-9),
+            Vec3::new(0.12, 0.02, 0.5 - 2.0e-9),
+            Vec3::new(0.02, 0.12, 0.5 + 3.0e-9),
+        ];
+        assert!(near_coplanar(a, tilted, 1.0e-5));
+        let gap = tilted.map(|p| Vec3::new(p.x, p.y, p.z + 2.0e-5));
+        assert!(!near_coplanar(a, gap, 1.0e-5), "a gap wider than the weld quantum is C7's, not an overlay");
+        let crossing = [
+            Vec3::new(0.02, 0.02, 0.49),
+            Vec3::new(0.12, 0.02, 0.51),
+            Vec3::new(0.02, 0.12, 0.49),
+        ];
+        assert!(!near_coplanar(a, crossing, 1.0e-5));
+        let speck = [
+            Vec3::new(0.02, 0.02, 0.5),
+            Vec3::new(0.02 + 1.0e-6, 0.02, 0.5),
+            Vec3::new(0.02, 0.02, 0.5 + 1.0e-6),
+        ];
+        assert!(!near_coplanar(a, speck, 1.0e-5), "a speck smaller than the tolerance is not a parallel plane");
+    }
 
     // AI-FUNC-SUMMARY: Build one synthetic single-source arranged face for private fallback diagnostics; returns ArrangedFace; side effects: none.
     fn diagnostic_face(nodes: [usize; 3], source_triangle: TriId, component: i32) -> ArrangedFace {

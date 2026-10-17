@@ -7,6 +7,9 @@ case on the default path with `h_max_frac` and `h_min_frac` halved until its `[V
 share meets the gated one, or the run exceeds the memory cap (2 GB by default), or `--max-halvings`
 is reached. Each attempt is verified with the case's own verify config.
 
+Historical since plan M-3.2: the default path is deleted, so re-running this needs a binary built
+before that commit (`RUSTMSPT_BIN`). Its committed table (`p2_equal_fidelity.md`) is M-1.4's record.
+
     python3 data/fixtures/meshgen/acceptance/p2_equal_fidelity.py <work> [--out table.md]
         [--cap-mb 2048] [--max-halvings 3] [cases...]
 """

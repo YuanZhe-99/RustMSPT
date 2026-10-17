@@ -7,7 +7,7 @@ Reuses the per-case configs `run_acceptance.py` wrote under `<work>/<path>/`, re
 document of the two runs. The only lines excluded are the ones that name the run rather than the
 mesh - the config hash and the output paths, which differ because the output directory does.
 
-    python3 data/fixtures/meshgen/acceptance/check_determinism.py <work> [--path default|gated]
+    python3 data/fixtures/meshgen/acceptance/check_determinism.py <work> [--path gated]
         [--out table.txt] [cases...]
 
 Prints one row per case and exits non-zero on any mismatch.
@@ -53,7 +53,7 @@ def outputs(config_text):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("work")
-    ap.add_argument("--path", default="gated", choices=["default", "gated"])
+    ap.add_argument("--path", default="gated", choices=["gated"])
     ap.add_argument("--out")
     ap.add_argument("cases", nargs="*")
     args = ap.parse_args()
@@ -67,10 +67,7 @@ def main():
     # The same environment `run_acceptance.py` meshes under: its diagnostic arrays are in the
     # files being compared, so leaving them out would compare two different documents.
     env = dict(os.environ, RUSTMSPT_CUT_DIAG="1", RUSTMSPT_TIME_STAGES="1")
-    env.pop("RUSTMSPT_PLC_PASS", None)
-    if args.path == "gated":
-        env["RUSTMSPT_PLC_PASS"] = "1"
-        env["RUSTMSPT_PLC_DIAG"] = "1"
+    env["RUSTMSPT_PLC_DIAG"] = "1"
     rows = []
     failed = False
     for case in cases:

@@ -379,11 +379,8 @@ pub fn split_soup_by_surface(
                     // `[V3]`-clean on all nine acceptance cases and takes `[V6]` A-6a
                     // 37 -> 21 and A-6b 60 -> 47 for A-3 79 -> 80.
                     Some(_) => {
-                        if std::env::var_os("RUSTMSPT_NO_MIXED_BY_CENTRE").is_none() {
-                            side = None;
-                            break;
-                        }
-                        return bail(&format!("mixed sides on one triangle {triangle:?}"));
+                        side = None;
+                        break;
                     }
                 },
             }

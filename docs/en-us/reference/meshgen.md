@@ -94,6 +94,7 @@ the shape. `s08_cut` is the first snapshot that fits the input.
 | `construct_three_triangle_intersection` | `src/meshgen/predicates.rs:631` | Frozen C2 local-frame Cramer construction, fully recomputed in DD on escalation. |
 | `EdgeId` / `EdgeId::new` / `IsectProv` / `SegKey` / `SegKey::new` | `src/meshgen/arrange.rs:29/33/44/52/61` | Canonical `EdgeTri`/`EdgeEdge`/`TriTriTri` and segment identities. |
 | `CoincidenceCase` / policy methods / `CoincidenceEntity` / `CoincidenceEvent` | `src/meshgen/arrange.rs:73/88/97/105/112` | Typed C1-C10 classification, sorted entities/components, and frozen reject/warn semantics. |
+| `near_coplanar` | `src/meshgen/arrange.rs:3221` | Invariant M1 at the pair test: two triangles (not neighbours in one tessellation) whose planes agree within 0.8 deg and whose vertices lie within the weld quantum `q = 0.1 eps` of each other's plane are overlaid as coplanar (C7 keeps the coarser near-coincidences up to `eps`); a float32 rotation cannot keep a flush contact exactly planar (plan M-2.6). |
 | `DegradedReason` / `DegradedNeighborhood` / `ArrangedPointFeature` | `src/meshgen/arrange.rs:120/130/140` | Durable G2-3 fallback records and welded C5/C6 point features. |
 | `ArrangeOptions` / `ArrangeOptions::new` / `with_coincidence` | `src/meshgen/arrange.rs:149/159/175` | Domain, epsilon, policy, and component table; constructor defaults to `merge`. |
 | `RegistryVertex` / `RegistrySegment` / `IntersectionRegistry` | `src/meshgen/arrange.rs:183/194/203` | Symbolic-first global registry; one committed node retains every compatible provenance alias. |
@@ -173,6 +174,7 @@ the shape. `s08_cut` is the first snapshot that fits the input.
 | `face_on_facet_plane` | `src/meshgen/cdt.rs:4462` | Whether a mesh face lies on a constraint facet: every vertex a facet vertex within the facet's band, or any other node within `tol`. The band covers only the facet's own snapped vertices; extending it to other nodes counted a sliver lying along a bent facet as covering it (a8 cell 507267 read 1.416 coverage). Used by the coverage check, `regions_by_constraint` and interface attribution. |
 | `PointClassifier::restrict_to_active` | `src/meshgen/classify.rs:679` | After S6, makes `triangles_of` return only faces that bound material (S6's `active_face`), while the inside test keeps every face. S8's face traces and fragment clips no longer cut along faces buried in a self-intersecting component's own union: gated a8 on-surface 98.455 -> 98.796 %, tets -5.8 %, link-polygon refusals 733 -> 263. |
 | `refresh_split_interfaces` | `src/meshgen/cut.rs:6975` | After the hanging-node repair, replaces an interface face no tet carries any more by its two halves at the node now on one of its edges, side elements recomputed; the repair splits every tet around an edge, including another tagged face on it (a3: 4 `[V12]` side_elems failures). |
+| `compact_unreferenced_nodes` | `src/meshgen/cut.rs:5778` | End of S8: drops every node no tet references and renumbers the rest in order (tets, interfaces, rim and curve edges, constraint arrays, `n_lattice_nodes`); a6a_r carried an S7-duplicated lattice node no cell used (plan M-2.6). |
 | `remove_flat_quad_tets` | `src/meshgen/cdt.rs:3385` | Removes flat tets from a constrained tetrahedralisation before the facet check: a vertex lying on an opposite edge splits every tet around that edge (a Steiner midpoint the Delaunay kept whole), and a flat quad tet is removed by 2-2-flipping one side\'s pyramid to the other diagonal; otherwise the flat tet and its face-neighbours are re-coned from one of their vertices with the cavity boundary kept (star test, no flat tet, volume); failing all three, one of the flat tet's edges that neither the hull nor a facet uses is removed (`remove_edge`), kept only when the flat count falls. Such a tet makes a facet read covered twice. Reference case 1 interior class 124 -> 84, gated a1 94.80 -> 95.91 %, a3 +0.2 points; the edge-removal move: reference case 1 refused facets 406 -> 226, gated on-surface 94.956 -> 95.346 %, a1 95.911 -> 96.882 %. |
 | `facet_plane` | `src/meshgen/cdt.rs:4493` | A §7.4 constraint facet's unit normal, offset and the band within which a face lies ON it: the facet's own deviation from its plane (its rim is snapped to the face traces, §6.43) plus `tol`. Used by the facet-coverage check, `regions_by_constraint` and the gated path's interface attribution; before it, a facet bent by its snap had none of its own faces counted and 90 % of A-3's "interior is not covered" refusals were this artefact. |
 | `constrained_tets_with_steiner` | `src/meshgen/cdt.rs:3786` | Plan M-2.1 on the gated path: `constrained_tets`, then up to three rounds of Steiner points on the constraint - (a) the midpoint of each facet edge the tetrahedralisation lacks, unless both ends lie in one cell face plane (J1), accepted only when `intern` creates a NEW node; (b) facet-plane crossings of mesh edges inside the facet; (c) on a thin-tet or uncovered-facet refusal, a point strictly inside the cell above each flat tet lying on a cell face (co-circular face nodes), a quarter of its longest edge in; (d) on a hull-recovery refusal ("the link polygon has no valid triangulation", "neither the boundary nor the facets survive"), the same point above every current hull face not in the frozen boundary, so the flip becomes a pyramid's (owner decision D-11: gated a8 99.12 -> 99.78 %, a3 98.91 -> 99.64 %, reference case 1 95.73 -> 97.70 %, at +1-8 % tets, +28 % on a7a/a7b, and more slivers, left to M-5). On refusal the facets and the arena are restored, so the facet-split fan sees exactly what it would have without the pass. Edge class 114 -> 49 (A-3), 25 -> 2 (A-6a), 1,835 -> 1,454 (A-8). |
@@ -1435,7 +1437,7 @@ the cell they must meet inside it. That last one separates a junction from a gap
 and splitting A-7a's 512 plate cells cost 0.36/0.10 % -> 0.57/0.44 % of volume before the
 guard was added. It counts distinct **components**, not chords - one component crossing a
 face twice is a plate's own two walls, which has no gap to mistake.
-`RUSTMSPT_NO_JCT_CUT=1` restores the old total fan; `RUSTMSPT_JCT_DIAG=1` prints refusals.
+`RUSTMSPT_JCT_DIAG=1` prints refusals (the `RUSTMSPT_NO_JCT_CUT` handle that restored the old total fan was deleted in plan M-3.2).
 
 #### One surface, more than one hole
 
@@ -1469,8 +1471,7 @@ Measured: sheet fixture 0 -> **66 cells cut into 132 material pieces**, band fix
 #### The K1 second cut ships
 
 Keeping invariant K1's **second** crossing on an edge as a real cut node takes those figures
-to 145/372 and 2,706/7,029. It is on by default; `RUSTMSPT_NO_K1_SECOND_CUT=1` turns it off
-as a bisection handle. It shipped gated for one pass because it cost conformity, and four
+to 145/372 and 2,706/7,029. It is always on (its `RUSTMSPT_NO_K1_SECOND_CUT` bisection handle was deleted in plan M-3.2). It shipped gated for one pass because it cost conformity, and four
 separate defects stood behind that. All four are fixed, and each was found only after a
 wrong guess, so both the fix and the guess are recorded.
 
@@ -2275,6 +2276,25 @@ grazes a cell along a face edge there is no facet at all (reference case 3, cell
 on the edge 2-7 the surface runs along, was read "outside" and left [0, 2, 7] straddling). Only
 input triangles whose box meets the cell's are traced. Reference case 3 whole-cell fans 1 -> 0.
 `[SIDE-TRACE]` (print-only, focused cell) lists each boundary triangle's trace.
+
+**Inclined geometry (plan M-2.6) and one S8 path (plan M-3.2), 2026-10-17.** Turning the scenes
+23 degrees off the lattice (`*_r` cases) broke `[V1]`/`[V3]` wherever a contact or a flush face
+existed, and the cause was upstream of S8: a float32 rotation cannot keep a contact plane exactly
+planar, so S2's exact sign test saw a6a/a6b's limb-on-cube contact and a8's flush strut faces as
+surfaces crossing at ~1e-7 rad (coplanar overlays 4/4/144 -> 0) and corefined slivers along them.
+`near_coplanar` applies Invariant M1 at the pair test - planes within 0.8 deg, vertices within the
+weld quantum `q`, C7's one-to-one match tried first on a pair the exact test calls disjoint - and
+the overlays return to the axis-aligned counts. Four local repairs, each from one dumped cell: a facet-split fan apex must clear every
+boundary plane by `tol` (a 1e-23-high fan tet changes sign when the file is denormalised); Steiner
+points keep a tenth of their own step from every node and facet, and near-coincident facet
+crossings are inserted once (`[V2]` duplicates with 1e-13 slivers between); nodes no tet references
+are dropped at the end of S8 (`compact_unreferenced_nodes`); a component whose facets in a cell all
+lie on one face except a corner less than `eps` inside it is dropped from that cell, with rollback.
+All fifteen cases pass `[V1]`/`[V2]`/`[V3]`; a3's on-surface share is 4e-7 lower, every other
+axis-aligned figure equal. The `RUSTMSPT_PLC_PASS`, `RUSTMSPT_CDT`, `RUSTMSPT_NO_JCT_CUT`,
+`RUSTMSPT_NO_K1_SECOND_CUT` and `RUSTMSPT_NO_MIXED_BY_CENTRE` handles are deleted: the local PLC
+pass is the S8 path, `subdivide_cell`'s cut-node route is gone, and every remaining `RUSTMSPT_*`
+variable in the mesher only changes what is printed or dumped.
 
 ### Welded sheet cuts (G6-5)
 
