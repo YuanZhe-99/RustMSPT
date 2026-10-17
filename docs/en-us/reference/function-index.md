@@ -1021,3 +1021,25 @@ From [pipeline-closest.md](pipeline-closest.md).
 | `METHOD_VERSION` | Closest point | `src/pipeline/closest.rs:10` | `closest-point-v1`, written in every report. |
 | `ClosestPipeline` | Closest point | `src/pipeline/closest.rs:12` | The subcommand's pipeline. |
 | `ClosestPipeline::run` | Closest point | `src/pipeline/closest.rs:32` | Read, build, seed, search, write primitive/closest/distance/report. |
+
+## Tet repair
+
+From [pipeline-tet-repair.md](pipeline-tet-repair.md).
+
+| Item | Module | Source | Summary |
+|---|---|---|---|
+| `FLAT` | Tet repair | `src/geometry/tet_repair.rs:7` | `1e-30`: a cell with no more volume has an infinite ratio. |
+| `RepairParams` | Tet repair | `src/geometry/tet_repair.rs:13` | limit, sweeps, wall_tol, padding, joint_tol, seed. |
+| `Flip` | Tet repair | `src/geometry/tet_repair.rs:24` | A flip taken: kind, where, worst ratio before and after. |
+| `Moved` | Tet repair | `src/geometry/tet_repair.rs:32` | A node moved: node, along a wall or a layer, distance, excess before (`None`: inverted) and after, joint pass or not. |
+| `ToPadding` | Tet repair | `src/geometry/tet_repair.rs:43` | A flat cell given to the padding. |
+| `RepairReport` | Tet repair | `src/geometry/tet_repair.rs:51` | Bad before, to padding, flips, moves, inverted and over the limit after, worst ratio after. |
+| `Repaired` | Tet repair | `src/geometry/tet_repair.rs:62` | Points, live cells, densities, report. |
+| `aspect_ratio` | Tet repair | `src/geometry/tet_repair.rs:95` | YAFEQ's ratio and the signed volume of one cell. |
+| `nelder_mead` | Tet repair | `src/geometry/tet_repair.rs:136` | scipy's non-adaptive Nelder-Mead. |
+| `repair` | Tet repair | `src/geometry/tet_repair.rs:692` | The whole rule: padding, flips and moves, the joint pass. |
+| `TetRepairParams` | Tet repair | `src/config/tet_repair.rs:9` | The `tet_repair` YAML block. |
+| `TetRepairConfig` | Tet repair | `src/config/tet_repair.rs:45` | The document. |
+| `METHOD_VERSION` | Tet repair | `src/pipeline/tet_repair.rs:9` | `tet-repair-v1`, written in every report. |
+| `TetRepairPipeline` | Tet repair | `src/pipeline/tet_repair.rs:11` | The subcommand's pipeline. |
+| `TetRepairPipeline::run` | Tet repair | `src/pipeline/tet_repair.rs:22` | Read, repair, write the mesh and the report. |

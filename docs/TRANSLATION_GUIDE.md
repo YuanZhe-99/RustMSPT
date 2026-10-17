@@ -28,6 +28,7 @@ docs/zh-cn/
     pipeline-placement.md
     pipeline-state-map.md
     pipeline-closest.md
+    pipeline-tet-repair.md
   algorithms/
     ffd-forging.md
     mesh-clipping-volume-fraction.md
@@ -40,6 +41,7 @@ docs/zh-cn/
     void-aware-placement.md
     state-map-location.md
     closest-point.md
+    tet-repair.md
   examples/
     crop.md
     forge.md
@@ -47,6 +49,7 @@ docs/zh-cn/
     mesh-render.md
     state-map.md
     closest.md
+    tet-repair.md
     optimize.md
     pack-placement.md
     pack-target-distribution.md

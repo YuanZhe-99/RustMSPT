@@ -11,6 +11,7 @@ pub mod render_scene;
 pub mod s2;
 pub mod scene_render;
 pub mod spatial;
+pub mod tet_repair;
 pub mod void_index;
 pub mod volume;
 

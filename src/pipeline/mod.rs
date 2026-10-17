@@ -22,6 +22,7 @@ pub mod scale;
 pub mod split_filter;
 pub mod closest;
 pub mod state_map;
+pub mod tet_repair;
 pub mod timing;
 
 use crate::error::Result;
