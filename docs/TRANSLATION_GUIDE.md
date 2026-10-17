@@ -27,6 +27,7 @@ docs/zh-cn/
     pipeline-packing.md
     pipeline-placement.md
     pipeline-state-map.md
+    pipeline-closest.md
   algorithms/
     ffd-forging.md
     mesh-clipping-volume-fraction.md
@@ -38,12 +39,14 @@ docs/zh-cn/
     stl-rendering.md
     void-aware-placement.md
     state-map-location.md
+    closest-point.md
   examples/
     crop.md
     forge.md
     measure.md
     mesh-render.md
     state-map.md
+    closest.md
     optimize.md
     pack-placement.md
     pack-target-distribution.md

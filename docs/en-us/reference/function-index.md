@@ -990,3 +990,34 @@ From [pipeline-state-map.md](pipeline-state-map.md).
 | `METHOD_VERSION` | State map | `src/pipeline/state_map.rs:10` | `state-map-locate-v2` (v2: the fallback tie band), written in every report. |
 | `StateMapPipeline` | State map | `src/pipeline/state_map.rs:12` | The subcommand's pipeline. |
 | `StateMapPipeline::run` | State map | `src/pipeline/state_map.rs:32` | Read, build, locate, write donors/distances/report. |
+
+## Closest point
+
+From [pipeline-closest.md](pipeline-closest.md).
+
+| Item | Module | Source | Summary |
+|---|---|---|---|
+| `DISTANCE_TIE` | Closest point | `src/geometry/closest.rs:4` | `1e-12`: distances within this fraction of the least tie; the lowest primitive index wins. |
+| `Kind` | Closest point | `src/geometry/closest.rs:10` | `Triangles` or `Segments`. |
+| `Kind::corners` | Closest point | `src/geometry/closest.rs:17` | Corners per primitive: 3 or 2. |
+| `Primitives` | Closest point | `src/geometry/closest.rs:26` | Vertices and corner indices; a segment stored as `[a, b, b]`. |
+| `Primitives::new` | Closest point | `src/geometry/closest.rs:39` | Check and pack the arrays; refuses ragged arrays, non-finite vertices, indices out of range. |
+| `Primitives::len` / `is_empty` | Closest point | `src/geometry/closest.rs:64` | Primitive count. |
+| `Primitives::corner_points` | Closest point | `src/geometry/closest.rs:74` | A primitive's corner coordinates. |
+| `Primitives::closest` | Closest point | `src/geometry/closest.rs:80` | Closest point of one primitive and its exact distance. |
+| `closest_on_segment` | Closest point | `src/geometry/closest.rs:125` | Clamped projection onto a segment. |
+| `closest_on_triangle` | Closest point | `src/geometry/closest.rs:141` | Voronoi-region closest point on a triangle; a triangle with no area gives its nearest edge. |
+| `PrimBvh` | Closest point | `src/geometry/closest.rs:208` | Static hierarchy over exact primitive boxes, laid out so the GPU walks the same arrays. |
+| `PrimBvh::build` | Closest point | `src/geometry/closest.rs:225` | Deterministic median-split build. |
+| `PrimBvh::nearest` | Closest point | `src/geometry/closest.rs:335` | The rule for one point, from an optional seed. |
+| `Nearest` | Closest point | `src/geometry/closest.rs:362` | Primitive (`-1` none), closest point, distance per query. |
+| `nearest_all` | Closest point | `src/geometry/closest.rs:374` | Every query in parallel over the current pool, from optional seeds. |
+| `GpuClosestSeedPipeline` | Closest point | `src/gpu/closest_candidates.rs:8` | The compiled seed kernel on the shared device. |
+| `GpuClosestSeedPipeline::new` | Closest point | `src/gpu/closest_candidates.rs:22` | Compile or reuse the kernel. |
+| `GpuClosestSeedPipeline::adapter` | Closest point | `src/gpu/closest_candidates.rs:90` | Adapter name and backend, for the report. |
+| `GpuClosestSeedPipeline::seeds` | Closest point | `src/gpu/closest_candidates.rs:100` | Per-point nearest primitive in `f32`, batched to device limits. |
+| `ClosestParams` | Closest point | `src/config/closest.rs:11` | The `closest` YAML block. |
+| `ClosestConfig` | Closest point | `src/config/closest.rs:25` | The document: `closest` plus optional `acceleration`. |
+| `METHOD_VERSION` | Closest point | `src/pipeline/closest.rs:10` | `closest-point-v1`, written in every report. |
+| `ClosestPipeline` | Closest point | `src/pipeline/closest.rs:12` | The subcommand's pipeline. |
+| `ClosestPipeline::run` | Closest point | `src/pipeline/closest.rs:32` | Read, build, seed, search, write primitive/closest/distance/report. |

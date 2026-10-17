@@ -1,5 +1,6 @@
 mod runtime;
 pub mod certify;
+pub mod closest_candidates;
 pub mod context;
 pub mod render;
 pub mod s2;
@@ -21,4 +22,5 @@ pub use s2_shell::GpuShellS2Pipeline;
 pub use scene_render::{GpuClipPlane, GpuSceneOptions, GpuScenePipeline};
 pub use volume_transform::GpuVolumeTransformPipeline;
 pub use tet_candidates::GpuTetCandidatePipeline;
+pub use closest_candidates::GpuClosestSeedPipeline;
 pub use voxel::GpuVoxelPipeline;

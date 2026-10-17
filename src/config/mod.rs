@@ -1,4 +1,5 @@
 pub mod acceleration;
+pub mod closest;
 pub mod crop;
 pub mod deserialize;
 pub mod forging;
@@ -87,5 +88,6 @@ pub use placement::{
 };
 pub use render::{RenderConfig, RenderParams};
 pub use scale::{ScaleConfig, ScalingParams};
+pub use closest::{ClosestConfig, ClosestParams};
 pub use state_map::{StateMapConfig, StateMapParams};
 pub use split_filter::{SplitFilterConfig, SplitFilterOutput, SplitFilterRules, SplitFilterVolume};

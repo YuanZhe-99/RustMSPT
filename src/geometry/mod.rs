@@ -1,4 +1,5 @@
 pub mod bbox;
+pub mod closest;
 pub mod collision;
 pub mod forging;
 pub mod mesh_ops;

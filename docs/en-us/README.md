@@ -1,6 +1,6 @@
 # RustMSPT Documentation (English)
 
-RustMSPT (Rust Microstructure Processing Toolbox) is a Rust toolkit for STL/CT-volume microstructure processing, providing pipelines for `split-filter`, `pack`, `optimize`, `measure`, `forge`, `scale`, `crop`, `render`, `mesh-render` and `state-map`, plus a `version` subcommand, built on shared geometry, I/O, and (optionally GPU-accelerated) compute-kernel modules.
+RustMSPT (Rust Microstructure Processing Toolbox) is a Rust toolkit for STL/CT-volume microstructure processing, providing pipelines for `split-filter`, `pack`, `optimize`, `measure`, `forge`, `scale`, `crop`, `render`, `mesh-render`, `state-map` and `closest`, plus a `version` subcommand, built on shared geometry, I/O, and (optionally GPU-accelerated) compute-kernel modules.
 
 This directory documents the codebase at the function level, explains its core algorithms conceptually, and walks through each pipeline with real, captured example output. It complements, and is built from the same source as, the `// AI-FUNC-SUMMARY` comments that already annotate almost every function in `src/` — see [AGENTS.md](../../AGENTS.md) for that convention and the "Function Reading Policy" it defines.
 
@@ -30,6 +30,7 @@ Mirrors the `src/` module layout. Each document opens with an `## Index` table (
 | [pipeline-optimize.md](reference/pipeline-optimize.md) | `pipeline/optimize.rs` |
 | [mesh-render-and-vtu.md](reference/mesh-render-and-vtu.md) | `io/vtu.rs`, `geometry/render_scene.rs`, `geometry/scene_render.rs`, `pipeline/mesh_render.rs`, `config/mesh_render.rs` |
 | [pipeline-state-map.md](reference/pipeline-state-map.md) | `transfer/{npy,locate}.rs`, `gpu/tet_candidates.rs`, `pipeline/state_map.rs`, `config/state_map.rs` |
+| [pipeline-closest.md](reference/pipeline-closest.md) | `geometry/closest.rs`, `gpu/closest_candidates.rs`, `pipeline/closest.rs`, `config/closest.rs` |
 
 ## Algorithms (conceptual explanations)
 
@@ -46,6 +47,7 @@ Higher-level explanations of the non-obvious algorithms behind the reference doc
 | [mesh-clipping-volume-fraction.md](algorithms/mesh-clipping-volume-fraction.md) | Sutherland-Hodgman mesh clipping and volume-fraction accounting |
 | [void-aware-placement.md](algorithms/void-aware-placement.md) | Determinism, the size multiset, the void predicate and why it is complete, the stop-reason precedence |
 | [state-map-location.md](algorithms/state-map-location.md) | Locating a remesh's sampling points in the old mesh: the rule, the BVH, rayon, and why the GPU only proposes candidates |
+| [closest-point.md](algorithms/closest-point.md) | The nearest point on triangles or segments: the tie rule, the BVH, and why a GPU seed cannot change the answer |
 | [stl-rendering.md](algorithms/stl-rendering.md) | Shared camera framing, CPU ray casting, and GPU offscreen rasterization |
 
 ## Examples (per-pipeline walkthroughs)
@@ -68,6 +70,7 @@ Each walkthrough shows a realistic config, the exact CLI command, and output cap
 | [render.md](examples/render.md) | `render` |
 | [mesh-render.md](examples/mesh-render.md) | `mesh-render` (VTU volume-mesh renderer) |
 | [state-map.md](examples/state-map.md) | `state-map` (locating sampling points for a state mapping) |
+| [closest.md](examples/closest.md) | `closest` (the nearest point on a surface or on lines) |
 
 ## Conventions used throughout
 

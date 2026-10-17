@@ -29,6 +29,7 @@ RustMSPT（Rust Microstructure Processing Toolbox，Rust 微结构处理工具�
 | [pipeline-packing.md](reference/pipeline-packing.md) | `pipeline/{pack,pack_targets}.rs` |
 | [mesh-render-and-vtu.md](reference/mesh-render-and-vtu.md) | `io/vtu.rs`、`geometry/render_scene.rs`、`geometry/scene_render.rs`、`pipeline/mesh_render.rs`、`config/mesh_render.rs` |
 | [pipeline-state-map.md](reference/pipeline-state-map.md) | `transfer/{npy,locate}.rs`、`gpu/tet_candidates.rs`、`pipeline/state_map.rs`、`config/state_map.rs` |
+| [pipeline-closest.md](reference/pipeline-closest.md) | `geometry/closest.rs`、`gpu/closest_candidates.rs`、`pipeline/closest.rs`、`config/closest.rs` |
 | [pipeline-optimize.md](reference/pipeline-optimize.md) | `pipeline/optimize.rs` |
 
 ## 算法（概念性说明）
@@ -46,6 +47,7 @@ RustMSPT（Rust Microstructure Processing Toolbox，Rust 微结构处理工具�
 | [void-aware-placement.md](algorithms/void-aware-placement.md) | 确定性、尺寸集合、孔隙判据及其完备性、停止原因的优先级 |
 | [mesh-clipping-volume-fraction.md](algorithms/mesh-clipping-volume-fraction.md) | Sutherland-Hodgman 网格裁剪与体积分数统计 |
 | [state-map-location.md](algorithms/state-map-location.md) | 在旧网格中定位重网格化采样点：规则、BVH、rayon，以及为什么 GPU 只提出候选 |
+| [closest-point.md](algorithms/closest-point.md) | 三角形或线段上的最近点：并列规则、BVH，以及为什么 GPU 种子不会改变答案 |
 | [stl-rendering.md](algorithms/stl-rendering.md) | 共享相机取景、CPU 光线投射与 GPU 离屏光栅化 |
 
 ## 示例（各流水线走查）
@@ -68,6 +70,7 @@ RustMSPT（Rust Microstructure Processing Toolbox，Rust 微结构处理工具�
 | [render.md](examples/render.md) | `render` |
 | [mesh-render.md](examples/mesh-render.md) | `mesh-render`（VTU 体网格渲染器） |
 | [state-map.md](examples/state-map.md) | `state-map`（为状态映射定位采样点） |
+| [closest.md](examples/closest.md) | `closest`（曲面或线上的最近点） |
 
 ## 全文使用的约定
 

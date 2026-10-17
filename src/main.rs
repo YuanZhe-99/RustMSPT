@@ -2,8 +2,9 @@ use clap::{Parser, Subcommand};
 use rustmspt::config::{
     load_pack_document, load_yaml, CropConfig, ForgingConfig,
     MeasurementConfig, MeshRenderConfig, OptimizationConfig,
-    PackDocument, RenderConfig, ScaleConfig, SplitFilterConfig, StateMapConfig,
+    ClosestConfig, PackDocument, RenderConfig, ScaleConfig, SplitFilterConfig, StateMapConfig,
 };
+use rustmspt::pipeline::closest::ClosestPipeline;
 use rustmspt::pipeline::crop::CropPipeline;
 use rustmspt::pipeline::forge::ForgePipeline;
 use rustmspt::pipeline::measure::MeasurePipeline;
@@ -96,6 +97,14 @@ enum Commands {
         #[arg(long)]
         config: Option<PathBuf>,
         /// Replace `state_map.output_dir`.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    /// The nearest point on a set of triangles or segments for every query point.
+    Closest {
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Replace `closest.output_dir`.
         #[arg(long)]
         output: Option<PathBuf>,
     },
@@ -348,6 +357,14 @@ fn run_cli() -> anyhow::Result<()> {
                 conf.state_map.output_dir = output.to_string_lossy().to_string();
             }
             StateMapPipeline { config: conf }.run()?;
+        }
+        Commands::Closest { config, output } => {
+            let path = pick_config_path(config, "closest_config.yaml");
+            let mut conf: ClosestConfig = load_yaml(&path)?;
+            if let Some(output) = output {
+                conf.closest.output_dir = output.to_string_lossy().to_string();
+            }
+            ClosestPipeline { config: conf }.run()?;
         }
         Commands::Scale {
             config,
