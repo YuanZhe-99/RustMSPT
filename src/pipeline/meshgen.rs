@@ -1564,7 +1564,10 @@ impl Pipeline for MeshGenPipeline {
             };
         let improved = crate::meshgen::improve::improve_doc_with(
             &mut doc,
-            &crate::meshgen::improve::ImproveOptions::default(),
+            &crate::meshgen::improve::ImproveOptions {
+                weld: 0.1 * eps * domain_diag,
+                ..Default::default()
+            },
             (p.fidelity.mode == crate::config::meshgen::FidelityMode::Approximate).then(|| {
                 crate::meshgen::improve::ApproximateInputs {
                     tolerance: p.fidelity.tolerance_frac * domain_diag,

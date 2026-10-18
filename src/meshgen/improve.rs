@@ -32,12 +32,16 @@ pub struct ImproveOptions {
     pub min_dihedral_deg: f64,
     /// Passes over the bad tets; a pass that collapses nothing ends the loop early.
     pub max_passes: usize,
+    /// The weld quantum in the document's units (Invariant M1, `0.1 eps`): four surface points
+    /// within it of one plane are one facet, as `merge_coplanar` already treated them. 0 uses the
+    /// arithmetic tolerance only.
+    pub weld: f64,
 }
 
 impl Default for ImproveOptions {
     // AI-FUNC-SUMMARY: The owner's FEM gate (AR < 10, dihedral >= 10 deg) and six passes; returns ImproveOptions; side effects: none.
     fn default() -> Self {
-        Self { ar_target: 10.0, min_dihedral_deg: 10.0, max_passes: 6 }
+        Self { ar_target: 10.0, min_dihedral_deg: 10.0, max_passes: 6, weld: 0.0 }
     }
 }
 
@@ -163,6 +167,8 @@ struct Mesh {
     /// Print-only (`RUSTMSPT_S9_DIAG`): how often each refusal site fired, keyed by source line
     /// (9xx: the guards of `try_unfold`, in order).
     refusals: std::cell::RefCell<BTreeMap<usize, usize>>,
+    /// `ImproveOptions::weld`, at least `tol`: the coplanarity bound of `try_unfold`.
+    weld: f64,
 }
 
 const BOX_BASE: u32 = u32::MAX - 16;
@@ -709,7 +715,7 @@ impl Mesh {
     // the two tagged face records move onto its other two faces - the same plane within `tol`, so
     // no surface moves and no node does. The worst elements S9 left on the rotated plates
     // (a7a_r, AR 5.3e7) are exactly this.
-    fn try_unfold(&mut self, t: u32) -> bool {
+    fn try_unfold(&mut self, t: u32, flat: f64) -> bool {
         let tet = self.tets[t as usize];
         let p = self.tet_points(tet);
         let mut longest = 0.0f64;
@@ -719,13 +725,13 @@ impl Mesh {
                 longest = longest.max(d.dot(d).sqrt());
             }
         }
-        // Coplanar within tol: every corner within tol of the plane of the other three.
+        // Coplanar within `flat`: every corner that close to the plane of the other three.
         let six_v = orient3d(p[0], p[1], p[2], p[3]).abs();
         for slots in TET_FACES {
             let [a, b, c] = slots.map(|k| p[k]);
             let area2 = b.sub(a).cross(c.sub(a));
             let area2 = area2.dot(area2).sqrt();
-            if area2 <= 0.0 || six_v / area2 > self.tol {
+            if area2 <= 0.0 || six_v / area2 > flat {
                 { self.refused(901); return false; }
             }
         }
@@ -1134,6 +1140,7 @@ pub fn improve_doc_with(doc: &mut VtuDoc, opts: &ImproveOptions, approximate: Op
         curve_ids: vec![BTreeSet::new(); n],
         curve_edges: BTreeMap::new(),
         tol: 1.0e-9 * diag,
+        weld: opts.weld.max(1.0e-9 * diag),
         refusals: std::cell::RefCell::new(BTreeMap::new()),
         approx: None,
     };
@@ -1333,7 +1340,7 @@ pub fn improve_doc_with(doc: &mut VtuDoc, opts: &ImproveOptions, approximate: Op
             if !mesh.bad(tet, opts) {
                 continue;
             }
-            let mut done_here = mesh.try_unfold(t);
+            let mut done_here = mesh.try_unfold(t, mesh.tol);
             for (i, j) in [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)] {
                 if done_here {
                     break;
@@ -1387,6 +1394,19 @@ pub fn improve_doc_with(doc: &mut VtuDoc, opts: &ImproveOptions, approximate: Op
             );
         }
         println!("[S9-DIAG] refusals by improve.rs line: {:?}", mesh.refusals.borrow());
+    }
+    // Last, the folds that are flat only to the weld quantum (a float32 input's inclined plane is
+    // flat to ~1e-7, which `tol` refuses). Not inside the passes: the moved tags are then
+    // coplanar to the weld only, which gives their nodes a further plane and pins them against
+    // every later move (p1: 165 more bad tets when this ran in the passes).
+    if mesh.weld > mesh.tol {
+        let weld = mesh.weld;
+        for (_, t) in bad_tets(&mesh.points, &mesh.tets, &mesh.alive, opts) {
+            if mesh.alive[t as usize] && mesh.try_unfold(t, weld) {
+                stats.flips += 1;
+            }
+        }
+        (stats.bad_after, stats.worst_ar_after) = count_bad(&mesh);
     }
     stats.tets_after = mesh.alive.iter().filter(|a| **a).count();
     lap("count");
