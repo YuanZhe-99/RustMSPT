@@ -954,7 +954,8 @@ impl Pipeline for MeshGenPipeline {
                 .flat_map(|c| c.nodes.windows(2).map(|w| [clipped.vertices[w[0]], clipped.vertices[w[1]]]))
                 .collect();
             // A triangle touching an intersection curve keeps the input's own edges: at a
-            // near-tangent junction a merged facet left a curve node with no tet of one body
+            // transversal junction (the surfaces meet at 45-57 deg) whose component-1 wedge inside
+            // one cell is 1 % of eps thick, a merged facet left a curve node with no tet of one body
             // (reference case 2, `[V9]`). One-component sharp edges do not pin anything.
             let junction_nodes: std::collections::BTreeSet<usize> = clipped
                 .curves

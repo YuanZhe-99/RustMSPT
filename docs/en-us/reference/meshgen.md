@@ -2148,10 +2148,13 @@ where two struts' coplanar faces meet, and merging across it left a strut corner
 (`[V9]` FAIL before, PASS after). **Slivers stay alone**: a triangle whose height is within the
 tolerance is never seeded or absorbed, as clipping drops it anyway. **Junctions stay as the input drew them**: a
 triangle with a vertex on an intersection curve (two or more components) is never merged - reference
-case 2 has a near-tangent junction whose component-1 wedge is 1 % of `eps` thick, and merging the
+case 2 has a junction cell where component 1's wedge is 1 % of `eps` thick, and merging the
 triangles beside it left an intersection-curve node with no component-1 tet (`[V9]` FAIL, PASS
 again with the rule). A cube's or a plate's own sharp edges are one-component curves and are not
-affected, so the seams the merge exists to remove still go.
+affected, so the seams the merge exists to remove still go. The junction there is **transversal** (the
+two surfaces meet at 45-57 deg), so neither an angle rule (lock only junctions within `feature_angle_deg`
+of parallel: case 2 fails again) nor locking only the edges at a curve node (identical to the whole-triangle
+rule on eight cases) selects it; z31's extra gains on a3/a9 stay unclaimed.
 
 **S2 keeps constructed points on their facets (plan M-1.6).** `build_registry_and_nodes` gave a
 constructed intersection point its key's grid coordinates (`key * weld_step`), moving it off its
