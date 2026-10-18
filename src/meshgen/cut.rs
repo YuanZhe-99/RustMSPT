@@ -1181,6 +1181,14 @@ pub fn cut_lattice(
     all_components.sort_unstable();
     all_components.dedup();
     let quantum = options.eps.max(f64::MIN_POSITIVE);
+    let s8_timing = std::env::var_os("RUSTMSPT_TIME_STAGES").is_some();
+    let mut s8_clock = std::time::Instant::now();
+    let mut s8_lap = |label: &str| {
+        if s8_timing {
+            println!("[S8-TIME] {} {:?}", label, s8_clock.elapsed());
+        }
+        s8_clock = std::time::Instant::now();
+    };
     let mut nodes = snapped.nodes.clone();
 
     // --- global cut-node ids, one per (edge, component) ---
@@ -1496,6 +1504,7 @@ pub fn cut_lattice(
         (uncertain == 0).then_some(inside)
     };
 
+    s8_lap("per-cell");
     // --- per cell, in parallel ---
     let per_cell: Vec<CellResult> = lattice
         .tets
@@ -1537,18 +1546,16 @@ pub fn cut_lattice(
     // really is on the 1-2 curve and really has no component-1 element touching it. Restricting
     // the fan to curves whose component set the face's own cut can carry removes the claim
     // rather than papering over it in the label.
+    s8_lap("setup");
     let mut pierce_components: BTreeMap<[u32; 3], SmallVec<[i32; 2]>> = BTreeMap::new();
-    for curve in &options.locked_curves {
-        if curve.segments.is_empty() {
-            continue;
-        }
-        for (face, _) in curve_pierce_points(
-            lattice,
-            &nodes,
-            &keys,
-            &curve.segments,
-            DUPLICATE_NODE_FRAC,
-        ) {
+    let polylines: Vec<&[(Vec3, Vec3)]> = options
+        .locked_curves
+        .iter()
+        .map(|curve| curve.segments.as_slice())
+        .collect();
+    let pierced = curve_pierce_points_grouped(lattice, &nodes, &keys, &polylines, DUPLICATE_NODE_FRAC);
+    for (curve, faces) in options.locked_curves.iter().zip(pierced) {
+        for (face, _) in faces {
             let entry = pierce_components.entry(face).or_default();
             for component in &curve.components {
                 if !entry.contains(component) {
@@ -1637,6 +1644,7 @@ pub fn cut_lattice(
         (0..lattice.tets.len()).map(|_| None).collect();
     let mut plc_edge_points: BTreeMap<[u32; 2], Vec<u32>> = BTreeMap::new();
     let mut plc_decline: Vec<Option<&'static str>> = vec![None; lattice.tets.len()];
+    s8_lap("pierce");
     // §7.1 as amended (rev 1.5): the local PLC pass is THE path (plan M-3.2 deleted the
     // `RUSTMSPT_PLC_PASS` handle and the §6-table-only path it gated).
     {
@@ -1651,6 +1659,14 @@ pub fn cut_lattice(
         let mut owners: BTreeMap<[u32; 3], SmallVec<[u32; 2]>> = BTreeMap::new();
         let mut edge_nodes: BTreeMap<[u32; 2], SmallVec<[u32; 6]>> = BTreeMap::new();
         let mut seen_faces: BTreeSet<[u32; 3]> = BTreeSet::new();
+        s8_lap("plc-setup");
+        let trace_probe: Option<Vec3> = std::env::var("RUSTMSPT_TRACE_PROBE").ok().and_then(|v| {
+            let c: Vec<f64> = v.split(',').filter_map(|x| x.parse().ok()).collect();
+            (c.len() == 3).then(|| Vec3::new(c[0], c[1], c[2]))
+        });
+        // Each lattice face once, in first-visit order; the trace of each is a pure function of
+        // the face and the surface, so it is computed in parallel and consumed in that order.
+        let mut unique_faces: Vec<([u32; 3], [u32; 3])> = Vec::new();
         for (index, tet) in lattice.tets.iter().enumerate() {
             for slots in TET_FACES {
                 let raw = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
@@ -1660,9 +1676,14 @@ pub fn cut_lattice(
                 if !entry.contains(&(index as u32)) {
                     entry.push(index as u32);
                 }
-                if !seen_faces.insert(face) {
-                    continue;
+                if seen_faces.insert(face) {
+                    unique_faces.push((face, raw));
                 }
+            }
+        }
+        let face_chords: Vec<SmallVec<[[Vec3; 2]; 4]>> = unique_faces
+            .par_iter()
+            .map(|(_, raw)| {
                 let geometry = [
                     mesh.nodes[raw[0] as usize],
                     mesh.nodes[raw[1] as usize],
@@ -1695,6 +1716,16 @@ pub fn cut_lattice(
                         chords.push(chord);
                     }
                 }
+                chords
+            })
+            .collect();
+        for ((face, raw), chords) in unique_faces.into_iter().zip(face_chords) {
+            {
+                let geometry = [
+                    mesh.nodes[raw[0] as usize],
+                    mesh.nodes[raw[1] as usize],
+                    mesh.nodes[raw[2] as usize],
+                ];
                 let mut on_face: SmallVec<[u32; 4]> = SmallVec::new();
                 for slot in 0..3 {
                     let (x, y) = (raw[slot], raw[(slot + 1) % 3]);
@@ -1723,10 +1754,7 @@ pub fn cut_lattice(
                         }
                     }
                 }
-                if let Some(probe) = std::env::var("RUSTMSPT_TRACE_PROBE").ok().and_then(|v| {
-                    let c: Vec<f64> = v.split(',').filter_map(|x| x.parse().ok()).collect();
-                    (c.len() == 3).then(|| Vec3::new(c[0], c[1], c[2]))
-                }) {
+                if let Some(probe) = trace_probe {
                     let n = geometry[1].sub(geometry[0]).cross(geometry[2].sub(geometry[0]));
                     let nl = n.dot(n).sqrt();
                     let off = (probe.sub(geometry[0]).dot(n) / nl).abs();
@@ -1765,6 +1793,7 @@ pub fn cut_lattice(
             }
         }
 
+        s8_lap("plc-face-scan");
         let mut global: BTreeMap<NodeKey, u32> = BTreeMap::new();
         for (id, key) in keys.iter().enumerate() {
             global.entry(*key).or_insert(id as u32);
@@ -1823,6 +1852,7 @@ pub fn cut_lattice(
             1.0e-6 * span.dot(span).sqrt()
         };
         let mut near_edge: BTreeMap<[u32; 2], SmallVec<[u32; 4]>> = BTreeMap::new();
+        s8_lap("plc-global");
         for (face, chords) in &chords_of {
             // Copied out before the loop: interning below takes `mesh.nodes` mutably.
             let corners = [
@@ -2165,6 +2195,7 @@ pub fn cut_lattice(
         // A note on what makes a face's point set hard: points that are distinct but nearly
         // collinear triangulate into slivers, and a sliver on the boundary forces a flat TET on
         // whichever cell owns it. The census after `face_tris` measures exactly that.
+        s8_lap("plc-edge-points");
         let mut face_ids: BTreeMap<[u32; 3], Vec<u32>> = BTreeMap::new();
         for face in owners.keys() {
             let mut ids: Vec<u32> = face.to_vec();
@@ -2201,6 +2232,7 @@ pub fn cut_lattice(
         let mut face_outside_worst = 0.0f64;
         let mut face_tris: BTreeMap<[u32; 3], Vec<[u32; 3]>> = BTreeMap::new();
         let mut trace: BTreeMap<[u32; 3], SmallVec<[[Vec3; 2]; 4]>> = BTreeMap::new();
+        s8_lap("plc-face-ids");
         for (face, ids) in &face_ids {
             let raw = *face;
             let geometry = [
@@ -2496,6 +2528,7 @@ pub fn cut_lattice(
         // whose triangulation came out equal to §5.2's is deliberately left out of `face_tris`, and
         // counting those as unusable reported 8,868 broken faces on a6a in a run where every face
         // triangulated. A measured row that says the opposite of the truth is worse than no row.
+        s8_lap("plc-face-tris");
         let unusable = failed_faces.len();
         if unusable > 0 {
             println!(
@@ -2585,6 +2618,7 @@ pub fn cut_lattice(
         // with.
         // **Where the exclusions come from**, because the three clauses want different work and a8
         // has 46,596 of them against zero on every other case.
+        s8_lap("plc-boundary-fns");
         let seed_no_boundary = std::sync::atomic::AtomicUsize::new(0);
         let seed_failed_face = std::sync::atomic::AtomicUsize::new(0);
         let seed_curve_pierce = std::sync::atomic::AtomicUsize::new(0);
@@ -2645,6 +2679,7 @@ pub fn cut_lattice(
                 }
             })
             .collect();
+        s8_lap("plc-excluded");
         for _round in 0..64 {
             let mut spread = 0usize;
             for (index, tet) in lattice.tets.iter().enumerate() {
@@ -2687,6 +2722,7 @@ pub fn cut_lattice(
 
         // The boundary first, so a declined cell still has one: it is fanned over exactly the same
         // augmented faces, and that is what keeps it conforming with a neighbour that took §7.4.
+        s8_lap("plc-exclusion-spread");
         let boundaries: Vec<Option<Vec<[u32; 3]>>> = lattice
             .tets
             .par_iter()
@@ -2708,6 +2744,7 @@ pub fn cut_lattice(
         let focus_cells: BTreeSet<usize> = std::env::var("RUSTMSPT_PLC_CELL")
             .map(|v| v.split(',').filter_map(|s| s.trim().parse().ok()).collect())
             .unwrap_or_default();
+        s8_lap("plc-boundaries");
         let attempt: Vec<Option<Result<PlcCell, &'static str>>> = lattice
             .tets
             .par_iter()
@@ -2737,6 +2774,7 @@ pub fn cut_lattice(
             })
             .collect();
 
+        s8_lap("plc-attempt");
         let attempted = attempt.iter().filter(|a| a.is_some()).count();
         let taken = attempt.iter().filter(|a| matches!(a, Some(Ok(_)))).count();
         let tets: usize = attempt
@@ -3071,6 +3109,7 @@ pub fn cut_lattice(
         }
     }
 
+    s8_lap("plc-census");
     // §7.3's `FaceTriCache`, wired in as a **consistency check first** (P-3, face-first
     // integration). Every escalated cell triangulates the faces it shares with its neighbours,
     // and today each cell computes that independently - they agree only because `face_mesh` is a
@@ -3422,11 +3461,43 @@ pub fn cut_lattice(
     let mut fan_repeated = 0usize;
     // Which path each cell took, so a leak can be charged to one instead of guessed at.
     let mut path_of: Vec<u8> = vec![0; lattice.tets.len()];
+    s8_lap("face-trace");
+    let mut asm_time = [std::time::Duration::ZERO; 3];
+    // §7.5's per-region labels of the §7.4-meshed cells read only nodes interned before this
+    // loop, so they are computed in parallel here and consumed in cell order below.
+    let n_nodes_before_assembly = mesh.nodes.len();
+    let mut meshed_records: Vec<Option<(BTreeMap<u32, OwnershipRecord>, usize)>> = plc
+        .par_iter()
+        .enumerate()
+        .map(|(index, plan)| match plan {
+            Some(PlcPlan::Meshed { tets, regions, .. })
+                if tets
+                    .iter()
+                    .flatten()
+                    .all(|node| (*node as usize) < n_nodes_before_assembly) =>
+            {
+                let mut uncertain = 0usize;
+                let records = region_records(
+                    tets,
+                    regions,
+                    &classification.records[index],
+                    &all_components,
+                    &mesh.nodes,
+                    classifier,
+                    &mut uncertain,
+                );
+                Some((records, uncertain))
+            }
+            _ => None,
+        })
+        .collect();
     for (index, cell) in per_cell.into_iter().enumerate() {
+        let asm_clock = std::time::Instant::now();
         // **§7.1 as amended (rev 1.5): a cell the surface's trace changes is meshed by §7.2/§7.4
         // ahead of §6's table.** Both arms keep the augmented faces, which is what lets a cell that
         // took the mesher and a cell that fell back to the fan share one and still meet.
         if let Some(plan) = plc[index].take() {
+            let _asm = AsmLap(&mut asm_time[0], asm_clock);
             let parent_record = &classification.records[index];
             match plan {
                 PlcPlan::Meshed {
@@ -3504,34 +3575,21 @@ pub fn cut_lattice(
                     // surface on the wrong side, and one bad sample labels the whole region -
                     // reference case 1's cell 17271 lost component 2 around an intersection-curve
                     // node that way (`[V9]`). Ties by index keep it deterministic.
-                    let mut sample: BTreeMap<u32, (f64, usize)> = BTreeMap::new();
-                    for (at, (tet, region)) in tets.iter().zip(regions.iter()).enumerate() {
-                        let p = [
-                            mesh.nodes[tet[0] as usize],
-                            mesh.nodes[tet[1] as usize],
-                            mesh.nodes[tet[2] as usize],
-                            mesh.nodes[tet[3] as usize],
-                        ];
-                        let v = p[1].sub(p[0]).cross(p[2].sub(p[0])).dot(p[3].sub(p[0])).abs();
-                        let entry = sample.entry(*region).or_insert((v, at));
-                        if v > entry.0 {
-                            *entry = (v, at);
+                    let region_record = match meshed_records[index].take() {
+                        Some((records, uncertain)) => {
+                            seed_uncertain += uncertain;
+                            records
                         }
-                    }
-                    let mut region_record: BTreeMap<u32, OwnershipRecord> = BTreeMap::new();
-                    for (region, (_, at)) in &sample {
-                        let tet = &tets[*at];
-                        let region = region;
-                        let record = seed_record(
+                        None => region_records(
+                            &tets,
+                            &regions,
                             parent_record,
-                            *tet,
                             &all_components,
                             &mesh.nodes,
                             classifier,
                             &mut seed_uncertain,
-                        );
-                        region_record.insert(*region, record);
-                    }
+                        ),
+                    };
                     for (tet, region) in tets.iter().zip(regions.iter()) {
                         let Some(oriented) = orient_positively(*tet, &mesh.nodes) else {
                             mesh.stats.n_degenerate_fan_pieces += 1;
@@ -3615,6 +3673,7 @@ pub fn cut_lattice(
             continue;
         }
         if let Some(reason) = cell.escalation {
+            let _asm = AsmLap(&mut asm_time[1], asm_clock);
             path_of[index] = 3;
             mesh.escalated.push((index as u32, reason));
             *mesh.stats.n_escalated.entry(reason).or_insert(0) += 1;
@@ -4276,6 +4335,7 @@ pub fn cut_lattice(
             mesh.stats.n_uncut_cells += 1;
             continue;
         }
+        let _asm = AsmLap(&mut asm_time[2], asm_clock);
         if cell.tets.len() == 1 && cell.case == 0 {
             mesh.stats.n_uncut_cells += 1;
         } else {
@@ -4362,6 +4422,10 @@ pub fn cut_lattice(
     }
     mesh.plc_path = path_of.clone();
     mesh.stats.n_tets = mesh.tets.len();
+    if s8_timing {
+        println!("[S8-TIME] assembly by arm: plc {:?} escalated {:?} table {:?}", asm_time[0], asm_time[1], asm_time[2]);
+    }
+    s8_lap("assembly");
     if !mesh.stats.min_dihedral_deg.is_finite() {
         mesh.stats.min_dihedral_deg = 0.0;
     }
@@ -4433,6 +4497,7 @@ pub fn cut_lattice(
             ));
         }
     }
+    s8_lap("interface");
     if plc_meshed + plc_fanned > 0 {
         // **Did the mesh actually take the faces the faces promised?** Every triangle of an
         // augmented face should be carried by exactly as many tets as the face has owners - two
@@ -4497,6 +4562,7 @@ pub fn cut_lattice(
                 unmatched_augmented += 1;
             }
         }
+        s8_lap("t-carried");
         // **Which path emitted each leaking face.** A face carried by exactly one tet, whose three
         // nodes are not all on one domain plane, is `[V3]`'s boundary leak; charging it to the path
         // its tet's parent took says which of them is wrong, and stops the diagnosis being a
@@ -4547,6 +4613,7 @@ pub fn cut_lattice(
              {} §7.4-fanned, {} escalated, {} other",
             leak_by_path[0], leak_by_path[1], leak_by_path[2], leak_by_path[3], leak_by_path[4]
         ));
+        s8_lap("t-leak");
         // **The same question asked of the hanging nodes, and asked as an EDGE question.**
         // A leak is a face two cells disagree about; a T-junction need not be. A cell can carry a
         // lattice edge whole while the point another cell put on that edge sits in the middle of
@@ -4627,6 +4694,7 @@ pub fn cut_lattice(
                  are invisible to §5.2 and are the T-junction"
             ));
         }
+        s8_lap("t-tjunction");
         // **The same tet emitted twice, by the path that emitted it.** `[V1]` calls it a duplicate
         // cell and `[V3]` sees the faces around it carried four, eight or ten times; both are one
         // defect, and it is a cell whose pieces overlap rather than partition. Charged by path
@@ -4696,6 +4764,7 @@ pub fn cut_lattice(
             over_by_path[3],
             over_by_path[4]
         ));
+        s8_lap("t-dup");
         // **`[V6]`'s adjacency violations, charged the same way.** A face between two tets whose
         // records name different materials is a material boundary and must carry an interface tag.
         // Whether the two tets are in ONE cell or in two says which half is at fault: inside a cell
@@ -4797,6 +4866,7 @@ pub fn cut_lattice(
             }
         }
 
+        s8_lap("t-v6");
         // **The histogram never built: off-surface AREA charged to the emitting path.** Every
         // previous cause in this step was found by charging a defect to the arm that produced it,
         // and P3 - the property the whole project is for - had never been charged to anything. The
@@ -4839,24 +4909,20 @@ pub fn cut_lattice(
                 .iter()
                 .filter(|(_, at)| at.len() == 2 && inside_set(at[0]) != inside_set(at[1]))
                 .collect();
+            let surface = crate::meshgen::verify::TriIndex::build(
+                all_components
+                    .iter()
+                    .filter_map(|component| classifier.slot_of(*component))
+                    .flat_map(|slot| classifier.triangles_of(slot).iter().copied())
+                    .collect(),
+            );
             let worsts: Vec<f64> = boundary_faces
                 .par_iter()
                 .map(|(face, _)| {
                     let mut worst = 0.0f64;
                     for node in face.iter() {
                         let q = mesh.nodes[*node as usize];
-                        let mut best = f64::INFINITY;
-                        for component in &all_components {
-                            let Some(slot) = classifier.slot_of(*component) else { continue };
-                            for tri in classifier.triangles_of(slot) {
-                                best = best.min(
-                                    crate::meshgen::verify::point_triangle_dist2(
-                                        q, tri[0], tri[1], tri[2],
-                                    )
-                                    .sqrt(),
-                                );
-                            }
-                        }
+                        let best = surface.nearest(q).map_or(f64::INFINITY, |(d, _)| d);
                         worst = worst.max(best);
                     }
                     worst
@@ -4934,6 +5000,7 @@ pub fn cut_lattice(
             }
         }
 
+        s8_lap("t-area");
         // **And the same charge for the degenerate elements.** `[V1]` reads a signed volume and
         // says nothing about where it came from; normalising by the tet's own longest edge cubed
         // makes "flat" a scale-free statement, and the path histogram says which arm to look in.
@@ -4970,6 +5037,7 @@ pub fn cut_lattice(
                 worst_flat = worst_flat.min(shape);
             }
         }
+        s8_lap("t-flat");
         // **Detect and repair, to a fixed point.** One pass is not enough: a node hangs on several
         // faces, and repairing one changes the ring the next is judged against - so the pass is run
         // again until it stops finding anything. Exclusion only ever removes hanging nodes here, so
@@ -5064,6 +5132,7 @@ pub fn cut_lattice(
                 ));
             }
         }
+        s8_lap("t-plcdiag");
         // **A repaired state the pass has already seen means the repair is undoing itself.** The
         // measured case is a pair of node chains between the same two endpoints, 1.85e-7 apart:
         // splitting an edge of one puts the other chain's node on the face that split just made,
@@ -5102,78 +5171,97 @@ pub fn cut_lattice(
                         (p.z / step).floor() as i64,
                     )
                 };
-                let mut grid: BTreeMap<(i64, i64, i64), Vec<u32>> = BTreeMap::new();
+                let mut grid: std::collections::HashMap<(i64, i64, i64), Vec<u32>> =
+                    std::collections::HashMap::new();
                 for (id, p) in mesh.nodes.iter().enumerate() {
                     grid.entry(at(*p)).or_default().push(id as u32);
                 }
-                let mut faces: BTreeSet<[u32; 3]> = BTreeSet::new();
-                for tet in &mesh.tets {
-                    for face in [
-                        [tet[1], tet[2], tet[3]],
-                        [tet[0], tet[2], tet[3]],
-                        [tet[0], tet[1], tet[3]],
-                        [tet[0], tet[1], tet[2]],
-                    ] {
-                        let mut key = face;
-                        key.sort_unstable();
-                        faces.insert(key);
-                    }
-                }
-                let mut hanging: BTreeSet<u32> = BTreeSet::new();
-                let mut incidences = 0usize;
-                let mut on_rim = 0usize;
-                for face in &faces {
-                    let p = [
-                        mesh.nodes[face[0] as usize],
-                        mesh.nodes[face[1] as usize],
-                        mesh.nodes[face[2] as usize],
-                    ];
-                    let bl = Vec3::new(
-                        p.iter().map(|q| q.x).fold(f64::INFINITY, f64::min) - tol,
-                        p.iter().map(|q| q.y).fold(f64::INFINITY, f64::min) - tol,
-                        p.iter().map(|q| q.z).fold(f64::INFINITY, f64::min) - tol,
-                    );
-                    let br = Vec3::new(
-                        p.iter().map(|q| q.x).fold(f64::NEG_INFINITY, f64::max) + tol,
-                        p.iter().map(|q| q.y).fold(f64::NEG_INFINITY, f64::max) + tol,
-                        p.iter().map(|q| q.z).fold(f64::NEG_INFINITY, f64::max) + tol,
-                    );
-                    let (l, h) = (at(bl), at(br));
-                    for gx in l.0..=h.0 {
-                        for gy in l.1..=h.1 {
-                            for gz in l.2..=h.2 {
-                                for id in grid.get(&(gx, gy, gz)).into_iter().flatten() {
-                                    if face.contains(id) {
-                                        continue;
-                                    }
-                                    let q = mesh.nodes[*id as usize];
-                                    if crate::meshgen::verify::point_triangle_dist2(q, p[0], p[1], p[2])
-                                        > tol * tol
-                                    {
-                                        continue;
-                                    }
-                                    hanging.insert(*id);
-                                    incidences += 1;
-                                    // On the face's RIM the repair is an edge split - every tet around
-                                    // that edge takes the node - and strictly inside it is a face split,
-                                    // which touches only the two tets sharing it. Counted apart because
-                                    // they are different operations.
-                                    let rim = (0..3).any(|slot| {
-                                        let (u, v) = (p[slot], p[(slot + 1) % 3]);
-                                        let along = v.sub(u);
-                                        let len2 = along.dot(along);
-                                        if len2 <= 0.0 {
-                                            return false;
+                let mut faces: Vec<[u32; 3]> = mesh
+                    .tets
+                    .par_iter()
+                    .flat_map_iter(|tet| {
+                        [
+                            [tet[1], tet[2], tet[3]],
+                            [tet[0], tet[2], tet[3]],
+                            [tet[0], tet[1], tet[3]],
+                            [tet[0], tet[1], tet[2]],
+                        ]
+                        .into_iter()
+                        .map(|mut key| {
+                            key.sort_unstable();
+                            key
+                        })
+                    })
+                    .collect();
+                faces.par_sort_unstable();
+                faces.dedup();
+                // Per face, the nodes within `tol` of it (ascending id) and whether each sits on the
+                // face's rim. The repair below walks exactly these pairs, in (face, node) order.
+                let near_face: Vec<Vec<(u32, bool)>> = faces
+                    .par_iter()
+                    .map(|face| {
+                        let p = [
+                            mesh.nodes[face[0] as usize],
+                            mesh.nodes[face[1] as usize],
+                            mesh.nodes[face[2] as usize],
+                        ];
+                        let bl = Vec3::new(
+                            p.iter().map(|q| q.x).fold(f64::INFINITY, f64::min) - tol,
+                            p.iter().map(|q| q.y).fold(f64::INFINITY, f64::min) - tol,
+                            p.iter().map(|q| q.z).fold(f64::INFINITY, f64::min) - tol,
+                        );
+                        let br = Vec3::new(
+                            p.iter().map(|q| q.x).fold(f64::NEG_INFINITY, f64::max) + tol,
+                            p.iter().map(|q| q.y).fold(f64::NEG_INFINITY, f64::max) + tol,
+                            p.iter().map(|q| q.z).fold(f64::NEG_INFINITY, f64::max) + tol,
+                        );
+                        let (l, h) = (at(bl), at(br));
+                        let mut here: Vec<(u32, bool)> = Vec::new();
+                        for gx in l.0..=h.0 {
+                            for gy in l.1..=h.1 {
+                                for gz in l.2..=h.2 {
+                                    for id in grid.get(&(gx, gy, gz)).into_iter().flatten() {
+                                        if face.contains(id) {
+                                            continue;
                                         }
-                                        let t = (q.sub(u).dot(along) / len2).clamp(0.0, 1.0);
-                                        let off = q.sub(u).sub(along.scale(t));
-                                        off.dot(off) <= tol * tol
-                                    });
-                                    if rim {
-                                        on_rim += 1;
+                                        let q = mesh.nodes[*id as usize];
+                                        if crate::meshgen::verify::point_triangle_dist2(q, p[0], p[1], p[2])
+                                            > tol * tol
+                                        {
+                                            continue;
+                                        }
+                                        // On the face's RIM the repair is an edge split - every tet
+                                        // around that edge takes the node - and strictly inside it is a
+                                        // face split, which touches only the two tets sharing it.
+                                        let rim = (0..3).any(|slot| {
+                                            let (u, v) = (p[slot], p[(slot + 1) % 3]);
+                                            let along = v.sub(u);
+                                            let len2 = along.dot(along);
+                                            if len2 <= 0.0 {
+                                                return false;
+                                            }
+                                            let t = (q.sub(u).dot(along) / len2).clamp(0.0, 1.0);
+                                            let off = q.sub(u).sub(along.scale(t));
+                                            off.dot(off) <= tol * tol
+                                        });
+                                        here.push((*id, rim));
                                     }
                                 }
                             }
+                        }
+                        here.sort_unstable();
+                        here
+                    })
+                    .collect();
+                let mut hanging: BTreeSet<u32> = BTreeSet::new();
+                let mut incidences = 0usize;
+                let mut on_rim = 0usize;
+                for here in &near_face {
+                    for (id, rim) in here {
+                        hanging.insert(*id);
+                        incidences += 1;
+                        if *rim {
+                            on_rim += 1;
                         }
                     }
                 }
@@ -5246,16 +5334,16 @@ pub fn cut_lattice(
                         key
                     })
                     .collect();
-                for face in &faces {
+                for (face, here) in faces.iter().zip(&near_face) {
+                    if here.is_empty() {
+                        continue;
+                    }
                     let p = [
                         mesh.nodes[face[0] as usize],
                         mesh.nodes[face[1] as usize],
                         mesh.nodes[face[2] as usize],
                     ];
-                    for id in hanging.clone() {
-                        if face.contains(&id) {
-                            continue;
-                        }
+                    for &(id, _) in here {
                         let q = mesh.nodes[id as usize];
                         if crate::meshgen::verify::point_triangle_dist2(q, p[0], p[1], p[2]) > tol * tol
                         {
@@ -5509,6 +5597,7 @@ pub fn cut_lattice(
                 break;
             }
         }
+        s8_lap("t-repair");
         // **Charge each BAD element to the arm that emitted it**, on the measure `[V4]` actually
         // reports: the smallest dihedral angle. The goal names three properties and this is the
         // third - *no bad elements* - and it is the only one the gated path still loses on. The
@@ -5649,6 +5738,7 @@ pub fn cut_lattice(
              augmented face - so the rest are faces §7.4 left to §5.2"
         ));
     }
+    s8_lap("t-bad");
     if fan_repeated > 0 {
         mesh.warnings.push(format!(
             "[PLC] {fan_repeated} triangle(s) appeared more than once in a cell's boundary soup and \
@@ -5811,8 +5901,11 @@ pub fn cut_lattice(
         mesh.warnings
             .push(format!("{tag} {count} cell(s) {text}"));
     }
+    s8_lap("t-reports");
     refresh_split_interfaces(&mut mesh);
+    s8_lap("t-refresh");
     compact_unreferenced_nodes(&mut mesh);
+    s8_lap("tail");
     mesh
 }
 
@@ -5948,6 +6041,48 @@ fn cut_record(
             Provenance::Cut
         },
     }
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: §7.5 for a §7.4-meshed cell - one ownership record per sub-region, sampled at the
+//   region's largest tet (ties by lowest index).
+// Inputs: the cell's tets and their region ids, the parent record, the components, the node table,
+//   the classifier, and the uncertain-sample counter.
+// Returns: region id -> its record.
+// Side effects: adds to `uncertain`.
+// Notes: A region's first tet can be a sliver along a facet whose centroid lies within rounding of
+//   the surface on the wrong side, and one bad sample labels the whole region - reference case 1's
+//   cell 17271 lost component 2 that way (`[V9]`). A pure function of its inputs, so S8 computes it
+//   for every meshed cell in parallel before the serial assembly.
+fn region_records(
+    tets: &[[u32; 4]],
+    regions: &[u32],
+    parent_record: &OwnershipRecord,
+    all_components: &[i32],
+    nodes: &[Vec3],
+    classifier: &PointClassifier,
+    uncertain: &mut usize,
+) -> BTreeMap<u32, OwnershipRecord> {
+    let mut sample: BTreeMap<u32, (f64, usize)> = BTreeMap::new();
+    for (at, (tet, region)) in tets.iter().zip(regions.iter()).enumerate() {
+        let p = [
+            nodes[tet[0] as usize],
+            nodes[tet[1] as usize],
+            nodes[tet[2] as usize],
+            nodes[tet[3] as usize],
+        ];
+        let v = p[1].sub(p[0]).cross(p[2].sub(p[0])).dot(p[3].sub(p[0])).abs();
+        let entry = sample.entry(*region).or_insert((v, at));
+        if v > entry.0 {
+            *entry = (v, at);
+        }
+    }
+    let mut region_record: BTreeMap<u32, OwnershipRecord> = BTreeMap::new();
+    for (region, (_, at)) in &sample {
+        let record = seed_record(parent_record, tets[*at], all_components, nodes, classifier, uncertain);
+        region_record.insert(*region, record);
+    }
+    region_record
 }
 
 // AI-FUNC-SUMMARY:
@@ -10524,6 +10659,15 @@ fn fan_swallows_vertex(fan: &[[u32; 3]], cycle: &[u32], nodes: &[Vec3]) -> bool 
     false
 }
 
+// AI-FUNC-SUMMARY: adds the time since `.1` to `*.0` when dropped (S8 assembly timing); side effects: none.
+struct AsmLap<'a>(&'a mut std::time::Duration, std::time::Instant);
+
+impl Drop for AsmLap<'_> {
+    fn drop(&mut self) {
+        *self.0 += self.1.elapsed();
+    }
+}
+
 // AI-FUNC-SUMMARY:
 // Purpose: Gate G6-0 - the point where a locked curve pierces each lattice face.
 // Inputs: the lattice, the snapped node table, the key table, and the curve polyline segments.
@@ -10541,8 +10685,37 @@ fn curve_pierce_points(
     segments: &[(Vec3, Vec3)],
     eps: f64,
 ) -> BTreeMap<[u32; 3], Vec3> {
+    curve_pierce_points_grouped(lattice, nodes, keys, &[segments], eps)
+        .pop()
+        .unwrap_or_default()
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: `curve_pierce_points` for several polylines at once, in one pass over the lattice.
+// Inputs: the lattice, the snapped node table, the key table, the polylines, and the duplicate bound.
+// Returns: one face -> piercing point map per polyline, each exactly what `curve_pierce_points`
+//   returns for that polyline alone.
+// Side effects: None.
+// Notes: Calling `curve_pierce_points` once per locked curve walked every lattice tet per curve
+//   (a8: 972 curves, 68 s of S8). Each hit carries its polyline's index, and the per-polyline
+//   sort, edge-duplicate drop and first-wins map run on each group separately, so the result does
+//   not depend on what else was passed.
+fn curve_pierce_points_grouped(
+    lattice: &Lattice,
+    nodes: &[Vec3],
+    keys: &[NodeKey],
+    groups: &[&[(Vec3, Vec3)]],
+    eps: f64,
+) -> Vec<BTreeMap<[u32; 3], Vec3>> {
+    let mut segments: Vec<(Vec3, Vec3)> = Vec::new();
+    let mut group_of: Vec<u32> = Vec::new();
+    for (group, polyline) in groups.iter().enumerate() {
+        segments.extend_from_slice(polyline);
+        group_of.extend(std::iter::repeat(group as u32).take(polyline.len()));
+    }
+    let mut out: Vec<BTreeMap<[u32; 3], Vec3>> = vec![BTreeMap::new(); groups.len()];
     if segments.is_empty() {
-        return BTreeMap::new();
+        return out;
     }
     let bounds: Vec<(Vec3, Vec3)> = segments
         .iter()
@@ -10554,7 +10727,7 @@ fn curve_pierce_points(
         })
         .collect();
     let grid = crate::meshgen::snap::BoxGrid::build(&bounds);
-    let mut found: Vec<([u32; 3], Vec3)> = lattice
+    let hits: Vec<(u32, [u32; 3], Vec3)> = lattice
         .tets
         .par_iter()
         .map_init(Vec::new, |scratch: &mut Vec<u32>, tet| {
@@ -10566,7 +10739,7 @@ fn curve_pierce_points(
                 hi = Vec3::new(hi.x.max(point.x), hi.y.max(point.y), hi.z.max(point.z));
             }
             grid.query_into(lo, hi, scratch);
-            let mut here: Vec<([u32; 3], Vec3)> = Vec::new();
+            let mut here: Vec<(u32, [u32; 3], Vec3)> = Vec::new();
             if scratch.is_empty() {
                 return here;
             }
@@ -10581,7 +10754,7 @@ fn curve_pierce_points(
                 for index in scratch.iter() {
                     let (a, b) = segments[*index as usize];
                     if let Some(point) = segment_pierces_triangle(a, b, triangle) {
-                        here.push((corners, point));
+                        here.push((group_of[*index as usize], corners, point));
                     }
                 }
             }
@@ -10589,31 +10762,36 @@ fn curve_pierce_points(
         })
         .flatten()
         .collect();
-    found.sort_by(|left, right| {
-        left.0.cmp(&right.0).then_with(|| {
-            let key = |point: &Vec3| (point.x.to_bits(), point.y.to_bits(), point.z.to_bits());
-            key(&left.1).cmp(&key(&right.1))
-        })
-    });
-    // **A point two faces sharing an edge both report is ON that edge.** The barycentric slack
-    // above is 1e-9 of the face; a3's cube corner lies 2.4e-8 off a checkerboard face diagonal
-    // (float32 input, x - 0.8125 = 0.6875 - y = z - 0.3125 to that precision), which passes it for
-    // both faces around the diagonal, and each interned its own crease hub there: two coincident
-    // nodes (a3's 17 `[V2]` duplicates), a zero-area fan triangle, a piece neither §7.6 nor the
-    // kernel could mesh, and a whole-cell fan with no cube element at the corner (`[V9]`). No
-    // distance threshold separates it: genuine near-edge hubs sit at every decade from 1e-3 to 1e-7
-    // of the edge, and dropping all within `eps` cost a3 0.98 and a8 0.39 points. What identifies
-    // the case is the duplication itself - one pierce reported by two faces that share an edge,
-    // within `[V2]`'s own duplicate-node bound (`DUPLICATE_NODE_FRAC`) - and only those are
-    // dropped, for both faces. The coarser `eps` was measured too wide: it also dropped distinct
-    // near-edge hubs on a8 (-0.24 points) that were never duplicates.
-    let dropped = pierces_shared_by_an_edge(&found, eps);
-    let mut out: BTreeMap<[u32; 3], Vec3> = BTreeMap::new();
-    for (slot, (corners, point)) in found.into_iter().enumerate() {
-        if dropped.contains(&slot) {
-            continue;
+    let mut found_of: Vec<Vec<([u32; 3], Vec3)>> = vec![Vec::new(); groups.len()];
+    for (group, corners, point) in hits {
+        found_of[group as usize].push((corners, point));
+    }
+    for (group, mut found) in found_of.into_iter().enumerate() {
+        found.sort_by(|left, right| {
+            left.0.cmp(&right.0).then_with(|| {
+                let key = |point: &Vec3| (point.x.to_bits(), point.y.to_bits(), point.z.to_bits());
+                key(&left.1).cmp(&key(&right.1))
+            })
+        });
+        // **A point two faces sharing an edge both report is ON that edge.** The barycentric slack
+        // above is 1e-9 of the face; a3's cube corner lies 2.4e-8 off a checkerboard face diagonal
+        // (float32 input, x - 0.8125 = 0.6875 - y = z - 0.3125 to that precision), which passes it for
+        // both faces around the diagonal, and each interned its own crease hub there: two coincident
+        // nodes (a3's 17 `[V2]` duplicates), a zero-area fan triangle, a piece neither §7.6 nor the
+        // kernel could mesh, and a whole-cell fan with no cube element at the corner (`[V9]`). No
+        // distance threshold separates it: genuine near-edge hubs sit at every decade from 1e-3 to 1e-7
+        // of the edge, and dropping all within `eps` cost a3 0.98 and a8 0.39 points. What identifies
+        // the case is the duplication itself - one pierce reported by two faces that share an edge,
+        // within `[V2]`'s own duplicate-node bound (`DUPLICATE_NODE_FRAC`) - and only those are
+        // dropped, for both faces. The coarser `eps` was measured too wide: it also dropped distinct
+        // near-edge hubs on a8 (-0.24 points) that were never duplicates.
+        let dropped = pierces_shared_by_an_edge(&found, eps);
+        for (slot, (corners, point)) in found.into_iter().enumerate() {
+            if dropped.contains(&slot) {
+                continue;
+            }
+            out[group].entry(corners).or_insert(point);
         }
-        out.entry(corners).or_insert(point);
     }
     out
 }

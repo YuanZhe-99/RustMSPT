@@ -737,6 +737,10 @@
 | `ImproveOptions` / `ImproveStats` | 网格生成 | `src/meshgen/improve.rs:26` | S9 的目标（默认为业主的 FEM 门槛：AR < 10、二面角 ≥ 10°，六轮；`weld` 为文档单位下的焊接量子——流水线传入 `0.1 eps`——限定 `try_unfold` 的共面判断）与计数（收缩、翻转、节点移动、前后的四面体数与不达标数、最差 AR）。 |
 | `aspect_ratio` / `min_dihedral_deg` | 网格生成 | `src/meshgen/improve.rs:59` | 门槛使用的度量：最长边除以最短高并归一到正四面体为 1（Abaqus 约定），以及以度为单位的最小二面角。 |
 | `bad_tets` | 网格生成 | `src/meshgen/improve.rs` | 未达标的存活四面体及其 AR，按下标升序——S9 的全网格扫描并行执行并按下标顺序收集，后续操作看到的列表与串行扫描相同。 |
+| `curve_pierce_points_grouped` | 网格生成 | `src/meshgen/cut.rs` | 对所有锁定曲线只遍历一次晶格的 `curve_pierce_points`；每个命中带曲线下标，排序、共边重复剔除和先到先得映射按曲线分别执行，所以每张表与单曲线调用相同。取代了逐曲线遍历晶格（a8：972 条曲线，S8 中 68 s -> 0.15 s）。 |
+| `region_records` | 网格生成 | `src/meshgen/cut.rs` | §7.4 网格化单元的 §7.5：每个子区域一条归属记录，在其最大四面体处采样（并列取下标小者）。是单元的纯函数，所以 S8 在串行组装前并行计算所有网格化单元的记录（a8 组装 16 -> 5.8 s）。 |
+| `AsmLap` | 网格生成 | `src/meshgen/cut.rs` | 析构守卫：把耗时累加到组装循环某一分支的总计，在 `RUSTMSPT_TIME_STAGES` 下打印为 `[S8-TIME] assembly by arm`。 |
+| `TriIndex::nearest` | 网格生成 | `src/meshgen/verify.rs` | 按网格壳层向外扩展求离点最近的三角形，在首次命中后再多查一圈即停；改为 `pub(crate)`，供 S8 只打印的 P3 分路统计使用，取代逐角点扫描全部输入三角形（a9 66 s -> 约 2 s，数值不变）。 |
 | `Mesh::try_unfold` | 网格生成 | `src/meshgen/improve.rs` | S9 的平折移除：一个四面体的四点在 `tol` 内共面、其两个面在同一曲面上带标签且共享边 (a, c)，若该边的环恰为它加上另一材料的两个共顶点 q 的四面体，则让这两个四面体改用另一条对角线——(q, a, b, d)、(q, c, b, d)——并把两条标签面记录移到它的另两个面上。不移动任何节点；要求环的体积守恒（非凸四边形会失败）、两个新四面体为正且最差 AR 严格下降。a7a_r：最差 AR 5.3e7 → 2.6e6，`[V5]` WARN → PASS。共面指在 `ImproveOptions::weld` 以内（不变量 M1 的 `0.1 eps`，即 `merge_coplanar` 视为同一面片的尺度）：float32 旋转后的平面只平到约 1e-7，仅用算术 `tol` 时 a8_r 的最差 AR 仍为 1.1e7（现为 2.7e3）。焊接尺度的展开在各轮之后作为一次扫描执行：放在轮内时，移动后的标签面只在焊接量子内共面，会给节点多一个平面而把它们固定住（p1 那样多出 165 个不达标单元，作为扫描则少 43 个）。 |
 | `improve_doc_with` / `ApproximateInputs` | 网格生成 | `src/meshgen/improve.rs:945` | `fidelity.mode: approximate` 下的 S9（M-4.5b）：曲面光滑处的节点（所有面法向在 `sizing.feature_angle_deg` 以内）也可以收缩和滑动——向其曲面邻居光顺后再投影回输入曲面——它触及的每个面都保持在输入曲面的 `tolerance_frac` 倍对角线以内；锋利边、曲线和盒面仍然精确。 |
 | `InputSurface` | 网格生成 | `src/meshgen/improve.rs:203` | 在均匀网格（格子尺寸 `max(平均边长, 容差)`）上分桶的输入曲面：`nearest(p, radius)` 给出半径内的最近点。 |

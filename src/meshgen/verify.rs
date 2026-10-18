@@ -3281,7 +3281,7 @@ pub struct SurfaceComponent {
 }
 
 /// A uniform grid over triangles, for nearest-surface queries.
-struct TriIndex {
+pub(crate) struct TriIndex {
     tris: Vec<[Vec3; 3]>,
     normals: Vec<Vec3>,
     /// The triangles' own bounding box (empty set -> the unit box), for `contains`' early reject.
@@ -3359,7 +3359,7 @@ fn point_tri_distance_sq(p: Vec3, t: [Vec3; 3]) -> f64 {
 
 impl TriIndex {
     // AI-FUNC-SUMMARY: Bucket triangles into a uniform grid sized from their count; returns TriIndex; side effects: none.
-    fn build(tris: Vec<[Vec3; 3]>) -> TriIndex {
+    pub(crate) fn build(tris: Vec<[Vec3; 3]>) -> TriIndex {
         let mut lo = Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
         let mut hi = Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
         for t in &tris {
@@ -3521,7 +3521,8 @@ impl TriIndex {
         best.is_finite().then_some(best)
     }
 
-    fn nearest(&self, p: Vec3) -> Option<(f64, usize)> {
+    // AI-FUNC-SUMMARY: Nearest triangle to a point by expanding grid shells; returns (distance, triangle index) or None when empty; side effects: none.
+    pub(crate) fn nearest(&self, p: Vec3) -> Option<(f64, usize)> {
         if self.tris.is_empty() {
             return None;
         }
