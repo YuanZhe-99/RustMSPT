@@ -1114,6 +1114,34 @@ struct CellResult {
     volume_error: f64,
 }
 
+
+// AI-FUNC-SUMMARY:
+// Purpose: The box a face or cell can draw surface polygons from, for `PointClassifier::polygons_near`.
+// Inputs: the corners and the tolerance the caller's trace or clip will use.
+// Returns: (low, high), the corners' bounding box inflated by the longest edge, the clip's own
+//   slack (`tol` over the shortest edge) and `tol`.
+// Side effects: None.
+// Notes: Generous on purpose - it only has to exclude polygons that cannot touch the region, so
+//   the caller's answer is the same as from the whole surface.
+fn polygon_query_box(corners: &[Vec3], tol: f64) -> (Vec3, Vec3) {
+    let mut lo = corners[0];
+    let mut hi = corners[0];
+    let (mut longest, mut shortest) = (0.0f64, f64::INFINITY);
+    for (i, a) in corners.iter().enumerate() {
+        lo = Vec3::new(lo.x.min(a.x), lo.y.min(a.y), lo.z.min(a.z));
+        hi = Vec3::new(hi.x.max(a.x), hi.y.max(a.y), hi.z.max(a.z));
+        for b in &corners[i + 1..] {
+            let d = b.sub(*a);
+            let l = d.dot(d).sqrt();
+            longest = longest.max(l);
+            shortest = shortest.min(l);
+        }
+    }
+    let slack = if shortest > 0.0 { tol / shortest } else { 0.0 };
+    let m = longest + slack + tol;
+    (Vec3::new(lo.x - m, lo.y - m, lo.z - m), Vec3::new(hi.x + m, hi.y + m, hi.z + m))
+}
+
 // AI-FUNC-SUMMARY:
 // Purpose: Run S8 - replace every cell one active patch crosses with pieces that stop at the patch.
 // Inputs: the S5 lattice (connectivity), S7's snap (coordinates + crossings + on-cut set), S6's
@@ -1654,7 +1682,8 @@ pub fn cut_lattice(
                 let mut chords: SmallVec<[[Vec3; 2]; 4]> = SmallVec::new();
                 for component in &all_components {
                     // A sheet's trace too (A-11): it owns no volume but the cut runs along it.
-                    let tris = classifier.polygons_of(*component);
+                    let (lo, hi) = polygon_query_box(&geometry, shortest * 1.0e-9);
+                    let tris = classifier.polygons_near(*component, lo, hi);
                     if tris.is_empty() {
                         continue;
                     }
@@ -3085,7 +3114,8 @@ pub fn cut_lattice(
                 let mut ids: SmallVec<[Vec3; 4]> = SmallVec::new();
                 let mut seen_keys: SmallVec<[NodeKey; 4]> = SmallVec::new();
                 for component in &all_components {
-                    let tris = classifier.polygons_of(*component);
+                    let (lo, hi) = polygon_query_box(&face, options.eps);
+                    let tris = classifier.polygons_near(*component, lo, hi);
                     if tris.is_empty() {
                         continue;
                     }
@@ -8805,7 +8835,8 @@ fn plc_attempt(
     for component in all_components {
         // Sheets included (A-11): a sheet's facets separate regions of one material, and the caps
         // between them become `FaceTagKind = 1` faces with geometric sides (`derive_interface`).
-        let surface = classifier.polygons_of(*component);
+        let (lo, hi) = polygon_query_box(&corners, edge * 1.0e-6);
+        let surface = classifier.polygons_near(*component, lo, hi);
         if surface.is_empty() {
             continue;
         }
@@ -9672,9 +9703,10 @@ fn split_escalated_cell(
             if classifier.slot_of(*component).is_none() {
                 continue;
             }
+            let (lo, hi) = polygon_query_box(&corners, edge * 1.0e-6);
             for facet in crate::meshgen::cdt::fragment_facets_in_cell(
                 corners,
-                &classifier.polygons_of(*component),
+                &classifier.polygons_near(*component, lo, hi),
                 edge * 1.0e-6,
             ) {
                 facets_local.push(facet.iter().map(|p| arena.intern(*p)).collect());
@@ -9739,9 +9771,10 @@ fn split_escalated_cell(
                     if classifier.slot_of(*component).is_none() {
                         continue;
                     }
+                    let (lo, hi) = polygon_query_box(&face, edge * 1.0e-9);
                     for chord in crate::meshgen::cdt::trace_on_face(
                         face,
-                        &classifier.polygons_of(*component),
+                        &classifier.polygons_near(*component, lo, hi),
                         edge * 1.0e-9,
                     ) {
                         let a = arena.intern(chord[0]);

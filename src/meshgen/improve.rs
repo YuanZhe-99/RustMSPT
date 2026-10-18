@@ -14,6 +14,7 @@
 use crate::io::vtu::{ArrayData, DataArray, VtuDoc};
 use crate::meshgen::predicates::orient3d;
 use crate::types::Vec3;
+use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
 
 const VTK_TRIANGLE: u8 = 5;
@@ -936,6 +937,21 @@ pub struct ApproximateInputs<'a> {
     pub components: &'a [(i32, Vec<[Vec3; 3]>)],
 }
 
+
+// AI-FUNC-SUMMARY: The alive tets that miss the gate (AR at or above target, or a dihedral below it), each with its aspect ratio, ascending by index; parallel, collected in index order (R-P1); returns Vec<(aspect ratio, tet)>; side effects: none.
+fn bad_tets(points: &[Vec3], tets: &[[u32; 4]], alive: &[bool], opts: &ImproveOptions) -> Vec<(f64, u32)> {
+    tets.par_iter()
+        .enumerate()
+        .filter_map(|(i, t)| {
+            if !alive[i] {
+                return None;
+            }
+            let p = t.map(|n| points[n as usize]);
+            let ar = aspect_ratio(p);
+            (ar >= opts.ar_target || min_dihedral_deg(p) < opts.min_dihedral_deg).then_some((ar, i as u32))
+        })
+        .collect()
+}
 // AI-FUNC-SUMMARY:
 // Purpose: `improve_doc`, optionally in approximate mode (plan M-4.5b): smooth surface nodes may
 //   also move, each face they touch held within the tolerance of the input surface.
@@ -944,6 +960,14 @@ pub struct ApproximateInputs<'a> {
 // Side effects: as `improve_doc`.
 pub fn improve_doc_with(doc: &mut VtuDoc, opts: &ImproveOptions, approximate: Option<ApproximateInputs>) -> ImproveStats {
     let mut stats = ImproveStats::default();
+    let timing = std::env::var_os("RUSTMSPT_TIME_STAGES").is_some();
+    let mut clock = std::time::Instant::now();
+    let mut lap = |label: &str| {
+        if timing {
+            println!("[S9-TIME] {} {:?}", label, clock.elapsed());
+        }
+        clock = std::time::Instant::now();
+    };
     let cells = doc.num_cells();
     let region = i32_cells(doc, "region_key").unwrap_or_else(|| vec![0; cells]);
     let partition = i32_cells(doc, "partition_id").unwrap_or_else(|| vec![0; cells]);
@@ -1040,18 +1064,30 @@ pub fn improve_doc_with(doc: &mut VtuDoc, opts: &ImproveOptions, approximate: Op
             _ => {}
         }
     }
+    lap("read");
     // A material boundary the document did not tag (a3r: 1,193 faces where a lower-priority surface
     // ends inside a higher one) is geometry all the same: it joins the classification as a virtual
     // face, so its nodes obey the same plane rules and the "tagged" check sees it. Virtual faces
     // are never written back - `rebuild` walks the document's own face cells only.
     {
-        let mut owners: BTreeMap<[u32; 3], Vec<usize>> = BTreeMap::new();
-        for (i, t) in mesh.tets.iter().enumerate() {
-            for slots in TET_FACES {
-                owners.entry(sorted3([t[slots[0]], t[slots[1]], t[slots[2]]])).or_default().push(i);
+        // Every (face, tet) pair, sorted: the same faces in the same order, with each face's
+        // tets ascending, as a map built by one serial scan would give.
+        let mut pairs: Vec<([u32; 3], usize)> = mesh
+            .tets
+            .par_iter()
+            .enumerate()
+            .flat_map_iter(|(i, t)| TET_FACES.iter().map(move |slots| (sorted3([t[slots[0]], t[slots[1]], t[slots[2]]]), i)))
+            .collect();
+        pairs.par_sort_unstable();
+        let mut start = 0usize;
+        while start < pairs.len() {
+            let face = pairs[start].0;
+            let mut end = start + 1;
+            while end < pairs.len() && pairs[end].0 == face {
+                end += 1;
             }
-        }
-        for (face, list) in owners {
+            let list: Vec<usize> = pairs[start..end].iter().map(|p| p.1).collect();
+            start = end;
             if list.len() != 2 || mesh.material[list[0]] == mesh.material[list[1]] || mesh.face_index.contains_key(&face) {
                 continue;
             }
@@ -1071,6 +1107,7 @@ pub fn improve_doc_with(doc: &mut VtuDoc, opts: &ImproveOptions, approximate: Op
             mesh.face_surface.push(s);
         }
     }
+    lap("untagged-boundaries");
     for (i, p) in mesh.points.iter().enumerate() {
         for (k, (l, h)) in [(lo.x, hi.x), (lo.y, hi.y), (lo.z, hi.z)].iter().enumerate() {
             let c = [p.x, p.y, p.z][k];
@@ -1107,27 +1144,23 @@ pub fn improve_doc_with(doc: &mut VtuDoc, opts: &ImproveOptions, approximate: Op
         });
     }
     let count_bad = |mesh: &Mesh| -> (usize, f64) {
-        let mut bad = 0;
-        let mut worst = 0.0f64;
-        for (t, alive) in mesh.tets.iter().zip(mesh.alive.iter()) {
-            if !alive {
-                continue;
-            }
-            worst = worst.max(aspect_ratio(mesh.tet_points(*t)));
-            bad += usize::from(mesh.bad(*t, opts));
-        }
+        let bad = bad_tets(&mesh.points, &mesh.tets, &mesh.alive, opts).len();
+        // A maximum is an element of the input, so the parallel reduction is order-free.
+        let points = &mesh.points;
+        let worst = mesh
+            .tets
+            .par_iter()
+            .zip(mesh.alive.par_iter())
+            .filter(|(_, alive)| **alive)
+            .map(|(t, _)| aspect_ratio(t.map(|n| points[n as usize])))
+            .reduce(|| 0.0f64, f64::max);
         (bad, worst)
     };
     stats.tets_before = mesh.tets.len();
     (stats.bad_before, stats.worst_ar_before) = count_bad(&mesh);
+    lap("setup");
     for _ in 0..opts.max_passes {
-        let mut order: Vec<(f64, u32)> = mesh
-            .tets
-            .iter()
-            .enumerate()
-            .filter(|(i, t)| mesh.alive[*i] && mesh.bad(**t, opts))
-            .map(|(i, t)| (aspect_ratio(mesh.tet_points(*t)), i as u32))
-            .collect();
+        let mut order: Vec<(f64, u32)> = bad_tets(&mesh.points, &mesh.tets, &mesh.alive, opts);
         order.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
         let mut done = 0usize;
         for (_, t) in order {
@@ -1158,9 +1191,8 @@ pub fn improve_doc_with(doc: &mut VtuDoc, opts: &ImproveOptions, approximate: Op
         }
         // Then flip around what is still bad: 3-2 on its edges, 2-3 on its faces.
         let mut flipped = 0usize;
-        let bad_now: Vec<u32> = (0..mesh.tets.len() as u32)
-            .filter(|t| mesh.alive[*t as usize] && mesh.bad(mesh.tets[*t as usize], opts))
-            .collect();
+        let bad_now: Vec<u32> =
+            bad_tets(&mesh.points, &mesh.tets, &mesh.alive, opts).into_iter().map(|(_, t)| t).collect();
         for t in bad_now {
             if !mesh.alive[t as usize] {
                 continue;
@@ -1187,17 +1219,17 @@ pub fn improve_doc_with(doc: &mut VtuDoc, opts: &ImproveOptions, approximate: Op
             flipped += usize::from(done_here);
         }
         stats.flips += flipped;
+        lap("collapse+flip");
         // Then smooth the nodes of whatever is still bad, in node order.
         let mut nodes: BTreeSet<u32> = BTreeSet::new();
-        for (i, t) in mesh.tets.iter().enumerate() {
-            if mesh.alive[i] && mesh.bad(*t, opts) {
-                nodes.extend(t.iter().copied());
-            }
+        for (_, t) in bad_tets(&mesh.points, &mesh.tets, &mesh.alive, opts) {
+            nodes.extend(mesh.tets[t as usize].iter().copied());
         }
         let mut moved = 0usize;
         for u in nodes {
             moved += usize::from(mesh.try_smooth(u));
         }
+        lap("smooth");
         stats.passes += 1;
         stats.collapses += done;
         stats.smoothed += moved;
@@ -1222,9 +1254,11 @@ pub fn improve_doc_with(doc: &mut VtuDoc, opts: &ImproveOptions, approximate: Op
         println!("[S9-DIAG] refusals by improve.rs line: {:?}", mesh.refusals.borrow());
     }
     stats.tets_after = mesh.alive.iter().filter(|a| **a).count();
+    lap("count");
     if stats.collapses > 0 {
         rebuild(doc, &mesh, &tet_cell, &face_cell, &curve_cell);
     }
+    lap("rebuild");
     stats
 }
 

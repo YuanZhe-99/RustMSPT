@@ -46,6 +46,7 @@
 use crate::meshgen::predicates::node_key;
 use crate::meshgen::NodeKey;
 use crate::types::Vec3;
+use smallvec::SmallVec;
 use std::collections::BTreeMap;
 
 /// A convex polyhedron: vertices by node id, and faces as node-id loops wound outward.
@@ -6308,6 +6309,14 @@ fn clip_to_halfspaces(
     halfspaces: &[(Vec3, f64)],
     tol: f64,
 ) -> Option<Vec<Vec3>> {
+    // Every vertex strictly outside one half-space: that plane keeps nothing. Exactly the loop's
+    // own answer, reached without allocating - most of a surface is far from any one cell.
+    if halfspaces
+        .iter()
+        .any(|(normal, offset)| triangle.iter().all(|v| normal.dot(*v) - offset < 0.0))
+    {
+        return None;
+    }
     let mut polygon: Vec<Vec3> = triangle.to_vec();
     for (normal, offset) in halfspaces {
         if polygon.is_empty() {
@@ -6373,14 +6382,19 @@ pub fn trace_on_face<P: AsRef<[Vec3]>>(face: [Vec3; 3], tris: &[P], tol: f64) ->
     for polygon in tris {
         let triangle = polygon.as_ref();
         let n = triangle.len();
-        let d: Vec<f64> = triangle.iter().map(|v| normal.dot(v.sub(face[0])) / scale).collect();
-        // Wholly on one side, or lying in the plane: no chord.
-        if d.iter().all(|x| *x > tol) || d.iter().all(|x| *x < -tol) {
+        // Wholly on one side, or lying in the plane: no chord. Decided before anything is
+        // allocated - this runs for every polygon of the surface on every face.
+        let (mut above, mut below, mut flat) = (true, true, true);
+        for v in triangle {
+            let x = normal.dot(v.sub(face[0])) / scale;
+            above &= x > tol;
+            below &= x < -tol;
+            flat &= x.abs() <= tol;
+        }
+        if above || below || flat {
             continue;
         }
-        if d.iter().all(|x| x.abs() <= tol) {
-            continue;
-        }
+        let d: SmallVec<[f64; 8]> = triangle.iter().map(|v| normal.dot(v.sub(face[0])) / scale).collect();
         let mut hits: Vec<Vec3> = Vec::new();
         for k in 0..n {
             let (a, b) = (k, (k + 1) % n);

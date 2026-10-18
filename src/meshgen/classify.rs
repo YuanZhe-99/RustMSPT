@@ -517,6 +517,99 @@ pub struct PointClassifier {
     /// Each component's surface as merged coplanar convex polygons (`merge_coplanar`), what S8
     /// cuts along; empty until merged, when `polygons_of` hands back the triangles themselves.
     polygons: Vec<(i32, Vec<Vec<Vec3>>)>,
+    /// A uniform grid over each entry of `polygons`, for `polygons_near`.
+    polygon_grids: Vec<PolygonGrid>,
+}
+
+/// A bucket grid over one component's polygons, by bounding box. S8 asks for the polygons near one
+/// lattice face millions of times; scanning the whole surface each time was most of S8 on a4.
+struct PolygonGrid {
+    boxes: Vec<[Vec3; 2]>,
+    lo: Vec3,
+    cell: [f64; 3],
+    n: usize,
+    buckets: Vec<Vec<u32>>,
+}
+
+impl PolygonGrid {
+    // AI-FUNC-SUMMARY: Bucket polygons by bounding box on an n^3 grid (n ~ cube root of the count, at most 64); returns the grid; side effects: none.
+    fn build(polygons: &[Vec<Vec3>]) -> PolygonGrid {
+        let boxes: Vec<[Vec3; 2]> = polygons
+            .iter()
+            .map(|p| {
+                let mut lo = p[0];
+                let mut hi = p[0];
+                for v in p {
+                    lo = Vec3::new(lo.x.min(v.x), lo.y.min(v.y), lo.z.min(v.z));
+                    hi = Vec3::new(hi.x.max(v.x), hi.y.max(v.y), hi.z.max(v.z));
+                }
+                [lo, hi]
+            })
+            .collect();
+        let mut lo = Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
+        let mut hi = Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+        for b in &boxes {
+            lo = Vec3::new(lo.x.min(b[0].x), lo.y.min(b[0].y), lo.z.min(b[0].z));
+            hi = Vec3::new(hi.x.max(b[1].x), hi.y.max(b[1].y), hi.z.max(b[1].z));
+        }
+        let n = ((boxes.len() as f64).cbrt().round() as usize).clamp(1, 64);
+        let span = |a: f64, b: f64| ((b - a) / n as f64).max(f64::MIN_POSITIVE);
+        let cell = if boxes.is_empty() {
+            [1.0; 3]
+        } else {
+            [span(lo.x, hi.x), span(lo.y, hi.y), span(lo.z, hi.z)]
+        };
+        let mut grid = PolygonGrid { boxes: Vec::new(), lo, cell, n, buckets: vec![Vec::new(); n * n * n] };
+        for (i, b) in boxes.iter().enumerate() {
+            let (r0, r1) = grid.range(b[0], b[1]);
+            for x in r0[0]..=r1[0] {
+                for y in r0[1]..=r1[1] {
+                    for z in r0[2]..=r1[2] {
+                        grid.buckets[(x * n + y) * n + z].push(i as u32);
+                    }
+                }
+            }
+        }
+        grid.boxes = boxes;
+        grid
+    }
+
+    // AI-FUNC-SUMMARY: The bucket index range a box covers, clamped to the grid; returns (low, high) per axis; side effects: none.
+    fn range(&self, lo: Vec3, hi: Vec3) -> ([usize; 3], [usize; 3]) {
+        let at = |v: f64, o: f64, c: f64| -> usize {
+            let k = ((v - o) / c).floor();
+            if k.is_nan() || k < 0.0 {
+                0
+            } else {
+                (k as usize).min(self.n - 1)
+            }
+        };
+        (
+            [at(lo.x, self.lo.x, self.cell[0]), at(lo.y, self.lo.y, self.cell[1]), at(lo.z, self.lo.z, self.cell[2])],
+            [at(hi.x, self.lo.x, self.cell[0]), at(hi.y, self.lo.y, self.cell[1]), at(hi.z, self.lo.z, self.cell[2])],
+        )
+    }
+
+    // AI-FUNC-SUMMARY: Indices of the polygons whose bounding box meets [lo, hi], ascending; returns a Vec; side effects: none.
+    fn near(&self, lo: Vec3, hi: Vec3) -> Vec<u32> {
+        let (r0, r1) = self.range(lo, hi);
+        let n = self.n;
+        let mut out: Vec<u32> = Vec::new();
+        for x in r0[0]..=r1[0] {
+            for y in r0[1]..=r1[1] {
+                for z in r0[2]..=r1[2] {
+                    out.extend_from_slice(&self.buckets[(x * n + y) * n + z]);
+                }
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out.retain(|i| {
+            let b = &self.boxes[*i as usize];
+            b[0].x <= hi.x && b[1].x >= lo.x && b[0].y <= hi.y && b[1].y >= lo.y && b[0].z <= hi.z && b[1].z >= lo.z
+        });
+        out
+    }
 }
 
 impl PointClassifier {
@@ -642,6 +735,7 @@ impl PointClassifier {
             n_sheets,
             n_defective,
             polygons: Vec::new(),
+            polygon_grids: Vec::new(),
         }
     }
 
@@ -666,6 +760,24 @@ impl PointClassifier {
         }
         let merged = crate::meshgen::cdt::merge_coplanar_convex(&sets, tol, barriers);
         self.polygons = ids.into_iter().zip(merged).collect();
+        self.polygon_grids = self.polygons.iter().map(|(_, p)| PolygonGrid::build(p)).collect();
+    }
+
+    // AI-FUNC-SUMMARY:
+    // Purpose: The polygons of `polygons_of` whose bounding box meets the box [lo, hi], in the
+    //   order `polygons_of` lists them.
+    // Inputs: the component and the query box (the caller inflates it by its own tolerance).
+    // Returns: borrowed polygons, ascending by index; every triangle when no merge ran.
+    // Side effects: None.
+    // Notes: A subset in the original order, so a caller whose result depends only on which
+    //   polygons touch its region (`trace_on_face`, `fragment_facets_in_cell`) gets the same answer
+    //   as from the whole surface.
+    pub fn polygons_near(&self, component: i32, lo: Vec3, hi: Vec3) -> Vec<&[Vec3]> {
+        if let Some(k) = self.polygons.iter().position(|(x, _)| *x == component) {
+            let polygons = &self.polygons[k].1;
+            return self.polygon_grids[k].near(lo, hi).into_iter().map(|i| polygons[i as usize].as_slice()).collect();
+        }
+        self.surface_of(component).iter().map(|t| t.as_slice()).collect()
     }
 
     // AI-FUNC-SUMMARY: A component's surface as the polygons S8 cuts along - merged when `merge_coplanar` ran, its triangles otherwise; returns a Cow of polygons, empty for an unknown component; side effects: none.
