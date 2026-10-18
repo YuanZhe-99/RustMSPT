@@ -319,6 +319,7 @@ def run(case, stls, overrides):
         f.write(mesh.stdout)
         f.write(mesh.stderr)
     stages = stage_times(mesh.stdout + mesh.stderr)
+    stages["peak_rss_mb"] = (peak_rss(mesh.stdout + mesh.stderr) or 0) / 1e6
     if mesh.returncode != 0 or not os.path.exists(contract):
         return {"case": case, "error": [(mesh.stderr or mesh.stdout).strip()[-200:]]}
     return lambda: verify_case(case, stls, env, wall, stages, contract, delivered)
@@ -413,6 +414,12 @@ def verify_case(case, stls, env, wall, stages, contract, delivered):
         "lattice_tets": int(v12.get("tets_provenance_lattice", -1)),
         "lattice_per_cell": v12.get("tets_per_cell_lattice", float("nan")),
     }
+
+
+def peak_rss(log):
+    """The last `[STAGE-RSS]` value (bytes) - the run's peak resident set - or None."""
+    values = [int(m.group(1)) for m in re.finditer(r"\[STAGE-RSS\] \S+ ([0-9]+)", log)]
+    return max(values) if values else None
 
 
 def stage_times(log):
@@ -601,13 +608,14 @@ def main():
         ],
     )
 
-    stage_names = sorted({k for r in rows if "stages" in r for k in r["stages"]})
+    stage_names = sorted({k for r in rows if "stages" in r for k in r["stages"] if k != "peak_rss_mb"})
     table(
         rows,
         f"Time - wall seconds per case on the {PATH} path (plan M-1.1, M-1.3)",
         "total is the mesher's wall time as the runner measured it; the stage columns are its "
         "own [STAGE-TIME] lines, summed over repeats (the K1 loop reruns S4-S7).",
-        [("case", 5, lambda r: r["case"]), ("total", 8, lambda r: num(r.get("wall_s", -1), ".1f"))]
+        [("case", 5, lambda r: r["case"]), ("total", 8, lambda r: num(r.get("wall_s", -1), ".1f")),
+         ("peakMB", 8, lambda r: num(r.get("stages", {}).get("peak_rss_mb", -1), ".0f"))]
         + [(n[:10], 10, (lambda n: lambda r: num(r.get("stages", {}).get(n, -1), ".2f"))(n))
            for n in stage_names],
     )

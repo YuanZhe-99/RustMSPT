@@ -43,6 +43,11 @@ const K1_MAX_PASSES: usize = 3;
 fn stage_time(name: &str, started: Instant) -> Instant {
     if std::env::var_os("RUSTMSPT_TIME_STAGES").is_some() {
         eprintln!("[STAGE-TIME] {name} {:?}", started.elapsed());
+        // The process's peak resident set so far (VmHWM) - monotone, so the stage that raised it is
+        // the one whose line first shows the new value (plan M-6.5's memory envelope).
+        if let Some(bytes) = crate::pipeline::timing::peak_rss_bytes() {
+            eprintln!("[STAGE-RSS] {name} {bytes}");
+        }
     }
     Instant::now()
 }
