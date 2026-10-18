@@ -178,6 +178,7 @@ the shape. `s08_cut` is the first snapshot that fits the input.
 | `ImproveOptions` / `ImproveStats` | `src/meshgen/improve.rs:26` | S9's target (default the owner's FEM gate: AR < 10, dihedral >= 10 deg, six passes) and its counts (collapses, flips, node moves, tets and bad tets before/after, worst AR). |
 | `aspect_ratio` / `min_dihedral_deg` | `src/meshgen/improve.rs:59` | The gate's measures: longest edge over shortest altitude scaled so a regular tet reads 1 (Abaqus convention), and the smallest dihedral in degrees. |
 | `bad_tets` | `src/meshgen/improve.rs` | The alive tets missing the gate, with their aspect ratio, ascending by index - S9's whole-mesh scans, run in parallel and collected in index order, so the moves that follow see the same list as a serial scan. |
+| `Mesh::try_unfold` | `src/meshgen/improve.rs` | S9's flat-fold removal: a tet within `tol` of one plane, two of its faces tagged on one surface and sharing an edge (a, c) whose ring is exactly it plus two tets of another material over a common apex q, is removed by giving those two tets the other diagonal - (q, a, b, d), (q, c, b, d) - and moving the two tagged face records onto its other two faces. No node moves; refused unless the ring's volume is conserved (a non-convex quad fails), both new tets are positive and the worst AR strictly falls. a7a_r: worst AR 5.3e7 -> 2.6e6, `[V5]` WARN -> PASS. |
 | `improve_doc_with` / `ApproximateInputs` | `src/meshgen/improve.rs:945` | S9 with `fidelity.mode: approximate` (M-4.5b): nodes where a surface is smooth (all face normals within `sizing.feature_angle_deg`) may also collapse and slide - smoothed towards their surface neighbours and projected back onto the input - with every face they touch held within `tolerance_frac` of the diagonal of the input; sharp edges, curves and box planes stay exact. |
 | `InputSurface` | `src/meshgen/improve.rs:203` | An input surface bucketed on a uniform grid (cell `max(mean edge, tolerance)`): `nearest(p, radius)` gives the closest point within a radius. |
 | `MeshGenFidelity` / `FidelityMode` | `src/config/meshgen.rs:306` | `meshgen.fidelity: { mode: exact (default) \| approximate, tolerance_frac: 1e-3 }` - which surface the mesh is held to (D-6, the user's choice). `validate()` refuses a tolerance outside (0, 0.1). |
@@ -402,6 +403,15 @@ parse-reject run.
 tagged faces only and moved nodes on those faces as if they were interior (on-surface 99.82 -> 99.21).
 They now join the classification as virtual faces - never written back - so the same plane rules
 hold on them, and S9 is geometry-exact again (a3r 99.817 with and without S9).
+
+**A flat tet lying IN a tagged plane is a fold, not a sliver to collapse (`try_unfold`).** The worst
+elements left on the rotated plates (a7a_r, a7b_r, a8_r: AR ~5e7) have all four nodes on the inclined
+plane, the two sides of the surface quad on different diagonals, and every node pinned by its planes,
+so no collapse, interior flip or smoothing reaches them. When the ring of the tagged diagonal (a, c) is
+exactly the flat tet plus two tets of another material over a common apex q, those two take the other
+diagonal and the flat tet goes, the two tag records moving onto its coplanar other faces: no node
+moves and the geometry is unchanged. a7a_r: worst AR 5.3e7 -> 2.6e6, misattributed 2 -> 0, `[V5]`
+WARN -> PASS, `[V13]` identical.
 
 The owner's FEM gate is a minimum dihedral of 10 deg and an aspect ratio below 10 (longest edge over
 shortest altitude, regular tet = 1). The cut's bad tets are 82-90 % needles - a short edge between a

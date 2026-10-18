@@ -737,6 +737,7 @@
 | `ImproveOptions` / `ImproveStats` | 网格生成 | `src/meshgen/improve.rs:26` | S9 的目标（默认为业主的 FEM 门槛：AR < 10、二面角 ≥ 10°，六轮）与计数（收缩、翻转、节点移动、前后的四面体数与不达标数、最差 AR）。 |
 | `aspect_ratio` / `min_dihedral_deg` | 网格生成 | `src/meshgen/improve.rs:59` | 门槛使用的度量：最长边除以最短高并归一到正四面体为 1（Abaqus 约定），以及以度为单位的最小二面角。 |
 | `bad_tets` | 网格生成 | `src/meshgen/improve.rs` | 未达标的存活四面体及其 AR，按下标升序——S9 的全网格扫描并行执行并按下标顺序收集，后续操作看到的列表与串行扫描相同。 |
+| `Mesh::try_unfold` | 网格生成 | `src/meshgen/improve.rs` | S9 的平折移除：一个四面体的四点在 `tol` 内共面、其两个面在同一曲面上带标签且共享边 (a, c)，若该边的环恰为它加上另一材料的两个共顶点 q 的四面体，则让这两个四面体改用另一条对角线——(q, a, b, d)、(q, c, b, d)——并把两条标签面记录移到它的另两个面上。不移动任何节点；要求环的体积守恒（非凸四边形会失败）、两个新四面体为正且最差 AR 严格下降。a7a_r：最差 AR 5.3e7 → 2.6e6，`[V5]` WARN → PASS。 |
 | `improve_doc_with` / `ApproximateInputs` | 网格生成 | `src/meshgen/improve.rs:945` | `fidelity.mode: approximate` 下的 S9（M-4.5b）：曲面光滑处的节点（所有面法向在 `sizing.feature_angle_deg` 以内）也可以收缩和滑动——向其曲面邻居光顺后再投影回输入曲面——它触及的每个面都保持在输入曲面的 `tolerance_frac` 倍对角线以内；锋利边、曲线和盒面仍然精确。 |
 | `InputSurface` | 网格生成 | `src/meshgen/improve.rs:203` | 在均匀网格（格子尺寸 `max(平均边长, 容差)`）上分桶的输入曲面：`nearest(p, radius)` 给出半径内的最近点。 |
 | `MeshGenFidelity` / `FidelityMode` | 网格生成 | `src/config/meshgen.rs:306` | `meshgen.fidelity: { mode: exact（默认）\| approximate, tolerance_frac: 1e-3 }`——网格要贴合哪个曲面（D-6，由用户选择）。`validate()` 拒绝 (0, 0.1) 以外的容差。 |

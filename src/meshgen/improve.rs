@@ -160,7 +160,8 @@ struct Mesh {
     curve_edges: BTreeMap<[u32; 2], i32>,
     tol: f64,
     approx: Option<Approx>,
-    /// Print-only (`RUSTMSPT_S9_DIAG`): how often each refusal site fired, keyed by source line.
+    /// Print-only (`RUSTMSPT_S9_DIAG`): how often each refusal site fired, keyed by source line
+    /// (9xx: the guards of `try_unfold`, in order).
     refusals: std::cell::RefCell<BTreeMap<usize, usize>>,
 }
 
@@ -702,6 +703,137 @@ impl Mesh {
         self.replace(&ring, &[[o[0], o[1], o[2], a], [o[0], o[1], o[2], b]])
     }
 
+    // A flat tet lying IN a tagged surface is a fold: the material side carries the quad (a, b, c, d)
+    // on one diagonal (a, c) and the other side on the other (b, d). When the two material tets
+    // over (a, c) share an apex q, they become (q, a, b, d), (q, c, b, d), the flat tet goes, and
+    // the two tagged face records move onto its other two faces - the same plane within `tol`, so
+    // no surface moves and no node does. The worst elements S9 left on the rotated plates
+    // (a7a_r, AR 5.3e7) are exactly this.
+    fn try_unfold(&mut self, t: u32) -> bool {
+        let tet = self.tets[t as usize];
+        let p = self.tet_points(tet);
+        let mut longest = 0.0f64;
+        for a in 0..4 {
+            for b in (a + 1)..4 {
+                let d = p[b].sub(p[a]);
+                longest = longest.max(d.dot(d).sqrt());
+            }
+        }
+        // Coplanar within tol: every corner within tol of the plane of the other three.
+        let six_v = orient3d(p[0], p[1], p[2], p[3]).abs();
+        for slots in TET_FACES {
+            let [a, b, c] = slots.map(|k| p[k]);
+            let area2 = b.sub(a).cross(c.sub(a));
+            let area2 = area2.dot(area2).sqrt();
+            if area2 <= 0.0 || six_v / area2 > self.tol {
+                { self.refused(901); return false; }
+            }
+        }
+        let tagged: Vec<(usize, [u32; 3])> = TET_FACES
+            .iter()
+            .filter_map(|slots| {
+                let face = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+                self.face_index.get(&sorted3(face)).map(|f| (*f, face))
+            })
+            .collect();
+        if tagged.len() != 2 || self.face_surface[tagged[0].0] != self.face_surface[tagged[1].0] {
+            { self.refused(902); return false; }
+        }
+        let (f1, f2) = (tagged[0].0, tagged[1].0);
+        let shared: Vec<u32> = tagged[0].1.iter().copied().filter(|x| tagged[1].1.contains(x)).collect();
+        let [a, c] = [shared[0], shared[1]];
+        let key = if a < c { [a, c] } else { [c, a] };
+        if self.curve_edges.contains_key(&key) {
+            { self.refused(903); return false; }
+        }
+        let Some(b) = tagged[0].1.iter().copied().find(|x| *x != a && *x != c) else { return false };
+        let Some(d) = tagged[1].1.iter().copied().find(|x| *x != a && *x != c) else { return false };
+        let ring = self.tets_with(&[a, c]);
+        if ring.len() != 3 || !ring.contains(&t) {
+            { self.refused(904); return false; }
+        }
+        let others: Vec<u32> = ring.iter().copied().filter(|x| *x != t).collect();
+        let x1 = *others.iter().find(|x| self.tets[**x as usize].contains(&b)).unwrap_or(&u32::MAX);
+        let x2 = *others.iter().find(|x| self.tets[**x as usize].contains(&d)).unwrap_or(&u32::MAX);
+        if x1 == u32::MAX || x2 == u32::MAX || x1 == x2 {
+            { self.refused(905); return false; }
+        }
+        let apex = |x: u32| self.tets[x as usize].iter().copied().find(|n| ![a, b, c, d].contains(n));
+        let (Some(q), Some(q2)) = (apex(x1), apex(x2)) else { return false };
+        let material = self.material[x1 as usize];
+        if q != q2 || self.material[x2 as usize] != material || self.material[t as usize] == material {
+            { self.refused(906); return false; }
+        }
+        // The far side of each new tagged face must be of another material, or it is no boundary.
+        for face in [[a, b, d], [c, b, d]] {
+            let far: Vec<u32> = self.tets_with(&face).into_iter().filter(|x| *x != t).collect();
+            if far.len() != 1 || self.material[far[0] as usize] == material || self.face_index.contains_key(&sorted3(face)) {
+                { self.refused(907); return false; }
+            }
+        }
+        let new = [[q, a, b, d], [q, c, b, d]];
+        if new.iter().any(|n| n.iter().all(|x| self.surfaces[*x as usize].iter().any(|s| *s < BOX_BASE))) {
+            { self.refused(908); return false; }
+        }
+        let volume = |n: [u32; 4]| {
+            let p = self.tet_points(n);
+            orient3d(p[0], p[1], p[2], p[3])
+        };
+        // The two new tets fill exactly the ring of (a, c): both material tets and the flat one.
+        let before: f64 =
+            volume(self.tets[x1 as usize]).abs() + volume(self.tets[x2 as usize]).abs() + volume(tet).abs();
+        let mut made: Vec<[u32; 4]> = Vec::new();
+        let mut after = 0.0;
+        let mut after_worst = 0.0f64;
+        for n in new {
+            let Some((o, v)) = self.oriented(n) else { return false };
+            after += v;
+            after_worst = after_worst.max(aspect_ratio(self.tet_points(o)));
+            made.push(o);
+        }
+        let before_worst = [t, x1, x2]
+            .iter()
+            .map(|x| aspect_ratio(self.tet_points(self.tets[*x as usize])))
+            .fold(0.0f64, f64::max);
+        if (after - before).abs() > 1.0e-9 * before || after_worst >= before_worst {
+            { self.refused(909); return false; }
+        }
+        // Apply: the two material tets take the other diagonal, the flat tet goes, the tagged
+        // records move with their winding (normal sense) kept.
+        for x in tet {
+            self.node_tets[x as usize].retain(|y| *y != t);
+        }
+        self.alive[t as usize] = false;
+        for (slot, n) in [x1, x2].into_iter().zip(made) {
+            for x in self.tets[slot as usize] {
+                self.node_tets[x as usize].retain(|y| *y != slot);
+            }
+            self.tets[slot as usize] = n;
+            for x in n {
+                self.node_tets[x as usize].push(slot);
+            }
+        }
+        for (f, face) in [(f1, [a, b, d]), (f2, [c, b, d])] {
+            let old = self.faces[f];
+            let normal = |g: [u32; 3]| {
+                let [u, v, w] = g.map(|n| self.points[n as usize]);
+                v.sub(u).cross(w.sub(u))
+            };
+            let sense = normal(old);
+            let g = if normal(face).dot(sense) >= 0.0 { face } else { [face[0], face[2], face[1]] };
+            self.face_index.remove(&sorted3(old));
+            for x in old {
+                self.node_faces[x as usize].retain(|y| *y != f as u32);
+            }
+            self.faces[f] = g;
+            self.face_index.insert(sorted3(g), f);
+            for x in g {
+                self.node_faces[x as usize].push(f as u32);
+            }
+        }
+        true
+    }
+
     // 2-3: an untagged interior face shared by two tets of one material becomes three tets
     // around the segment joining the two apexes.
     fn try_flip23(&mut self, f: [u32; 3]) -> bool {
@@ -1201,8 +1333,11 @@ pub fn improve_doc_with(doc: &mut VtuDoc, opts: &ImproveOptions, approximate: Op
             if !mesh.bad(tet, opts) {
                 continue;
             }
-            let mut done_here = false;
+            let mut done_here = mesh.try_unfold(t);
             for (i, j) in [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)] {
+                if done_here {
+                    break;
+                }
                 if mesh.try_flip32(tet[i], tet[j]) {
                     done_here = true;
                     break;
