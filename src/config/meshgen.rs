@@ -329,6 +329,26 @@ pub struct MeshGenOutput {
     pub abaqus: Option<String>,
     #[serde(default)]
     pub report: Option<String>,
+    /// How the INP carries a tagged interface (plan D-4, M-6.6): `welded` (default) - one node set,
+    /// the interface delivered as `(elem+, elem-)` surface pairs; `split` - the selected interfaces
+    /// cut open by node-star sectoring, one node copy per connected sector, the copies mapped back to
+    /// the welded VTU ids in `<inp stem>_split_map.csv`. The VTU contract stays welded either way.
+    /// A modelling choice for the solver, like `fem_profile`, not a correctness knob (R3).
+    #[serde(default)]
+    pub interface: InterfaceExport,
+    /// Under `split`, the components whose tagged faces are cut open; empty selects every material
+    /// interface.
+    #[serde(default)]
+    pub split_components: Vec<i32>,
+}
+
+// AI-FUNC-SUMMARY: The INP's interface treatment (`welded` | `split`); side effects: none.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Hash)]
+#[serde(rename_all = "kebab-case")]
+pub enum InterfaceExport {
+    #[default]
+    Welded,
+    Split,
 }
 
 // AI-FUNC-SUMMARY:

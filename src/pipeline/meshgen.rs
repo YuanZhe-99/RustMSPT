@@ -177,6 +177,8 @@ fn compute_config_hash(p: &crate::config::meshgen::MeshGenParams) -> u64 {
     p.output.vtu.hash(&mut hasher);
     p.output.abaqus.hash(&mut hasher);
     p.output.report.hash(&mut hasher);
+    p.output.interface.hash(&mut hasher);
+    p.output.split_components.hash(&mut hasher);
     for value in [
         p.verify.max_ar_warn,
         p.verify.min_dihedral_deg,
@@ -1531,7 +1533,29 @@ impl Pipeline for MeshGenPipeline {
             Some(path) => PathBuf::from(path),
             None => output_path.with_extension("inp"),
         };
-        let export = crate::meshgen::export::write_inp(&doc, &p.materials)?;
+        let split = match p.output.interface {
+            crate::config::meshgen::InterfaceExport::Welded => None,
+            crate::config::meshgen::InterfaceExport::Split => {
+                let split = crate::meshgen::export::split_interfaces(&doc, &p.output.split_components);
+                if split.faces_split == 0 {
+                    return Err(RustMsptError::InvalidConfig(format!(
+                        "output.interface: split found no tagged material interface to cut open{}",
+                        if p.output.split_components.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" for components {:?}", p.output.split_components)
+                        }
+                    )));
+                }
+                println!(
+                    "[S11] split: {} interface face(s) cut open, {} node cop(ies)",
+                    split.faces_split,
+                    split.copies.len()
+                );
+                Some(split)
+            }
+        };
+        let export = crate::meshgen::export::write_inp(&doc, &p.materials, split.as_ref())?;
         for warning in &export.warnings {
             println!("{warning}");
         }
@@ -1541,6 +1565,18 @@ impl Pipeline for MeshGenPipeline {
             }
         }
         std::fs::write(&inp_path, &export.text)?;
+        if let Some(split) = &split {
+            let map_path = inp_path.with_file_name(format!(
+                "{}_split_map.csv",
+                inp_path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()
+            ));
+            let mut csv = String::from("inp_node,welded_vtu_point\n");
+            for (id, of) in &split.copies {
+                csv.push_str(&format!("{},{}\n", id + 1, of));
+            }
+            std::fs::write(&map_path, csv)?;
+            println!("[S11] split map: {}", map_path.display());
+        }
         clock = stage_time("S11", clock);
         println!(
             "[S11] INP: {} ({} node(s), {} C3D4 element(s))",

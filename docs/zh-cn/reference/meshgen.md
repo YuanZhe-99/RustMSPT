@@ -230,6 +230,8 @@ PLAN §6.3 的拒绝在代码中强制执行，而非假设。出现以下任一
 
 **S11。** 由于 S9 尚未实现，第 11 阶段文档即切割结果，写入 `output.vtu`（纯四面体体网格）与 `<stem>_contract.vtu`，并以 Abaqus INP 视图导出（`export.rs`）：节点 `i` 即点 `i-1`，单元 `c` 即四面体单元 `c-1`，类型 `C3D4`；每个区域键一个 `ELSET=REGION_<k>`，每个分区一个 `PARTITION_<p>`，按各节点 `N_ID` 生成 `NSET=COMPONENT_<X>`，并在每个组分的内侧与外侧生成 `*SURFACE, NAME=IFACE_<X>_IN/OUT`（`FaceTagSideElems` 是几何约定的 `(elem+, elem-)` 对，各成员的 `FaceTagOrientation` 指明其内侧：+1 为 elem+，−1 为 elem−）。材料映射：没有 `materials:` 块时 INP 只含集合、不含截面；有该块时每个区域键都必须可解析（单组分键经 `by_component`，多组分键经 `by_region_key` 以 `"X+Y"` 形式），否则运行失败并列出这些键，除非设置 `unmapped: elset-only`。`mesh-verify` 通过 `inp:` 将 INP 交叉检查为 `[V10]`。
 
+**`output.interface: welded | split`**（计划 D-4、M-6.6）。`welded`（默认）写出单一节点集，每个界面以 `IFACE_<X>_IN/OUT` 面对的形式交付。`split` 在 INP 中按节点星形扇区把选定界面剪开（`split_interfaces`）：对选定面上的每个节点，其周围四面体在经过该节点的所有共享面上相连，选定面除外；第一个扇区之外的每个扇区获得一个节点副本——普通接触两份，界面沿曲线交汇处更多，星形仍连通的裂纹前缘节点不复制。`output.split_components: [X, ...]` 把选择限定为带这些组分标签的面；为空时选择全部材料界面，若一个也没选到则报错。副本编号接在焊接节点之后，在 INP 中以 `**SPLIT 副本, 焊接节点` 行列出，并写入 `<inp 名>_split_map.csv`，`[V10]` 通过该映射逐一检查每个副本。VTU 契约始终保持焊接。实测：a6a 剪开 31,287 个面、15,753 个副本，a3 剪开 53,252 个面、27,005 个副本；两者在域盒以外的自由面恰为被剪开面的两侧，且没有面被三个四面体共享（`fem_smoke.py`）。
+
 ## G2-1 至 G2-3 排布
 
 注册身份先于几何量化建立。`EdgeTri` 使用稳定源边/三角形 ID，`EdgeEdge` 排序两条源边，`TriTriTri` 排序三个三角形 ID。请求在有序容器中收集，仅按规范键顺序分配 ID。共享一个 `NodeKey` 的溯源仍作为同一 `RegistryVertex` 的别名可见；非同坐标别名同时产生 G2-3 歧义记录。

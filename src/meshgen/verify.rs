@@ -1842,13 +1842,19 @@ fn check_v10(doc: &VtuDoc, inp: Option<&str>, cap: usize) -> VerifySection {
     let tets: Vec<usize> = (0..doc.types.len()).filter(|c| doc.types[*c] == VTK_TETRA).collect();
     s.metric("inp_nodes", parsed.nodes.len() as f64);
     s.metric("inp_elements", parsed.elements.len() as f64);
-    if parsed.nodes.len() != doc.points.len() {
+    // A split export (plan M-6.6) carries copies; each is checked against its welded original
+    // through the map, never by count equality alone.
+    let welded_of: BTreeMap<usize, usize> = parsed.split.iter().map(|(c, w)| (*c, *w)).collect();
+    s.metric("split_copies", welded_of.len() as f64);
+    let resolve = |id: usize| welded_of.get(&id).copied().unwrap_or(id);
+    if parsed.nodes.len() != doc.points.len() + welded_of.len() {
         fail(&mut s, "V10.node_count", format!("INP has {} node(s), the document {}", parsed.nodes.len(), doc.points.len()));
     }
     let mut node_mismatch = 0usize;
     for (id, p) in &parsed.nodes {
-        let ok = *id >= 1
-            && doc.points.get(id - 1).is_some_and(|q| q.x == p[0] && q.y == p[1] && q.z == p[2]);
+        let w = resolve(*id);
+        let ok = w >= 1
+            && doc.points.get(w - 1).is_some_and(|q| q.x == p[0] && q.y == p[1] && q.z == p[2]);
         if !ok {
             node_mismatch += 1;
             if node_mismatch <= 8 {
@@ -1864,7 +1870,7 @@ fn check_v10(doc: &VtuDoc, inp: Option<&str>, cap: usize) -> VerifySection {
         let ok = *id >= 1
             && tets.get(id - 1).is_some_and(|c| {
                 let n = doc.cell(*c);
-                (0..4).all(|k| n[k] + 1 == nodes[k] as i64)
+                (0..4).all(|k| n[k] + 1 == resolve(nodes[k]) as i64)
             });
         if !ok {
             element_mismatch += 1;
@@ -1934,8 +1940,9 @@ fn check_v10(doc: &VtuDoc, inp: Option<&str>, cap: usize) -> VerifySection {
     }
     let mut nset_bad = 0usize;
     for (name, ids) in &expected_nsets {
-        let mut got = parsed.nsets.get(name).cloned().unwrap_or_default();
+        let mut got: Vec<usize> = parsed.nsets.get(name).into_iter().flatten().map(|id| resolve(*id)).collect();
         got.sort_unstable();
+        got.dedup();
         if &got != ids {
             nset_bad += 1;
             fail(&mut s, "V10.nset", format!("NSET {name} does not hold exactly the {} node(s) whose N_ID names it", ids.len()));

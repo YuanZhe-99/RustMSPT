@@ -850,7 +850,7 @@ fn v10_passes_the_written_inp_and_fails_every_tampered_one() {
     use rustmspt::meshgen::export::write_inp;
     use rustmspt::meshgen::verify::{verify_with_options, VerifyOptions};
     let doc = load_vtu(&fixture("good_cube")).unwrap();
-    let inp = write_inp(&doc, &MeshGenMaterials::default()).unwrap().text;
+    let inp = write_inp(&doc, &MeshGenMaterials::default(), None).unwrap().text;
     let run = |text: &str| {
         verify_with_options(
             &doc,
@@ -934,4 +934,30 @@ fn v6_fails_a_tag_orientation_that_names_the_wrong_inside() {
     let (checked_minus, wrong_minus) = with(-1);
     assert!(checked_plus > 0.0 && checked_minus > 0.0, "the check must examine the fixture's tags");
     assert!((wrong_plus == 0.0) != (wrong_minus == 0.0), "exactly one orientation is right: +1 {wrong_plus}, -1 {wrong_minus}");
+}
+
+// AI-FUNC-SUMMARY: The split export (plan M-6.6) cuts the tagged interface open with node copies that [V10] traces back through the map, and a copy pointing at the wrong welded node fails (R8); returns nothing; side effects: none.
+#[test]
+fn v10_traces_a_split_export_through_its_node_map() {
+    use rustmspt::config::meshgen::MeshGenMaterials;
+    use rustmspt::meshgen::export::{split_interfaces, write_inp};
+    use rustmspt::meshgen::verify::{verify_with_options, VerifyOptions};
+    let doc = load_vtu(&fixture("good_cube")).unwrap();
+    let split = split_interfaces(&doc, &[]);
+    assert!(split.faces_split > 0, "the fixture's interface must be selected");
+    assert!(!split.copies.is_empty(), "cutting an interface open must copy its nodes");
+    let inp = write_inp(&doc, &MeshGenMaterials::default(), Some(&split)).unwrap().text;
+    let status = |text: &str| {
+        verify_with_options(&doc, &VerifyGates::default(), VerifyOptions { inp: Some(text.to_string()), ..VerifyOptions::default() })
+            .sections
+            .iter()
+            .find(|s| s.id == "V10")
+            .unwrap()
+            .status
+    };
+    assert_eq!(status(&inp), CheckStatus::Pass);
+    let (copy, welded) = split.copies[0];
+    let wrong = (welded + 1) % doc.points.len();
+    let tampered = inp.replacen(&format!("**SPLIT {}, {}", copy + 1, welded + 1), &format!("**SPLIT {}, {}", copy + 1, wrong + 1), 1);
+    assert_eq!(status(&tampered), CheckStatus::Fail);
 }

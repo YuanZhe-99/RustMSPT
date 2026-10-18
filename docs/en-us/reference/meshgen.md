@@ -176,6 +176,7 @@ the shape. `s08_cut` is the first snapshot that fits the input.
 | `refresh_split_interfaces` | `src/meshgen/cut.rs:6975` | After the hanging-node repair, replaces an interface face no tet carries any more by its two halves at the node now on one of its edges, side elements recomputed; the repair splits every tet around an edge, including another tagged face on it (a3: 4 `[V12]` side_elems failures). |
 | `compact_unreferenced_nodes` | `src/meshgen/cut.rs:5778` | End of S8: drops every node no tet references and renumbers the rest in order (tets, interfaces, rim and curve edges, constraint arrays, `n_lattice_nodes`); a6a_r carried an S7-duplicated lattice node no cell used (plan M-2.6). |
 | `write_inp` | `src/meshgen/export.rs:83` | S11: the stage-11 contract document as an Abaqus INP - C3D4 in VTU order, REGION/PARTITION ELSETs, COMPONENT NSETs from N_ID, IFACE_X_IN/OUT surfaces (X's inside and outside, from the geometric FaceTagSideElems pair and X's FaceTagOrientation), sections from `materials:` (unmapped key is an error unless `elset-only`). |
+| `split_interfaces` / `SplitNodes` | `src/meshgen/export.rs:425` | `output.interface: split`: cut the selected tagged interfaces open by node-star sectoring, one copy per sector beyond the first, mapped back to the welded ids. |
 | `parse_inp` | `src/meshgen/export.rs:274` | Parse the INP subset S11 writes (nodes, elements, ELSET/NSET, element surfaces, solid sections) for `[V10]`. |
 | `c3d4_face_of` | `src/meshgen/export.rs:64` | The C3D4 face number (S1..S4) of a tet whose three nodes are a given face. |
 | `partition_tets` | `src/meshgen/cut.rs:7694` | S10: union-find flood fill of the tets across every shared face except a sheet's, partitions numbered by their lowest tet. |
@@ -410,6 +411,19 @@ elem+, -1 elem-), so two bodies in contact carry opposite orientations (plan M-4
 block the INP carries sets and no sections; with one, every region key must resolve (a singleton
 through `by_component`, a multi-ID key through `by_region_key` as `"X+Y"`) or the run fails naming
 the keys, unless `unmapped: elset-only`. `mesh-verify` cross-checks the INP (`inp:`) as `[V10]`.
+
+**`output.interface: welded | split`** (plan D-4, M-6.6). `welded` (default) writes one node set and
+delivers each interface as the `IFACE_<X>_IN/OUT` surface pair. `split` cuts the selected interfaces
+open in the INP by node-star sectoring (`split_interfaces`): for every node on a selected face the
+tets around it are joined across every shared face through it except the selected ones, and each
+sector beyond the first gets its own copy - two on a plain contact, more where interfaces meet along
+a curve, none at a crack-front node whose star stays connected. `output.split_components: [X, ...]`
+restricts the selection to faces tagged with those components; empty selects every material
+interface, and a selection that finds none is an error. Copies are numbered after the welded nodes,
+listed in the INP as `**SPLIT copy, welded` lines and in `<inp stem>_split_map.csv`, and `[V10]`
+checks every copy through that map. The VTU contract stays welded. Measured: a6a cuts 31,287 faces
+with 15,753 copies, a3 53,252 with 27,005; in both the only free faces off the box are the cut faces'
+two sides and no face carries three tets (`fem_smoke.py`).
 
 ## G2-1 through G2-3 arrangement
 

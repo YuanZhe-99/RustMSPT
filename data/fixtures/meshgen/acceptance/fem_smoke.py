@@ -48,8 +48,36 @@ def read_inp(path):
     return xyz, tets
 
 
+def topology(xyz, tets):
+    """Faces used once (free) off the box, and faces used three or more times."""
+    f = np.sort(tets[:, [[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]]].reshape(-1, 3), axis=1)
+    _, counts = np.unique(f, axis=0, return_counts=True)
+    uniq = np.unique(f, axis=0)
+    lo, hi = xyz.min(axis=0), xyz.max(axis=0)
+    tol = 1e-9 * np.linalg.norm(hi - lo)
+    free = uniq[counts == 1]
+    p = xyz[free]
+    on_box = np.zeros(len(free), dtype=bool)
+    for k in range(3):
+        on_box |= np.all(np.abs(p[:, :, k] - lo[k]) <= tol, axis=1) | np.all(np.abs(p[:, :, k] - hi[k]) <= tol, axis=1)
+    return int((~on_box).sum()), int((counts > 2).sum())
+
+
 def smoke(path):
     xyz, tets = read_inp(path)
+    split = any(line.startswith("**SPLIT ") for line in open(path))
+    interior_free, multi = topology(xyz, tets)
+    if split:
+        # A split export: interfaces cut open, so bodies may float and the linear patch test does
+        # not hold across a traction-free cut. What must hold is that every element is valid, no
+        # face carries three tets, and the only free faces off the box are the cut faces' two sides.
+        p = xyz[tets]
+        jac = np.linalg.det(p[:, 1:, :] - p[:, :1, :])
+        bad = int((jac <= 0).sum())
+        ok = bad == 0 and multi == 0
+        print(f"{path}: split export, {len(tets)} C3D4, {xyz.shape[0]} nodes; non-positive Jacobians {bad}; "
+              f"faces on 3+ tets {multi}; free faces off the box {interior_free} (the cut faces' two sides) -> {'PASS' if ok else 'FAIL'}")
+        return ok
     p = xyz[tets]  # (E, 4, 3)
     d = p[:, 1:, :] - p[:, :1, :]  # edges from node 1
     jac = np.linalg.det(d)  # 6 x volume
@@ -84,12 +112,14 @@ def smoke(path):
     u, info = spla.cg(kff, rhs, rtol=1e-12, maxiter=20 * max(1, kff.shape[0]), M=m)
     err = float(np.abs(u - exact[free]).max()) if free.any() else 0.0
     span = float(np.abs(exact).max())
-    passed = bad == 0 and asym <= 1e-12 * scale and info == 0 and err <= 1e-6 * span and abs(vol - box) <= 1e-9 * box
+    passed = (bad == 0 and asym <= 1e-12 * scale and info == 0 and err <= 1e-6 * span
+              and abs(vol - box) <= 1e-9 * box and interior_free == 0 and multi == 0)
     print(
         f"{path}: {len(tets)} C3D4, {n} nodes ({int(free.sum())} free); "
         f"non-positive Jacobians {bad}; volume {vol:.12g} vs box {box:.12g}; "
         f"asymmetry {asym:.2e} of {scale:.2e}; CG {'converged' if info == 0 else f'FAILED ({info})'}; "
-        f"patch-test error {err:.2e} of {span:.2e} -> {'PASS' if passed else 'FAIL'}"
+        f"patch-test error {err:.2e} of {span:.2e}; free faces off the box {interior_free}, faces on 3+ tets {multi} "
+        f"-> {'PASS' if passed else 'FAIL'}"
     )
     return passed
 

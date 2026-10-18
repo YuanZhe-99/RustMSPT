@@ -81,7 +81,7 @@ pub fn c3d4_face_of(tet: &[i64], face: [i64; 3]) -> Option<usize> {
 // Notes: Every tet of the document is positively oriented (`orient_positively`), which is C3D4's
 //   positive-Jacobian order, so nodes are written as they are. Set and surface order is sorted by
 //   id throughout, so the text is a function of the document (R-P2).
-pub fn write_inp(doc: &VtuDoc, materials: &MeshGenMaterials) -> Result<InpExport> {
+pub fn write_inp(doc: &VtuDoc, materials: &MeshGenMaterials, split: Option<&SplitNodes>) -> Result<InpExport> {
     let mut export = InpExport::default();
     let tets: Vec<usize> = (0..doc.types.len()).filter(|c| doc.types[*c] == VTK_TETRA).collect();
     if tets.iter().enumerate().any(|(at, c)| at != *c) {
@@ -116,12 +116,33 @@ pub fn write_inp(doc: &VtuDoc, materials: &MeshGenMaterials) -> Result<InpExport
     for (i, p) in doc.points.iter().enumerate() {
         let _ = writeln!(out, "{}, {:.17e}, {:.17e}, {:.17e}", i + 1, p.x, p.y, p.z);
     }
+    let copies = split.map(|s| s.copies.as_slice()).unwrap_or(&[]);
+    for (id, of) in copies {
+        let p = doc.points[*of];
+        let _ = writeln!(out, "{}, {:.17e}, {:.17e}, {:.17e}", id + 1, p.x, p.y, p.z);
+    }
     let _ = writeln!(out, "*ELEMENT, TYPE=C3D4, ELSET=ALL_TETS");
-    for c in &tets {
-        let n = doc.cell(*c);
+    for (at, c) in tets.iter().enumerate() {
+        let n: [usize; 4] = match split {
+            Some(s) => s.tets[at],
+            None => {
+                let n = doc.cell(*c);
+                [n[0] as usize, n[1] as usize, n[2] as usize, n[3] as usize]
+            }
+        };
         let _ = writeln!(out, "{}, {}, {}, {}, {}", c + 1, n[0] + 1, n[1] + 1, n[2] + 1, n[3] + 1);
     }
-    export.n_nodes = doc.points.len();
+    if !copies.is_empty() {
+        // The split's node map, one line per copy (`**SPLIT copy, welded`, 1-based), so a reader -
+        // and `[V10]` - can trace every copy back to the welded node it duplicates.
+        let _ = writeln!(out, "** split interface: {} node cop(ies) of welded nodes", copies.len());
+        for (id, of) in copies {
+            let _ = writeln!(out, "**SPLIT {}, {}", id + 1, of + 1);
+        }
+        let _ = writeln!(out, "*NSET, NSET=SPLIT_COPIES");
+        id_lines(out, &copies.iter().map(|(id, _)| id + 1).collect::<Vec<_>>());
+    }
+    export.n_nodes = doc.points.len() + copies.len();
     export.n_elements = tets.len();
 
     // Regions.
@@ -153,6 +174,13 @@ pub fn write_inp(doc: &VtuDoc, materials: &MeshGenMaterials) -> Result<InpExport
         for x in n_id_sets.get(*key as usize).into_iter().flatten() {
             if *x > 0 {
                 by_component.entry(*x).or_default().push(node + 1);
+            }
+        }
+    }
+    for (id, of) in copies {
+        for x in n_id_key.get(*of).and_then(|k| n_id_sets.get(*k as usize)).into_iter().flatten() {
+            if *x > 0 {
+                by_component.entry(*x).or_default().push(id + 1);
             }
         }
     }
@@ -263,6 +291,8 @@ pub struct ParsedInp {
     pub surfaces: BTreeMap<String, Vec<(usize, usize)>>,
     /// ELSET name -> material, one per `*SOLID SECTION`.
     pub sections: BTreeMap<String, String>,
+    /// `(copy, welded)` node ids (1-based) of a split interface export.
+    pub split: Vec<(usize, usize)>,
 }
 
 // AI-FUNC-SUMMARY: The value of `KEY=value` in a keyword line (case-insensitive key); returns Option<String>; side effects: none.
@@ -292,6 +322,13 @@ pub fn parse_inp(text: &str) -> Result<ParsedInp> {
     let bad = |n: usize, line: &str| RustMsptError::InvalidMesh(format!("INP line {}: cannot read '{line}'", n + 1));
     for (n, raw) in text.lines().enumerate() {
         let line = raw.trim();
+        if let Some(rest) = line.strip_prefix("**SPLIT ") {
+            let v: Vec<usize> = rest.split(',').filter_map(|f| f.trim().parse().ok()).collect();
+            if v.len() == 2 {
+                out.split.push((v[0], v[1]));
+            }
+            continue;
+        }
         if line.is_empty() || line.starts_with("**") {
             continue;
         }
@@ -359,4 +396,147 @@ pub fn parse_inp(text: &str) -> Result<ParsedInp> {
         }
     }
     Ok(out)
+}
+
+/// The INP-side split of an interface (plan M-6.6): every tet's node ids after the copies, the
+/// copies' positions, and the map from each copy back to the welded node it came from.
+#[derive(Debug, Clone, Default)]
+pub struct SplitNodes {
+    /// Per tet (in document order), its four node ids in the split numbering.
+    pub tets: Vec<[usize; 4]>,
+    /// `(split id, welded id)` for every copy; split ids run on from the welded count.
+    pub copies: Vec<(usize, usize)>,
+    /// How many selected faces were cut open.
+    pub faces_split: usize,
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Cut the selected tagged interfaces open by node-star sectoring (plan M-6.6, MG-14).
+// Inputs: the contract document and the components whose tagged faces are selected (empty: every
+//   material interface - a face of kind 0 whose two side elements carry different regions).
+// Returns: SplitNodes.
+// Side effects: None.
+// Notes: For each node on a selected face, the tets around it are joined across every face they
+//   share that contains the node, except the selected faces; each connected sector beyond the first
+//   (the one holding the node's lowest tet) gets its own copy, and every tet of that sector takes it.
+//   Two copies on a plain two-body contact, more where three interfaces meet along a curve, one (no
+//   copy) at a crack-front node whose star the cut does not disconnect. Deterministic: sectors are
+//   ordered by their lowest tet and copies numbered in node order.
+pub fn split_interfaces(doc: &VtuDoc, components: &[i32]) -> SplitNodes {
+    let tets: Vec<usize> = (0..doc.types.len()).filter(|c| doc.types[*c] == VTK_TETRA).collect();
+    let tet_nodes: Vec<[usize; 4]> = tets
+        .iter()
+        .map(|c| {
+            let n = doc.cell(*c);
+            [n[0] as usize, n[1] as usize, n[2] as usize, n[3] as usize]
+        })
+        .collect();
+    let region_key = ints(doc.cell_array("region_key")).unwrap_or_default();
+    let face_tag_key = ints(doc.cell_array("face_tag_key")).unwrap_or_default();
+    let kinds = ints(doc.field_array("FaceTagKind")).unwrap_or_default();
+    let tag_sets = csr(
+        &ints(doc.field_array("FaceTagOffsets")).unwrap_or_default(),
+        &ints(doc.field_array("FaceTagComponents")).unwrap_or_default(),
+    );
+    let side = ints(doc.field_array("FaceTagSideElems")).unwrap_or_default();
+    let mut selected: BTreeSet<[usize; 3]> = BTreeSet::new();
+    for c in 0..doc.types.len() {
+        if doc.types[c] != VTK_TRIANGLE {
+            continue;
+        }
+        let key = face_tag_key.get(c).copied().unwrap_or(-1);
+        if key < 0 || kinds.get(key as usize).copied().unwrap_or(0) != 0 {
+            continue;
+        }
+        let (a, b) = (side.get(2 * key as usize).copied().unwrap_or(-1), side.get(2 * key as usize + 1).copied().unwrap_or(-1));
+        if a < 0 || b < 0 || region_key.get(a as usize) == region_key.get(b as usize) {
+            continue;
+        }
+        let members = tag_sets.get(key as usize).cloned().unwrap_or_default();
+        if !components.is_empty() && !members.iter().any(|x| components.contains(&(*x as i32))) {
+            continue;
+        }
+        let n = doc.cell(c);
+        let mut f = [n[0] as usize, n[1] as usize, n[2] as usize];
+        f.sort_unstable();
+        selected.insert(f);
+    }
+    let mut star: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for f in &selected {
+        for n in f {
+            star.entry(*n).or_default();
+        }
+    }
+    for (t, nodes) in tet_nodes.iter().enumerate() {
+        for n in nodes {
+            if let Some(v) = star.get_mut(n) {
+                v.push(t);
+            }
+        }
+    }
+    let mut out = SplitNodes { tets: tet_nodes.clone(), copies: Vec::new(), faces_split: selected.len() };
+    let mut next = doc.points.len();
+    for (node, around) in &star {
+        // Union-find over the star, joined across shared faces through `node` not selected.
+        let mut parent: Vec<usize> = (0..around.len()).collect();
+        fn find(p: &mut [usize], mut x: usize) -> usize {
+            while p[x] != x {
+                p[x] = p[p[x]];
+                x = p[x];
+            }
+            x
+        }
+        let mut by_face: BTreeMap<[usize; 3], usize> = BTreeMap::new();
+        for (slot, t) in around.iter().enumerate() {
+            let nodes = tet_nodes[*t];
+            for skip in 0..4 {
+                let mut f = [0usize; 3];
+                let mut k = 0;
+                for (i, n) in nodes.iter().enumerate() {
+                    if i != skip {
+                        f[k] = *n;
+                        k += 1;
+                    }
+                }
+                if !f.contains(node) {
+                    continue;
+                }
+                f.sort_unstable();
+                if selected.contains(&f) {
+                    continue;
+                }
+                match by_face.get(&f) {
+                    Some(other) => {
+                        let (a, b) = (find(&mut parent, slot), find(&mut parent, *other));
+                        if a != b {
+                            parent[a.max(b)] = a.min(b);
+                        }
+                    }
+                    None => {
+                        by_face.insert(f, slot);
+                    }
+                }
+            }
+        }
+        let mut sector_id: BTreeMap<usize, usize> = BTreeMap::new();
+        for slot in 0..around.len() {
+            let root = find(&mut parent, slot);
+            let id = if root == find(&mut parent, 0) {
+                *node
+            } else {
+                *sector_id.entry(root).or_insert_with(|| {
+                    let id = next;
+                    next += 1;
+                    out.copies.push((id, *node));
+                    id
+                })
+            };
+            for k in out.tets[around[slot]].iter_mut() {
+                if *k == *node {
+                    *k = id;
+                }
+            }
+        }
+    }
+    out
 }
