@@ -293,6 +293,44 @@ pub struct MeshGenEnvelope {
     pub eps_frac: f64,
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Which surface the mesh is held to (plan M-4.5b, owner 2026-10-18).
+// Notes: `exact` (default) keeps every node S9 moves inside the planes its faces already span, so
+//   the input's own faceting is reproduced. `approximate` lets S9 also move nodes on SMOOTH parts of
+//   a surface - every face normal around the node within `sizing.feature_angle_deg` - as long as no
+//   face it touches leaves the input surface by more than `tolerance_frac` of the domain diagonal.
+//   Sharp edges, intersection curves, rims and box planes stay exact either way. It is the user's
+//   statement of which surface they want meshed (D-6), not a correctness knob.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MeshGenFidelity {
+    #[serde(default)]
+    pub mode: FidelityMode,
+    #[serde(default = "default_fidelity_tolerance")]
+    pub tolerance_frac: f64,
+}
+
+impl Default for MeshGenFidelity {
+    // AI-FUNC-SUMMARY: Exact mode with the default tolerance (used only when switched to approximate); returns MeshGenFidelity; side effects: none.
+    fn default() -> Self {
+        Self { mode: FidelityMode::Exact, tolerance_frac: default_fidelity_tolerance() }
+    }
+}
+
+// AI-FUNC-SUMMARY: `fidelity.mode`: exact (default) or approximate; side effects: none.
+#[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum FidelityMode {
+    #[default]
+    Exact,
+    Approximate,
+}
+
+// AI-FUNC-SUMMARY: Default approximate-mode tolerance, 1e-3 of the domain diagonal; returns f64; side effects: none.
+fn default_fidelity_tolerance() -> f64 {
+    1.0e-3
+}
+
 // AI-FUNC-SUMMARY: S0 repair configuration; side effects: none.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct MeshGenRepair {
@@ -378,6 +416,8 @@ pub struct MeshGenParams {
     pub determinism: DeterminismMode,
     #[serde(default)]
     pub materials: MeshGenMaterials,
+    #[serde(default)]
+    pub fidelity: MeshGenFidelity,
     #[serde(default)]
     pub acceleration: AccelerationConfig,
     #[serde(default)]
@@ -524,6 +564,12 @@ impl MeshGenParams {
     //   Also rejects duplicate resolved input priorities and duplicate
     //   materials.by_component keys ("duplicate component overrides").
     pub fn validate(&self) -> Result<()> {
+        if !(self.fidelity.tolerance_frac > 0.0 && self.fidelity.tolerance_frac < 0.1) {
+            return Err(RustMsptError::InvalidConfig(format!(
+                "meshgen.fidelity.tolerance_frac must be in (0, 0.1), got {}",
+                self.fidelity.tolerance_frac
+            )));
+        }
         if self.inputs.is_empty() {
             return Err(RustMsptError::InvalidConfig(
                 "meshgen.inputs must list at least one STL".to_string(),

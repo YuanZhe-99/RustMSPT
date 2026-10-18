@@ -7,6 +7,7 @@ pub mod export;
 pub mod facecache;
 pub mod features;
 pub mod gapfield;
+pub mod improve;
 pub mod junction;
 pub mod lattice;
 pub mod predicates;

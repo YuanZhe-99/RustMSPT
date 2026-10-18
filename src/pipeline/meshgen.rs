@@ -945,6 +945,34 @@ impl Pipeline for MeshGenPipeline {
             // S8 cuts along the faces that bound material, not the ones S6 found buried in a
             // component's own union (`restrict_to_active`); the inside test keeps every face.
             point_classifier.restrict_to_active(&classification.active_face);
+            // A flat face is one facet, not the input file's triangles of it: coplanar neighbours
+            // within the weld quantum (Invariant M1's 0.1 eps) merge into convex polygons, so an
+            // STL rectangle's diagonal is no longer an edge the mesh has to carry.
+            let mut curve_edges: Vec<[Vec3; 2]> = clipped
+                .curves
+                .iter()
+                .flat_map(|c| c.nodes.windows(2).map(|w| [clipped.vertices[w[0]], clipped.vertices[w[1]]]))
+                .collect();
+            // A triangle touching an intersection curve keeps the input's own edges: at a
+            // near-tangent junction a merged facet left a curve node with no tet of one body
+            // (reference case 2, `[V9]`). One-component sharp edges do not pin anything.
+            let junction_nodes: std::collections::BTreeSet<usize> = clipped
+                .curves
+                .iter()
+                .filter(|c| c.components.len() > 1)
+                .flat_map(|c| c.nodes.iter().copied())
+                .collect();
+            for face in &clipped.faces {
+                if face.nodes.iter().any(|n| junction_nodes.contains(n)) {
+                    for k in 0..3 {
+                        curve_edges.push([
+                            clipped.vertices[face.nodes[k]],
+                            clipped.vertices[face.nodes[(k + 1) % 3]],
+                        ]);
+                    }
+                }
+            }
+            point_classifier.merge_coplanar(0.1 * eps, &curve_edges);
             clock = stage_time("S6", clock);
 
             let snapped = snap_lattice(
@@ -1513,6 +1541,52 @@ impl Pipeline for MeshGenPipeline {
             println!("[mesh] snapshot s08: {}", path.display());
         }
 
+        // --- S9: quality without moving geometry (plan M-5.4) ---
+        // Approximate mode (M-4.5b) holds smooth surfaces to the input within a tolerance instead
+        // of to their own facet planes; the input is each component's surface, in the doc's frame.
+        let approximate_components: Vec<(i32, Vec<[Vec3; 3]>)> =
+            if p.fidelity.mode == crate::config::meshgen::FidelityMode::Approximate {
+                clipped
+                    .components
+                    .iter()
+                    .map(|c| {
+                        let tris = point_classifier
+                            .surface_of(c.x)
+                            .iter()
+                            .map(|t| t.map(|q| output_domain_min.add(q.scale(domain_diag))))
+                            .collect();
+                        (c.x, tris)
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+        let improved = crate::meshgen::improve::improve_doc_with(
+            &mut doc,
+            &crate::meshgen::improve::ImproveOptions::default(),
+            (p.fidelity.mode == crate::config::meshgen::FidelityMode::Approximate).then(|| {
+                crate::meshgen::improve::ApproximateInputs {
+                    tolerance: p.fidelity.tolerance_frac * domain_diag,
+                    feature_angle_deg: p.sizing.feature_angle_deg,
+                    components: &approximate_components,
+                }
+            }),
+        );
+        println!(
+            "[S9] {} collapse(s), {} flip(s), {} node move(s) over {} pass(es): tets {} -> {}, bad (AR >= 10 or dihedral < 10 deg) {} -> {}, worst AR {:.3e} -> {:.3e}",
+            improved.collapses,
+            improved.flips,
+            improved.smoothed,
+            improved.passes,
+            improved.tets_before,
+            improved.tets_after,
+            improved.bad_before,
+            improved.bad_after,
+            improved.worst_ar_before,
+            improved.worst_ar_after
+        );
+        clock = stage_time("S9", clock);
+
         // --- S10/S11: partitions are in the document (`partition_tets`); the export ---
         // The lattice's hull is the domain box (each axis stretched to whole cells, plan M-6.2), so
         // there is nothing to trim: S11 writes the stage-11 document and the INP view of it.
@@ -1531,7 +1605,7 @@ impl Pipeline for MeshGenPipeline {
         println!(
             "[mesh] delivered: {} ({} tets) and {}",
             delivered.display(),
-            cut.tets.len(),
+            improved.tets_after,
             crate::meshgen::snapshot::contract_path(&delivered).display()
         );
         let inp_path = match &p.output.abaqus {

@@ -1654,13 +1654,13 @@ pub fn cut_lattice(
                 let mut chords: SmallVec<[[Vec3; 2]; 4]> = SmallVec::new();
                 for component in &all_components {
                     // A sheet's trace too (A-11): it owns no volume but the cut runs along it.
-                    let tris = classifier.surface_of(*component);
+                    let tris = classifier.polygons_of(*component);
                     if tris.is_empty() {
                         continue;
                     }
                     for chord in crate::meshgen::cdt::trace_on_face(
                         geometry,
-                        tris,
+                        &tris,
                         shortest * 1.0e-9,
                     ) {
                         chords.push(chord);
@@ -2491,7 +2491,14 @@ pub fn cut_lattice(
                 face_tris.contains_key(&face)
             })
         };
-        let cell_boundary = |tet: &[u32; 4]| -> Option<Vec<[u32; 3]>> {
+        // **An escalated cell is offered §7.4 whether or not a trace augmented one of its faces**
+        // (§7.1 rev 1.5: every cell the surface crosses is offered §7.2 first). Gating on an
+        // augmented face made the offer depend on accidents of the input file: an STL rectangle's
+        // diagonal pierced a lattice face and pulled its cells in, and merging coplanar facets
+        // (M-5.2) took that away and sent 15 of a3's cells back to §7.6, 11 of them to its fan.
+        let escalates = |index: usize| per_cell[index].escalation.is_some();
+        let offered = |index: usize, tet: &[u32; 4]| has_augmented_face(tet) || escalates(index);
+        let cell_boundary = |tet: &[u32; 4], force: bool| -> Option<Vec<[u32; 3]>> {
             // **The un-augmented faces come from `face_states`, the very function §6 and §7.6 use.**
             // Not augmented does not mean bare: §5.2 splits a face wherever its edges carry
             // crossings, and handing this cell the whole triangle presents a face its neighbour has
@@ -2529,7 +2536,7 @@ pub fn cut_lattice(
                 };
                 out.extend(tris.iter().copied());
             }
-            any.then_some(out)
+            (any || force).then_some(out)
         };
         // **The 117 faces that could not be triangulated poison their owners, and the poison
         // spreads exactly one way.** A cell that cannot build a boundary takes §6's table, whose
@@ -2557,10 +2564,10 @@ pub fn cut_lattice(
             .par_iter()
             .enumerate()
             .map(|(index, tet)| {
-                if !has_augmented_face(tet) {
+                if !offered(index, tet) {
                     return false;
                 }
-                if cell_boundary(tet).is_none() {
+                if cell_boundary(tet, escalates(index)).is_none() {
                     seed_no_boundary.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     return true;
                 }
@@ -2597,7 +2604,7 @@ pub fn cut_lattice(
                             list.iter().any(|other| {
                                 *other as usize != index
                                     && per_cell[*other as usize].escalation.is_some()
-                                    && !has_augmented_face(&lattice.tets[*other as usize])
+                                    && !offered(*other as usize, &lattice.tets[*other as usize])
                             })
                         })
                         .unwrap_or(false)
@@ -2612,7 +2619,7 @@ pub fn cut_lattice(
         for _round in 0..64 {
             let mut spread = 0usize;
             for (index, tet) in lattice.tets.iter().enumerate() {
-                if excluded[index] || !has_augmented_face(tet) {
+                if excluded[index] || !offered(index, tet) {
                     continue;
                 }
                 let poisoned = TET_FACES.iter().any(|slots| {
@@ -2655,7 +2662,8 @@ pub fn cut_lattice(
             .tets
             .par_iter()
             .zip(excluded.par_iter())
-            .map(|(tet, out)| (!out).then(|| cell_boundary(tet)).flatten())
+            .enumerate()
+            .map(|(index, (tet, out))| (!out).then(|| cell_boundary(tet, escalates(index))).flatten())
             .collect();
         // Which (node, component) pairs the cut already puts ON that component's surface: every
         // crossing node, and every parent node S7 snapped onto it (invariant K2's promotions).
@@ -3077,11 +3085,11 @@ pub fn cut_lattice(
                 let mut ids: SmallVec<[Vec3; 4]> = SmallVec::new();
                 let mut seen_keys: SmallVec<[NodeKey; 4]> = SmallVec::new();
                 for component in &all_components {
-                    let tris = classifier.surface_of(*component);
+                    let tris = classifier.polygons_of(*component);
                     if tris.is_empty() {
                         continue;
                     }
-                    for segment in crate::meshgen::cdt::trace_on_face(face, tris, options.eps) {
+                    for segment in crate::meshgen::cdt::trace_on_face(face, &tris, options.eps) {
                         for point in segment {
                             // Deduplicated per face by node key, so the two cells sharing it get
                             // the same point set whatever order their triangles arrive in.
@@ -8797,7 +8805,7 @@ fn plc_attempt(
     for component in all_components {
         // Sheets included (A-11): a sheet's facets separate regions of one material, and the caps
         // between them become `FaceTagKind = 1` faces with geometric sides (`derive_interface`).
-        let surface = classifier.surface_of(*component);
+        let surface = classifier.polygons_of(*component);
         if surface.is_empty() {
             continue;
         }
@@ -8805,7 +8813,7 @@ fn plc_attempt(
         let facets_start = facets.len();
         for facet in crate::meshgen::cdt::fragment_facets_in_cell(
             corners,
-            surface,
+            &surface,
             edge * 1.0e-6,
         ) {
             if crate::meshgen::cdt::DIAG_CELL.with(|c| c.get()) {
@@ -9661,10 +9669,12 @@ fn split_escalated_cell(
         let before = arena.points.len();
         let mut facets_local: Vec<Vec<u32>> = Vec::new();
         for component in all_components {
-            let Some(slot) = classifier.slot_of(*component) else { continue };
+            if classifier.slot_of(*component).is_none() {
+                continue;
+            }
             for facet in crate::meshgen::cdt::fragment_facets_in_cell(
                 corners,
-                classifier.triangles_of(slot),
+                &classifier.polygons_of(*component),
                 edge * 1.0e-6,
             ) {
                 facets_local.push(facet.iter().map(|p| arena.intern(*p)).collect());
@@ -9726,10 +9736,12 @@ fn split_escalated_cell(
                 // The face's own trace, which both cells compute identically from the face alone.
                 let mut segments: Vec<[u32; 2]> = Vec::new();
                 for component in all_components {
-                    let Some(cslot) = classifier.slot_of(*component) else { continue };
+                    if classifier.slot_of(*component).is_none() {
+                        continue;
+                    }
                     for chord in crate::meshgen::cdt::trace_on_face(
                         face,
-                        classifier.triangles_of(cslot),
+                        &classifier.polygons_of(*component),
                         edge * 1.0e-9,
                     ) {
                         let a = arena.intern(chord[0]);

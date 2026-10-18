@@ -333,3 +333,18 @@ fn an_input_level_below_the_global_one_is_accepted_and_recorded() {
     let l = conf.meshgen.resolution().unwrap().ladder.unwrap();
     assert_eq!(l.input_levels, vec![0, 2]);
 }
+
+// AI-FUNC-SUMMARY: `fidelity` defaults to exact, parses approximate with a tolerance, and refuses a tolerance outside (0, 0.1) (plan M-4.5b); returns nothing; side effects: none.
+#[test]
+fn fidelity_defaults_to_exact_and_validates_its_tolerance() {
+    use rustmspt::config::meshgen::FidelityMode;
+    let p = valid_minimal();
+    assert_eq!(p.fidelity.mode, FidelityMode::Exact);
+    assert!(p.validate().is_ok());
+    let p = overrides("fidelity: { mode: approximate, tolerance_frac: 0.002 }");
+    assert_eq!(p.fidelity.mode, FidelityMode::Approximate);
+    assert_eq!(p.fidelity.tolerance_frac, 0.002);
+    assert!(p.validate().is_ok());
+    assert!(overrides("fidelity: { mode: approximate, tolerance_frac: 0.0 }").validate().is_err());
+    assert!(overrides("fidelity: { mode: approximate, tolerance_frac: 0.5 }").validate().is_err());
+}

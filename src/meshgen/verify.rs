@@ -5825,6 +5825,7 @@ fn check_v13(
     s.metric("input_covered_area_frac", cover.input_covered_area_frac);
     s.metric("input_triangles_uncovered", cover.uncovered_inputs.len() as f64);
     s.metric("input_triangles_hidden_by_priority", cover.hidden as f64);
+    s.metric("input_triangles_buried_in_own_union", cover.buried as f64);
     for (i, frac) in &cover.not_contained {
         let f = &boundary[*i];
         let mut item = VerifyItem::bare(
@@ -5876,6 +5877,8 @@ struct Containment {
     uncovered_inputs: Vec<(usize, usize, f64, Vec3)>,
     input_covered_area_frac: f64,
     hidden: usize,
+    /// Input facets inside their own component's union (both sides material), excluded too.
+    buried: usize,
 }
 
 /// Barycentric sample points of a triangle: a regular grid of `n` steps per edge, corners and
@@ -5992,8 +5995,11 @@ fn containment(
 
     // Direction 2: each input facet no higher-precedence body hides, covered by the mesh.
     let domain = view.domain;
-    // Err(true): hidden by a body of higher precedence; Err(false): outside the domain or on its box.
-    let input_uncovered: Vec<Result<f64, bool>> = inputs
+    // Err(1): hidden by a body of higher precedence; Err(2): buried in its own component's union
+    // (a self-intersecting solid's interior faces, which bound no material); Err(0): outside the
+    // domain or on its box.
+    let diag = domain.map(|(lo, hi)| hi.sub(lo).dot(hi.sub(lo)).sqrt()).unwrap_or(1.0);
+    let input_uncovered: Vec<Result<(f64, f64), u8>> = inputs
         .par_iter()
         .map(|(x, _, t)| {
             let centroid = t[0].add(t[1]).add(t[2]).scale(1.0 / 3.0);
@@ -6005,7 +6011,7 @@ fn containment(
                     || centroid.y > hi.y
                     || centroid.z > hi.z;
                 if outside {
-                    return Err(false);
+                    return Err(0);
                 }
                 // A facet on a domain plane is the box, not a material boundary to mesh (C10).
                 let on_plane = |get: fn(&Vec3) -> f64| {
@@ -6014,7 +6020,7 @@ fn containment(
                         || t.iter().all(|p| (get(p) - get(&hi)).abs() <= tol)
                 };
                 if on_plane(|v| v.x) || on_plane(|v| v.y) || on_plane(|v| v.z) {
-                    return Err(false);
+                    return Err(0);
                 }
             }
             let hidden = surfaces.iter().enumerate().any(|(y, c)| {
@@ -6024,14 +6030,31 @@ fn containment(
                     && per_component[y].contains(centroid)
             });
             if hidden {
-                return Err(true);
+                return Err(1);
             }
+            // Material on both sides, by the component's own winding number, means the point is
+            // inside its own union and no mesh boundary should cover it (A-8's struts pass through
+            // each other, so most of their facets are partly buried). Judged per sample, so a
+            // facet counts only its visible part; a facet buried everywhere is reported as such.
+            let normal = t[1].sub(t[0]).cross(t[2].sub(t[0]));
+            let length = normal.dot(normal).sqrt();
+            let step = if length > 0.0 { normal.scale(1.0e-6 * diag / length) } else { Vec3::new(0.0, 0.0, 0.0) };
+            let samples: Vec<Vec3> = tri_samples(*t, 6)
+                .into_iter()
+                .filter(|p| {
+                    length <= 0.0
+                        || !(per_component[*x].contains(p.add(step)) && per_component[*x].contains(p.sub(step)))
+                })
+                .collect();
+            if samples.is_empty() {
+                return Err(2);
+            }
+            let visible = samples.len() as f64 / 28.0;
             let candidates: Vec<[Vec3; 3]> = near(&mesh_index, *t, frac * longest_edge(*t))
                 .into_iter()
                 .map(|i| mesh_faces[i])
                 .filter(|f| coplanar(*f, *t, frac * longest_edge(*f)))
                 .collect();
-            let samples = tri_samples(*t, 6);
             let missed = samples
                 .iter()
                 .filter(|p| {
@@ -6041,22 +6064,24 @@ fn containment(
                     })
                 })
                 .count();
-            Ok(missed as f64 / samples.len() as f64)
+            Ok((missed as f64 / samples.len() as f64, visible))
         })
         .collect();
     let mut hidden = 0;
+    let mut buried = 0;
     let mut active_area = 0.0;
     let mut covered_area = 0.0;
     let mut uncovered_inputs = Vec::new();
     for ((x, i, t), u) in inputs.iter().zip(input_uncovered.iter()) {
-        let u = match u {
-            Ok(u) => u,
-            Err(by_priority) => {
-                hidden += usize::from(*by_priority);
+        let (u, visible) = match u {
+            Ok((u, visible)) => (u, *visible),
+            Err(why) => {
+                hidden += usize::from(*why == 1);
+                buried += usize::from(*why == 2);
                 continue;
             }
         };
-        let a = t[1].sub(t[0]).cross(t[2].sub(t[0])).dot(t[1].sub(t[0]).cross(t[2].sub(t[0]))).sqrt() / 2.0;
+        let a = visible * t[1].sub(t[0]).cross(t[2].sub(t[0])).dot(t[1].sub(t[0]).cross(t[2].sub(t[0]))).sqrt() / 2.0;
         active_area += a;
         covered_area += a * (1.0 - u);
         if *u > 0.0 {
@@ -6069,6 +6094,7 @@ fn containment(
         uncovered_inputs,
         input_covered_area_frac: if active_area > 0.0 { covered_area / active_area } else { 1.0 },
         hidden,
+        buried,
     }
 }
 

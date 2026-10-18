@@ -732,6 +732,14 @@
 | `pierces_shared_by_an_edge` | 网格生成 | `src/meshgen/cut.rs:9929` | 共享一条边的两个面在 `[V2]` 重复节点界限（`DUPLICATE_NODE_FRAC`，对角线的 1e-6）内都报告的穿透点条目；`curve_pierce_points`（现在接收该界限）对两个面都丢弃它们，因为这样的点位于边上，按面内化会产生重合的中心点——a3 的立方体角点离棋盘格面对角线 2.4e-8，造成 17 个重复节点（`[V2]`）和 `[V9]` 角点失败。只被一个面报告的真正近边穿透点保留。 |
 | `face_on_facet_plane` | 网格生成 | `src/meshgen/cdt.rs:4462` | 网格面是否位于约束小面上：每个顶点要么是小面自身顶点且在小面带宽内，要么是其他节点且在 `tol` 内。带宽只覆盖小面自身被吸附的顶点；把它扩展到其他节点会让贴着弯折小面的薄片也算作覆盖（a8 单元 507267 覆盖率读成 1.416）。用于覆盖检查、`regions_by_constraint` 与界面归属。 |
 | `PointClassifier::restrict_to_active` | 网格生成 | `src/meshgen/classify.rs:679` | S6 之后让 `triangles_of` 只返回界定材料的面（S6 的 `active_face`），内外判定仍使用全部面。S8 的面迹与碎片裁剪不再沿自相交组分内部被埋没的面切割：门控 a8 贴面比例 98.455 → 98.796 %，四面体数 −5.8 %，链接多边形拒绝 733 → 263。 |
+| `merge_coplanar_convex` | 网格生成 | `src/meshgen/cdt.rs:6118` | 把每个组分中相邻的共面三角形（顶点在种子平面的焊接量子以内、法向相差 0.8° 以内）合并成凸多边形；不跨越其他组分共用的边、被三个以上三角形共用的边，也不在并集不再凸时合并。S8 的面迹与碎片裁剪使用这些多边形，因此 STL 矩形的对角线不再是网格约束（M-5.2）。 |
+| `improve_doc` | 网格生成 | `src/meshgen/improve.rs:725` | S9（M-5.4）：在第 8 阶段契约文档上，对不达标四面体（AR ≥ 10 或二面角 < 10°）收缩短边、在同一材料内做 3-2/2-3 翻转、并在约束平面内光顺节点——只在几何不动的地方进行：节点只能在其标签面所在的至多两个平面内滑动（平面，或输入三角化的折痕）、在盒面内滑动、沿直的曲线边移动，否则固定。每一步都保持四面体为正、星形最差 AR 严格变好、每个面至多被两个四面体共享，且“材料不同”等价于“面带标签”。串行、确定。会重写点、单元、点/单元数组以及面标签表（两侧单元重新计算）。 |
+| `ImproveOptions` / `ImproveStats` | 网格生成 | `src/meshgen/improve.rs:26` | S9 的目标（默认为业主的 FEM 门槛：AR < 10、二面角 ≥ 10°，六轮）与计数（收缩、翻转、节点移动、前后的四面体数与不达标数、最差 AR）。 |
+| `aspect_ratio` / `min_dihedral_deg` | 网格生成 | `src/meshgen/improve.rs:59` | 门槛使用的度量：最长边除以最短高并归一到正四面体为 1（Abaqus 约定），以及以度为单位的最小二面角。 |
+| `improve_doc_with` / `ApproximateInputs` | 网格生成 | `src/meshgen/improve.rs:945` | `fidelity.mode: approximate` 下的 S9（M-4.5b）：曲面光滑处的节点（所有面法向在 `sizing.feature_angle_deg` 以内）也可以收缩和滑动——向其曲面邻居光顺后再投影回输入曲面——它触及的每个面都保持在输入曲面的 `tolerance_frac` 倍对角线以内；锋利边、曲线和盒面仍然精确。 |
+| `InputSurface` | 网格生成 | `src/meshgen/improve.rs:203` | 在均匀网格（格子尺寸 `max(平均边长, 容差)`）上分桶的输入曲面：`nearest(p, radius)` 给出半径内的最近点。 |
+| `MeshGenFidelity` / `FidelityMode` | 网格生成 | `src/config/meshgen.rs:306` | `meshgen.fidelity: { mode: exact（默认）\| approximate, tolerance_frac: 1e-3 }`——网格要贴合哪个曲面（D-6，由用户选择）。`validate()` 拒绝 (0, 0.1) 以外的容差。 |
+| `PointClassifier::merge_coplanar` / `polygons_of` | 网格生成 | `src/meshgen/classify.rs:655` | 按组分保存合并后的多边形（在 `restrict_to_active` 之后调用）；`polygons_of` 返回它们，未合并时返回三角形。内外判定仍读取三角形。 |
 | `refresh_split_interfaces` | 网格生成 | `src/meshgen/cut.rs:6975` | 悬挂节点修复之后，把不再被任何四面体承载的界面面替换为它在边上新节点处分出的两半，并重新计算两侧单元；修复会拆分一条边周围的所有四面体，包括该边上另一个带标签的面（a3：4 个 `[V12]` side_elems 失败）。 |
 | `compact_unreferenced_nodes` | 网格生成 | `src/meshgen/cut.rs:5778` | S8 结尾：删除没有任何四面体引用的节点，并按原顺序重编号其余节点；a6a_r 曾带有一个被 S7 重复吸附、无单元使用的点阵节点（计划 M-2.6）。 |
 | `write_inp` | 网格生成 | `src/meshgen/export.rs:83` | S11：把第 11 阶段契约文档写为 Abaqus INP——按 VTU 顺序的 C3D4、REGION/PARTITION 单元集、由 N_ID 生成的 COMPONENT 节点集、由几何 FaceTagSideElems 对与 X 的 FaceTagOrientation 生成的 IFACE_X_IN/OUT 面（X 的内侧与外侧），按 `materials:` 写截面（未映射键报错，除非 `elset-only`）。 |

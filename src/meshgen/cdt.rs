@@ -2668,6 +2668,7 @@ fn fill_non_convex(
     points: &[Vec3],
     keys: &[NodeKey],
     tol: f64,
+    extra: &[Vec3],
 ) -> Result<Vec<[u32; 4]>, Vec<[u32; 2]>> {
     let mut nodes: Vec<u32> = piece.iter().flatten().copied().collect();
     nodes.sort_unstable();
@@ -2706,6 +2707,13 @@ fn fill_non_convex(
         } else {
             crate::meshgen::predicates::node_key(points[*n as usize], quantum)
         });
+    }
+    // Interior Steiner points the caller offers (strictly inside the piece, so inside the cell and
+    // on no face a neighbour shares): they become nodes only through the tets that keep them.
+    let extra_start = sub_points.len() as u32;
+    for q in extra {
+        sub_points.push(*q);
+        sub_keys.push(crate::meshgen::predicates::node_key(*q, quantum));
     }
     let (mut lo, mut hi) = (sub_points[0], sub_points[0]);
     for q in &sub_points {
@@ -2809,7 +2817,11 @@ fn fill_non_convex(
     if kept.iter().flatten().any(|id| *id >= corner_start) {
         return Err(Vec::new());
     }
-    let kept: Vec<[u32; 4]> = kept.iter().map(|t| t.map(|id| nodes[id as usize])).collect();
+    let base = points.len() as u32;
+    let kept: Vec<[u32; 4]> = kept
+        .iter()
+        .map(|t| t.map(|id| if id < extra_start { nodes[id as usize] } else { base + (id - extra_start) }))
+        .collect();
     let filled: f64 = tets
         .iter()
         .zip(regions.iter())
@@ -3897,9 +3909,85 @@ pub fn facet_split_fan(
                     // No apex sees the whole piece: tetrahedralise its hull with the piece as a
                     // constraint and carve off the outside (`fill_non_convex`). When that stalls on
                     // piece edges that are all inside the cell, ask the caller to split them.
-                    match fill_non_convex(piece, points, keys, tol) {
+                    // **A missing edge on the cell's boundary gets help from inside** (plan M-2.3). It
+                    // may not be split - its faces are frozen for the neighbour (J1) - but a point a
+                    // little inside the piece beside it changes the hull's Delaunay there and lets the
+                    // recovery reach it. Up to two rounds, each adding one point per edge still
+                    // missing; nothing is kept unless the carve then succeeds.
+                    let winding = |q: Vec3| {
+                        piece
+                            .iter()
+                            .map(|t| {
+                                let [a, b, c] = t.map(|id| points[id as usize]);
+                                crate::meshgen::topo::solid_angle(a, b, c, q)
+                            })
+                            .sum::<f64>()
+                            .abs()
+                            / (4.0 * std::f64::consts::PI)
+                    };
+                    let mut extra: Vec<Vec3> = Vec::new();
+                    let mut outcome = fill_non_convex(piece, points, keys, tol, &extra);
+                    for _ in 0..2 {
+                        let Err(missing) = outcome.clone() else { break };
+                        if missing.is_empty() {
+                            break;
+                        }
+                        let before = extra.len();
+                        for e in &missing {
+                            let (pa, pb) = (points[e[0] as usize], points[e[1] as usize]);
+                            let mid = pa.add(pb).scale(0.5);
+                            let length = pb.sub(pa).dot(pb.sub(pa)).sqrt();
+                            let mut normal = Vec3::new(0.0, 0.0, 0.0);
+                            for t in piece.iter().filter(|t| t.contains(&e[0]) && t.contains(&e[1])) {
+                                let [a, b, c] = t.map(|id| points[id as usize]);
+                                let n = b.sub(a).cross(c.sub(a));
+                                let l = n.dot(n).sqrt();
+                                if l > 0.0 {
+                                    normal = normal.add(n.scale(1.0 / l));
+                                }
+                            }
+                            let l = normal.dot(normal).sqrt();
+                            if l <= 0.0 || length <= 0.0 {
+                                continue;
+                            }
+                            // One point each side: the one inside the piece may become a node, the one
+                            // outside only ever touches tets the carve removes (a kept tet lies in the
+                            // piece, so no vertex of it can be outside).
+                            for want_inside in [true, false] {
+                                'place: for step in [0.25, 0.1, 0.03] {
+                                    for sign in [1.0, -1.0] {
+                                        let x = mid.add(normal.scale(sign * step * length / l));
+                                        if (winding(x) > 0.5) == want_inside
+                                            && !extra.iter().any(|y| y.sub(x).dot(y.sub(x)) < (0.02 * length).powi(2))
+                                        {
+                                            extra.push(x);
+                                            break 'place;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if extra.len() == before {
+                            break;
+                        }
+                        outcome = fill_non_convex(piece, points, keys, tol, &extra);
+                        if DIAG_CELL.with(|c| c.get()) {
+                            eprintln!(
+                                "[CARVE-HELP] {} interior point(s) beside {:?}: now {:?}",
+                                extra.len(),
+                                missing,
+                                outcome.as_ref().err()
+                            );
+                        }
+                    }
+                    match outcome {
                         Ok(carved) => {
-                            note_split("a non-star piece was carved from its hull");
+                            note_split(if extra.is_empty() {
+                                "a non-star piece was carved from its hull"
+                            } else {
+                                "a non-star piece was carved from its hull with interior points beside its unrecovered edges"
+                            });
+                            points.extend(extra.iter().copied());
                             for tet in carved {
                                 tets.push(tet);
                                 regions.push(region as u32);
@@ -6006,8 +6094,139 @@ pub fn fragment_in_cell(tet: [Vec3; 4], tris: &[[Vec3; 3]], tol: f64) -> Vec<[Ve
         return Vec::new();
     };
     tris.iter()
-        .filter(|triangle| clip_to_halfspaces(triangle, &halfspaces, tol).is_some())
+        .filter(|triangle| clip_to_halfspaces(&triangle[..], &halfspaces, tol).is_some())
         .copied()
+        .collect()
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Merge each component's coplanar neighbouring triangles into convex polygons, so the
+//   cut sees a flat face as one facet instead of the input file's arbitrary triangulation of it.
+// Inputs: per component, its triangles (the same slice order as `components`), and the planarity
+//   tolerance (a length: every vertex within it of the seed triangle's plane).
+// Returns: per component, its polygons - convex, wound like the seed triangle, every original
+//   vertex on their boundary kept (it is shared with a neighbour).
+// Side effects: None.
+//   `barriers`: edges never merged across - the arrangement's locked curves (a8_r: a curve where
+//   two struts' coplanar faces meet, merged across, left two of its nodes with no strut material).
+// Notes: **The diagonal of a rectangle in an STL file is not geometry** (owner, 2026-10-18): a
+//   plate face stored as two triangles has its diagonal carried into the mesh as a constraint edge,
+//   which every cell along it must recover, and the mesh shows it as a seam of small elements.
+//   Merging stops at three kinds of edge, each of which IS geometry: an edge another component
+//   also uses (an intersection curve or a contact rim, where that component's facets end), an edge
+//   carried by more than two triangles, and an edge across which the union would stop being
+//   convex - so a facet stays something clipping to half-spaces keeps convex. Deterministic: seeds
+//   in triangle order, neighbours absorbed in polygon-edge order.
+pub fn merge_coplanar_convex(components: &[&[[Vec3; 3]]], tol: f64, barriers: &[[Vec3; 2]]) -> Vec<Vec<Vec<Vec3>>> {
+    type Key = (u64, u64, u64);
+    let key = |v: Vec3| -> Key { (v.x.to_bits(), v.y.to_bits(), v.z.to_bits()) };
+    let edge_key = |a: Vec3, b: Vec3| {
+        let (ka, kb) = (key(a), key(b));
+        if ka <= kb { (ka, kb) } else { (kb, ka) }
+    };
+    let barrier: std::collections::HashSet<(Key, Key)> = barriers.iter().map(|e| edge_key(e[0], e[1])).collect();
+    let mut owners: std::collections::HashMap<(Key, Key), Vec<usize>> = std::collections::HashMap::new();
+    for (c, tris) in components.iter().enumerate() {
+        for t in tris.iter() {
+            for k in 0..3 {
+                let list = owners.entry(edge_key(t[k], t[(k + 1) % 3])).or_default();
+                if !list.contains(&c) {
+                    list.push(c);
+                }
+            }
+        }
+    }
+    components
+        .iter()
+        .enumerate()
+        .map(|(c, tris)| {
+            let mut by_edge: std::collections::HashMap<(Key, Key), Vec<usize>> =
+                std::collections::HashMap::new();
+            for (i, t) in tris.iter().enumerate() {
+                for k in 0..3 {
+                    by_edge.entry(edge_key(t[k], t[(k + 1) % 3])).or_default().push(i);
+                }
+            }
+            let mut used = vec![false; tris.len()];
+            let mut out: Vec<Vec<Vec3>> = Vec::new();
+            for seed in 0..tris.len() {
+                if used[seed] {
+                    continue;
+                }
+                used[seed] = true;
+                let t = tris[seed];
+                let raw = t[1].sub(t[0]).cross(t[2].sub(t[0]));
+                let length = raw.dot(raw).sqrt();
+                let mut polygon: Vec<Vec3> = t.to_vec();
+                // A sliver - height within the tolerance - stays its own facet, as it was before
+                // merging: clipping drops it for having no area, while merged into a polygon its
+                // near-coincident vertices (1e-9 apart on rotated float32 input) would ride along
+                // and fold the facet (a8_r: a strut corner lost its material, `[V9]` FAIL).
+                let sliver = |t: &[Vec3; 3]| {
+                    let n = t[1].sub(t[0]).cross(t[2].sub(t[0]));
+                    let longest = (0..3)
+                        .map(|k| t[(k + 1) % 3].sub(t[k]).dot(t[(k + 1) % 3].sub(t[k])))
+                        .fold(0.0f64, f64::max)
+                        .sqrt();
+                    n.dot(n).sqrt() <= tol * longest
+                };
+                if length <= 0.0 || sliver(&t) {
+                    out.push(polygon);
+                    continue;
+                }
+                let normal = raw.scale(1.0 / length);
+                let turn = |a: Vec3, b: Vec3, c: Vec3| normal.dot(b.sub(a).cross(c.sub(b)));
+                let mut grown = true;
+                while grown {
+                    grown = false;
+                    let m = polygon.len();
+                    for k in 0..m {
+                        let (a, b) = (polygon[k], polygon[(k + 1) % m]);
+                        let ek = edge_key(a, b);
+                        if barrier.contains(&ek) || owners.get(&ek).is_some_and(|o| o.len() > 1) {
+                            continue;
+                        }
+                        let Some(sharing) = by_edge.get(&ek) else { continue };
+                        if sharing.len() != 2 {
+                            continue;
+                        }
+                        let Some(&j) = sharing.iter().find(|j| !used[**j]) else { continue };
+                        let tj = tris[j];
+                        if sliver(&tj) {
+                            continue;
+                        }
+                        let Some(w) = tj.iter().copied().find(|v| key(*v) != key(a) && key(*v) != key(b)) else {
+                            continue;
+                        };
+                        let nj = tj[1].sub(tj[0]).cross(tj[2].sub(tj[0]));
+                        let lj = nj.dot(nj).sqrt();
+                        if lj <= 0.0 || nj.dot(normal) / lj < 0.9999 || normal.dot(w.sub(t[0])).abs() > tol {
+                            continue;
+                        }
+                        if polygon.iter().any(|v| key(*v) == key(w)) {
+                            continue;
+                        }
+                        let prev = polygon[(k + m - 1) % m];
+                        let next = polygon[(k + 2) % m];
+                        let scale2 = (b.sub(a)).dot(b.sub(a));
+                        // Strictly convex: a vertex left straight between its neighbours is a
+                        // degenerate corner the facet's triangulation coned into a zero-area
+                        // triangle (a12 cell 81481), so a merge that would make one is not taken.
+                        let slack = 1.0e-9 * scale2;
+                        if turn(prev, a, w) <= slack || turn(a, w, b) <= slack || turn(w, b, next) <= slack {
+                            continue;
+                        }
+                        polygon.insert(k + 1, w);
+                        used[j] = true;
+                        grown = true;
+                        break;
+                    }
+                }
+                out.push(polygon);
+            }
+            let _ = c;
+            out
+        })
         .collect()
 }
 
@@ -6030,16 +6249,16 @@ pub fn fragment_in_cell(tet: [Vec3; 4], tris: &[[Vec3; 3]], tol: f64) -> Vec<[Ve
 //   plane-driven route could not have: there the cut point depended on the cell's own plane SET,
 //   which the neighbour does not share. Clipping a triangle by four half-spaces always yields a
 //   convex polygon, so the facet needs no triangulation to be well defined.
-pub fn fragment_facets_in_cell(
+pub fn fragment_facets_in_cell<P: AsRef<[Vec3]>>(
     tet: [Vec3; 4],
-    tris: &[[Vec3; 3]],
+    tris: &[P],
     tol: f64,
 ) -> Vec<Vec<Vec3>> {
     let Some(halfspaces) = tet_halfspaces(tet) else {
         return Vec::new();
     };
     tris.iter()
-        .filter_map(|triangle| clip_to_halfspaces(triangle, &halfspaces, tol))
+        .filter_map(|polygon| clip_to_halfspaces(polygon.as_ref(), &halfspaces, tol))
         .collect()
 }
 
@@ -6085,7 +6304,7 @@ fn tet_halfspaces(tet: [Vec3; 4]) -> Option<Vec<(Vec3, f64)>> {
 //   and, on the plane-driven path, an infinite supporting plane that cuts the whole cell for
 //   nothing. `tol` is a length, so it is squared to compare against an area.
 fn clip_to_halfspaces(
-    triangle: &[Vec3; 3],
+    triangle: &[Vec3],
     halfspaces: &[(Vec3, f64)],
     tol: f64,
 ) -> Option<Vec<Vec3>> {
@@ -6138,7 +6357,7 @@ fn clip_to_halfspaces(
 //   — its trace is an area, not a curve, and the coincident-surface case is §6's, not this one.
 //   Endpoints are ordered within each segment and the segments among themselves, so the result is a
 //   function of the geometry rather than of the order the caller supplies triangles in.
-pub fn trace_on_face(face: [Vec3; 3], tris: &[[Vec3; 3]], tol: f64) -> Vec<[Vec3; 2]> {
+pub fn trace_on_face<P: AsRef<[Vec3]>>(face: [Vec3; 3], tris: &[P], tol: f64) -> Vec<[Vec3; 2]> {
     let normal = face[1].sub(face[0]).cross(face[2].sub(face[0]));
     let area2 = normal.dot(normal);
     if area2 <= 0.0 {
@@ -6151,12 +6370,10 @@ pub fn trace_on_face(face: [Vec3; 3], tris: &[[Vec3; 3]], tol: f64) -> Vec<[Vec3
         edge(face[0], face[1]) && edge(face[1], face[2]) && edge(face[2], face[0])
     };
     let mut out: Vec<[Vec3; 2]> = Vec::new();
-    for triangle in tris {
-        let d: [f64; 3] = [
-            normal.dot(triangle[0].sub(face[0])) / scale,
-            normal.dot(triangle[1].sub(face[0])) / scale,
-            normal.dot(triangle[2].sub(face[0])) / scale,
-        ];
+    for polygon in tris {
+        let triangle = polygon.as_ref();
+        let n = triangle.len();
+        let d: Vec<f64> = triangle.iter().map(|v| normal.dot(v.sub(face[0])) / scale).collect();
         // Wholly on one side, or lying in the plane: no chord.
         if d.iter().all(|x| *x > tol) || d.iter().all(|x| *x < -tol) {
             continue;
@@ -6165,8 +6382,8 @@ pub fn trace_on_face(face: [Vec3; 3], tris: &[[Vec3; 3]], tol: f64) -> Vec<[Vec3
             continue;
         }
         let mut hits: Vec<Vec3> = Vec::new();
-        for k in 0..3 {
-            let (a, b) = (k, (k + 1) % 3);
+        for k in 0..n {
+            let (a, b) = (k, (k + 1) % n);
             if d[a].abs() <= tol {
                 hits.push(triangle[a]);
             } else if (d[a] > tol && d[b] < -tol) || (d[a] < -tol && d[b] > tol) {
@@ -6177,8 +6394,21 @@ pub fn trace_on_face(face: [Vec3; 3], tris: &[[Vec3; 3]], tol: f64) -> Vec<[Vec3
         if hits.len() < 2 {
             continue;
         }
+        // A convex polygon meets the plane in one segment; with more than two hits (vertices lying
+        // on the plane) its ends are the farthest pair, found in a fixed order.
+        let (mut p, mut q) = (hits[0], hits[1]);
+        let mut best = q.sub(p).dot(q.sub(p));
+        for i in 0..hits.len() {
+            for j in (i + 1)..hits.len() {
+                let gap = hits[j].sub(hits[i]).dot(hits[j].sub(hits[i]));
+                if gap > best {
+                    best = gap;
+                    p = hits[i];
+                    q = hits[j];
+                }
+            }
+        }
         // Clip the chord to the face by walking its parameter against the three edges.
-        let (p, q) = (hits[0], hits[hits.len() - 1]);
         let along = q.sub(p);
         if along.dot(along) <= 0.0 {
             continue;
@@ -8280,7 +8510,7 @@ mod tests {
             &[[0, 1, 2], [0, 2, 3]],
             1.0,
         );
-        let tets = fill_non_convex(&piece, &points, &keys_of(&points), 1.0e-9)
+        let tets = fill_non_convex(&piece, &points, &keys_of(&points), 1.0e-9, &[])
             .expect("a box is carved");
         let mut total = 0.0;
         for t in &tets {
@@ -8303,7 +8533,7 @@ mod tests {
             &[[0, 1, 4], [0, 4, 5], [0, 5, 7], [5, 6, 7], [1, 2, 4], [2, 3, 4]],
             0.5,
         );
-        match fill_non_convex(&piece, &points, &keys_of(&points), 1.0e-9) {
+        match fill_non_convex(&piece, &points, &keys_of(&points), 1.0e-9, &[]) {
             Ok(tets) => {
                 let total: f64 = tets
                     .iter()
@@ -8325,4 +8555,44 @@ mod tests {
         }
     }
 
+
+    // AI-FUNC-SUMMARY: A rectangle stored as two triangles merges into one quad, an L-shape stays split where the union would stop being convex, and an edge another component uses is never merged across (owner, 2026-10-18); returns nothing; side effects: none.
+    #[test]
+    fn coplanar_triangles_merge_into_convex_facets_and_stop_at_geometry() {
+        let v = |x: f64, y: f64| Vec3::new(x, y, 0.0);
+        let rect = [[v(0.0, 0.0), v(2.0, 0.0), v(2.0, 1.0)], [v(0.0, 0.0), v(2.0, 1.0), v(0.0, 1.0)]];
+        let merged = merge_coplanar_convex(&[&rect], 1e-9, &[]);
+        assert_eq!(merged[0].len(), 1, "the diagonal is not geometry");
+        assert_eq!(merged[0][0].len(), 4);
+        // An L of three unit squares (six triangles): no convex union of all of it exists.
+        let l = [
+            [v(0.0, 0.0), v(1.0, 0.0), v(1.0, 1.0)],
+            [v(0.0, 0.0), v(1.0, 1.0), v(0.0, 1.0)],
+            [v(1.0, 0.0), v(2.0, 0.0), v(2.0, 1.0)],
+            [v(1.0, 0.0), v(2.0, 1.0), v(1.0, 1.0)],
+            [v(0.0, 1.0), v(1.0, 1.0), v(1.0, 2.0)],
+            [v(0.0, 1.0), v(1.0, 2.0), v(0.0, 2.0)],
+        ];
+        let merged = merge_coplanar_convex(&[&l], 1e-9, &[]);
+        assert!(merged[0].len() >= 2 && merged[0].len() < 6, "{:?}", merged[0].len());
+        let area = |p: &Vec<Vec3>| {
+            let mut s = Vec3::new(0.0, 0.0, 0.0);
+            for k in 1..p.len() - 1 {
+                s = s.add(p[k].sub(p[0]).cross(p[k + 1].sub(p[0])));
+            }
+            s.z / 2.0
+        };
+        let total: f64 = merged[0].iter().map(area).sum();
+        assert!((total - 3.0).abs() < 1e-12, "the polygons tile the L: {total}");
+        for p in &merged[0] {
+            for k in 0..p.len() {
+                let (a, b, c) = (p[k], p[(k + 1) % p.len()], p[(k + 2) % p.len()]);
+                assert!(b.sub(a).cross(c.sub(b)).z >= -1e-12, "convex");
+            }
+        }
+        // The diagonal shared with another component (an intersection curve there) stays.
+        let other = [[v(0.0, 0.0), v(2.0, 1.0), Vec3::new(1.0, 0.5, 1.0)]];
+        let merged = merge_coplanar_convex(&[&rect, &other], 1e-9, &[]);
+        assert_eq!(merged[0].len(), 2);
+    }
 }

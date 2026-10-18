@@ -173,6 +173,14 @@ the shape. `s08_cut` is the first snapshot that fits the input.
 | `pierces_shared_by_an_edge` | `src/meshgen/cut.rs:9929` | The pierce entries two faces sharing an edge both report within `[V2]`'s duplicate-node bound (`DUPLICATE_NODE_FRAC`, 1e-6 of the diagonal); `curve_pierce_points` (now taking that bound) drops them for both faces, because such a point is on the edge and interning it per face made coincident hubs - a3\'s cube corner, 2.4e-8 off a checkerboard face diagonal, gave 17 duplicate nodes (`[V2]`) and the `[V9]` corners. A genuine near-edge pierce is reported by one face and kept. |
 | `face_on_facet_plane` | `src/meshgen/cdt.rs:4462` | Whether a mesh face lies on a constraint facet: every vertex a facet vertex within the facet's band, or any other node within `tol`. The band covers only the facet's own snapped vertices; extending it to other nodes counted a sliver lying along a bent facet as covering it (a8 cell 507267 read 1.416 coverage). Used by the coverage check, `regions_by_constraint` and interface attribution. |
 | `PointClassifier::restrict_to_active` | `src/meshgen/classify.rs:679` | After S6, makes `triangles_of` return only faces that bound material (S6's `active_face`), while the inside test keeps every face. S8's face traces and fragment clips no longer cut along faces buried in a self-intersecting component's own union: gated a8 on-surface 98.455 -> 98.796 %, tets -5.8 %, link-polygon refusals 733 -> 263. |
+| `merge_coplanar_convex` | `src/meshgen/cdt.rs:6118` | Merge each component's coplanar neighbouring triangles (vertices within the weld quantum of the seed plane, normals within 0.8 deg) into convex polygons; never across an edge another component uses, an edge on three or more triangles, or where the union would stop being convex. The facets S8 traces and clips, so an STL rectangle's diagonal is no longer a mesh constraint (M-5.2). |
+| `improve_doc` | `src/meshgen/improve.rs:725` | S9 (M-5.4): on the stage-8 contract document, collapse short edges of bad tets (AR >= 10 or dihedral < 10 deg), flip 3-2/2-3 inside one material and smooth nodes within their constraint planes - only where no geometry moves: a node may slide within the at most two planes its tagged faces lie in (a flat face, or a crease of the input's faceting), within its box planes, and along a straight curve edge; pinned otherwise. Every step keeps tets positive, the star's worst AR strictly better, faces on at most two tets and "material differs" equal to "face tagged". Serial, deterministic. Rewrites points, cells, per-point/per-cell arrays and the face-tag tables (side elements recomputed). |
+| `ImproveOptions` / `ImproveStats` | `src/meshgen/improve.rs:26` | S9's target (default the owner's FEM gate: AR < 10, dihedral >= 10 deg, six passes) and its counts (collapses, flips, node moves, tets and bad tets before/after, worst AR). |
+| `aspect_ratio` / `min_dihedral_deg` | `src/meshgen/improve.rs:59` | The gate's measures: longest edge over shortest altitude scaled so a regular tet reads 1 (Abaqus convention), and the smallest dihedral in degrees. |
+| `improve_doc_with` / `ApproximateInputs` | `src/meshgen/improve.rs:945` | S9 with `fidelity.mode: approximate` (M-4.5b): nodes where a surface is smooth (all face normals within `sizing.feature_angle_deg`) may also collapse and slide - smoothed towards their surface neighbours and projected back onto the input - with every face they touch held within `tolerance_frac` of the diagonal of the input; sharp edges, curves and box planes stay exact. |
+| `InputSurface` | `src/meshgen/improve.rs:203` | An input surface bucketed on a uniform grid (cell `max(mean edge, tolerance)`): `nearest(p, radius)` gives the closest point within a radius. |
+| `MeshGenFidelity` / `FidelityMode` | `src/config/meshgen.rs:306` | `meshgen.fidelity: { mode: exact (default) \| approximate, tolerance_frac: 1e-3 }` - which surface the mesh is held to (D-6, the user's choice). `validate()` refuses a tolerance outside (0, 0.1). |
+| `PointClassifier::merge_coplanar` / `polygons_of` | `src/meshgen/classify.rs:655` | Store the merged polygons per component (called after `restrict_to_active`); `polygons_of` returns them, or the triangles when never merged. The inside tests keep reading the triangles. |
 | `refresh_split_interfaces` | `src/meshgen/cut.rs:6975` | After the hanging-node repair, replaces an interface face no tet carries any more by its two halves at the node now on one of its edges, side elements recomputed; the repair splits every tet around an edge, including another tagged face on it (a3: 4 `[V12]` side_elems failures). |
 | `compact_unreferenced_nodes` | `src/meshgen/cut.rs:5778` | End of S8: drops every node no tet references and renumbers the rest in order (tets, interfaces, rim and curve edges, constraint arrays, `n_lattice_nodes`); a6a_r carried an S7-duplicated lattice node no cell used (plan M-2.6). |
 | `write_inp` | `src/meshgen/export.rs:83` | S11: the stage-11 contract document as an Abaqus INP - C3D4 in VTU order, REGION/PARTITION ELSETs, COMPONENT NSETs from N_ID, IFACE_X_IN/OUT surfaces (X's inside and outside, from the geometric FaceTagSideElems pair and X's FaceTagOrientation), sections from `materials:` (unmapped key is an error unless `elset-only`). |
@@ -384,6 +392,45 @@ actionable key list; it lands with the S11 export driver (G9-2), not in the
 
 See [`mesh.md`](../examples/mesh.md) for captured output of the current partial run and a
 parse-reject run.
+
+## S9 quality improvement (plan M-5.4)
+
+**Untagged material boundaries are geometry to S9 too.** A ranked scene (a3r, priority overlap) carries
+1,193 faces between different regions that the document does not tag; S9 first classified nodes by
+tagged faces only and moved nodes on those faces as if they were interior (on-surface 99.82 -> 99.21).
+They now join the classification as virtual faces - never written back - so the same plane rules
+hold on them, and S9 is geometry-exact again (a3r 99.817 with and without S9).
+
+The owner's FEM gate is a minimum dihedral of 10 deg and an aspect ratio below 10 (longest edge over
+shortest altitude, regular tet = 1). The cut's bad tets are 82-90 % needles - a short edge between a
+cut node and a lattice node a few percent of an element away, or two cut nodes on one trace - and
+`improve_doc` removes them without moving the geometry. A node is classified by the tagged surfaces,
+box planes and locked curves it lies on; on each surface its faces span at most two planes (one on a
+flat face, two on a crease of the input's own faceting, e.g. a faceted sphere's edges) or it is
+pinned. `u` collapses onto `v` only if `v` lies on every surface and curve `u` does and in every plane
+`u` is held to, `uv` is an edge of each such surface (and a curve edge, with the curve straight at
+`u`, when `u` is on a curve). After the collapse loop each pass flips (3-2 on an interior edge with
+three tets, 2-3 on an untagged face, same material, volume conserved to 1e-10, never making a tet with
+all four corners on tagged surfaces - such a sliver's centroid can sit in a chord's sag and read as
+the wrong material) and smooths nodes towards their neighbours' mean, projected into their
+constraint planes. Every step must keep each tet positive by more than a `1e-9 diag` displacement
+could undo and make the worst AR of the star strictly better. Measured (z24 -> S9, with the coplanar
+merge): a1 tets 50,665 -> 36,830 and bad 13,889 -> 1,689; a3 256,428 -> 203,047 and 42,655 -> 3,435;
+a6a 220,140 -> 203,915 and 26,473 -> 149; `[V13]` cont/cover/on identical to the digit, `[V1]`-`[V6]`
+unchanged. What remains on a1/a3 is needles between two nodes pinned at input vertices of the faceted
+sphere; moving those needs M-4.5b's optional approximate mode.
+
+**Approximate mode (`meshgen.fidelity`, plan M-4.5b, owner 2026-10-18).** A faceted input at element
+size (a1's 1,280-facet sphere) pins every node on an input vertex, so the mesh reproduces the file's
+faceting and S9 cannot reach the needles there. `fidelity: { mode: approximate, tolerance_frac }` is
+the user saying which surface they want: on a smooth surface (all face normals around a node within
+`sizing.feature_angle_deg`) nodes may collapse onto any surface neighbour and be smoothed towards their
+surface neighbours and projected back onto the input, as long as every face they touch stays within
+the tolerance of the input (corners, edge midpoints, centroid). Sharp edges, intersection curves,
+rims and box planes stay exact. The refinement level is already capped by `sizing.max_level`. With
+`tolerance_frac: 1e-3`: a1 bad tets 13,889 -> 27 (exact mode 1,689), tets -35 %, `[V13]` still PASS;
+a3 42,655 -> 615, tets -23 %, `[V5]` WARN (the sphere is approximated, which is the point). The
+default stays exact.
 
 ## S10/S11 export (plan M-6.1, M-6.2)
 
@@ -2066,6 +2113,35 @@ face - so a8's cells were cut along walls with the same material on both sides. 
 calls `restrict_to_active` after S6; the inside test is unchanged. Gated a8 on-surface 98.455 ->
 98.796 %, tets 1,466,500 -> 1,381,443, link-polygon refusals 733 -> 263, thin-tet 438 -> 171; the
 default path and every non-self-intersecting case are byte-identical.
+
+**A flat face is one facet, not the file's triangles of it (plan M-5.2, owner 2026-10-18).** S8 used
+to clip and trace every input triangle separately, so an STL rectangle's diagonal became an edge the
+mesh had to recover, visible as a seam of small elements across a6b's plate. After
+`restrict_to_active` the pipeline calls `merge_coplanar` (tolerance `0.1 eps`, Invariant M1's weld
+quantum), and every facet and face-trace site of the cut reads `polygons_of`. The same change made
+§7.1's offer rule say what the spec says: an escalated cell is offered §7.4 whether or not a trace
+augmented one of its faces - gating on an augmented face made the offer depend on such diagonals,
+and without them 15 of a3's cells fell back to §7.6, 11 to its centroid fan. `[V13]`'s coverage
+direction now also leaves out input area buried in its own component's union, judged per sample by
+the component's winding number on both sides (A-8's struts pass through each other; before this its
+cover read ~84 % at best). Measured against z24: tets a3 -5.2 %, a6a -2.3 %, a6b -2.1 %, a8 -10.2 %;
+facet-split fan cells a3 393 -> 189, a8 1,121 -> 177; a3 max deviation 34.9 -> 3.6 % of h with cont
+99.975 -> 99.979 and cover 99.962 -> 99.968. Cost, sub-eps: a8 has struts whose faces sit 6e-5 apart
+(eps 1.7e-4), and 34 strut corners now take the node 6e-5 away instead of their own, which the
+per-sample coverage reads as 2 points because one sample stands for 1/28 of a large input triangle.
+
+Three refinements, each closing a regression the full matrix found. **Strictly convex merges only**: a
+merge that would leave a vertex straight between its neighbours is not taken - a12's cell 81481 coned
+such a facet into a zero-area triangle and declined (on-surface 99.90 -> 99.82 before, 99.94 after).
+**Locked curves are barriers**: the arrangement's curves are never merged across - a8_r has a curve
+where two struts' coplanar faces meet, and merging across it left a strut corner with no material
+(`[V9]` FAIL before, PASS after). **Slivers stay alone**: a triangle whose height is within the
+tolerance is never seeded or absorbed, as clipping drops it anyway. **Junctions stay as the input drew them**: a
+triangle with a vertex on an intersection curve (two or more components) is never merged - reference
+case 2 has a near-tangent junction whose component-1 wedge is 1 % of `eps` thick, and merging the
+triangles beside it left an intersection-curve node with no component-1 tet (`[V9]` FAIL, PASS
+again with the rule). A cube's or a plate's own sharp edges are one-component curves and are not
+affected, so the seams the merge exists to remove still go.
 
 **S2 keeps constructed points on their facets (plan M-1.6).** `build_registry_and_nodes` gave a
 constructed intersection point its key's grid coordinates (`key * weld_step`), moving it off its

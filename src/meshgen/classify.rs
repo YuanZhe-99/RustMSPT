@@ -514,6 +514,9 @@ pub struct PointClassifier {
     reach: f64,
     n_sheets: usize,
     n_defective: usize,
+    /// Each component's surface as merged coplanar convex polygons (`merge_coplanar`), what S8
+    /// cuts along; empty until merged, when `polygons_of` hands back the triangles themselves.
+    polygons: Vec<(i32, Vec<Vec<Vec3>>)>,
 }
 
 impl PointClassifier {
@@ -638,7 +641,39 @@ impl PointClassifier {
             reach,
             n_sheets,
             n_defective,
+            polygons: Vec::new(),
         }
+    }
+
+    // AI-FUNC-SUMMARY:
+    // Purpose: Merge every component's coplanar neighbouring triangles into convex polygons, the
+    //   facets S8 traces and clips (`cdt::merge_coplanar_convex`).
+    // Inputs: the planarity tolerance (normalized length) and the edges never merged across (the
+    //   arrangement's locked curves).
+    // Side effects: replaces the stored polygons; call after `restrict_to_active`.
+    // Notes: The inside tests keep reading the triangles; only what the cut is constrained by
+    //   changes, so a flat face's file triangulation no longer becomes edges of the mesh.
+    pub fn merge_coplanar(&mut self, tol: f64, barriers: &[[Vec3; 2]]) {
+        let mut ids: Vec<i32> = Vec::new();
+        let mut sets: Vec<&[[Vec3; 3]]> = Vec::new();
+        for slot in 0..self.solids.len() {
+            ids.push(self.solids[slot].x);
+            sets.push(self.triangles_of(slot));
+        }
+        for (x, t) in &self.sheets {
+            ids.push(*x);
+            sets.push(t.as_slice());
+        }
+        let merged = crate::meshgen::cdt::merge_coplanar_convex(&sets, tol, barriers);
+        self.polygons = ids.into_iter().zip(merged).collect();
+    }
+
+    // AI-FUNC-SUMMARY: A component's surface as the polygons S8 cuts along - merged when `merge_coplanar` ran, its triangles otherwise; returns a Cow of polygons, empty for an unknown component; side effects: none.
+    pub fn polygons_of(&self, component: i32) -> std::borrow::Cow<'_, [Vec<Vec3>]> {
+        if let Some((_, p)) = self.polygons.iter().find(|(x, _)| *x == component) {
+            return std::borrow::Cow::Borrowed(p.as_slice());
+        }
+        std::borrow::Cow::Owned(self.surface_of(component).iter().map(|t| t.to_vec()).collect())
     }
 
     // AI-FUNC-SUMMARY: How many solid components own a slot here; returns usize; side effects: none.
