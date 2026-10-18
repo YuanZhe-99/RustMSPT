@@ -83,6 +83,17 @@ header p { margin: 0; color: var(--muted); max-width: 70ch; line-height: 1.6; }
 .facts { display: flex; flex-wrap: wrap; gap: 6px 20px; color: var(--muted); font-size: 13px; }
 .facts b { color: var(--ink); font-weight: 500; }
 .note { color: var(--muted); font-size: 13px; line-height: 1.6; margin: 0; max-width: 80ch; }
+.progress { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 16px; display: grid; gap: 10px; }
+.progress .headline { margin: 0; line-height: 1.6; max-width: 90ch; }
+.phases { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
+.phase { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; display: grid; gap: 4px; min-width: 0; }
+.phase .top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.phase b { font-weight: 500; }
+.phase .id { font-family: var(--font-mono); font-size: 12px; color: var(--muted); margin-right: 6px; }
+.phase p { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.55; }
+.pill { font-size: 11px; padding: 1px 6px; border-radius: 10px; border: 1px solid currentColor; white-space: nowrap; }
+.pill.done { color: var(--pass); } .pill.mostly { color: var(--accent); } .pill.partial { color: var(--warn); } .pill.todo { color: var(--skip); }
+details.progress summary { cursor: pointer; font-weight: 500; }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
 </style>
 
@@ -90,6 +101,12 @@ header p { margin: 0; color: var(--muted); max-width: 70ch; line-height: 1.6; }
   <h1>网格 Atlas</h1>
   <p id="summary">读取用例清单中…</p>
 </header>
+
+<details class="progress" id="progress" open>
+  <summary>计划进展（M-0 – M-8）</summary>
+  <p class="headline" id="headline">读取进展…</p>
+  <div class="phases" id="phases"></div>
+</details>
 
 <div class="app">
   <nav class="list" id="list" aria-label="测试用例"></nav>
@@ -379,6 +396,11 @@ header p { margin: 0; color: var(--muted); max-width: 70ch; line-height: 1.6; }
 
   ["showBoundary", "showInput", "showEdges", "sliceAxis", "clipAxis", "clipPos"].forEach((id) => el(id).addEventListener("input", applyVisibility));
 
+  const STATE = { done: "完成", mostly: "基本完成", partial: "进行中", todo: "未开始" };
+  fetch("progress.json").then((r) => r.json()).then((p) => {
+    el("headline").textContent = `${p.headline}（更新于 ${p.updated}）`;
+    el("phases").innerHTML = p.phases.map((ph) => `<div class="phase"><div class="top"><b><span class="id">${ph.id}</span>${ph.name}</b><span class="pill ${ph.state}">${STATE[ph.state] || ph.state}</span></div><p>${ph.note}</p></div>`).join("");
+  }).catch(() => { el("progress").hidden = true; });
   fetch("manifest.json").then((r) => r.json()).then((m) => {
     manifest = m;
     renderList();
