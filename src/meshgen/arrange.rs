@@ -696,6 +696,7 @@ pub fn arrange_surface(
 
     let mut stage_clock = time_arrange_stage("narrow-phase", stage_clock);
     let split_segments = split_pair_segments(&pair_segments, &proposals, weld_step, &mut degraded)?;
+    stage_clock = time_arrange_stage("split-segments", stage_clock);
     let source_aliases = build_near_source_aliases(
         &near_coincidences,
         &normalized,
@@ -703,6 +704,7 @@ pub fn arrange_surface(
         weld_step,
         &mut degraded,
     );
+    stage_clock = time_arrange_stage("near-aliases", stage_clock);
     let (vertices, node_normalized, source_node_map, mut registry) = build_registry_and_nodes(
         surface,
         &normalized,
@@ -715,6 +717,7 @@ pub fn arrange_surface(
         &source_aliases,
         &mut degraded,
     )?;
+    stage_clock = time_arrange_stage("registry", stage_clock);
     let (extra_constraints, extra_nodes, mut overlay_curves) = build_overlay_constraints(
         &canonical,
         &normalized,
@@ -729,7 +732,7 @@ pub fn arrange_surface(
         weld_step,
         &mut degraded,
     )?;
-    stage_clock = time_arrange_stage("registry+overlay", stage_clock);
+    stage_clock = time_arrange_stage("overlay", stage_clock);
     let source_faces = split_all_triangles(
         &canonical,
         &node_normalized,
@@ -2080,14 +2083,14 @@ fn resolve_symbolic_output_node(
     }
 }
 
-// AI-FUNC-SUMMARY: Return committed provenance-edge and relation-incident source nodes on one source edge in exact determinant-ratio order; returns deduplicated node sequence; side effects: none.
+// AI-FUNC-SUMMARY: Return committed provenance-edge and relation-incident source nodes on one source edge in exact determinant-ratio order; `edge_aliases` lists, per source edge, the registry (node, alias) pairs whose provenance names that edge, in registry order; returns deduplicated node sequence; side effects: none.
 #[allow(clippy::too_many_arguments)]
 fn atomic_edge_nodes(
     triangle: &SourceTriangle,
     edge: EdgeId,
     canonical: &CanonicalInput,
     source_node_map: &[usize],
-    registry: &IntersectionRegistry,
+    edge_aliases: &BTreeMap<EdgeId, Vec<(usize, IsectProv)>>,
     proposals: &BTreeMap<IsectProv, VertexProposal>,
     incident_nodes: &BTreeSet<usize>,
     node_points: &[Vec3],
@@ -2111,11 +2114,9 @@ fn atomic_edge_nodes(
     let start_point = node_points[endpoints[0]];
     let end_point = node_points[endpoints[1]];
     let mut interior: Vec<(usize, Option<DeterminantRatio>, Option<IsectProv>)> = Vec::new();
-    for vertex in &registry.vertices {
-        for alias in &vertex.aliases {
-            if let Some(ratio) = proposal_ratio_for_edge(alias, &proposals[alias], edge) {
-                interior.push((vertex.node, Some(ratio), Some(alias.clone())));
-            }
+    for (node, alias) in edge_aliases.get(&edge).into_iter().flatten() {
+        if let Some(ratio) = proposal_ratio_for_edge(alias, &proposals[alias], edge) {
+            interior.push((*node, Some(ratio), Some(alias.clone())));
         }
     }
     for node in incident_nodes.iter().copied() {
@@ -2182,6 +2183,37 @@ fn build_overlay_constraints(
                 .map(move |alias| (alias, vertex.node))
         })
         .collect();
+    // Two scans of the whole registry used to run per curve segment and per (relation, edge),
+    // which made S2 quadratic on large inputs (a9: 17 s). They are indexed once: the registry
+    // vertices owned by each triangle, and the (node, alias) pairs naming each source edge, both in
+    // registry order, so every loop below visits the same vertices in the same order.
+    let mut vertices_of_triangle: BTreeMap<TriId, Vec<usize>> = BTreeMap::new();
+    let mut edge_aliases: BTreeMap<EdgeId, Vec<(usize, IsectProv)>> = BTreeMap::new();
+    for (at, vertex) in registry.vertices.iter().enumerate() {
+        let mut owners: BTreeSet<TriId> = BTreeSet::new();
+        for alias in &vertex.aliases {
+            if let Some(set) = proposal_owners.get(alias) {
+                owners.extend(set.iter().copied());
+            }
+            let mut edges: SmallVec<[EdgeId; 2]> = SmallVec::new();
+            match alias {
+                IsectProv::EdgeTri { edge, .. } => edges.push(*edge),
+                IsectProv::EdgeEdge { first, second } => {
+                    edges.push(*first);
+                    if second != first {
+                        edges.push(*second);
+                    }
+                }
+                IsectProv::TriTriTri(_) => {}
+            }
+            for edge in edges {
+                edge_aliases.entry(edge).or_default().push((vertex.node, alias.clone()));
+            }
+        }
+        for triangle in owners {
+            vertices_of_triangle.entry(triangle).or_default().push(at);
+        }
+    }
     let mut constraints: BTreeMap<TriId, BTreeSet<(usize, usize)>> = BTreeMap::new();
     let mut extra_nodes: BTreeMap<TriId, BTreeSet<usize>> = BTreeMap::new();
     let mut curve_components: BTreeMap<(usize, usize), BTreeSet<i32>> = BTreeMap::new();
@@ -2259,7 +2291,17 @@ fn build_overlay_constraints(
                 );
             }
         }
-        for vertex in &registry.vertices {
+        let candidates: Box<dyn Iterator<Item = &RegistryVertex>> = match curve.triangles.first() {
+            Some(first) => Box::new(
+                vertices_of_triangle
+                    .get(first)
+                    .into_iter()
+                    .flatten()
+                    .map(|at| &registry.vertices[*at]),
+            ),
+            None => Box::new(registry.vertices.iter()),
+        };
+        for vertex in candidates {
             if vertex.aliases.iter().any(|alias| {
                 proposal_owners.get(alias).is_some_and(|owners| {
                     curve
@@ -2319,7 +2361,7 @@ fn build_overlay_constraints(
                     edge,
                     canonical,
                     source_node_map,
-                    registry,
+                    &edge_aliases,
                     proposals,
                     &incident_nodes,
                     node_points,

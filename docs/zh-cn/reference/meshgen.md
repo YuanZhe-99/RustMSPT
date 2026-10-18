@@ -159,6 +159,7 @@ meshgen:
 | `AsmLap` | `src/meshgen/cut.rs` | 析构守卫：把耗时累加到组装循环某一分支的总计，在 `RUSTMSPT_TIME_STAGES` 下打印为 `[S8-TIME] assembly by arm`。 |
 | `TriIndex::nearest` | `src/meshgen/verify.rs` | 按网格壳层向外扩展求离点最近的三角形，在首次命中后再多查一圈即停；改为 `pub(crate)`，供 S8 只打印的 P3 分路统计使用，取代逐角点扫描全部输入三角形（a9 66 s -> 约 2 s，数值不变）。 |
 | `classify_lattice_memo / VertexMemo` | `src/meshgen/classify.rs` | 复用此前 K1 轮次在同一分类器上的逐顶点结果（按精确坐标为键，含每个实体的内外位和该顶点自身的诊断计数）的 `classify_lattice_with`；结果和统计完全相同。流水线还把 S6 分类器在各轮间只建一次，切割用的（限定活动面、合并共面片的）分类器也只建一次（仅当 `active_face` 变化时重建）。a8 第 2-4 轮顶点奇偶判定：1.8 s -> 0.05 s。`RUSTMSPT_TIME_STAGES` 下打印 `[S6-TIME]`。 |
+| `build_overlay_constraints / atomic_edge_nodes` | `src/meshgen/arrange.rs` | G2-2 叠加：接触约束、接触曲线以及每条源边上已提交的节点。注册表只建一次索引——每个三角形拥有的顶点、以及指向每条源边的（节点, 别名）对，均按注册表顺序——取代按每段曲线、每个（关系, 边）扫描整个注册表；输出不变，a9 的叠加 17 s -> 0.07 s。`[S2-TIME]` 把原来的 `registry+overlay` 拆为 `split-segments`、`near-aliases`、`registry`、`overlay`。 |
 
 必填字段：`inputs`（非空）、`domain`、`output.vtu`。
 
