@@ -3,6 +3,7 @@ pub mod cdt;
 pub mod classify;
 pub mod contract;
 pub mod cut;
+pub mod export;
 pub mod facecache;
 pub mod features;
 pub mod gapfield;

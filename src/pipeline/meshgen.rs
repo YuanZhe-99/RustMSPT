@@ -30,7 +30,7 @@ use crate::meshgen::{
     source_component_is_closed, ArrangeComponent, ArrangeOptions,
 };
 use crate::types::{Mesh, Vec3};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 /// How many times invariant K1's remedy may refine and rerun S4-S7 before the remaining
@@ -209,13 +209,13 @@ impl Pipeline for MeshGenPipeline {
         if let Some(l) = &resolution.ladder {
             let est_leaves: u64 = l.counts.iter().map(|c| *c as u64).product();
             println!(
-                "[S4/RES] background given: h_bg = {:.6} ({:.6} of the diagonal), cells {:?}, overhang {:?}; \
+                "[S4/RES] background given: h_bg = {:.6} ({:.6} of the diagonal), cells {:?}, each axis stretched to fit the domain by {:?}; \
                  max_level given: L = {} -> h_min = {:.6}; octree levels {} (background) .. {} (finest); \
                  at least {} background leaves; input levels {:?}",
                 l.h_bg,
                 l.h_bg_frac,
                 l.counts,
-                l.overhang.map(|o| (o * 1e9).round() / 1e9),
+                [0, 1, 2].map(|a| ((1.0 - l.overhang[a] / (l.counts[a] as f64 * l.h_bg)) * 1e9).round() / 1e9),
                 l.level,
                 l.h_bg / (1u64 << l.level) as f64,
                 l.root_level,
@@ -257,11 +257,43 @@ impl Pipeline for MeshGenPipeline {
 
         // --- S0: Conditioning and repair ---
         let mut clock = Instant::now();
-        let cs = condition_surface(&meshes, eps, p.repair.level)?;
+        let mut cs = condition_surface(&meshes, eps, p.repair.level)?;
         clock = stage_time("S0", clock);
-        let mut components = Vec::with_capacity(p.inputs.len());
-        for (index, input) in p.inputs.iter().enumerate() {
-            let x = index as i32 + 1;
+        // **One component per body, not per file** (plan M-4.0a, MG-04). An input holding two
+        // disjoint cubes is two bodies, and one holding a cube beside an open quad is a solid and
+        // a sheet - deciding `kind` from the whole file's closedness made that cube a sheet with no
+        // volume. `input_bodies` splits a file into its shells, keeping shells whose boxes overlap
+        // (a lattice's struts, a cavity in a solid) as one body. X runs over files in order and
+        // over bodies in order within a file, so a file holding one body keeps X = its index + 1.
+        let mut source_of: Vec<usize> = Vec::new();
+        {
+            let mut relabel = vec![0i32; cs.faces.len()];
+            for index in 0..p.inputs.len() {
+                let members: Vec<usize> = (0..cs.faces.len())
+                    .filter(|f| cs.source_component[*f] == index as i32 + 1)
+                    .collect();
+                let faces: Vec<[usize; 3]> = members.iter().map(|f| cs.faces[*f]).collect();
+                let bodies = crate::meshgen::surface::input_bodies(&faces, &cs.vertices);
+                let n_bodies = bodies.iter().copied().max().map_or(1, |b| b + 1);
+                let first = source_of.len() as i32 + 1;
+                for (member, body) in members.iter().zip(bodies.iter()) {
+                    relabel[*member] = first + *body as i32;
+                }
+                if n_bodies > 1 {
+                    println!(
+                        "[S0] input {} holds {n_bodies} bodies -> components X {first}..{}",
+                        p.inputs[index].stl,
+                        first + n_bodies as i32 - 1
+                    );
+                }
+                source_of.extend(std::iter::repeat_n(index, n_bodies));
+            }
+            cs.source_component = relabel;
+        }
+        let mut components = Vec::with_capacity(source_of.len());
+        for (slot, index) in source_of.iter().enumerate() {
+            let input = &p.inputs[*index];
+            let x = slot as i32 + 1;
             let closed = source_component_is_closed(&cs, x);
             let priority = u32::try_from(input.resolved_priority()).map_err(|_| {
                 RustMsptError::InvalidConfig(format!(
@@ -593,10 +625,11 @@ impl Pipeline for MeshGenPipeline {
             curve_cells: p.sizing.curve_cells,
             eps,
             root_size: resolution.ladder.as_ref().map(|l| l.root_frac),
+            forest_counts: resolution.ladder.as_ref().map(|l| l.counts),
             // Plan M-1.8 (c): input i is component X = i + 1, and refines at most to its own level.
             component_floor: match &resolution.ladder {
                 Some(l) if l.input_levels.iter().any(|x| *x != l.level) => std::iter::once(resolution.h_min_frac)
-                    .chain(l.input_levels.iter().map(|x| l.h_bg_frac / (1u64 << x) as f64))
+                    .chain(source_of.iter().map(|input| l.h_bg_frac / (1u64 << l.input_levels[*input]) as f64))
                     .collect(),
                 _ => Vec::new(),
             },
@@ -1454,34 +1487,101 @@ impl Pipeline for MeshGenPipeline {
             println!("{warning}");
         }
 
+        // One document for s08 and s11: S9 (quality) does not exist yet, so the final mesh IS the
+        // cut, relabelled as stage 11 and written to the delivered path (plan M-6.2).
+        let mut doc = cut_to_doc(&cut, &clipped.components);
+        for point in &mut doc.points {
+            *point = output_domain_min.add(point.scale(domain_diag));
+        }
         if should_emit(snapshot_mode, Stage::Cut) {
-            let mut doc = cut_to_doc(&cut, &clipped.components);
-            for point in &mut doc.points {
-                *point = output_domain_min.add(point.scale(domain_diag));
-            }
+            let mut snapshot = doc.clone();
             let meta = SnapshotMeta::new(
                 Stage::Cut,
                 config_hash,
                 (output_domain_min, output_domain_max),
             )
             .with_determinism(p.determinism);
-            let path = emit_snapshot(&mut doc, output_path, &meta, encoding)?;
+            let path = emit_snapshot(&mut snapshot, output_path, &meta, encoding)?;
             clock = stage_time("snapshot-s08", clock);
             println!("[mesh] snapshot s08: {}", path.display());
         }
 
+        // --- S10/S11: partitions are in the document (`partition_tets`); the export ---
+        // The lattice's hull is the domain box (each axis stretched to whole cells, plan M-6.2), so
+        // there is nothing to trim: S11 writes the stage-11 document and the INP view of it.
+        let final_meta = SnapshotMeta::new(
+            Stage::Final,
+            config_hash,
+            (output_domain_min, output_domain_max),
+        )
+        .with_determinism(p.determinism);
+        if should_emit(snapshot_mode, Stage::Final) {
+            let mut snapshot = doc.clone();
+            let path = emit_snapshot(&mut snapshot, output_path, &final_meta, encoding)?;
+            println!("[mesh] snapshot s11: {}", path.display());
+        }
+        let delivered = write_final(&mut doc, output_path, &final_meta, encoding)?;
+        println!(
+            "[mesh] delivered: {} ({} tets) and {}",
+            delivered.display(),
+            cut.tets.len(),
+            crate::meshgen::snapshot::contract_path(&delivered).display()
+        );
+        let inp_path = match &p.output.abaqus {
+            Some(path) => PathBuf::from(path),
+            None => output_path.with_extension("inp"),
+        };
+        let export = crate::meshgen::export::write_inp(&doc, &p.materials)?;
+        for warning in &export.warnings {
+            println!("{warning}");
+        }
+        if let Some(dir) = inp_path.parent() {
+            if !dir.as_os_str().is_empty() {
+                std::fs::create_dir_all(dir)?;
+            }
+        }
+        std::fs::write(&inp_path, &export.text)?;
+        clock = stage_time("S11", clock);
+        println!(
+            "[S11] INP: {} ({} node(s), {} C3D4 element(s))",
+            inp_path.display(),
+            export.n_nodes,
+            export.n_elements
+        );
         let _ = clock;
-
-        Err(RustMsptError::NotAvailable(format!(
-            "mesh: stages S9..S11 are not implemented yet; \
-             S0+S1, G2-1..G2-5 arrangement+clip+topology, G3 gap field + regimes, \
-             G4-1 sizing field + grading, G4-2 balanced lattice, G5-1 classification, \
-             G6-1 snap, and G6-2/G6-3 cut complete; \
-             {} input(s) loaded, output '{}'",
-            p.inputs.len(),
-            p.output.vtu
-        )))
+        Ok(())
     }
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Write the stage-11 document at the delivered path: the tets-only volume under the plain
+//   name and the mixed-cell contract document beside it as `_contract.vtu` (R4).
+// Inputs: the document, the configured output path, the stage-11 metadata, the encoding.
+// Returns: the delivered path.
+// Side effects: Stamps the metadata onto `doc`; writes two files.
+fn write_final(
+    doc: &mut crate::io::vtu::VtuDoc,
+    output_path: &std::path::Path,
+    meta: &SnapshotMeta,
+    encoding: crate::io::vtu::VtuEncoding,
+) -> Result<PathBuf> {
+    crate::meshgen::snapshot::stamp_metadata(doc, meta);
+    doc.validate()?;
+    if let Some(dir) = output_path.parent() {
+        if !dir.as_os_str().is_empty() {
+            std::fs::create_dir_all(dir)?;
+        }
+    }
+    let encoding = if output_path.to_string_lossy().ends_with(".ascii.vtu") {
+        crate::io::vtu::VtuEncoding::Ascii
+    } else {
+        encoding
+    };
+    crate::io::vtu::save_vtu(&crate::meshgen::snapshot::contract_path(output_path), doc, encoding)?;
+    let volume = crate::io::vtu::volume_only(doc);
+    volume.validate()?;
+    crate::io::vtu::save_vtu(output_path, &volume, encoding)?;
+    Ok(output_path.to_path_buf())
 }
 
 // AI-FUNC-SUMMARY:

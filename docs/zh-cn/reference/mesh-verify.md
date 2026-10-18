@@ -60,8 +60,8 @@ GA-2）：精确谓词与单元质量原语（`src/meshgen/predicates.rs`）、�
 | [V7] 薄片与薄特征 | **部分** | 体阶段运行薄片面焊接性；s00-s03 因无四面体而报告 SKIPPED；单层带、中面与边缘一致性随 G7-1 落地 |
 | [V8] 分区 | **体阶段完整** | 重算薄片阻断的洪水填充并与 `partition_id` 比对（允许重编号）、针孔泄漏启发式、`expected_partitions` 门限；s00-s03 报告 SKIPPED |
 | [V9] 交汇 | 跳过 | 随 G6-4 落地 |
-| [V10] 导出完整性 | 跳过 | 随 G9-2 落地 |
-| [V11] 比较模式 | 跳过 | 随 GK-3 落地 |
+| [V10] 导出完整性 | **设置 `inp:` 后完整** | 按身份将配套 INP 与契约文档比对：节点 `i` 逐位等于点 `i-1`，单元 `c` 等于四面体单元 `c-1`，每个 `REGION_k`/`PARTITION_p` 单元集、`COMPONENT_X` 节点集与 `IFACE_X_POS/NEG` 面均由文档数组重新计算；无截面时未映射区域为 INFO，有截面时为 FAIL。未给 `inp:` 时跳过 |
+| [V11] 比较模式 | **`--compare A B [--mode strict\|topology]`** | 同一次运行的两个文件：strict = 单元、所有数组与坐标逐位一致；topology = 单元与整数数组一致，坐标在 `1e-6 * diag` 内，浮点数组在 1 % 内。从不比较 `ConfigHash`（它记录配置文件名）；模式默认取 B 的 `DeterminismMode`。单文件运行时跳过 |
 | [V12] 溯源与统计 | **完整** | **契约校验**（契约 §4.2，计划 MG-08），强度由元数据选定——每条被违反的规则都是一条 `V12.contract` FAIL，强度以 INFO `V12.contract_strength` 与指标 `contract_strength`（0 仅几何、1 主体网格、2 混合契约）报告；计数、元数据回显、`Counts` 与网格实际值一致性、`SchemaVersion` 校验、`StageIndex` 范围与文件名交叉校验（T-C6），以及计划中 P2 所依据的**单元数归因**：按 `provenance` 分类的四面体计数，以及在 `RUSTMSPT_CUT_DIAG` 下存在 `parent_cell` 时，其背后的 S5 单元数与每单元发射率。S5 单元本身就是一个晶格**四面体**，因此未被处理的单元恰好发射 1 个，`tets_per_cell_*` 可直接读作「该路径相对于放着不动多付出的代价」。 |
 | [V13] 界面保真度 | **设置 `surfaces:` 后完整** | 计划中的 P3，以**包含性**度量（计划 M-1.5）：每个材料边界面必须位于与之共面的输入面片的并集之内（`contained_area_frac`、`V13.not_contained`），每个未被更高优先级实体遮住、且不在区域盒上的输入面片必须被网格的边界面或标签面覆盖（`input_covered_area_frac`、`V13.boundary_missing`）。下面的角点检查是必要条件，继续保留。只要有任何材料边界面积不在曲面上，`V13.off_surface` 即为 **FAIL**（契约 rev 1.3；计划 M-1.0），每个违规面一条发现。见下文——它并不是 [V5] 的一个变体。 |
 
@@ -145,6 +145,8 @@ cargo run --release -- mesh-verify \
   --json   data/output/mesh_verification.json \
   --annotate data/output/mesh_annotated.vtu
 ```
+
+`inp: out/mesh.inp` 开启 `[V10]`：`input` 应指向与该 INP 一同写出的 `_contract.vtu`，并设 `delivered: true`——这就是验收门所读的导出网格（PLAN §1.2）。
 
 `fidelity_vtu: out/compare.vtu`（需要 `surfaces:`）写出**输入与输出的对照曲面**：`[V13]` 所测的材料边界面，每个面带 `dev_pct`（角点到输入曲面的距离占该面边长的百分比）、`offset_pct`（带符号）和 `dev_class`（在 `mesh-render` 的分类调色板中：灰 < 2%、黄 2–10%、橙 10–25%、红 ≥ 25%），以及输入 STL 三角形（`source = 0`，细分到与输出面相近的尺寸）。用 `color_by: dev_class` 并对 `source` 加 `array_range` 过滤，即可把输入与输出并排显示；`data/fixtures/meshgen/acceptance/render_focus.py` 对每个算例自动完成这些，包括最差聚集区的特写。
 

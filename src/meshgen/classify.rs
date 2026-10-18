@@ -506,6 +506,9 @@ struct ComponentGeometry {
 //   the projection grids, hence one build shared by both stages.
 pub struct PointClassifier {
     solids: Vec<ComponentGeometry>,
+    /// Each sheet component's triangles (plan M-4.4, A-11). A sheet owns no volume, so it has no
+    /// slot and no inside test; S8 still has to cut along it, so its geometry is kept here.
+    sheets: Vec<(i32, Vec<[Vec3; 3]>)>,
     /// Arranged-surface vertices, for the winding-number fallback's indexing.
     vertices: Vec<Vec3>,
     reach: f64,
@@ -550,6 +553,7 @@ impl PointClassifier {
         // components) while a touching cube-and-limb goes 251 -> 324. Reverted.
 
         let mut solids: Vec<ComponentGeometry> = Vec::new();
+        let mut sheets: Vec<(i32, Vec<[Vec3; 3]>)> = Vec::new();
         let mut n_sheets = 0usize;
         let mut n_defective = 0usize;
         for component in &surface.components {
@@ -561,6 +565,15 @@ impl PointClassifier {
             match classification {
                 ComponentClassification::Sheet => {
                     n_sheets += 1;
+                    let triangles: Vec<[Vec3; 3]> = surface
+                        .faces
+                        .iter()
+                        .filter(|face| face.components.contains(&component.x))
+                        .map(|face| face.nodes.map(|n| surface.vertices[n]))
+                        .collect();
+                    if !triangles.is_empty() {
+                        sheets.push((component.x, triangles));
+                    }
                     continue;
                 }
                 ComponentClassification::SolidDefective => n_defective += 1,
@@ -620,6 +633,7 @@ impl PointClassifier {
         let reach = 4.0 * extent.dot(extent).sqrt().max(f64::MIN_POSITIVE);
         PointClassifier {
             solids,
+            sheets,
             vertices: surface.vertices.clone(),
             reach,
             n_sheets,
@@ -640,6 +654,18 @@ impl PointClassifier {
     // AI-FUNC-SUMMARY: How many solid components S2b could not certify closed, for the S6 stats line; returns usize; side effects: none.
     pub fn n_defective(&self) -> usize {
         self.n_defective
+    }
+
+    // AI-FUNC-SUMMARY: A component's surface - a solid's material-bounding triangles or a sheet's - for callers that cut along it without asking inside/outside; returns a slice, empty for an unknown component; side effects: none.
+    pub fn surface_of(&self, component: i32) -> &[[Vec3; 3]] {
+        if let Some(slot) = self.slot_of(component) {
+            return self.triangles_of(slot);
+        }
+        self.sheets
+            .iter()
+            .find(|(x, _)| *x == component)
+            .map(|(_, t)| t.as_slice())
+            .unwrap_or(&[])
     }
 
     // AI-FUNC-SUMMARY: The component id at one slot; returns i32; side effects: none.

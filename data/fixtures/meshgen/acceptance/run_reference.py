@@ -199,11 +199,12 @@ def run_case(case):
             )
         )
 
-    # P-2.1: the plain name is the delivered tets-only volume; the full catalog needs the
-    # mixed-cell contract document beside it, because [V5]-[V9] read the face tags.
-    vtu = os.path.join(work, "mesh.debug", "mesh_s08_cut_contract.vtu")
+    # Plan M-6.2: the exported mesh. The plain name is the delivered tets-only volume; the full
+    # catalog needs the mixed-cell contract document beside it, because [V5]-[V9] read the face
+    # tags, and [V10] reads the INP against it.
+    vtu = os.path.join(work, "mesh_contract.vtu")
     js = os.path.join(work, "report.json")
-    for stale in (vtu, js):
+    for stale in (vtu, js, os.path.join(work, "mesh.inp")):
         if os.path.exists(stale):
             os.remove(stale)
     env = dict(os.environ, RUSTMSPT_CUT_DIAG="1")
@@ -217,7 +218,7 @@ def run_case(case):
     mesh = subprocess.run(
         [BIN, "mesh", "--config", config], capture_output=True, text=True, env=env
     )
-    if not os.path.exists(vtu):
+    if mesh.returncode != 0 or not os.path.exists(vtu):
         return {"case": name, "error": (mesh.stderr or mesh.stdout).strip()[-300:]}
     return lambda: verify_case(case, name, work, vtu, js, stls, env, params, levels, h_max, h_min)
 
@@ -225,7 +226,10 @@ def run_case(case):
 def verify_case(case, name, work, vtu, js, stls, env, params, levels, h_max, h_min):
     vcfg = os.path.join(work, "verify.yaml")
     with open(vcfg, "w") as f:
-        f.write(f"mesh_verify:\n  input: {vtu}\n  json: {js}\n  surfaces:\n")
+        f.write(
+            f"mesh_verify:\n  input: {vtu}\n  json: {js}\n  inp: {os.path.join(work, 'mesh.inp')}\n"
+            "  delivered: true\n  surfaces:\n"
+        )
         for stl in stls:
             f.write(f"    - {stl}\n")
         f.write("  verify:\n    max_ar_warn: 20.0\n    min_dihedral_deg: 5.0\n")

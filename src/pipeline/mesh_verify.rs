@@ -59,32 +59,50 @@ pub fn verify_file(
     surfaces: &[crate::config::mesh_verify::MeshVerifySurface],
     delivered: bool,
     fidelity_path: Option<&Path>,
+    inp_path: Option<&Path>,
 ) -> Result<VerifyReport> {
     let doc = load_vtu(input)?;
     doc.validate()?;
     let mut options = VerifyOptions::from_path(input);
     options.delivered = delivered;
+    // [V10]'s companion, read here for the same reason the surfaces are: the check is a pure
+    // function of what it is handed.
+    if let Some(path) = inp_path {
+        options.inp = Some(std::fs::read_to_string(path)?);
+    }
     // [V5]'s input side. Loaded here rather than in `verify.rs` so the check stays a
     // pure function of geometry it is handed - it never reads a file itself, which is
     // what lets the same check run inside the mesh pipeline at S11.
     for surface in surfaces {
         let mesh = crate::io::stl::load_stl(Path::new(surface.stl()))?;
-        let tris: Vec<[crate::types::Vec3; 3]> = mesh
-            .faces
-            .iter()
-            .map(|f| [mesh.vertices[f.a], mesh.vertices[f.b], mesh.vertices[f.c]])
-            .collect();
-        // Priority resolves exactly as `meshgen.inputs` resolves it - 0 unless stated - so the
-        // surfaces listed here mean the same thing they meant to the mesher. Deriving it from
-        // the file index (as this did until 2026-08-07) made [V5] mask a body the mesher had
-        // *not* overridden, reporting A-4's contained cube as owning nothing at all.
-        options.surfaces.push(crate::meshgen::verify::SurfaceComponent {
-            priority: surface.resolved_priority(),
-            // Closed-surface test by edge parity: an open sheet can never mask another
-            // body, so only closed components take part in the priority mask.
-            closed: is_closed_soup(&mesh),
-            tris,
-        });
+        // One component per body the file holds, numbered as the mesher numbers them (plan
+        // M-4.0a): `input_bodies` on the same faces, bodies in order within a file, files in order.
+        let faces: Vec<[usize; 3]> = mesh.faces.iter().map(|f| [f.a, f.b, f.c]).collect();
+        let bodies = crate::meshgen::surface::input_bodies(&faces, &mesh.vertices);
+        let n_bodies = bodies.iter().copied().max().map_or(0, |b| b + 1);
+        for body in 0..n_bodies {
+            let members: Vec<usize> = (0..faces.len()).filter(|f| bodies[*f] == body).collect();
+            let part = crate::types::Mesh {
+                vertices: mesh.vertices.clone(),
+                faces: members.iter().map(|f| mesh.faces[*f].clone()).collect(),
+            };
+            let tris: Vec<[crate::types::Vec3; 3]> = part
+                .faces
+                .iter()
+                .map(|f| [mesh.vertices[f.a], mesh.vertices[f.b], mesh.vertices[f.c]])
+                .collect();
+            // Priority resolves exactly as `meshgen.inputs` resolves it - 0 unless stated - so the
+            // surfaces listed here mean the same thing they meant to the mesher. Deriving it from
+            // the file index (as this did until 2026-08-07) made [V5] mask a body the mesher had
+            // *not* overridden, reporting A-4's contained cube as owning nothing at all.
+            options.surfaces.push(crate::meshgen::verify::SurfaceComponent {
+                priority: surface.resolved_priority(),
+                // Closed-surface test by edge parity: an open sheet can never mask another
+                // body, so only closed components take part in the priority mask.
+                closed: is_closed_soup(&part),
+                tris,
+            });
+        }
     }
     let inputs: Vec<Vec<[crate::types::Vec3; 3]>> =
         options.surfaces.iter().map(|c| c.tris.clone()).collect();
@@ -270,6 +288,7 @@ impl Pipeline for MeshVerifyPipeline {
             &p.surfaces,
             p.delivered,
             p.fidelity_vtu.as_deref().map(Path::new),
+            p.inp.as_deref().map(Path::new),
         )?;
         if !report.passed() {
             return Err(RustMsptError::InvalidMesh(format!(
@@ -291,4 +310,48 @@ fn is_closed_soup(mesh: &crate::types::Mesh) -> bool {
         }
     }
     !mesh.faces.is_empty() && edges.values().all(|n| *n == 2)
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: `mesh-verify --compare a b [--mode strict|topology]` - [V11] on two files (plan M-6.3).
+// Inputs: the two VTU paths, the optional mode name, optional report/JSON destinations.
+// Returns: Ok when they agree under the mode; InvalidMesh naming the failure otherwise.
+// Side effects: Reads both files, prints the log, writes the report/JSON when asked.
+pub fn compare_files(
+    a: &Path,
+    b: &Path,
+    mode: Option<&str>,
+    report_path: Option<&Path>,
+    json_path: Option<&Path>,
+) -> Result<()> {
+    let mode = match mode {
+        None => None,
+        Some("strict") => Some(crate::meshgen::verify::CompareMode::Strict),
+        Some("topology") => Some(crate::meshgen::verify::CompareMode::Topology),
+        Some(other) => {
+            return Err(RustMsptError::InvalidConfig(format!(
+                "mesh-verify --mode must be strict or topology, not {other}"
+            )))
+        }
+    };
+    let (da, db) = (load_vtu(a)?, load_vtu(b)?);
+    let mut report = crate::meshgen::verify::compare_report(&da, &db, mode, VerifyGates::default().max_items_per_section);
+    report.input = format!("{} vs {}", a.display(), b.display());
+    let log = report_to_log(&report);
+    print!("{log}");
+    if let Some(path) = report_path {
+        std::fs::write(path, &log)?;
+    }
+    if let Some(path) = json_path {
+        std::fs::write(path, report_to_json(&report))?;
+    }
+    if !report.passed() {
+        return Err(RustMsptError::InvalidMesh(format!(
+            "mesh-verify --compare: {} and {} differ ({} FAIL)",
+            a.display(),
+            b.display(),
+            report.fail
+        )));
+    }
+    Ok(())
 }

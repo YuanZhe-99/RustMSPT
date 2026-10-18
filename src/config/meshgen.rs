@@ -430,19 +430,10 @@ impl MeshGenParams {
         let count = |e: f64, h: f64| ((e / h) * (1.0 - 1e-9)).ceil().max(1.0) as u32;
         let h_bg = match (&background.cells, background.size, background.size_frac) {
             (Some(CellCounts::Longest(n)), _, _) if *n > 0 => longest / *n as f64,
+            // Any count is realised since plan M-6.2: each axis is stretched so its cells tile the
+            // extent, the longest cell being `h_bg`.
             (Some(CellCounts::PerAxis(n)), _, _) if n.iter().all(|v| *v > 0) => {
-                let h = (0..3).map(|a| extent[a] / n[a] as f64).fold(0.0, f64::max);
-                let realised: Vec<u32> = (0..3).map(|a| count(extent[a], h)).collect();
-                if realised != n.to_vec() {
-                    let h_fine = (0..3).map(|a| extent[a] / n[a] as f64).fold(f64::INFINITY, f64::min);
-                    let fine: Vec<u32> = (0..3).map(|a| count(extent[a], h_fine)).collect();
-                    return bad(format!(
-                        "meshgen.sizing.background cells {n:?} cannot all be realised by one cubic cell on \
-                         a domain of extent {extent:?}; the consistent triples on either side are {fine:?} \
-                         (size {h_fine}) and {realised:?} (size {h})"
-                    ));
-                }
-                h
+                (0..3).map(|a| extent[a] / n[a] as f64).fold(0.0, f64::max)
             }
             (_, Some(size), _) if size > 0.0 => size,
             (_, _, Some(frac)) if frac > 0.0 => frac * diag,
@@ -453,7 +444,10 @@ impl MeshGenParams {
                 "meshgen.sizing.max_level {level} exceeds the cap {RESOLUTION_MAX_LEVEL}"
             ));
         }
-        let counts = [count(extent[0], h_bg), count(extent[1], h_bg), count(extent[2], h_bg)];
+        let counts = match &background.cells {
+            Some(CellCounts::PerAxis(n)) if n.iter().all(|v| *v > 0) => *n,
+            _ => [count(extent[0], h_bg), count(extent[1], h_bg), count(extent[2], h_bg)],
+        };
         let largest = *counts.iter().max().unwrap_or(&1);
         let root_level = (largest as f64).log2().ceil().max(0.0) as u32;
         if root_level + level + 1 > 31 {

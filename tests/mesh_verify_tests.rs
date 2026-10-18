@@ -842,3 +842,73 @@ fn the_delivered_volume_skips_only_the_checks_that_read_tagged_cells() {
         assert_ne!(r.section(id).unwrap().status, CheckStatus::Skipped, "{id} must run");
     }
 }
+
+// AI-FUNC-SUMMARY: [V10] passes on the INP S11 writes for a document and fails on each kind of tampering (R8: a check is trusted only after its negative fixture fails it); returns nothing; side effects: none.
+#[test]
+fn v10_passes_the_written_inp_and_fails_every_tampered_one() {
+    use rustmspt::config::meshgen::MeshGenMaterials;
+    use rustmspt::meshgen::export::write_inp;
+    use rustmspt::meshgen::verify::{verify_with_options, VerifyOptions};
+    let doc = load_vtu(&fixture("good_cube")).unwrap();
+    let inp = write_inp(&doc, &MeshGenMaterials::default()).unwrap().text;
+    let run = |text: &str| {
+        verify_with_options(
+            &doc,
+            &VerifyGates::default(),
+            VerifyOptions { inp: Some(text.to_string()), ..VerifyOptions::default() },
+        )
+    };
+    let v10 = |report: &rustmspt::meshgen::verify::VerifyReport| {
+        report.sections.iter().find(|s| s.id == "V10").unwrap().status
+    };
+    assert_eq!(v10(&run(&inp)), CheckStatus::Pass, "the INP S11 wrote must cross-check");
+    let skipped = verify(&doc, &VerifyGates::default());
+    assert_eq!(v10(&skipped), CheckStatus::Skipped, "no INP, no [V10]");
+
+    // An element whose nodes are rotated is a different element.
+    let element = inp.lines().skip_while(|l| !l.starts_with("*ELEMENT")).nth(1).unwrap().to_string();
+    let f: Vec<&str> = element.split(", ").collect();
+    let rotated = format!("{}, {}, {}, {}, {}", f[0], f[2], f[3], f[4], f[1]);
+    let report = run(&inp.replacen(&element, &rotated, 1));
+    assert!(report.fired_codes().iter().any(|c| c == "V10.element_mismatch"));
+    // A node moved by one ulp is a different node.
+    let node = inp.lines().skip_while(|l| !l.starts_with("*NODE")).nth(2).unwrap().to_string();
+    let moved = node.replacen("e0", "e-1", 1).replacen("0.0000", "0.0001", 1);
+    if moved != node {
+        assert!(run(&inp.replacen(&node, &moved, 1)).fired_codes().iter().any(|c| c == "V10.node_mismatch"));
+    }
+    // A region set missing a member.
+    let at = inp.find("*ELSET, ELSET=REGION_").unwrap();
+    let line_end = inp[at..].find('\n').unwrap() + at + 1;
+    let next_end = inp[line_end..].find('\n').unwrap() + line_end + 1;
+    let first_line = &inp[line_end..next_end];
+    let shortened = first_line.split(", ").skip(1).collect::<Vec<_>>().join(", ");
+    let shortened = if shortened.is_empty() { String::new() } else if shortened.ends_with('\n') { shortened } else { shortened + "\n" };
+    let report = run(&format!("{}{}{}", &inp[..line_end], shortened, &inp[next_end..]));
+    assert!(report.fired_codes().iter().any(|c| c == "V10.elset"), "{:?}", report.fired_codes());
+    // A section for a region the materials never named is fine; a section missing for one of two
+    // regions once sections exist is an unmapped region.
+    let with_one = format!("{inp}*SOLID SECTION, ELSET=REGION_0, MATERIAL=matrix\n");
+    if inp.contains("ELSET=REGION_1") {
+        assert!(run(&with_one).fired_codes().iter().any(|c| c == "V10.unmapped_region"));
+        assert_eq!(v10(&run(&with_one)), CheckStatus::Fail);
+    }
+}
+
+// AI-FUNC-SUMMARY: [V11] strict passes an identical file and fails a one-ulp move that topology mode accepts; topology still fails changed connectivity (R8); returns nothing; side effects: none.
+#[test]
+fn v11_strict_sees_one_ulp_topology_sees_connectivity() {
+    use rustmspt::meshgen::verify::{compare_report, CompareMode};
+    let a = load_vtu(&fixture("good_cube")).unwrap();
+    let status = |r: &rustmspt::meshgen::verify::VerifyReport| r.sections[0].status;
+    assert_eq!(status(&compare_report(&a, &a, Some(CompareMode::Strict), 64)), CheckStatus::Pass);
+    let mut nudged = a.clone();
+    nudged.points[0].x = f64::from_bits(nudged.points[0].x.to_bits() + 1);
+    assert_eq!(status(&compare_report(&a, &nudged, Some(CompareMode::Strict), 64)), CheckStatus::Fail);
+    assert_eq!(status(&compare_report(&a, &nudged, Some(CompareMode::Topology), 64)), CheckStatus::Pass);
+    let mut rewired = a.clone();
+    rewired.connectivity.swap(0, 1);
+    let report = compare_report(&a, &rewired, Some(CompareMode::Topology), 64);
+    assert_eq!(status(&report), CheckStatus::Fail);
+    assert!(report.fired_codes().iter().any(|c| c == "V11.connectivity"));
+}

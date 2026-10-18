@@ -2,7 +2,7 @@
 //!
 //! Covers the frozen PLAN_mesh_generation §6.3 rejects (nonpositive domain,
 //! t_sheet_factor >= t_layer_factor, eps_frac >= 0.5 * t_sheet_factor * h_min_frac,
-//! duplicate component overrides) plus the partial pipeline's NotAvailable return.
+//! duplicate component overrides) plus a run through S11.
 
 use rustmspt::config::meshgen::{CoincidencePolicy, MeshGenConfig, MeshGenParams};
 use rustmspt::io::save_stl;
@@ -201,7 +201,7 @@ fn kebab_case_unmapped_policy_parses() {
 }
 
 #[test]
-fn pipeline_returns_not_available_after_validating() {
+fn pipeline_validates_and_exports_through_s11() {
     let temp = tempfile::tempdir().unwrap();
     let stl = temp.path().join("triangle.stl");
     let output = temp.path().join("mesh.vtu");
@@ -224,14 +224,11 @@ fn pipeline_returns_not_available_after_validating() {
         output.display(),
     );
     let conf: MeshGenConfig = serde_yaml::from_str(&text).unwrap();
-    let err = MeshGenPipeline { config: conf }.run().unwrap_err();
-    let msg = err.to_string();
-    assert!(
-        msg.contains("not implemented") || msg.contains("not available"),
-        "{msg}"
-    );
-    assert!(msg.contains("S0"), "{msg}");
-    assert!(msg.contains("S9"), "{msg}");
+    // Plan M-6.2: a valid config runs to S11 and writes the exported mesh and its INP.
+    MeshGenPipeline { config: conf }.run().unwrap();
+    for exported in ["mesh.vtu", "mesh_contract.vtu", "mesh.inp"] {
+        assert!(temp.path().join(exported).exists(), "{exported} missing");
+    }
 }
 
 #[test]
@@ -271,9 +268,12 @@ fn a_consistent_background_triple_is_realised_exactly() {
 }
 
 #[test]
-fn an_inconsistent_triple_is_rejected_naming_both_neighbours() {
-    let e = ladder("    background: {cells: [20, 20, 10]}\n    max_level: 1", 0.6).unwrap_err();
-    assert!(e.contains("[20, 20, 12]") && e.contains("[17, 17, 10]"), "{e}");
+fn any_triple_is_realised_by_stretching_an_axis() {
+    // Plan M-6.2: [20, 20, 10] on a 1 x 1 x 0.6 domain used to be refused (no cubic cell gives
+    // it); each axis is now stretched so its cells tile the extent, the longest cell being h_bg.
+    let l = ladder("    background: {cells: [20, 20, 10]}\n    max_level: 1", 0.6).unwrap().ladder.unwrap();
+    assert_eq!(l.counts, [20, 20, 10]);
+    assert!((l.h_bg - 0.06).abs() < 1e-15, "the longest cell is 0.6 / 10, got {}", l.h_bg);
 }
 
 #[test]

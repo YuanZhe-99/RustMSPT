@@ -107,6 +107,34 @@ CASES = [
     ),
 ]
 
+# The P1 campaign (plan M-4.4, B.9) - the cases the suite had never built. Fixtures from
+# generate_p1_cases.py; an input is a path, (path, priority) or (path, priority, kind).
+# Priorities: a lower number takes the overlap (R-A4).
+P1_CASES = [
+    # A-3 ranked: the cube outranks the sphere, so the lens is the cube's and no {1, 2} key exists.
+    ("a3r", [("a3_cube.stl", 0), ("a3_sphere.stl", 1)], {}),
+    # A-4b: the cube outranks the sphere it sits in - {cube} and {sphere}, no shared key.
+    ("a4b", [("a4_cube.stl", 0), ("a4_sphere.stl", 1)], {"h_max_frac": 0.0125}),
+    # A-5: a sphere inside a cube, equal priority.
+    ("a5", ["a5_cube.stl", "a5_sphere.stl"], {}),
+    # A-9: a strut lattice interpenetrating a sphere.
+    ("a9", ["a9_lattice.stl", "a9_sphere.stl"], {"h_min_frac": 0.006}),
+    # A-11: an open sheet crossing the box - two partitions, no volume inside the sheet.
+    ("a11", ["a11_sheet.stl"], {}),
+    # A-12: A-3 in a non-cubic box - the sphere and cube cross its top face.
+    ("a12", ["a3_cube.stl", "a3_sphere.stl"], {"domain": ((0.0, 0.0, 0.0), (1.0, 1.0, 0.6))}),
+    # A-13: a defective sphere through the default (conservative) repair.
+    ("a13", ["a13_sphere_defective.stl"], {}),
+    # A-14a/b: two shells in one file.
+    ("a14a", ["a14a_two_cubes.stl"], {}),
+    ("a14b", ["a14b_cube_and_quad.stl"], {}),
+    # A-15: a five-face cube declared solid, and a separate sheet over its missing face.
+    ("a15", [("a15_open_cube.stl", None, "solid"), "a15_lid.stl"], {}),
+    # A-16: the same cube twice at equal priority - one region {1, 2} over the whole cube (R-A3).
+    ("a16", ["a2_cube.stl", "a2_cube.stl"], {}),
+]
+CASES = CASES + P1_CASES
+
 FEW_DEFECT_RENDERS = {"p1"}
 
 CONFIG = """meshgen:
@@ -150,8 +178,13 @@ CONFIG = """meshgen:
 
 
 def stl_entry(entry):
-    """(path, priority) for a CASES input given either as a path or as (path, priority)."""
-    return entry if isinstance(entry, tuple) else (entry, None)
+    """(path, priority) for a CASES input given as a path, (path, priority) or (path, priority, kind)."""
+    return entry[:2] if isinstance(entry, tuple) else (entry, None)
+
+
+def kind_of(entry):
+    """The input's declared `kind`, or None for auto."""
+    return entry[2] if isinstance(entry, tuple) and len(entry) > 2 else None
 
 
 def write_config(case, stls, overrides):
@@ -161,6 +194,8 @@ def write_config(case, stls, overrides):
         lines.append("    - stl: {}".format(os.path.join(HERE, stl)))
         if priority is not None:
             lines.append("      priority: {}".format(priority))
+        if kind_of(entry) is not None:
+            lines.append("      kind: {}".format(kind_of(entry)))
     inputs = "\n".join(lines)
     dmin, dmax = overrides.get("domain", ((0.0, 0.0, 0.0), (1.0, 1.0, 1.0)))
     text = CONFIG.format(
@@ -243,13 +278,14 @@ def status_of(report, section):
 
 def run(case, stls, overrides):
     config = write_config(case, stls, overrides)
-    # P-2.1: `<case>_s08_cut.vtu` is the DELIVERED mesh - tets only, region identity on a
-    # cell array - and `<case>_s08_cut_contract.vtu` beside it is the mixed-cell document
-    # carrying the tags. The full catalog is read off the contract file, because [V5]-[V9]
-    # need those tags; the delivered file gets its own structural pass below, which is the
-    # acceptance criterion "opened directly, the only feature edges are the domain box".
-    delivered = os.path.join(WORK, case + ".debug", case + "_s08_cut.vtu")
-    contract = os.path.join(WORK, case + ".debug", case + "_s08_cut_contract.vtu")
+    # Plan M-6.2: `mesh` runs through S11 and writes the EXPORTED mesh at the configured path -
+    # `<case>.vtu` the tets-only volume (R4), `<case>_contract.vtu` beside it carrying the tags,
+    # `<case>.inp` the Abaqus view of it. The gate is read off those, never off a debug snapshot
+    # (PLAN §1.2). The full catalog runs on the contract file - [V5]-[V9] need its tags, [V10] reads
+    # the INP against it - with `delivered: true`; the volume gets its own structural pass below.
+    delivered = os.path.join(WORK, case + ".vtu")
+    contract = os.path.join(WORK, case + "_contract.vtu")
+    inp = os.path.join(WORK, case + ".inp")
     # Clear last run's artefacts first. Without this a run that fails validation leaves
     # the previous mesh on disk, the existence check below passes, and the table reports
     # the *old* mesh under the new settings - two different configs silently produced
@@ -257,6 +293,7 @@ def run(case, stls, overrides):
     for stale in (
         delivered,
         contract,
+        inp,
         os.path.join(WORK, case + ".json"),
         os.path.join(WORK, case + "_delivered.json"),
         # Left behind by runs from before P-2.1, when the tets-only file was an optional
@@ -279,9 +316,7 @@ def run(case, stls, overrides):
         f.write(mesh.stdout)
         f.write(mesh.stderr)
     stages = stage_times(mesh.stdout + mesh.stderr)
-    # `mesh` exits non-zero by design - S9..S11 are unimplemented - after writing the
-    # s08 cut snapshot, which is the mesh these gates are measured on.
-    if not os.path.exists(contract):
+    if mesh.returncode != 0 or not os.path.exists(contract):
         return {"case": case, "error": [(mesh.stderr or mesh.stdout).strip()[-200:]]}
     return lambda: verify_case(case, stls, env, wall, stages, contract, delivered)
 
@@ -290,7 +325,11 @@ def verify_case(case, stls, env, wall, stages, contract, delivered):
     js = os.path.join(WORK, case + ".json")
     vcfg = os.path.join(WORK, case + "_verify.yaml")
     with open(vcfg, "w") as f:
-        f.write("mesh_verify:\n  input: {}\n  json: {}\n  surfaces:\n".format(contract, js))
+        f.write(
+            "mesh_verify:\n  input: {}\n  json: {}\n  inp: {}\n  delivered: true\n  surfaces:\n".format(
+                contract, js, os.path.join(WORK, case + ".inp")
+            )
+        )
         for entry in stls:
             stl, priority = stl_entry(entry)
             if priority is None:
@@ -332,6 +371,7 @@ def verify_case(case, stls, env, wall, stages, contract, delivered):
         "V5": status_of(report, "V5"),
         "V6": status_of(report, "V6"),
         "V9": status_of(report, "V9"),
+        "V10": status_of(report, "V10"),
         "V13": status_of(report, "V13"),
         "misattr": int(v5.get("misattributed_cells", -1)),
         "adjacency": int(v6.get("region_adjacency_violations", -1)),
@@ -520,7 +560,7 @@ def main():
     table(
         rows,
         "P-2.1 - the delivered file IS the mesh (R4)",
-        "Read off `<case>_s08_cut.vtu` alone, never the `_contract.vtu` beside it. "
+        "Read off the exported `<case>.vtu` alone, never the `_contract.vtu` beside it. "
         "tets-only: nothing in the file but VTK_TETRA. box-only: [V1]/[V3] fire nothing, so "
         "every free face is on a domain plane, none is shared by more than two tets, and no "
         "edge is non-manifold - which on an untagged document is exactly 'the only feature "
@@ -550,6 +590,7 @@ def main():
             ("V5", 5, lambda r: r["V5"]),
             ("V6", 5, lambda r: r["V6"]),
             ("V9", 5, lambda r: r["V9"]),
+            ("V10", 5, lambda r: r["V10"]),
             ("misattr", 8, lambda r: num(r["misattr"], "d")),
             ("adjac", 6, lambda r: num(r["adjacency"], "d")),
             ("undecl", 7, lambda r: num(r["undecl"], "d")),

@@ -5952,7 +5952,7 @@ pub(crate) fn facet_within(a: &[u32], b: &[u32], points: &[Vec3], tol: f64) -> b
     })
 }
 
-fn inside_polygon(point: Vec3, facet: &[u32], points: &[Vec3], normal: Vec3, tol: f64) -> bool {
+pub(crate) fn inside_polygon(point: Vec3, facet: &[u32], points: &[Vec3], normal: Vec3, tol: f64) -> bool {
     for slot in 0..facet.len() {
         let a = points[facet[slot] as usize];
         let b = points[facet[(slot + 1) % facet.len()] as usize];

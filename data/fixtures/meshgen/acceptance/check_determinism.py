@@ -36,18 +36,13 @@ def digest(path):
 
 
 def outputs(config_text):
-    """The delivered VTU path a config names, and its contract companion."""
+    """The exported files a config names: the delivered VTU, its contract companion, the INP."""
     m = re.search(r"(?m)^\s*vtu:\s*(\S+)", config_text)
     if not m:
         return []
     vtu = m.group(1)
     stem = vtu[:-4] if vtu.endswith(".vtu") else vtu
-    case = os.path.basename(stem)
-    debug = os.path.join(os.path.dirname(stem), case + ".debug")
-    return [
-        os.path.join(debug, f"{case}_s08_cut.vtu"),
-        os.path.join(debug, f"{case}_s08_cut_contract.vtu"),
-    ]
+    return [vtu, stem + "_contract.vtu", stem + ".inp"]
 
 
 def main():
@@ -92,7 +87,7 @@ def main():
     if args.out:
         with open(args.out, "w") as f:
             f.write(f"# R-P2, {args.path} path: default worker count against RAYON_NUM_THREADS=1\n")
-            f.write("# case  delivered-volume  contract-document  (sha256 prefix, run-naming lines excluded)\n")
+            f.write("# case  delivered-volume  contract-document  inp  (sha256 prefix, run-naming lines excluded)\n")
             for case, verdicts, _ in rows:
                 f.write(f"{case:5s} " + "  ".join(f"{v[0]} {v[1]}" for v in verdicts) + "\n")
     sys.exit(1 if failed else 0)

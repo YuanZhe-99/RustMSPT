@@ -734,6 +734,15 @@
 | `PointClassifier::restrict_to_active` | 网格生成 | `src/meshgen/classify.rs:679` | S6 之后让 `triangles_of` 只返回界定材料的面（S6 的 `active_face`），内外判定仍使用全部面。S8 的面迹与碎片裁剪不再沿自相交组分内部被埋没的面切割：门控 a8 贴面比例 98.455 → 98.796 %，四面体数 −5.8 %，链接多边形拒绝 733 → 263。 |
 | `refresh_split_interfaces` | 网格生成 | `src/meshgen/cut.rs:6975` | 悬挂节点修复之后，把不再被任何四面体承载的界面面替换为它在边上新节点处分出的两半，并重新计算两侧单元；修复会拆分一条边周围的所有四面体，包括该边上另一个带标签的面（a3：4 个 `[V12]` side_elems 失败）。 |
 | `compact_unreferenced_nodes` | 网格生成 | `src/meshgen/cut.rs:5778` | S8 结尾：删除没有任何四面体引用的节点，并按原顺序重编号其余节点；a6a_r 曾带有一个被 S7 重复吸附、无单元使用的点阵节点（计划 M-2.6）。 |
+| `write_inp` | 网格生成 | `src/meshgen/export.rs:83` | S11：把第 11 阶段契约文档写为 Abaqus INP——按 VTU 顺序的 C3D4、REGION/PARTITION 单元集、由 N_ID 生成的 COMPONENT 节点集、由 FaceTagSideElems 生成的 IFACE_X_POS/NEG 面，按 `materials:` 写截面（未映射键报错，除非 `elset-only`）。 |
+| `parse_inp` | 网格生成 | `src/meshgen/export.rs:274` | 解析 S11 写出的 INP 子集（节点、单元、ELSET/NSET、单元面、实体截面），供 `[V10]` 使用。 |
+| `c3d4_face_of` | 网格生成 | `src/meshgen/export.rs:64` | 给定三节点面在四面体中对应的 C3D4 面号（S1..S4）。 |
+| `partition_tets` | 网格生成 | `src/meshgen/cut.rs:7694` | S10：跨越除片体面外的所有共享面对四面体做并查集泛洪，分区按最小四面体编号。 |
+| `check_v10` | 网格生成 | `src/meshgen/verify.rs:1823` | [V10]：按身份将配套 INP 与契约文档交叉检查（节点、单元、集合、面、未映射审计），所有期望值均由文档重新计算。 |
+| `compare_report` / `CompareMode` | 网格生成 | `src/meshgen/verify.rs:6535` | [V11]：两份文档按 strict（逐位一致）或 topology（坐标在 1e-6 diag 内、浮点在 1 % 内）比较，不含 ConfigHash；模式默认取第二个文件的 DeterminismMode。 |
+| `compare_files` | 网格生成 | `src/pipeline/mesh_verify.rs:308` | `mesh-verify --compare A B [--mode]`：读入两者、运行 [V11]、打印/写出报告，FAIL 时返回 Err。 |
+| `write_final` | 网格生成 | `src/pipeline/meshgen.rs:1530` | S11：写入第 11 阶段元数据，并在配置的输出路径写出交付的纯四面体体网格与 `_contract.vtu`。 |
+| `SizingField::level_extent` | 网格生成 | `src/meshgen/sizing.rs:1406` | 某层单元的按轴边长：`root_size / 2^L * scale`——各轴拉伸使整数个单元铺满区域（计划 M-6.2）。 |
 | `remove_flat_quad_tets` | 网格生成 | `src/meshgen/cdt.rs:3385` | 在小面检查之前从约束四面体化中去除平坦四面体：某顶点落在对边上时，拆分该边周围的所有四面体（Delaunay 保留完整的 Steiner 中点）；平坦四边形四面体通过把一侧金字塔 2-2 翻转到另一条对角线后删除；否则把平坦四面体及其面邻居组成的空腔保持边界不变、从其某个顶点重新锥化（星形检验、无平坦四面体、体积守恒）；三者都不适用时，移除平坦四面体中外壳与小面都不使用的那条边（`remove_edge`），仅当平坦四面体数量下降时保留。这类四面体会使小面读成被覆盖两次。参考算例 1 内部类 124 → 84，门控 a1 94.80 → 95.91 %，a3 +0.2 个百分点；去边一步：参考算例 1 被拒小面 406 → 226，门控贴面比例 94.956 → 95.346 %，a1 95.911 → 96.882 %。 |
 | `facet_plane` | 网格生成 | `src/meshgen/cdt.rs:4493` | §7.4 约束小面的单位法向、偏移量，以及"面位于小面上"的判定带宽：小面自身顶点到其平面的最大偏差（其边缘被吸附到面迹上，§6.43）加 `tol`。供小面覆盖检查、`regions_by_constraint` 与门控路径的界面归属使用；此前被吸附弯折的小面连自己的三角形都不被计入，A-3 上 90% 的"内部未被覆盖"拒绝都是这一假象。 |
 | `constrained_tets_with_steiner` | 网格生成 | `src/meshgen/cdt.rs:3786` | 门控路径上的计划 M-2.1：先 `constrained_tets`，再最多三轮在约束上插入 Steiner 点——(a) 四面体化缺少的小面边的中点（两端同在一个单元面平面上时除外，J1），仅当 `intern` 真正新建节点时接受；(b) 网格边与小面平面在小面内部的交点；(c) 在薄四面体或小面内部未覆盖的拒绝时，为每个躺在单元面上的平坦四面体（单元面节点共圆）在单元内部插入一点，位于其中心向单元中心方向其最长边的四分之一处；(d) 在外壳恢复失败的拒绝时（"链接多边形没有有效三角化"、"边界与小面都不成立"），对每个不在冻结边界中的当前外壳面上方插入同样的点，使翻转变为金字塔翻转（负责人决定 D-11：门控 a8 99.12 → 99.78 %，a3 98.91 → 99.64 %，参考算例 1 95.73 → 97.70 %，代价为四面体 +1–8 %、a7a/a7b +28 %，薄片增多，留给 M-5）。拒绝时恢复小面与节点池，使小面分割扇形看到的与未经此步完全相同。边类拒绝 114 → 49（A-3）、25 → 2（A-6a）、1,835 → 1,454（A-8）。 |

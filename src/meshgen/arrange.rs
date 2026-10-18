@@ -753,7 +753,7 @@ pub fn arrange_surface(
     } else {
         Vec::new()
     };
-    let (curves, mut corner_nodes) = build_arranged_curves(
+    let (mut curves, mut corner_nodes) = build_arranged_curves(
         features,
         &canonical,
         &source_node_map,
@@ -775,6 +775,7 @@ pub fn arrange_surface(
     point_features.sort();
     point_features.dedup();
     corner_nodes.extend(point_features.iter().map(|feature| feature.node));
+    refine_curves_through_face_nodes(&mut curves, &faces, &node_normalized);
     stage_clock = time_arrange_stage("faces+curves", stage_clock);
     validate_arrangement(
         &faces,
@@ -3911,6 +3912,78 @@ fn split_all_triangles(
     Ok(output)
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: Give a curve the nodes its faces split it at - the same split `triangulate_parent_impl`
+//   applies to a constraint through a registry node.
+// Inputs: the curves, the atomic faces, the node table.
+// Returns: None.
+// Side effects: Inserts the intermediate nodes into each affected curve polyline.
+// Notes: A curve edge that is no face edge is replaced by the chain of face edges through nodes
+//   lying on it to `1e-12` of its length, walked in order along it (a9: edge 64-66 split at a strut
+//   corner 1e-17 off it). An edge with no such chain is left for `validate_arrangement` to refuse.
+fn refine_curves_through_face_nodes(curves: &mut [ArrangedCurve], faces: &[ArrangedFace], vertices: &[Vec3]) {
+    let face_edges: BTreeSet<(usize, usize)> = faces
+        .iter()
+        .flat_map(|face| triangle_edges(face.nodes))
+        .map(|edge| sorted_pair(edge[0], edge[1]))
+        .collect();
+    let mut neighbours: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for (a, b) in &face_edges {
+        neighbours.entry(*a).or_default().push(*b);
+        neighbours.entry(*b).or_default().push(*a);
+    }
+    for curve in curves.iter_mut() {
+        let mut refined: Vec<usize> = Vec::with_capacity(curve.nodes.len());
+        for (k, window) in curve.nodes.windows(2).enumerate() {
+            let (a, b) = (window[0], window[1]);
+            if k == 0 {
+                refined.push(a);
+            }
+            if face_edges.contains(&sorted_pair(a, b)) {
+                refined.push(b);
+                continue;
+            }
+            let (pa, pb) = (vertices[a], vertices[b]);
+            let along = pb.sub(pa);
+            let length2 = along.dot(along);
+            let on_segment = |n: usize| -> Option<f64> {
+                let d = vertices[n].sub(pa);
+                let t = d.dot(along) / length2;
+                let off = d.sub(along.scale(t));
+                (length2 > 0.0 && t > 0.0 && t < 1.0 && off.dot(off) <= 1e-24 * length2).then_some(t)
+            };
+            // Walk from a toward b, always to the on-segment neighbour furthest along that is
+            // still short of b, then to b itself once it is adjacent.
+            let mut chain = Vec::new();
+            let mut at = a;
+            let mut t_at = 0.0;
+            let mut ok = false;
+            for _ in 0..64 {
+                let next = neighbours.get(&at).into_iter().flatten().copied();
+                if neighbours.get(&at).is_some_and(|v| v.contains(&b)) && at != a {
+                    ok = true;
+                    break;
+                }
+                let best = next
+                    .filter_map(|n| on_segment(n).map(|t| (t, n)))
+                    .filter(|(t, _)| *t > t_at)
+                    .min_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)));
+                let Some((t, n)) = best else { break };
+                chain.push(n);
+                at = n;
+                t_at = t;
+            }
+            if ok {
+                refined.extend(chain);
+            }
+            refined.push(b);
+        }
+        if refined.len() > curve.nodes.len() {
+            curve.nodes = refined;
+        }
+    }
+}
+
 // AI-FUNC-SUMMARY: Run one projected constrained Delaunay triangulation using only pre-registered points and try_add_constraint, refusing crossings without panic and verifying coverage/area tiling; returns oriented child triangles or InvalidMesh; side effects: none.
 pub fn triangulate_parent(
     parent_nodes: [usize; 3],
@@ -3952,6 +4025,42 @@ fn triangulate_parent_impl(
         nodes.insert(*b);
     }
     nodes.extend(extra_nodes);
+    // **A constraint through a registry node is split there.** A constructed point that lies on a
+    // constraint by provenance lies on it only to rounding - a9's node 234 sits 3e-17 off the
+    // strut edge 67-260 whose two halves are constraints too - and spade reads the whole edge as
+    // crossing them. Within `1e-12` of the segment's own length the node is on it.
+    let split_constraints: BTreeSet<(usize, usize)> = {
+        let mut out = BTreeSet::new();
+        for (a, b) in constraints {
+            let (pa, pb) = (project_point(node_points[*a], axis), project_point(node_points[*b], axis));
+            let (ax, ay, bx, by) = (pa.x, pa.y, pb.x, pb.y);
+            let length2 = (bx - ax).powi(2) + (by - ay).powi(2);
+            let mut on: Vec<(f64, usize)> = nodes
+                .iter()
+                .copied()
+                .filter(|n| *n != *a && *n != *b)
+                .filter_map(|n| {
+                    let q = project_point(node_points[n], axis);
+                    let cross = (bx - ax) * (q.y - ay) - (by - ay) * (q.x - ax);
+                    let t = ((q.x - ax) * (bx - ax) + (q.y - ay) * (by - ay)) / length2;
+                    (length2 > 0.0 && cross.abs() <= 1e-12 * length2 && t > 1e-12 && t < 1.0 - 1e-12)
+                        .then_some((t, n))
+                })
+                .collect();
+            if on.is_empty() {
+                out.insert((*a, *b));
+                continue;
+            }
+            on.sort_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)));
+            let chain: Vec<usize> =
+                std::iter::once(*a).chain(on.iter().map(|(_, n)| *n)).chain(std::iter::once(*b)).collect();
+            for w in chain.windows(2) {
+                out.insert(sorted_pair(w[0], w[1]));
+            }
+        }
+        out
+    };
+    let constraints = &split_constraints;
     let mut cdt = ConstrainedDelaunayTriangulation::<CdtVertex>::new();
     let mut handles = BTreeMap::new();
     for node in nodes {
@@ -3971,8 +4080,37 @@ fn triangulate_parent_impl(
     for (a, b) in constraints {
         let inserted = cdt.try_add_constraint(handles[a], handles[b]);
         if inserted.is_empty() {
+            // Name what it crosses: the constraint pair and how far the crossing is from each
+            // end, so a rounding crossing (a few ULP from an endpoint) reads differently from a
+            // topological one.
+            let (pa, pb) = (node_points[*a], node_points[*b]);
+            let mut crossing = Vec::new();
+            for (c, d) in constraints {
+                if [c, d].iter().any(|n| *n == a || *n == b) {
+                    continue;
+                }
+                let (pc, pd) = (node_points[*c], node_points[*d]);
+                let s1 = orient2d_axis(pa, pb, pc, axis);
+                let s2 = orient2d_axis(pa, pb, pd, axis);
+                let s3 = orient2d_axis(pc, pd, pa, axis);
+                let s4 = orient2d_axis(pc, pd, pb, axis);
+                if s1 * s2 <= 0.0 && s3 * s4 <= 0.0 {
+                    crossing.push(((*c, *d), [s1, s2, s3, s4]));
+                }
+            }
+            let through: Vec<usize> = handles
+                .keys()
+                .copied()
+                .filter(|n| *n != *a && *n != *b)
+                .filter(|n| orient2d_axis(pa, pb, node_points[*n], axis) == 0.0)
+                .filter(|n| {
+                    let t = node_points[*n].sub(pa).dot(pb.sub(pa)) / pb.sub(pa).dot(pb.sub(pa));
+                    t > 0.0 && t < 1.0
+                })
+                .collect();
             return Err(RustMsptError::InvalidMesh(format!(
-                "[ARR-RESID] crossing or refused local CDT constraint ({a}, {b}); constraints={constraints:?}"
+                "[ARR-RESID] crossing or refused local CDT constraint ({a}, {b}) at {pa:?}-{pb:?}; \
+                 it crosses {crossing:?} and passes through nodes {through:?}; constraints={constraints:?}"
             )));
         }
     }
@@ -4017,7 +4155,37 @@ fn triangulate_parent_impl(
         .flat_map(|nodes| triangle_edges(*nodes))
         .map(|edge| sorted_pair(edge[0], edge[1]))
         .collect();
-    if let Some(missing) = constraints.iter().find(|edge| !child_edges.contains(edge)) {
+    // A constraint through a vertex is carried as the chain of sub-edges between the vertices that
+    // lie exactly on it (spade splits it there) - a9's lattice-and-sphere arrangement, where a strut
+    // edge's overlay constraint passes through another constraint's endpoint. Only a constraint no
+    // such chain carries is omitted.
+    let child_nodes: BTreeSet<usize> = children.iter().flatten().copied().collect();
+    let carried_by_chain = |a: usize, b: usize| -> bool {
+        let (pa, pb) = (node_points[a], node_points[b]);
+        let along = pb.sub(pa);
+        let length2 = along.dot(along);
+        if length2 <= 0.0 {
+            return false;
+        }
+        let mut on: Vec<(f64, usize)> = child_nodes
+            .iter()
+            .copied()
+            .filter(|n| *n != a && *n != b)
+            .filter(|n| orient2d_axis(pa, pb, node_points[*n], axis) == 0.0)
+            .map(|n| (node_points[n].sub(pa).dot(along) / length2, n))
+            .filter(|(t, _)| *t > 0.0 && *t < 1.0)
+            .collect();
+        if on.is_empty() {
+            return false;
+        }
+        on.sort_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)));
+        let chain: Vec<usize> = std::iter::once(a).chain(on.iter().map(|(_, n)| *n)).chain(std::iter::once(b)).collect();
+        chain.windows(2).all(|w| child_edges.contains(&sorted_pair(w[0], w[1])))
+    };
+    if let Some(missing) = constraints
+        .iter()
+        .find(|edge| !child_edges.contains(edge) && !carried_by_chain(edge.0, edge.1))
+    {
         return Err(RustMsptError::InvalidMesh(format!(
             "[ARR-RESID] local CDT omitted constraint edge {missing:?}"
         )));

@@ -102,6 +102,11 @@ pub struct MeshVerifyParams {
     /// `mesh-render`. Needs `surfaces:`.
     #[serde(default)]
     pub fidelity_vtu: Option<String>,
+    /// The companion Abaqus INP `mesh` wrote beside the mesh (S11). Supplying it turns [V10]'s
+    /// INP-to-VTU cross-check on; it reads the contract document's tables, so point `input` at
+    /// the `_contract.vtu`.
+    #[serde(default)]
+    pub inp: Option<String>,
 }
 
 // AI-FUNC-SUMMARY: Top-level YAML wrapper for the `mesh_verify:` config block; side effects: none.

@@ -127,6 +127,12 @@ enum Commands {
         /// Write a copy of the mesh carrying the quality arrays and `verify_flags`.
         #[arg(long)]
         annotate: Option<PathBuf>,
+        /// [V11] compare mode: compare two meshes instead of verifying one (plan M-6.3).
+        #[arg(long, num_args = 2, value_names = ["A", "B"])]
+        compare: Option<Vec<PathBuf>>,
+        /// `strict` (bit-identical) or `topology`; defaults to the second file's `DeterminismMode`.
+        #[arg(long)]
+        mode: Option<String>,
     },
     Scale {
         #[arg(long)]
@@ -404,7 +410,19 @@ fn run_cli() -> anyhow::Result<()> {
             report,
             json,
             annotate,
+            compare,
+            mode,
         } => {
+            if let Some(pair) = compare {
+                rustmspt::pipeline::mesh_verify::compare_files(
+                    &pair[0],
+                    &pair[1],
+                    mode.as_deref(),
+                    report.as_deref(),
+                    json.as_deref(),
+                )?;
+                return Ok(());
+            }
             let path = pick_config_path(config, "mesh_verify_config.yaml");
             let mut conf: MeshVerifyConfig = load_yaml(&path)?;
             if let Some(input) = input {

@@ -285,6 +285,7 @@ pub fn balance_octree(field: &SizingField) -> (SizingField, usize) {
         SizingField {
             origin: field.origin,
             root_size: field.root_size,
+            scale: field.scale,
             max_level: field.max_level,
             leaves: out,
             stats,
@@ -764,13 +765,14 @@ pub fn build_lattice_with_splits(
     }
 
     let unit = field.root_size / (1u64 << (max_level + 1)) as f64;
+    let unit = Vec3::new(unit * field.scale.x, unit * field.scale.y, unit * field.scale.z);
     let nodes: Vec<Vec3> = node_index
         .par_iter()
         .map(|point| {
             Vec3::new(
-                field.origin.x + point[0] as f64 * unit,
-                field.origin.y + point[1] as f64 * unit,
-                field.origin.z + point[2] as f64 * unit,
+                field.origin.x + point[0] as f64 * unit.x,
+                field.origin.y + point[1] as f64 * unit.y,
+                field.origin.z + point[2] as f64 * unit.z,
             )
         })
         .collect();

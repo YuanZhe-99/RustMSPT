@@ -709,7 +709,7 @@ fn c3_validates_both_selected_tier_edge_ratios_independently() {
 }
 
 #[test]
-fn small_pipeline_emits_s02_and_returns_not_available_for_s9() {
+fn small_pipeline_emits_s02_and_exports_the_final_mesh() {
     let temp = tempfile::tempdir().unwrap();
     let input = temp.path().join("cube.stl");
     let output = temp.path().join("mesh.vtu");
@@ -729,8 +729,11 @@ fn small_pipeline_emits_s02_and_returns_not_available_for_s9() {
         output.display()
     );
     let config: MeshGenConfig = serde_yaml::from_str(&yaml).unwrap();
-    let error = MeshGenPipeline { config }.run().unwrap_err().to_string();
-    assert!(error.contains("S9..S11"), "{error}");
+    // Plan M-6.2: `mesh` runs through S11 and exits Ok, writing the exported mesh and its INP.
+    MeshGenPipeline { config }.run().unwrap();
+    for exported in ["mesh.vtu", "mesh_contract.vtu", "mesh.inp"] {
+        assert!(temp.path().join(exported).exists(), "{exported} must be written by S11");
+    }
     let snapshot = temp.path().join("mesh.debug/mesh_s02_arranged.vtu");
     assert!(
         snapshot.exists(),
@@ -759,7 +762,7 @@ fn pipeline_s00_and_s01_snapshots_pass_the_contract_verifier() {
         output.display()
     );
     let config: MeshGenConfig = serde_yaml::from_str(&yaml).unwrap();
-    MeshGenPipeline { config }.run().unwrap_err();
+    MeshGenPipeline { config }.run().unwrap();
     for name in ["mesh_s00_conditioned.vtu", "mesh_s01_features.vtu"] {
         let path = temp.path().join("mesh.debug").join(name);
         let doc = load_vtu(Path::new(&path)).unwrap();
@@ -797,7 +800,7 @@ fn production_normalization_is_translation_invariant_before_s0() {
             output = output.display(),
         );
         let config: MeshGenConfig = serde_yaml::from_str(&yaml).unwrap();
-        MeshGenPipeline { config }.run().unwrap_err();
+        MeshGenPipeline { config }.run().unwrap();
         let debug = temp.path().join(format!("{name}.debug"));
         (
             load_vtu(&debug.join(format!("{name}_s00_conditioned.vtu"))).unwrap(),

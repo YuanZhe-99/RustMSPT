@@ -393,6 +393,10 @@ pub struct SizingOptions {
     /// 2^m`, anchored at `domain_min`, so the background and every finer level are exact
     /// halvings. `None` keeps the root on the domain's longest axis, as before the ladder.
     pub root_size: Option<f64>,
+    /// The background's cell count per axis at the forest level, when a ladder states it (plan
+    /// M-1.8). `None` takes `ceil(extent / cell)` per axis. Either way each axis is then stretched
+    /// so those cells tile its extent exactly (`SizingField::scale`).
+    pub forest_counts: Option<[u32; 3]>,
     /// Per-component floor on the requested size, indexed by X (plan M-1.8 (c): an input's own
     /// `max_level`). Empty means every component refines to `h_min`. A source several components
     /// own takes the finest of their floors.
@@ -418,6 +422,7 @@ impl Default for SizingOptions {
             max_level: SIZING_MAX_LEVEL,
             max_leaves: SIZING_MAX_LEAVES,
             root_size: None,
+            forest_counts: None,
             component_floor: Vec::new(),
         }
     }
@@ -1379,31 +1384,44 @@ pub struct SizingStats {
 pub struct SizingField {
     pub origin: Vec3,
     pub root_size: f64,
+    /// Per-axis stretch of the index cube onto the domain (each component in (0.5, 1]): a cell at
+    /// level `L` spans `root_size / 2^L * scale` - a box, not a cube, wherever an extent is not a
+    /// whole number of cells (plan M-6.2). The forest-level cells then tile the domain exactly, the
+    /// subtree cut drops everything outside it, and the lattice's hull IS the domain box, so no
+    /// stage ever has to trim a tet. `(1, 1, 1)` on a cube or a stated count that fits.
+    pub scale: Vec3,
     pub max_level: u32,
     pub leaves: Vec<SizingLeaf>,
     pub stats: SizingStats,
 }
 
 impl SizingField {
-    // AI-FUNC-SUMMARY: Side length of a cell at the given level; returns f64; side effects: none.
+    // AI-FUNC-SUMMARY: Longest side of a cell at the given level (its per-axis sides are `level_extent`); returns f64; side effects: none.
     pub fn level_size(&self, level: u32) -> f64 {
-        self.root_size / (1u64 << level) as f64
+        let e = self.level_extent(level);
+        e.x.max(e.y).max(e.z)
+    }
+
+    // AI-FUNC-SUMMARY: Per-axis sides of a cell at the given level; returns Vec3; side effects: none.
+    pub fn level_extent(&self, level: u32) -> Vec3 {
+        let size = self.root_size / (1u64 << level) as f64;
+        Vec3::new(size * self.scale.x, size * self.scale.y, size * self.scale.z)
     }
 
     // AI-FUNC-SUMMARY: Minimum corner of one leaf in world coordinates; returns Vec3; side effects: none.
     pub fn leaf_min(&self, leaf: &SizingLeaf) -> Vec3 {
-        let size = self.level_size(leaf.level);
+        let size = self.level_extent(leaf.level);
         Vec3::new(
-            self.origin.x + leaf.coord[0] as f64 * size,
-            self.origin.y + leaf.coord[1] as f64 * size,
-            self.origin.z + leaf.coord[2] as f64 * size,
+            self.origin.x + leaf.coord[0] as f64 * size.x,
+            self.origin.y + leaf.coord[1] as f64 * size.y,
+            self.origin.z + leaf.coord[2] as f64 * size.z,
         )
     }
 
     // AI-FUNC-SUMMARY: Centre of one leaf in world coordinates; returns Vec3; side effects: none.
     pub fn leaf_center(&self, leaf: &SizingLeaf) -> Vec3 {
-        let half = self.level_size(leaf.level) * 0.5;
-        self.leaf_min(leaf).add(Vec3::new(half, half, half))
+        let half = self.level_extent(leaf.level).scale(0.5);
+        self.leaf_min(leaf).add(half)
     }
 
     // AI-FUNC-SUMMARY:
@@ -1415,8 +1433,8 @@ impl SizingField {
     //   whole query is `O(max_level * log n)` with no allocation. Cells outside the domain box were
     //   dropped during refinement, hence the `Option`.
     pub fn locate(&self, point: Vec3) -> Option<usize> {
-        let finest = self.level_size(self.max_level);
-        let axis = |value: f64, base: f64| -> Option<u32> {
+        let finest = self.level_extent(self.max_level);
+        let axis = |value: f64, base: f64, finest: f64| -> Option<u32> {
             let index = ((value - base) / finest).floor();
             if index < 0.0 || index >= (1u64 << self.max_level) as f64 {
                 return None;
@@ -1424,9 +1442,9 @@ impl SizingField {
             Some(index as u32)
         };
         let deep = [
-            axis(point.x, self.origin.x)?,
-            axis(point.y, self.origin.y)?,
-            axis(point.z, self.origin.z)?,
+            axis(point.x, self.origin.x, finest.x)?,
+            axis(point.y, self.origin.y, finest.y)?,
+            axis(point.z, self.origin.z, finest.z)?,
         ];
         for level in (0..=self.max_level).rev() {
             let shift = self.max_level - level;
@@ -1493,6 +1511,28 @@ pub fn build_sizing_field(lookup: &SizingLookup, options: &SizingOptions) -> Siz
     while forest_level < max_level && root_size / (1u64 << forest_level) as f64 > options.h_max {
         forest_level += 1;
     }
+    // **Stretch each axis so the forest-level cells tile the domain exactly** (plan M-6.2). A
+    // shorter axis used to overhang the box by up to one cell and leave S11 a trim no stage could
+    // do without remeshing; a whole number of slightly shorter cells has no overhang to trim. The
+    // count is the ladder's when stated, else the fewest cells no longer than the forest cell.
+    let forest_cell = root_size / (1u64 << forest_level) as f64;
+    let count = |e: f64| ((e / forest_cell) * (1.0 - 1e-9)).ceil().max(1.0);
+    let counts = options
+        .forest_counts
+        .map(|n| [n[0] as f64, n[1] as f64, n[2] as f64])
+        .unwrap_or([count(extent.x), count(extent.y), count(extent.z)]);
+    let fit = |e: f64, n: f64| {
+        let s = e / (n * forest_cell);
+        if (s - 1.0).abs() <= 1e-12 { 1.0 } else { s }
+    };
+    let scale = Vec3::new(
+        fit(extent.x, counts[0]),
+        fit(extent.y, counts[1]),
+        fit(extent.z, counts[2]),
+    );
+    let stretch = scale.x.max(scale.y).max(scale.z);
+    let touch_axis = |s: f64| if s != 1.0 { 1e-9 * root_size } else { touch };
+    let touch = Vec3::new(touch_axis(scale.x), touch_axis(scale.y), touch_axis(scale.z));
     let mut leaves: Vec<SizingLeaf> = Vec::new();
     let mut current: Vec<[u32; 3]> = vec![[0, 0, 0]];
     let mut level = 0u32;
@@ -1505,26 +1545,27 @@ pub fn build_sizing_field(lookup: &SizingLookup, options: &SizingOptions) -> Siz
         let decisions: Vec<Option<(bool, f64)>> = current
             .par_iter()
             .map(|coord| {
+                let side = Vec3::new(size * scale.x, size * scale.y, size * scale.z);
                 let min = Vec3::new(
-                    options.domain_min.x + coord[0] as f64 * size,
-                    options.domain_min.y + coord[1] as f64 * size,
-                    options.domain_min.z + coord[2] as f64 * size,
+                    options.domain_min.x + coord[0] as f64 * side.x,
+                    options.domain_min.y + coord[1] as f64 * side.y,
+                    options.domain_min.z + coord[2] as f64 * side.z,
                 );
-                let max = min.add(Vec3::new(size, size, size));
+                let max = min.add(side);
                 // A cell entirely outside the domain box carries no mesh - but only
                 // whole subtrees may be cut (see the note above).
                 if level <= forest_level
                     && (max.x <= options.domain_min.x
                     || max.y <= options.domain_min.y
                     || max.z <= options.domain_min.z
-                    || min.x >= options.domain_max.x - touch
-                    || min.y >= options.domain_max.y - touch
-                    || min.z >= options.domain_max.z - touch)
+                    || min.x >= options.domain_max.x - touch.x
+                    || min.y >= options.domain_max.y - touch.y
+                    || min.z >= options.domain_max.z - touch.z)
                 {
                     return None;
                 }
                 let smallest = lookup.eval_box(min, max);
-                Some((size > smallest, smallest))
+                Some((size * stretch > smallest, smallest))
             })
             .collect();
 
@@ -1599,6 +1640,7 @@ pub fn build_sizing_field(lookup: &SizingLookup, options: &SizingOptions) -> Siz
     SizingField {
         origin: options.domain_min,
         root_size,
+        scale,
         max_level,
         leaves,
         stats,
@@ -1762,7 +1804,7 @@ impl SizingConstraint {
 //   which is what makes the level jumps legible in a heatmap. There are no tets, so [V1]/[V3]/[V4]
 //   have nothing to check and the always-present tet arrays carry their sentinels.
 pub fn sizing_to_doc(field: &SizingField, components: &[ArrangeComponent]) -> VtuDoc {
-    let finest = field.level_size(field.max_level);
+    let finest = field.level_extent(field.max_level);
     let mut point_ids: BTreeMap<[u32; 3], usize> = BTreeMap::new();
     let mut corners: Vec<[[u32; 3]; 8]> = Vec::with_capacity(field.leaves.len());
     for leaf in &field.leaves {
@@ -1798,9 +1840,9 @@ pub fn sizing_to_doc(field: &SizingField, components: &[ArrangeComponent]) -> Vt
     };
     for key in point_ids.keys() {
         doc.points.push(Vec3::new(
-            field.origin.x + key[0] as f64 * finest,
-            field.origin.y + key[1] as f64 * finest,
-            field.origin.z + key[2] as f64 * finest,
+            field.origin.x + key[0] as f64 * finest.x,
+            field.origin.y + key[1] as f64 * finest.y,
+            field.origin.z + key[2] as f64 * finest.z,
         ));
     }
     let mut sizing_h = vec![f64::INFINITY; doc.points.len()];

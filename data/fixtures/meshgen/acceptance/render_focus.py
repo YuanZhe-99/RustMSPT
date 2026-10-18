@@ -255,14 +255,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("work")
     ap.add_argument("case")
-    ap.add_argument("--mesh", help="the mesh to compare (default: <case>.debug/<case>_s08_cut_contract.vtu)")
+    ap.add_argument("--mesh", help="the mesh to compare (default: <case>_contract.vtu, the exported mesh)")
     ap.add_argument("--defects", type=int, default=6)
     ap.add_argument("--threshold", type=float, default=10.0, help="percent of an edge")
     ap.add_argument("--width", type=int, default=1200)
     args = ap.parse_args()
 
     work, case = os.path.abspath(args.work), args.case
-    mesh = args.mesh or os.path.join(work, case + ".debug", f"{case}_s08_cut_contract.vtu")
+    mesh = args.mesh or os.path.join(work, f"{case}_contract.vtu")
     out = os.path.join(work, case + ".focus")
     os.makedirs(os.path.join(out, "cfg"), exist_ok=True)
     os.makedirs(os.path.join(out, "png"), exist_ok=True)

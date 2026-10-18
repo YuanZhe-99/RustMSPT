@@ -1653,10 +1653,14 @@ pub fn cut_lattice(
                     .fold(f64::INFINITY, f64::min);
                 let mut chords: SmallVec<[[Vec3; 2]; 4]> = SmallVec::new();
                 for component in &all_components {
-                    let Some(slot) = classifier.slot_of(*component) else { continue };
+                    // A sheet's trace too (A-11): it owns no volume but the cut runs along it.
+                    let tris = classifier.surface_of(*component);
+                    if tris.is_empty() {
+                        continue;
+                    }
                     for chord in crate::meshgen::cdt::trace_on_face(
                         geometry,
-                        classifier.triangles_of(slot),
+                        tris,
                         shortest * 1.0e-9,
                     ) {
                         chords.push(chord);
@@ -3073,8 +3077,7 @@ pub fn cut_lattice(
                 let mut ids: SmallVec<[Vec3; 4]> = SmallVec::new();
                 let mut seen_keys: SmallVec<[NodeKey; 4]> = SmallVec::new();
                 for component in &all_components {
-                    let Some(slot) = classifier.slot_of(*component) else { continue };
-                    let tris = classifier.triangles_of(slot);
+                    let tris = classifier.surface_of(*component);
                     if tris.is_empty() {
                         continue;
                     }
@@ -4353,6 +4356,17 @@ pub fn cut_lattice(
     mesh.curves = options.locked_curves.clone();
     mesh.curve_edges =
         curve_mesh_edges(&mesh.tets, &mesh.nodes, &mesh.curves, DUPLICATE_NODE_FRAC);
+    // An open sheet's rim is both a locked curve (S2's `Rim`) and the boundary `collapsed_sheet_rim`
+    // finds, and emitting both wrote the edge twice (`[V1]` duplicate cells on a14b's quad). The
+    // locked curve keeps it: it names the curve's components, which `[V9]` reads.
+    {
+        let locked: BTreeSet<[u32; 2]> = mesh
+            .curve_edges
+            .iter()
+            .map(|(_, e)| [e[0].min(e[1]), e[0].max(e[1])])
+            .collect();
+        mesh.rim_curve.retain(|e| !locked.contains(&[e[0].min(e[1]), e[0].max(e[1])]));
+    }
     if !mesh.curves.is_empty() {
         let carried: BTreeSet<u32> = mesh.curve_edges.iter().map(|(curve, _)| *curve).collect();
         println!(
@@ -7681,6 +7695,56 @@ fn declare_contact_components(
 // Notes: This is the first snapshot whose *cells* follow the geometry, and the first to carry
 //   tagged faces, so it exercises the parts of the contract ([V6] region keys, [V7] sheet metrics,
 //   the `FaceTag*` tables) that earlier stages could only leave empty.
+// AI-FUNC-SUMMARY:
+// Purpose: S10's partition flood fill (plan M-6.1): the connected regions of the tet mesh when a
+//   sheet's faces are cut open.
+// Inputs: the tets and the sheet faces (sorted node triples) that separate them.
+// Returns: per tet, its partition id - partitions numbered by their lowest tet index.
+// Side effects: None.
+// Notes: Union-find over shared faces, sequential and keyed by sorted node triple, so the result is
+//   a function of the mesh alone (R-P2). A closed solid is not a sheet and separates nothing: its
+//   faces are interfaces between materials in one continuous complex. Only an open sheet that
+//   reaches the box on every side partitions the domain (`[V8]`, A-11).
+pub fn partition_tets(tets: &[[u32; 4]], sheet_faces: &BTreeSet<[u32; 3]>) -> Vec<i32> {
+    let mut parent: Vec<usize> = (0..tets.len()).collect();
+    fn find(parent: &mut [usize], mut x: usize) -> usize {
+        while parent[x] != x {
+            parent[x] = parent[parent[x]];
+            x = parent[x];
+        }
+        x
+    }
+    let mut first: BTreeMap<[u32; 3], usize> = BTreeMap::new();
+    for (at, tet) in tets.iter().enumerate() {
+        for slots in [[0usize, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]] {
+            let mut key = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+            key.sort_unstable();
+            if sheet_faces.contains(&key) {
+                continue;
+            }
+            match first.get(&key) {
+                Some(other) => {
+                    let (a, b) = (find(&mut parent, at), find(&mut parent, *other));
+                    if a != b {
+                        parent[a.max(b)] = a.min(b);
+                    }
+                }
+                None => {
+                    first.insert(key, at);
+                }
+            }
+        }
+    }
+    let mut label: BTreeMap<usize, i32> = BTreeMap::new();
+    (0..tets.len())
+        .map(|at| {
+            let root = find(&mut parent, at);
+            let next = label.len() as i32;
+            *label.entry(root).or_insert(next)
+        })
+        .collect()
+}
+
 pub fn cut_to_doc(mesh: &CutMesh, components: &[ArrangeComponent]) -> VtuDoc {
     let mut doc = VtuDoc {
         points: mesh.nodes.clone(),
@@ -7783,9 +7847,20 @@ pub fn cut_to_doc(mesh: &CutMesh, components: &[ArrangeComponent]) -> VtuDoc {
     region_key.resize(cells, -1i32);
     doc.cell_data
         .push(DataArray::scalar("region_key", ArrayData::I32(region_key)));
-    // Tets carry partition 0 until plan M-6.1 builds the flood fill (contracts D-14); every
-    // other cell carries the `-1` sentinel, which `[V12]`'s contract validation requires.
-    let mut partition_id = vec![0i32; tets];
+    // S10's partitions (plan M-6.1): tets flood-filled across every shared face except a sheet's,
+    // numbered in order of their lowest tet. Every other cell carries the `-1` sentinel, which
+    // `[V12]`'s contract validation requires.
+    let sheet_faces: BTreeSet<[u32; 3]> = mesh
+        .interfaces
+        .iter()
+        .filter(|face| face.kind == FACE_TAG_SHEET)
+        .map(|face| {
+            let mut key = face.nodes;
+            key.sort_unstable();
+            key
+        })
+        .collect();
+    let mut partition_id = partition_tets(&mesh.tets, &sheet_faces);
     partition_id.resize(cells, -1);
     doc.cell_data.push(DataArray::scalar(
         "partition_id",
@@ -8694,12 +8769,17 @@ fn plc_attempt(
     let mut facets: Vec<Vec<u32>> = Vec::new();
     let mut facet_of: Vec<i32> = Vec::new();
     for component in all_components {
-        let Some(slot) = classifier.slot_of(*component) else { continue };
+        // Sheets included (A-11): a sheet's facets separate regions of one material, and the caps
+        // between them become `FaceTagKind = 1` faces with geometric sides (`derive_interface`).
+        let surface = classifier.surface_of(*component);
+        if surface.is_empty() {
+            continue;
+        }
         let component_start = arena.points.len();
         let facets_start = facets.len();
         for facet in crate::meshgen::cdt::fragment_facets_in_cell(
             corners,
-            classifier.triangles_of(slot),
+            surface,
             edge * 1.0e-6,
         ) {
             if crate::meshgen::cdt::DIAG_CELL.with(|c| c.get()) {
@@ -9130,6 +9210,50 @@ fn plc_attempt(
             // straddling boundary triangles were every one of them a triangle with one such corner
             // read to the wrong side (cells 6619, 72050, 78462, 841020). The cut's decision is read,
             // not recomputed - the same rule M-2.2 applies to rim vertices on a cell edge.
+            // **A sheet has a side, not an inside** (plan M-4.4, A-11). Its facets in this cell are
+            // pieces of one consistently wound surface, so a point's side is the sign against the
+            // plane of the facet nearest to it; within `tol` of that plane it has none.
+            let sheet_pieces: Vec<Vec<(Vec3, f64, [Vec3; 3])>> = components
+                .iter()
+                .map(|component| {
+                    let mut out = Vec::new();
+                    if classifier.slot_of(*component).is_some() {
+                        return out;
+                    }
+                    for slot in &groups[component] {
+                        let facet = &facets[*slot];
+                        if facet.len() < 3 {
+                            continue;
+                        }
+                        let Some((normal, offset, _)) =
+                            crate::meshgen::cdt::facet_plane(facet, &arena.points, tol)
+                        else {
+                            continue;
+                        };
+                        let a = arena.points[facet[0] as usize];
+                        for k in 1..facet.len() - 1 {
+                            out.push((normal, offset, [a, arena.points[facet[k] as usize], arena.points[facet[k + 1] as usize]]));
+                        }
+                    }
+                    out
+                })
+                .collect();
+            let sheet_side = |group: usize, point: Vec3| -> Option<bool> {
+                let mut best: Option<(f64, Vec3, f64)> = None;
+                for (normal, offset, t) in &sheet_pieces[group] {
+                    let d = crate::meshgen::verify::point_triangle_dist2(point, t[0], t[1], t[2]);
+                    if best.is_none_or(|(e, _, _)| d < e) {
+                        best = Some((d, *normal, *offset));
+                    }
+                }
+                let (_, normal, offset) = best?;
+                let signed = normal.dot(point) - offset;
+                if signed.abs() <= tol {
+                    None
+                } else {
+                    Some(signed > 0.0)
+                }
+            };
             let side_of = |group: usize, node: u32| -> Option<bool> {
                 if on_patch[group].contains(&node) {
                     return None;
@@ -9139,7 +9263,9 @@ fn plc_attempt(
                 {
                     return None;
                 }
-                let slot = classifier.slot_of(components[group])?;
+                let Some(slot) = classifier.slot_of(components[group]) else {
+                    return sheet_side(group, at(node)?);
+                };
                 let point = at(node)?;
                 let mut here = uncertain.get();
                 let inside = classifier.inside(point, slot, &mut here);
@@ -9151,7 +9277,9 @@ fn plc_attempt(
             // cap triangle at its own centre - and it cannot be answered here, where nothing knows
             // which of the two a triangle is.
             let side_of_point = |group: usize, point: Vec3| -> Option<bool> {
-                let slot = classifier.slot_of(components[group])?;
+                let Some(slot) = classifier.slot_of(components[group]) else {
+                    return sheet_side(group, point);
+                };
                 let mut here = uncertain.get();
                 let inside = classifier.inside(point, slot, &mut here);
                 uncertain.set(here);
@@ -9314,8 +9442,18 @@ fn plc_attempt(
         }
     }
     let mut caps: Vec<([u32; 3], i32)> = Vec::new();
+    // A sheet is the exception: it is a surface of one material, so a face lying in one of its
+    // facets is a sheet face whether or not regions differ across it - its rim ends inside a cell,
+    // and the face just short of the rim has the same region on both sides (a14b's embedded quad
+    // lost a strip one cell wide along its whole outline that way).
+    let sheet_facet: Vec<bool> =
+        facet_of.iter().map(|component| classifier.slot_of(*component).is_none()).collect();
     for (face, on) in &carried {
-        if on.len() != 2 || regions[on[0]] == regions[on[1]] {
+        if on.len() != 2 {
+            continue;
+        }
+        let same_region = regions[on[0]] == regions[on[1]];
+        if same_region && !sheet_facet.iter().any(|s| *s) {
             continue;
         }
         let p = [
@@ -9332,7 +9470,7 @@ fn plc_attempt(
         // one on the plane x = 0.5817 the cube and the limb share.
         let mut named: SmallVec<[i32; 2]> = SmallVec::new();
         for (slot, facet) in facets.iter().enumerate() {
-            if facet.len() < 3 || named.contains(&facet_of[slot]) {
+            if facet.len() < 3 || named.contains(&facet_of[slot]) || (same_region && !sheet_facet[slot]) {
                 continue;
             }
             let Some((normal, offset, band)) =
@@ -9349,7 +9487,13 @@ fn plc_attempt(
             ) {
                 continue;
             }
-            let _ = centre;
+            // Without a region change the plane alone says nothing - the facet's plane runs on past
+            // a sheet's rim - so the face must lie inside the facet itself.
+            if same_region
+                && !crate::meshgen::cdt::inside_polygon(centre, facet, &arena.points, normal, -tol)
+            {
+                continue;
+            }
             named.push(facet_of[slot]);
             caps.push((*face, facet_of[slot]));
         }

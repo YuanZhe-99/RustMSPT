@@ -1196,13 +1196,12 @@ fn a_welded_sheet_is_cut_without_changing_ownership() {
             ..Default::default()
         },
     );
-    assert!(
-        cut.stats.n_welded_sheet_cells > 0,
-        "no cell was cut by the sheet"
-    );
+    // Cut by §6's welded-sheet rows or, where the face trace sends the cell there, by §7.4 with the
+    // sheet's facets as constraints (plan M-4.4) - either way the sheet's faces are tagged sheet.
     assert!(!cut.interfaces.is_empty(), "the sheet produced no tagged faces");
     for face in &cut.interfaces {
         assert_eq!(face.component, 1);
+        assert_eq!(face.kind, 1, "a sheet's face is tagged FaceTagKind = 1");
     }
     // Ownership is unchanged: the sheet claims no volume on either side.
     for record in &cut.records {

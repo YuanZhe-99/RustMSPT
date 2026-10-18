@@ -10,10 +10,10 @@
 //! Every deferred check reports SKIPPED naming what it is waiting for, so a report
 //! never silently omits a check.
 
-use crate::io::vtu::{VtuDoc, VTK_POLY_LINE, VTK_TETRA, VTK_TRIANGLE};
+use crate::io::vtu::{ArrayData, VtuDoc, VTK_POLY_LINE, VTK_TETRA, VTK_TRIANGLE};
 use crate::meshgen::predicates::{node_key, orient3d, tet_quality, TetQuality};
 use crate::types::Vec3;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 
 // AI-FUNC-SUMMARY: Severity of a single verifier finding; ordering is Info < Warn < Fail; side effects: none.
@@ -792,6 +792,11 @@ pub struct VerifyOptions {
     /// The input surfaces, per component, in the mesh's own coordinates. Empty makes
     /// [V5] report SKIPPED with the reason, exactly as before it was implementable.
     pub surfaces: Vec<SurfaceComponent>,
+    /// The companion Abaqus INP's text, when one is given (`mesh_verify.inp`): `[V10]` cross-checks
+    /// it against the document by identity - node `i` is point `i-1`, element `c` is tet cell `c-1` -
+    /// and every set and surface against the arrays it was written from. `None` leaves [V10]
+    /// SKIPPED with the reason.
+    pub inp: Option<String>,
 }
 
 impl VerifyOptions {
@@ -799,7 +804,7 @@ impl VerifyOptions {
     pub fn from_path(path: &std::path::Path) -> Self {
         VerifyOptions {
             expected_stage: crate::meshgen::snapshot::Stage::from_path(path).map(|s| s.index()),
-            delivered: false,
+            delivered: false, inp: None,
             surfaces: Vec::new(),
         }
     }
@@ -833,6 +838,7 @@ pub fn verify_with_options(
 ) -> VerifyReport {
     let view = MeshView::new(doc);
     let cap = gates.max_items_per_section;
+    let options_inp = options.inp.clone();
     let stage_index = field_i64(doc, "StageIndex").first().copied();
     let surface_stage = matches!(stage_index, Some(0..=3));
     // The delivered file (contracts §1, D-18) is the tets-only volume: it carries the
@@ -964,15 +970,11 @@ pub fn verify_with_options(
     sections.push(take(&mut slots[3]));
     sections.push(take(&mut slots[4]));
     sections.push(take(&mut slots[5]));
-    sections.push(VerifySection::skipped(
-        "V10",
-        "Export completeness",
-        "lands with G9-2; needs a companion Abaqus INP export",
-    ));
+    sections.push(check_v10(doc, options_inp.as_deref(), cap));
     sections.push(VerifySection::skipped(
         "V11",
         "Compare mode",
-        "lands with GK-3; use `mesh-verify --compare a.vtu b.vtu`",
+        "compares two files; run `mesh-verify --compare a.vtu b.vtu [--mode strict|topology]`",
     ));
     sections.push(take(&mut slots[6]));
     sections.push(take(&mut slots[7]));
@@ -1805,6 +1807,207 @@ fn face_area(points: &[Vec3], fk: &[i64; 3]) -> f64 {
     };
     let n = b.sub(a).cross(c.sub(a));
     0.5 * n.dot(n).sqrt()
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: [V10] Export completeness - the companion INP cross-checked against the contract document by identity.
+// Inputs: the contract document, the INP text (None skips), the item cap.
+// Returns: VerifySection.
+// Side effects: None.
+// Notes: Independent of the writer: every expectation is recomputed from the document's own arrays.
+//   Node `i` must be point `i-1` bit for bit, element `c` tet cell `c-1` node for node; each
+//   `REGION_k` / `PARTITION_p` set exactly the tets carrying `k` / `p`; each `COMPONENT_X` exactly the
+//   nodes whose N_ID holds X; each `IFACE_X_POS/NEG` entry a face of its element that is a tagged face
+//   carrying X on that side, and every such side present. The unmapped audit reports regions with no
+//   section - INFO when the INP has no sections at all (no `materials:` block), FAIL otherwise.
+fn check_v10(doc: &VtuDoc, inp: Option<&str>, cap: usize) -> VerifySection {
+    let Some(text) = inp else {
+        return VerifySection::skipped(
+            "V10",
+            "Export completeness",
+            "no companion INP given (`mesh_verify.inp`)",
+        );
+    };
+    let mut s = VerifySection::new("V10", "Export completeness");
+    let fail = |s: &mut VerifySection, code: &str, message: String| {
+        s.push(VerifyItem::bare(Severity::Fail, code, message), cap);
+    };
+    let parsed = match crate::meshgen::export::parse_inp(text) {
+        Ok(p) => p,
+        Err(e) => {
+            fail(&mut s, "V10.unreadable", e.to_string());
+            return s;
+        }
+    };
+    let tets: Vec<usize> = (0..doc.types.len()).filter(|c| doc.types[*c] == VTK_TETRA).collect();
+    s.metric("inp_nodes", parsed.nodes.len() as f64);
+    s.metric("inp_elements", parsed.elements.len() as f64);
+    if parsed.nodes.len() != doc.points.len() {
+        fail(&mut s, "V10.node_count", format!("INP has {} node(s), the document {}", parsed.nodes.len(), doc.points.len()));
+    }
+    let mut node_mismatch = 0usize;
+    for (id, p) in &parsed.nodes {
+        let ok = *id >= 1
+            && doc.points.get(id - 1).is_some_and(|q| q.x == p[0] && q.y == p[1] && q.z == p[2]);
+        if !ok {
+            node_mismatch += 1;
+            if node_mismatch <= 8 {
+                fail(&mut s, "V10.node_mismatch", format!("INP node {id} is not document point {}", id.wrapping_sub(1)));
+            }
+        }
+    }
+    if parsed.elements.len() != tets.len() {
+        fail(&mut s, "V10.element_count", format!("INP has {} element(s), the document {} tet(s)", parsed.elements.len(), tets.len()));
+    }
+    let mut element_mismatch = 0usize;
+    for (id, nodes) in &parsed.elements {
+        let ok = *id >= 1
+            && tets.get(id - 1).is_some_and(|c| {
+                let n = doc.cell(*c);
+                (0..4).all(|k| n[k] + 1 == nodes[k] as i64)
+            });
+        if !ok {
+            element_mismatch += 1;
+            if element_mismatch <= 8 {
+                fail(&mut s, "V10.element_mismatch", format!("INP element {id} is not document tet {}", id.wrapping_sub(1)));
+            }
+        }
+    }
+    s.metric("node_mismatches", node_mismatch as f64);
+    s.metric("element_mismatches", element_mismatch as f64);
+    // Element sets.
+    let compare_sets = |s: &mut VerifySection, prefix: &str, values: &[i64]| -> usize {
+        let mut expected: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        for (at, c) in tets.iter().enumerate() {
+            let v = values.get(*c).copied().unwrap_or(0);
+            expected.entry(format!("{prefix}_{v}")).or_default().push(at + 1);
+        }
+        let mut bad = 0usize;
+        let got: BTreeMap<&String, Vec<usize>> = parsed
+            .elsets
+            .iter()
+            .filter(|(name, _)| name.starts_with(&format!("{prefix}_")))
+            .map(|(name, ids)| {
+                let mut ids = ids.clone();
+                ids.sort_unstable();
+                (name, ids)
+            })
+            .collect();
+        for (name, ids) in &expected {
+            if got.get(name) != Some(ids) {
+                bad += 1;
+                s.push(
+                    VerifyItem::bare(Severity::Fail, "V10.elset", format!("ELSET {name} does not hold exactly the {} tet(s) the document gives it", ids.len())),
+                    cap,
+                );
+            }
+        }
+        for name in got.keys() {
+            if !expected.contains_key(*name) {
+                bad += 1;
+                s.push(VerifyItem::bare(Severity::Fail, "V10.elset", format!("ELSET {name} names nothing in the document")), cap);
+            }
+        }
+        bad
+    };
+    let region_key = cell_i64(doc, "region_key").unwrap_or_default();
+    let partition = cell_i64(doc, "partition_id").unwrap_or_default();
+    let region_bad = compare_sets(&mut s, "REGION", &region_key);
+    let partition_bad = compare_sets(&mut s, "PARTITION", &partition);
+    s.metric("region_sets", parsed.elsets.keys().filter(|k| k.starts_with("REGION_")).count() as f64);
+    s.metric("partition_sets", parsed.elsets.keys().filter(|k| k.starts_with("PARTITION_")).count() as f64);
+    s.metric("elset_mismatches", (region_bad + partition_bad) as f64);
+    // Node sets from N_ID.
+    let n_id_key = doc.point_array("n_id_key").map(|a| (0..a.data.len()).map(|i| a.data.get_i64(i)).collect::<Vec<_>>()).unwrap_or_default();
+    let offsets = field_i64(doc, "NIdSetOffsets");
+    let members = field_i64(doc, "NIdSetComponents");
+    let mut expected_nsets: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for (node, key) in n_id_key.iter().enumerate() {
+        let k = *key as usize;
+        let start = if k == 0 { 0 } else { offsets.get(k - 1).copied().unwrap_or(0) as usize };
+        let end = offsets.get(k).copied().unwrap_or(0) as usize;
+        for x in members.get(start.min(members.len())..end.min(members.len())).into_iter().flatten() {
+            if *x > 0 {
+                expected_nsets.entry(format!("COMPONENT_{x}")).or_default().push(node + 1);
+            }
+        }
+    }
+    let mut nset_bad = 0usize;
+    for (name, ids) in &expected_nsets {
+        let mut got = parsed.nsets.get(name).cloned().unwrap_or_default();
+        got.sort_unstable();
+        if &got != ids {
+            nset_bad += 1;
+            fail(&mut s, "V10.nset", format!("NSET {name} does not hold exactly the {} node(s) whose N_ID names it", ids.len()));
+        }
+    }
+    s.metric("nset_mismatches", nset_bad as f64);
+    // Surfaces.
+    let face_tag_key = cell_i64(doc, "face_tag_key").unwrap_or_default();
+    let tag_offsets = field_i64(doc, "FaceTagOffsets");
+    let tag_members = field_i64(doc, "FaceTagComponents");
+    let side = field_i64(doc, "FaceTagSideElems");
+    let mut expected_faces: BTreeMap<String, BTreeSet<(usize, usize)>> = BTreeMap::new();
+    for c in 0..doc.types.len() {
+        if doc.types[c] != VTK_TRIANGLE {
+            continue;
+        }
+        let key = face_tag_key.get(c).copied().unwrap_or(-1);
+        if key < 0 {
+            continue;
+        }
+        let k = key as usize;
+        let n = doc.cell(c);
+        let start = if k == 0 { 0 } else { tag_offsets.get(k - 1).copied().unwrap_or(0) as usize };
+        let end = tag_offsets.get(k).copied().unwrap_or(0) as usize;
+        for x in tag_members.get(start.min(tag_members.len())..end.min(tag_members.len())).into_iter().flatten() {
+            for (slot, suffix) in [(0usize, "POS"), (1, "NEG")] {
+                let elem = side.get(2 * k + slot).copied().unwrap_or(-1);
+                if elem < 0 || elem as usize >= tets.len() {
+                    continue;
+                }
+                if let Some(face) = crate::meshgen::export::c3d4_face_of(doc.cell(elem as usize), [n[0], n[1], n[2]]) {
+                    expected_faces.entry(format!("IFACE_{x}_{suffix}")).or_default().insert((elem as usize + 1, face));
+                }
+            }
+        }
+    }
+    let mut surface_bad = 0usize;
+    for (name, faces) in &expected_faces {
+        let got: BTreeSet<(usize, usize)> = parsed.surfaces.get(name).into_iter().flatten().copied().collect();
+        if &got != faces {
+            surface_bad += 1;
+            fail(&mut s, "V10.surface", format!("SURFACE {name} does not hold exactly the {} tagged face side(s) the document records", faces.len()));
+        }
+    }
+    for name in parsed.surfaces.keys() {
+        if !expected_faces.contains_key(name) {
+            surface_bad += 1;
+            fail(&mut s, "V10.surface", format!("SURFACE {name} names no tagged face side of the document"));
+        }
+    }
+    s.metric("surfaces", parsed.surfaces.len() as f64);
+    s.metric("surface_mismatches", surface_bad as f64);
+    // Unmapped audit.
+    let regions: Vec<&String> = parsed.elsets.keys().filter(|k| k.starts_with("REGION_")).collect();
+    let unmapped: Vec<&&String> = regions.iter().filter(|r| !parsed.sections.contains_key(**r)).collect();
+    s.metric("unmapped_regions", unmapped.len() as f64);
+    if !unmapped.is_empty() {
+        let severity = if parsed.sections.is_empty() { Severity::Info } else { Severity::Fail };
+        s.push(
+            VerifyItem::bare(
+                severity,
+                "V10.unmapped_region",
+                format!(
+                    "{} region set(s) carry no section{}",
+                    unmapped.len(),
+                    if parsed.sections.is_empty() { " (no `materials:` block: sets only)" } else { "" }
+                ),
+            ),
+            cap,
+        );
+    }
+    s
 }
 
 // AI-FUNC-SUMMARY: [V6] ID semantics (VTU-only subset) — region-key legality and one priority per key; returns VerifySection; side effects: none.
@@ -5947,7 +6150,7 @@ mod tests {
     fn fidelity(doc: &VtuDoc) -> VerifySection {
         let options = VerifyOptions {
             expected_stage: None,
-            delivered: false,
+            delivered: false, inp: None,
             surfaces: vec![slab(0.12)],
         };
         verify_with_options(doc, &VerifyGates::default(), options)
@@ -6044,7 +6247,7 @@ mod tests {
         let doc = fidelity_block(|_, layer| layer == 0);
         let options = VerifyOptions {
             expected_stage: None,
-            delivered: false,
+            delivered: false, inp: None,
             surfaces: vec![slab(0.10)],
         };
         let s = verify_with_options(&doc, &VerifyGates::default(), options)
@@ -6095,7 +6298,7 @@ mod tests {
         let doc = fidelity_block(|_, layer| layer == 0);
         let options = VerifyOptions {
             expected_stage: None,
-            delivered: false,
+            delivered: false, inp: None,
             surfaces: vec![tented_box(0.10, 0.01)],
         };
         let s = verify_with_options(&doc, &VerifyGates::default(), options)
@@ -6123,7 +6326,7 @@ mod tests {
         let s = verify_with_options(
             &doc,
             &VerifyGates::default(),
-            VerifyOptions { expected_stage: None, delivered: false, surfaces: vec![unit] },
+            VerifyOptions { expected_stage: None, delivered: false, inp: None, surfaces: vec![unit] },
         )
         .section("V13")
         .cloned()
@@ -6144,7 +6347,7 @@ mod tests {
         let s = verify_with_options(
             &doc,
             &VerifyGates::default(),
-            VerifyOptions { expected_stage: None, delivered: false, surfaces: vec![slab(ZS[1])] },
+            VerifyOptions { expected_stage: None, delivered: false, inp: None, surfaces: vec![slab(ZS[1])] },
         )
         .section("V13")
         .cloned()
@@ -6175,7 +6378,7 @@ mod tests {
             &VerifyGates::default(),
             VerifyOptions {
                 expected_stage: None,
-                delivered: false,
+                delivered: false, inp: None,
                 surfaces: vec![slab(ZS[1]), missing],
             },
         )
@@ -6203,7 +6406,7 @@ mod tests {
         let s = verify_with_options(
             &doc,
             &VerifyGates::default(),
-            VerifyOptions { expected_stage: None, delivered: false, surfaces: vec![slab(ZS[1]), sheet] },
+            VerifyOptions { expected_stage: None, delivered: false, inp: None, surfaces: vec![slab(ZS[1]), sheet] },
         )
         .section("V13")
         .cloned()
@@ -6233,7 +6436,7 @@ mod tests {
             &VerifyGates::default(),
             VerifyOptions {
                 expected_stage: None,
-                delivered: false,
+                delivered: false, inp: None,
                 surfaces: vec![slab(ZS[1]), hidden],
             },
         )
@@ -6253,7 +6456,7 @@ mod tests {
         let report = verify_with_options(
             &doc,
             &VerifyGates::default(),
-            VerifyOptions { expected_stage: None, delivered: false, surfaces: vec![slab(0.12)] },
+            VerifyOptions { expected_stage: None, delivered: false, inp: None, surfaces: vec![slab(0.12)] },
         );
         assert_eq!(
             report.section("V5").unwrap().status,
@@ -6310,5 +6513,124 @@ mod tests {
         assert!((face_area(&points, &[0, 1, 2]) - 3.0).abs() < 1e-12);
         // An out-of-range node id yields 0.0 rather than panicking the verifier.
         assert_eq!(face_area(&points, &[0, 1, 99]), 0.0);
+    }
+}
+
+/// `[V11]`'s two comparisons (contracts §4): `Strict` for `DeterminismMode` strict, `Topology` for fast.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompareMode {
+    Strict,
+    Topology,
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: [V11] Compare mode - two meshes of one run compared as the contract states (plan M-6.3).
+// Inputs: the two documents, the mode (None takes it from the second document's `DeterminismMode`), the item cap.
+// Returns: a VerifyReport holding the one `V11` section.
+// Side effects: None.
+// Notes: Strict: connectivity, offsets, types and every array byte-equal, coordinates bit-identical.
+//   Topology: connectivity, types and every integer array equal; coordinates within 1e-6 of the
+//   bounding-box diagonal; every other float array within 1 % relative. `ConfigHash` is the one
+//   array never compared - it names the run's configuration file, including its output path.
+pub fn compare_report(a: &VtuDoc, b: &VtuDoc, mode: Option<CompareMode>, cap: usize) -> VerifyReport {
+    let mode = mode.unwrap_or(match field_i64(b, "DeterminismMode").first() {
+        Some(1) => CompareMode::Topology,
+        _ => CompareMode::Strict,
+    });
+    let mut s = VerifySection::new("V11", "Compare mode");
+    s.metric("mode_strict", f64::from(u8::from(mode == CompareMode::Strict)));
+    let fail = |s: &mut VerifySection, code: &str, message: String| {
+        s.push(VerifyItem::bare(Severity::Fail, code, message), cap);
+    };
+    if a.connectivity != b.connectivity || a.offsets != b.offsets || a.types != b.types {
+        fail(&mut s, "V11.connectivity", format!(
+            "cells differ: {} / {} cells, {} / {} connectivity entries",
+            a.types.len(), b.types.len(), a.connectivity.len(), b.connectivity.len()
+        ));
+    }
+    let diag = {
+        let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+        for p in &a.points {
+            for (k, v) in [p.x, p.y, p.z].into_iter().enumerate() {
+                lo[k] = lo[k].min(v);
+                hi[k] = hi[k].max(v);
+            }
+        }
+        (0..3).map(|k| (hi[k] - lo[k]).max(0.0).powi(2)).sum::<f64>().sqrt()
+    };
+    let mut moved = 0usize;
+    let mut worst = 0.0f64;
+    if a.points.len() != b.points.len() {
+        fail(&mut s, "V11.points", format!("{} / {} points", a.points.len(), b.points.len()));
+    } else {
+        for (p, q) in a.points.iter().zip(b.points.iter()) {
+            let same = match mode {
+                CompareMode::Strict => p.x.to_bits() == q.x.to_bits() && p.y.to_bits() == q.y.to_bits() && p.z.to_bits() == q.z.to_bits(),
+                CompareMode::Topology => {
+                    let d = p.sub(*q);
+                    let d = d.dot(d).sqrt();
+                    worst = worst.max(d);
+                    d <= 1e-6 * diag
+                }
+            };
+            moved += usize::from(!same);
+        }
+        if moved > 0 {
+            fail(&mut s, "V11.points", format!("{moved} point(s) differ beyond the {mode:?} tolerance"));
+        }
+    }
+    s.metric("points_differing", moved as f64);
+    s.metric("max_point_displacement", worst);
+    let mut arrays_differing = 0usize;
+    let groups: [(&str, &Vec<crate::io::vtu::DataArray>, &Vec<crate::io::vtu::DataArray>); 3] = [
+        ("cell", &a.cell_data, &b.cell_data),
+        ("point", &a.point_data, &b.point_data),
+        ("field", &a.field_data, &b.field_data),
+    ];
+    for (kind, xs, ys) in groups {
+        let names: BTreeSet<&str> = xs.iter().chain(ys.iter()).map(|x| x.name.as_str()).collect();
+        for name in names {
+            if name == "ConfigHash" {
+                continue;
+            }
+            let (x, y) = (xs.iter().find(|d| d.name == name), ys.iter().find(|d| d.name == name));
+            let same = match (x, y) {
+                (Some(x), Some(y)) if x.components == y.components && x.data.len() == y.data.len() => {
+                    let float = matches!(x.data, ArrayData::F32(_) | ArrayData::F64(_));
+                    (0..x.data.len()).all(|i| match (mode, float) {
+                        (CompareMode::Topology, true) => {
+                            let (u, v) = (x.data.get_f64(i), y.data.get_f64(i));
+                            u == v || (u - v).abs() <= 0.01 * u.abs().max(v.abs())
+                        }
+                        (_, true) => x.data.get_f64(i).to_bits() == y.data.get_f64(i).to_bits(),
+                        _ => x.data.get_i64(i) == y.data.get_i64(i),
+                    })
+                }
+                _ => false,
+            };
+            if !same {
+                arrays_differing += 1;
+                fail(&mut s, "V11.array", format!("{kind} array `{name}` differs"));
+            }
+        }
+    }
+    s.metric("arrays_differing", arrays_differing as f64);
+    s.finish();
+    let (fail_n, warn_n, info_n) = (s.fail_count, s.warn_count, s.info_count);
+    VerifyReport {
+        input: String::new(),
+        schema_version: field_i64(b, "SchemaVersion").first().copied(),
+        stage_index: field_i64(b, "StageIndex").first().copied(),
+        config_hash: field_i64(b, "ConfigHash").first().map(|&v| v as u64),
+        determinism_mode: field_i64(b, "DeterminismMode").first().copied(),
+        generator_version: None,
+        sections: vec![s],
+        fail: fail_n,
+        warn: warn_n,
+        info: info_n,
+        checks_run: 1,
+        checks_skipped: 0,
+        warn_is_fatal: false,
+        fidelity: Vec::new(),
     }
 }

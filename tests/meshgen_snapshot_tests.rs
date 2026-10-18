@@ -233,13 +233,13 @@ fn pipeline_delivers_a_tets_only_volume_whose_only_boundary_is_the_domain_box() 
         output.display()
     );
     let config: MeshGenConfig = serde_yaml::from_str(&yaml).unwrap();
-    // S9..S11 are unimplemented, so the run reports that after writing s08 - which is the
-    // stage this asserts on.
-    let error = MeshGenPipeline { config }.run().unwrap_err().to_string();
-    assert!(error.contains("S9..S11"), "{error}");
+    // Plan M-6.2: the run goes through S11 and the exported pair at the configured path is the
+    // deliverable this asserts on (the s08 snapshot pair is written too, in the debug folder).
+    MeshGenPipeline { config }.run().unwrap();
+    assert!(temp.path().join("mesh.debug/mesh_s08_cut.vtu").exists());
 
-    let delivered = temp.path().join("mesh.debug/mesh_s08_cut.vtu");
-    let contract = temp.path().join("mesh.debug/mesh_s08_cut_contract.vtu");
+    let delivered = temp.path().join("mesh.vtu");
+    let contract = temp.path().join("mesh_contract.vtu");
     assert!(delivered.exists(), "the delivered volume must carry the plain name");
     assert!(contract.exists(), "the contract document must be written beside it");
 
@@ -259,7 +259,7 @@ fn pipeline_delivers_a_tets_only_volume_whose_only_boundary_is_the_domain_box() 
     let report = verify_with_options(
         &volume,
         &VerifyGates::default(),
-        VerifyOptions::from_path(&delivered),
+        VerifyOptions { delivered: true, ..VerifyOptions::from_path(&delivered) },
     );
     let offending: Vec<String> = report
         .fired_codes()

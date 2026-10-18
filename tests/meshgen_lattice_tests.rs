@@ -623,6 +623,18 @@ fn a_non_cubic_domain_stays_conforming() {
     assert_eq!(multi, 0, "non-manifold face on a non-cubic domain");
     assert_eq!(hanging, 0, "hanging node on a non-cubic domain");
 
+    // Plan M-6.2: the short axis is stretched so whole cells tile it, so the lattice's hull IS
+    // the domain box - nothing overhangs, and S11 has nothing to trim.
+    let (mut lo, mut hi) = (Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY), Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY));
+    for p in &lattice.nodes {
+        lo = Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z));
+        hi = Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
+    }
+    for (got, want) in [(lo.x, 0.0), (lo.y, 0.0), (lo.z, 0.0), (hi.x, 1.0), (hi.y, 1.0), (hi.z, 0.35)] {
+        assert!((got - want).abs() < 1e-12, "lattice hull {lo:?}..{hi:?} is not the domain box");
+    }
+    assert!(field.scale.z < 1.0 && field.scale.x == 1.0, "only the short axis is stretched: {:?}", field.scale);
+
     // And the domain is fully covered - trimming may not leave a hole in it.
     for i in 0..=8 {
         for j in 0..=8 {

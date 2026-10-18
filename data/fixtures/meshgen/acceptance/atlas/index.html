@@ -1,0 +1,393 @@
+<title>网格 Atlas</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+<style>
+/* Layout: a case index on the left, one large 3D viewport on the right with its controls and the
+   case's verifier card beneath; stacks to one column on a phone. */
+:root {
+  --bg: #f3f4f1;
+  --panel: #ffffff;
+  --ink: #1d2320;
+  --muted: #5f6b66;
+  --line: #d9ddd8;
+  --accent: #2f6f62;
+  --pass: #2e7d4f;
+  --warn: #b7791f;
+  --fail: #c0392b;
+  --skip: #8a948f;
+  --viewport: #e6e9e5;
+  --font-body: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141816; --panel: #1c2120; --ink: #e4e9e6; --muted: #98a39e; --line: #2e3532;
+    --accent: #6fbfa9; --pass: #5cbf86; --warn: #e0a84a; --fail: #ef6b5d; --skip: #7b8580;
+    --viewport: #101312; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141816; --panel: #1c2120; --ink: #e4e9e6; --muted: #98a39e; --line: #2e3532;
+  --accent: #6fbfa9; --pass: #5cbf86; --warn: #e0a84a; --fail: #ef6b5d; --skip: #7b8580;
+  --viewport: #101312; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 14px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 16px 32px;
+}
+h1 { font-size: 22px; margin: 0; text-wrap: balance; letter-spacing: 0.02em; }
+h2 { font-size: 15px; margin: 0; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 20px; margin-bottom: 12px; }
+header p { margin: 0; color: var(--muted); max-width: 70ch; line-height: 1.6; }
+.app { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 860px) { .app { grid-template-columns: minmax(0, 1fr); } }
+.list { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; max-height: calc(100vh - 120px); overflow-y: auto; }
+@media (max-width: 860px) { .list { max-height: 320px; } }
+.group { padding: 8px 12px 4px; font-size: 12px; color: var(--muted); letter-spacing: 0.06em; border-top: 1px solid var(--line); }
+.group:first-child { border-top: none; }
+.case { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; width: 100%; text-align: left; padding: 8px 12px; border: none; background: transparent; color: inherit; cursor: pointer; font: inherit; border-left: 3px solid transparent; }
+.case:hover { background: var(--bg); }
+.case[aria-current="true"] { border-left-color: var(--accent); background: var(--bg); }
+.case:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.case .name { font-weight: 500; }
+.case .sub { grid-column: 1 / -1; font-size: 12px; color: var(--muted); }
+.chips { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.chip { font-family: var(--font-mono); font-size: 11px; padding: 1px 5px; border-radius: 3px; border: 1px solid currentColor; line-height: 1.4; }
+.chip.PASS { color: var(--pass); } .chip.WARN { color: var(--warn); } .chip.FAIL { color: var(--fail); } .chip.SKIPPED { color: var(--skip); }
+.main { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.viewer { position: relative; background: var(--viewport); border: 1px solid var(--line); border-radius: 8px; aspect-ratio: 4 / 3; max-height: 72vh; width: 100%; overflow: hidden; }
+.viewer canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+.overlay { position: absolute; left: 12px; top: 10px; right: 12px; display: flex; justify-content: space-between; gap: 8px; pointer-events: none; }
+.overlay .title { font-weight: 700; font-size: 16px; }
+.overlay .hint { font-size: 12px; color: var(--muted); }
+.loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); }
+.controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.controls label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.controls .sep { width: 1px; align-self: stretch; background: var(--line); }
+.controls select, .controls input[type="range"] { accent-color: var(--accent); font: inherit; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 12px; }
+.legend span { display: inline-flex; align-items: center; gap: 5px; }
+.legend i { width: 12px; height: 12px; border-radius: 2px; display: inline-block; border: 1px solid var(--line); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; display: grid; gap: 10px; }
+.checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.check { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; display: grid; gap: 2px; }
+.check b { font-family: var(--font-mono); font-size: 12px; }
+.check .s { font-family: var(--font-mono); font-size: 12px; font-weight: 500; }
+.check .s.PASS { color: var(--pass); } .check .s.WARN { color: var(--warn); } .check .s.FAIL { color: var(--fail); } .check .s.SKIPPED { color: var(--skip); }
+.check .m { font-size: 11px; color: var(--muted); font-family: var(--font-mono); word-break: break-all; }
+.facts { display: flex; flex-wrap: wrap; gap: 6px 20px; color: var(--muted); font-size: 13px; }
+.facts b { color: var(--ink); font-weight: 500; }
+.note { color: var(--muted); font-size: 13px; line-height: 1.6; margin: 0; max-width: 80ch; }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+
+<header>
+  <h1>网格 Atlas</h1>
+  <p id="summary">读取用例清单中…</p>
+</header>
+
+<div class="app">
+  <nav class="list" id="list" aria-label="测试用例"></nav>
+  <section class="main">
+    <div class="viewer" id="viewer">
+      <div class="overlay"><span class="title" id="vtitle"></span><span class="hint">拖动旋转 · 滚轮缩放 · 右键平移</span></div>
+      <div class="loading" id="loading">加载中…</div>
+    </div>
+    <div class="controls">
+      <label><input type="checkbox" id="showBoundary" checked> 材料边界</label>
+      <label><input type="checkbox" id="showInput"> 输入 STL（线框）</label>
+      <label><input type="checkbox" id="showEdges"> 边界网格线</label>
+      <span class="sep" aria-hidden="true"></span>
+      <label>剖面
+        <select id="sliceAxis">
+          <option value="-1">无</option>
+          <option value="0">X 中截面</option>
+          <option value="1">Y 中截面</option>
+          <option value="2">Z 中截面</option>
+        </select>
+      </label>
+      <label>裁剪 <select id="clipAxis"><option value="-1">无</option><option value="0">X</option><option value="1">Y</option><option value="2">Z</option></select></label>
+      <input type="range" id="clipPos" min="0" max="1000" value="514" aria-label="裁剪位置">
+      <span class="sep" aria-hidden="true"></span>
+      <div class="legend" id="legend"></div>
+    </div>
+    <div class="card" id="card"></div>
+  </section>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+(function () {
+  const GROUPS = [
+    ["原有九例", ["a1", "a2", "a3", "a4", "a6a", "a6b", "a7a", "a7b", "a8"]],
+    ["旋转 23° 版本", ["a6a_r", "a6b_r", "a7a_r", "a7b_r", "a8_r"]],
+    ["真实样件", ["p1"]],
+    ["P1 新算例（M-4.4）", ["a3r", "a4b", "a5", "a9", "a11", "a12", "a13", "a14a", "a14b", "a15", "a16"]],
+    ["参考数据集", ["TestCaseIntersect1", "TestCaseIntersect2", "TestCaseIntersect3"]],
+  ];
+  const DESC = {
+    a1: "单个球体", a2: "轴对齐立方体", a3: "球与立方体相交（同优先级）", a4: "球内含立方体",
+    a6a: "立方体 + 片状细肢（sheet 区）", a6b: "立方体 + 细肢（band 区）", a7a: "两块板，薄间隙（sheet 区）",
+    a7b: "两块板，间隙（band 区）", a8: "支杆格子（自相交）", a6a_r: "a6a 旋转 23°", a6b_r: "a6b 旋转 23°",
+    a7a_r: "a7a 旋转 23°", a7b_r: "a7b 旋转 23°", a8_r: "a8 旋转 23°", p1: "金属体与十个气孔（mm）",
+    a3r: "a3 有序优先级：立方体胜出", a4b: "a4 有序优先级", a5: "立方体内含球体", a9: "格子贯穿球体",
+    a11: "开口片体贯穿域盒", a12: "a3 置于非立方域 1×1×0.6", a13: "含缺陷的球（重复/翻转三角形、裂缝）",
+    a14a: "一个文件内两个分离立方体", a14b: "一个文件：立方体 + 开口四边形", a15: "缺一面的立方体 + 独立盖子",
+    a16: "同一立方体输入两次",
+    TestCaseIntersect1: "参考算例 1", TestCaseIntersect2: "参考算例 2", TestCaseIntersect3: "参考算例 3",
+  };
+  const CHECKS = ["V1", "V2", "V3", "V4", "V5", "V6", "V8", "V9", "V10", "V13"];
+  const NAMES = { V1: "单元", V2: "节点", V3: "共形", V4: "质量", V5: "几何", V6: "区域标签", V8: "分区", V9: "交线", V10: "INP 导出", V13: "界面贴合 P3" };
+  const PALETTE = ["#4f8cc9", "#d9822b", "#7a5bb3", "#3c9d6b", "#c4475b", "#2aa6a6", "#b59a2a", "#8d6748", "#5d6fd8", "#c16fb0", "#6aa84f"];
+
+  const el = (id) => document.getElementById(id);
+  let manifest = null, current = null, three = null;
+
+  function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+  function chipsFor(c) {
+    const out = [];
+    const conform = ["V1", "V2", "V3"].map((k) => c.checks[k] && c.checks[k].status).filter(Boolean);
+    const cs = conform.includes("FAIL") ? "FAIL" : (conform.length ? "PASS" : "SKIPPED");
+    out.push(`<span class="chip ${cs}" title="[V1]–[V3] 共形">共形</span>`);
+    const v13 = c.checks.V13;
+    if (v13 && v13.on_surface_area_frac !== undefined) {
+      out.push(`<span class="chip ${v13.status}" title="[V13] 材料边界落在输入曲面上的面积比">${(100 * v13.on_surface_area_frac).toFixed(3)}%</span>`);
+    } else if (v13) {
+      out.push(`<span class="chip ${v13.status}">P3 ${v13.status === "SKIPPED" ? "—" : v13.status}</span>`);
+    }
+    return out.join("");
+  }
+
+  function renderList() {
+    const byName = Object.fromEntries(manifest.cases.map((c) => [c.case, c]));
+    const html = [];
+    for (const [label, names] of GROUPS) {
+      const present = names.filter((n) => byName[n]);
+      if (!present.length) continue;
+      html.push(`<div class="group">${label}</div>`);
+      for (const n of present) {
+        const c = byName[n];
+        html.push(`<button class="case" id="case-${n}" data-case="${n}"><span class="name mono">${n}</span><span class="chips">${chipsFor(c)}</span><span class="sub">${DESC[n] || ""} · ${c.tets.toLocaleString()} 四面体</span></button>`);
+      }
+    }
+    el("list").innerHTML = html.join("");
+    el("list").querySelectorAll(".case").forEach((b) => b.addEventListener("click", () => select(b.dataset.case)));
+    const n = manifest.cases.length;
+    const conformOk = manifest.cases.filter((c) => ["V1", "V2", "V3"].every((k) => !c.checks[k] || c.checks[k].status !== "FAIL")).length;
+    const p3 = manifest.cases.filter((c) => c.checks.V13 && c.checks.V13.status === "PASS").length;
+    el("summary").textContent = `${n} 个用例的导出网格（S11）。[V1]–[V3] 共形通过 ${conformOk}/${n}；[V13] 界面完全贴合（P3）${p3}/${n}。更新于 ${manifest.updated || ""}。`;
+  }
+
+  function regionLabel(c, key) {
+    if (key === 65535) return "片体";
+    const r = c.regions[key];
+    if (!r) return `区域 ${key}`;
+    const comps = r.components.filter((x) => x !== 0);
+    return comps.length ? "{" + comps.join(",") + "}" : "背景";
+  }
+  function regionColor(c, key) {
+    if (key === 65535) return new THREE.Color(css("--warn"));
+    const r = c.regions[key];
+    if (!r || r.components.every((x) => x === 0)) return new THREE.Color("#9aa39f");
+    return new THREE.Color(PALETTE[(key - 1 + PALETTE.length) % PALETTE.length]);
+  }
+  function innerKey(c, a, b) {
+    if (a === 65535 || b === 65535) return 65535;
+    const size = (k) => (c.regions[k] ? c.regions[k].components.filter((x) => x !== 0).length : 0);
+    return size(a) > size(b) || (size(a) === size(b) && a > b) ? a : b;
+  }
+
+  function initThree() {
+    const host = el("viewer");
+    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.localClippingEnabled = true;
+    host.prepend(renderer.domElement);
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(35, 4 / 3, 0.001, 1000);
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x606a66, 0.9));
+    const sun = new THREE.DirectionalLight(0xffffff, 0.7);
+    scene.add(sun);
+    const group = new THREE.Group();
+    scene.add(group);
+    function resize() {
+      const w = host.clientWidth, h = host.clientHeight;
+      renderer.setSize(w, h, false);
+      camera.aspect = w / Math.max(h, 1);
+      camera.updateProjectionMatrix();
+    }
+    new ResizeObserver(resize).observe(host);
+    resize();
+    (function loop() {
+      controls.update();
+      sun.position.copy(camera.position);
+      scene.background = new THREE.Color(css("--viewport"));
+      renderer.render(scene, camera);
+      requestAnimationFrame(loop);
+    })();
+    return { renderer, scene, camera, controls, group };
+  }
+
+  const cache = {};
+  async function loadBin(c) {
+    if (!cache[c.case]) {
+      cache[c.case] = Promise.all(c.bin.map((part) => fetch(part).then((r) => { if (!r.ok) throw new Error(`${part}: ${r.status}`); return r.arrayBuffer(); })))
+        .then((parts) => {
+          const total = parts.reduce((n, p) => n + p.byteLength, 0);
+          const all = new Uint8Array(total); let at = 0;
+          for (const p of parts) { all.set(new Uint8Array(p), at); at += p.byteLength; }
+          return all.buffer;
+        });
+    }
+    return cache[c.case];
+  }
+  function view(buf, c, name, Type) {
+    const [off, len] = c.layout[name] || [0, 0];
+    return new Type(buf, off, len / Type.BYTES_PER_ELEMENT);
+  }
+
+  let objects = {};
+  function clipPlanes() {
+    const axis = +el("clipAxis").value;
+    const slice = +el("sliceAxis").value;
+    const c = current;
+    if (!c) return [];
+    const pick = slice >= 0 ? slice : axis;
+    if (pick < 0) return [];
+    const lo = c.box[0][pick], hi = c.box[1][pick];
+    const value = slice >= 0 ? c.sections[slice].value : lo + (+el("clipPos").value / 1000) * (hi - lo);
+    const n = new THREE.Vector3(); n.setComponent(pick, -1);
+    return [new THREE.Plane(n, value)];
+  }
+
+  function applyVisibility() {
+    if (!objects.boundary) return;
+    const planes = clipPlanes();
+    for (const k of ["boundary", "edges", "input"]) if (objects[k]) objects[k].material.clippingPlanes = planes;
+    objects.boundary.visible = el("showBoundary").checked;
+    if (objects.edges) objects.edges.visible = el("showEdges").checked && el("showBoundary").checked;
+    if (objects.input) objects.input.visible = el("showInput").checked;
+    const slice = +el("sliceAxis").value;
+    for (let k = 0; k < 3; k++) {
+      if (objects["slice" + k]) objects["slice" + k].visible = slice === k;
+      if (objects["sliceLines" + k]) objects["sliceLines" + k].visible = slice === k;
+    }
+    el("clipPos").disabled = +el("clipAxis").value < 0 || slice >= 0;
+  }
+
+  async function select(name) {
+    const c = manifest.cases.find((x) => x.case === name);
+    if (!c) return;
+    current = c;
+    try { localStorage.setItem("atlas-case", name); } catch (e) {}
+    document.querySelectorAll(".case").forEach((b) => b.setAttribute("aria-current", b.dataset.case === name ? "true" : "false"));
+    el("vtitle").textContent = `${name} · ${DESC[name] || ""}`;
+    renderCard(c);
+    el("loading").hidden = false;
+    el("loading").textContent = `加载 ${name}（${(c.bytes / 1e6).toFixed(1)} MB）…`;
+    let buf;
+    try { buf = await loadBin(c); } catch (e) { el("loading").textContent = `无法加载 ${c.case} 的数据：${e.message}`; return; }
+    if (current !== c) return;
+    const g = three.group;
+    while (g.children.length) { const o = g.children.pop(); o.geometry && o.geometry.dispose(); }
+    objects = {};
+    const verts = view(buf, c, "verts", Float32Array);
+    const faces = view(buf, c, "faces", Uint32Array);
+    const keys = view(buf, c, "face_keys", Uint16Array);
+    const nf = faces.length / 3;
+    const pos = new Float32Array(nf * 9), col = new Float32Array(nf * 9);
+    const used = new Set();
+    for (let f = 0; f < nf; f++) {
+      const k = innerKey(c, keys[2 * f], keys[2 * f + 1]);
+      used.add(k);
+      const color = regionColor(c, k);
+      for (let v = 0; v < 3; v++) {
+        const i = faces[3 * f + v];
+        pos.set([verts[3 * i], verts[3 * i + 1], verts[3 * i + 2]], 9 * f + 3 * v);
+        col.set([color.r, color.g, color.b], 9 * f + 3 * v);
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    geo.computeVertexNormals();
+    objects.boundary = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.75, metalness: 0.0, flatShading: true, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }));
+    g.add(objects.boundary);
+    if (nf <= 400000) {
+      objects.edges = new THREE.LineSegments(new THREE.WireframeGeometry(geo), new THREE.LineBasicMaterial({ color: css("--ink"), transparent: true, opacity: 0.25 }));
+      g.add(objects.edges);
+    }
+    const inputs = [];
+    c.inputs.forEach((inp, k) => { const a = view(buf, c, "input" + k, Float32Array); if (a.length) inputs.push(a); });
+    if (inputs.length) {
+      const total = inputs.reduce((s, a) => s + a.length, 0);
+      const all = new Float32Array(total); let at = 0;
+      for (const a of inputs) { all.set(a, at); at += a.length; }
+      const ig = new THREE.BufferGeometry(); ig.setAttribute("position", new THREE.BufferAttribute(all, 3));
+      objects.input = new THREE.LineSegments(new THREE.WireframeGeometry(ig), new THREE.LineBasicMaterial({ color: css("--fail"), transparent: true, opacity: 0.6 }));
+      g.add(objects.input);
+    }
+    for (let k = 0; k < 3; k++) {
+      const tris = view(buf, c, `slice${k}_tris`, Float32Array);
+      const sk = view(buf, c, `slice${k}_keys`, Uint16Array);
+      if (!tris.length) continue;
+      const sc = new Float32Array(tris.length);
+      for (let t = 0; t < sk.length; t++) {
+        const color = regionColor(c, sk[t]);
+        for (let v = 0; v < 3; v++) sc.set([color.r, color.g, color.b], 9 * t + 3 * v);
+        used.add(sk[t]);
+      }
+      const sg = new THREE.BufferGeometry();
+      sg.setAttribute("position", new THREE.BufferAttribute(tris, 3));
+      sg.setAttribute("color", new THREE.BufferAttribute(sc, 3));
+      objects["slice" + k] = new THREE.Mesh(sg, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }));
+      const lines = view(buf, c, `slice${k}_lines`, Float32Array);
+      const lg = new THREE.BufferGeometry(); lg.setAttribute("position", new THREE.BufferAttribute(lines, 3));
+      objects["sliceLines" + k] = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: css("--ink"), transparent: true, opacity: 0.55 }));
+      g.add(objects["slice" + k]); g.add(objects["sliceLines" + k]);
+    }
+    el("legend").innerHTML = [...used].sort((a, b) => a - b).map((k) => `<span><i style="background:#${regionColor(c, k).getHexString()}"></i>${regionLabel(c, k)}</span>`).join("");
+    const lo = new THREE.Vector3(...c.box[0]), hi = new THREE.Vector3(...c.box[1]);
+    const centre = lo.clone().add(hi).multiplyScalar(0.5), size = hi.clone().sub(lo).length();
+    three.controls.target.copy(centre);
+    three.camera.near = size / 1000; three.camera.far = size * 20; three.camera.updateProjectionMatrix();
+    three.camera.position.copy(centre.clone().add(new THREE.Vector3(0.9, 0.7, 1.1).normalize().multiplyScalar(size * 1.5)));
+    applyVisibility();
+    el("loading").hidden = true;
+  }
+
+  function fmt(v) { return typeof v === "number" ? (Math.abs(v) < 1e-3 && v !== 0 ? v.toExponential(2) : (Number.isInteger(v) ? v.toLocaleString() : v.toFixed(4))) : v; }
+  function renderCard(c) {
+    const items = CHECKS.filter((k) => c.checks[k]).map((k) => {
+      const ck = c.checks[k];
+      const extra = Object.entries(ck).filter(([m, v]) => m !== "status" && v !== 0 && v !== undefined).slice(0, 4).map(([m, v]) => `${m}=${fmt(m.endsWith("_frac") ? v * 100 : v)}${m.endsWith("_frac") ? "%" : ""}`).join(" ");
+      return `<div class="check"><b>[${k}] ${NAMES[k] || ""}</b><span class="s ${ck.status}">${ck.status}</span><span class="m">${extra}</span></div>`;
+    }).join("");
+    el("card").innerHTML = `<h2>${c.case} · ${DESC[c.case] || ""}</h2>
+      <div class="facts"><span><b class="mono">${c.tets.toLocaleString()}</b> 四面体</span><span><b class="mono">${c.boundary_faces.toLocaleString()}</b> 材料边界面</span>${c.sheet_faces ? `<span><b class="mono">${c.sheet_faces.toLocaleString()}</b> 片面</span>` : ""}<span>输入：${c.inputs.map((i) => i.name).join("、") || "—"}</span></div>
+      <div class="checks">${items}</div>
+      <p class="note">材料边界按两侧区域中组分更多的一侧着色；红色线框为输入 STL。剖面显示中截面上每个被切四面体留下的多边形（按区域填色，黑线为单元边），同时在该平面处裁掉边界的一侧。</p>`;
+  }
+
+  ["showBoundary", "showInput", "showEdges", "sliceAxis", "clipAxis", "clipPos"].forEach((id) => el(id).addEventListener("input", applyVisibility));
+
+  fetch("manifest.json").then((r) => r.json()).then((m) => {
+    manifest = m;
+    renderList();
+    three = initThree();
+    let start = manifest.cases[0].case;
+    try { const s = localStorage.getItem("atlas-case"); if (s && manifest.cases.some((c) => c.case === s)) start = s; } catch (e) {}
+    const hash = (location.hash || "").slice(1);
+    if (hash && manifest.cases.some((c) => c.case === hash)) start = hash;
+    select(start);
+  }).catch((e) => { el("summary").textContent = "无法读取 manifest.json：" + e.message; });
+})();
+</script>

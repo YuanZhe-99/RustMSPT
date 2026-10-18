@@ -44,16 +44,6 @@ pub fn rebuild_topology(surface: &ArrangedSurface) -> RebuiltTopology {
     let vertices = &surface.vertices;
     let faces = &surface.faces;
 
-    let mut edge_faces: BTreeMap<(usize, usize), Vec<usize>> = BTreeMap::new();
-    for (face_index, face) in faces.iter().enumerate() {
-        for k in 0..3 {
-            let a = face.nodes[k];
-            let b = face.nodes[(k + 1) % 3];
-            let key = if a <= b { (a, b) } else { (b, a) };
-            edge_faces.entry(key).or_default().push(face_index);
-        }
-    }
-
     let component_ids: BTreeSet<i32> = surface
         .components
         .iter()
@@ -65,10 +55,16 @@ pub fn rebuild_topology(surface: &ArrangedSurface) -> RebuiltTopology {
     let mut updated_components: Vec<ArrangeComponent> = surface.components.clone();
 
     for component_id in &component_ids {
+        // **Closure is proved per component, over its whole member set** (plan M-4.0b, MG-05,
+        // geometry D-42). A face belongs to X when X is any of its tags, not only when X is the
+        // representative `face.component`: two identical cubes merge into faces tagged {1, 2} whose
+        // representative is 1, and selecting by it left component 2 with no face at all - S6 then
+        // read it as a sheet and its material vanished (A-16). And the edge count is taken over X's
+        // own faces only, so another component's face over an opening never closes it (A-15).
         let component_faces: Vec<usize> = faces
             .iter()
             .enumerate()
-            .filter(|(_, face)| face.component == *component_id)
+            .filter(|(_, face)| face.component == *component_id || face.components.contains(component_id))
             .map(|(index, _)| index)
             .collect();
 
@@ -76,19 +72,17 @@ pub fn rebuild_topology(surface: &ArrangedSurface) -> RebuiltTopology {
             continue;
         }
 
-        let mut boundary_edges = 0usize;
+        let mut edge_faces: BTreeMap<(usize, usize), usize> = BTreeMap::new();
         for face_index in &component_faces {
             let face = &faces[*face_index];
             for k in 0..3 {
                 let a = face.nodes[k];
                 let b = face.nodes[(k + 1) % 3];
                 let key = if a <= b { (a, b) } else { (b, a) };
-                let incident_count = edge_faces.get(&key).map(|v| v.len()).unwrap_or(0);
-                if incident_count == 1 {
-                    boundary_edges += 1;
-                }
+                *edge_faces.entry(key).or_default() += 1;
             }
         }
+        let boundary_edges = edge_faces.values().filter(|n| **n == 1).count();
 
         let is_closed = boundary_edges == 0;
         let component_idx = updated_components

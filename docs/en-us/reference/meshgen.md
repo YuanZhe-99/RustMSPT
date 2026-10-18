@@ -39,7 +39,7 @@ on, G4-2 strongly 2:1-balances that octree and tetrahedralizes it with the froze
 Freudenthal and centroid-fan templates, G5-1 classifies every lattice vertex
 against every solid component and seeds the ownership records, and G6-1 snaps the
 lattice onto the geometry's corners, feature curves and near-node crossings, and
-G6-2..G6-5 cut it. It returns `NotAvailable` for S9 through S11. The `s02_arranged` snapshot is emitted
+G6-2..G6-5 cut it; S10 flood-fills the partitions and S11 exports the result (plan M-6.2) - see "S10/S11 export" below. S9 (quality) is not built yet, so the exported mesh is the cut. The `s02_arranged` snapshot is emitted
 after box clipping and topology rebuild are complete; `s03_gapfield`, `s04_sizing`,
 `s06_classified`, `s07_snapped` and `s08_cut` follow it under `snapshots: all`, and
 `s05_lattice` and `s08_cut` are **key** snapshots.
@@ -76,7 +76,7 @@ the shape. `s08_cut` is the first snapshot that fits the input.
 | `MeshGenInput::resolved_priority` | `src/config/meshgen.rs:265` | Effective priority: the explicit value, else 0. Takes no file index - deriving a default from file order is the defect it replaced. |
 | `MeshGenParams::validate` | `src/config/meshgen.rs:279` | Enforce the PLAN §6.3 parse-time rejects; returns `Ok(())` or `InvalidConfig`. |
 | `deserialize_component_map` | `src/config/meshgen.rs:509` | Deserialize `by_component` as an ordered pair list preserving duplicate keys. |
-| `MeshGenPipeline` | `src/pipeline/meshgen.rs:57` | Runs normalized S0/S1/G2-1..G2-5/S3/S4, emits s02, s03 and s04, then returns `NotAvailable` for S5..S11. |
+| `MeshGenPipeline` | `src/pipeline/meshgen.rs:57` | Runs normalized S0..S8, S10's partitions and S11's export (delivered VTU, contract VTU, INP); exits Ok. |
 | `ConditionedSurface` / `ConditionStats` | `src/meshgen/surface.rs:88/116` | S0 geometry, persistent source-component ids, repair log, and aggregate counts. |
 | `SurfaceComponent` (`ArrangeComponent`) | `src/meshgen/surface.rs:99` | Contract component row `{X, priority Y, solid/sheet kind, closed}` shared by surface stages. |
 | `condition_surface` | `src/meshgen/surface.rs:135` | Weld on `q=0.1*eps`, drop exact degenerates, dedupe per source identity, orient/repair, and derive provisional components. |
@@ -175,6 +175,13 @@ the shape. `s08_cut` is the first snapshot that fits the input.
 | `PointClassifier::restrict_to_active` | `src/meshgen/classify.rs:679` | After S6, makes `triangles_of` return only faces that bound material (S6's `active_face`), while the inside test keeps every face. S8's face traces and fragment clips no longer cut along faces buried in a self-intersecting component's own union: gated a8 on-surface 98.455 -> 98.796 %, tets -5.8 %, link-polygon refusals 733 -> 263. |
 | `refresh_split_interfaces` | `src/meshgen/cut.rs:6975` | After the hanging-node repair, replaces an interface face no tet carries any more by its two halves at the node now on one of its edges, side elements recomputed; the repair splits every tet around an edge, including another tagged face on it (a3: 4 `[V12]` side_elems failures). |
 | `compact_unreferenced_nodes` | `src/meshgen/cut.rs:5778` | End of S8: drops every node no tet references and renumbers the rest in order (tets, interfaces, rim and curve edges, constraint arrays, `n_lattice_nodes`); a6a_r carried an S7-duplicated lattice node no cell used (plan M-2.6). |
+| `write_inp` | `src/meshgen/export.rs:83` | S11: the stage-11 contract document as an Abaqus INP - C3D4 in VTU order, REGION/PARTITION ELSETs, COMPONENT NSETs from N_ID, IFACE_X_POS/NEG surfaces from FaceTagSideElems, sections from `materials:` (unmapped key is an error unless `elset-only`). |
+| `parse_inp` | `src/meshgen/export.rs:274` | Parse the INP subset S11 writes (nodes, elements, ELSET/NSET, element surfaces, solid sections) for `[V10]`. |
+| `c3d4_face_of` | `src/meshgen/export.rs:64` | The C3D4 face number (S1..S4) of a tet whose three nodes are a given face. |
+| `partition_tets` | `src/meshgen/cut.rs:7694` | S10: union-find flood fill of the tets across every shared face except a sheet's, partitions numbered by their lowest tet. |
+| `check_v10` | `src/meshgen/verify.rs:1823` | [V10]: the companion INP cross-checked against the contract document by identity (nodes, elements, sets, surfaces, unmapped audit), every expectation recomputed from the document. |
+| `write_final` | `src/pipeline/meshgen.rs:1530` | S11: stamp stage-11 metadata and write the delivered tets-only volume and `_contract.vtu` at the configured output path. |
+| `SizingField::level_extent` | `src/meshgen/sizing.rs:1406` | Per-axis cell sides at a level: `root_size / 2^L * scale` - each axis stretched so whole cells tile the domain (plan M-6.2). |
 | `remove_flat_quad_tets` | `src/meshgen/cdt.rs:3385` | Removes flat tets from a constrained tetrahedralisation before the facet check: a vertex lying on an opposite edge splits every tet around that edge (a Steiner midpoint the Delaunay kept whole), and a flat quad tet is removed by 2-2-flipping one side\'s pyramid to the other diagonal; otherwise the flat tet and its face-neighbours are re-coned from one of their vertices with the cavity boundary kept (star test, no flat tet, volume); failing all three, one of the flat tet's edges that neither the hull nor a facet uses is removed (`remove_edge`), kept only when the flat count falls. Such a tet makes a facet read covered twice. Reference case 1 interior class 124 -> 84, gated a1 94.80 -> 95.91 %, a3 +0.2 points; the edge-removal move: reference case 1 refused facets 406 -> 226, gated on-surface 94.956 -> 95.346 %, a1 95.911 -> 96.882 %. |
 | `facet_plane` | `src/meshgen/cdt.rs:4493` | A §7.4 constraint facet's unit normal, offset and the band within which a face lies ON it: the facet's own deviation from its plane (its rim is snapped to the face traces, §6.43) plus `tol`. Used by the facet-coverage check, `regions_by_constraint` and the gated path's interface attribution; before it, a facet bent by its snap had none of its own faces counted and 90 % of A-3's "interior is not covered" refusals were this artefact. |
 | `constrained_tets_with_steiner` | `src/meshgen/cdt.rs:3786` | Plan M-2.1 on the gated path: `constrained_tets`, then up to three rounds of Steiner points on the constraint - (a) the midpoint of each facet edge the tetrahedralisation lacks, unless both ends lie in one cell face plane (J1), accepted only when `intern` creates a NEW node; (b) facet-plane crossings of mesh edges inside the facet; (c) on a thin-tet or uncovered-facet refusal, a point strictly inside the cell above each flat tet lying on a cell face (co-circular face nodes), a quarter of its longest edge in; (d) on a hull-recovery refusal ("the link polygon has no valid triangulation", "neither the boundary nor the facets survive"), the same point above every current hull face not in the frozen boundary, so the flip becomes a pyramid's (owner decision D-11: gated a8 99.12 -> 99.78 %, a3 98.91 -> 99.64 %, reference case 1 95.73 -> 97.70 %, at +1-8 % tets, +28 % on a7a/a7b, and more slivers, left to M-5). On refusal the facets and the arena are restored, so the facet-split fan sees exactly what it would have without the pass. Edge class 114 -> 49 (A-3), 25 -> 2 (A-6a), 1,835 -> 1,454 (A-8). |
@@ -274,14 +281,13 @@ it - a **background lattice** and a **maximum refinement level** below it:
 
 `MeshGenParams::resolution()` turns this into the bounds every sizing stage reads: `h_max = h_bg`,
 `h_min = h_bg / 2^L`, and the octree root `h_bg * 2^m` anchored at the domain minimum with
-`m = ceil(log2 max n_i)`, so any count is realised exactly (17, not 16 or 32) and the lattice
-fits a non-cubic domain with no overhang when its extents are multiples of `h_bg`. Cells are
-cubic: `cells: [nx, ny, nz]` takes `h_bg = max_i E_i / n_i` and is accepted only if every axis
-realises its count. With both new keys absent the pipeline is unchanged to the byte, and stating
+`m = ceil(log2 max n_i)`, so any count is realised exactly (17, not 16 or 32). Each axis is
+stretched so its `n_i` cells tile its extent exactly (plan M-6.2), so the lattice never overhangs:
+`cells: [nx, ny, nz]` takes `h_bg = max_i E_i / n_i` (the longest cell) and realises every count,
+and `size`/`size_frac` take `n_i = ceil(E_i / h_bg)`. With both new keys absent the pipeline is unchanged to the byte, and stating
 the ladder gives the same mesh as fractions equal to its `h_max`/`h_min`. `[S4/RES]` reports the
 realised ladder. Rejects: the fractions together with the ladder; one half of the ladder alone;
-`auto` (derived resolution, plan M-4.6); two background forms at once; an inconsistent triple
-(the message names the consistent triples on either side); `max_level > 12`; more than 31 index
+`auto` (derived resolution, plan M-4.6); two background forms at once; `max_level > 12`; more than 31 index
 bits; the envelope rule on the realised finest edge; `inputs[].max_level` above the global level.
 
 `inputs[].max_level` caps how deep that input's own sizing sources may ask (curvature, feature
@@ -371,11 +377,37 @@ actionable key list; it lands with the S11 export driver (G9-2), not in the
 9. Segment thin regions (G3-2), report every converted region as `[THIN]` and every
    gated one as an aggregated `[THIN-SKIP]` WARN with its per-check histogram, then
    run the coupling driver and report its iterations, `h`, and any lock.
-10. Return `Err(NotAvailable)` naming S4..S11, so a partial run cannot be mistaken
-    for a contract-complete mesh.
+10. Run S4..S8, then S10/S11: write the stage-11 document at `output.vtu` (the tets-only
+    volume) and `<stem>_contract.vtu`, the Abaqus INP at `output.abaqus` (default `<stem>.inp`),
+    and return `Ok` - `mesh` exits 0.
 
 See [`mesh.md`](../examples/mesh.md) for captured output of the current partial run and a
 parse-reject run.
+
+## S10/S11 export (plan M-6.1, M-6.2)
+
+**The domain box is a lattice plane, so nothing is ever trimmed.** The background octree used to
+be a cube on the domain's longest axis, so a non-cubic domain overhung its box by up to one cell
+and left S11 a trim that no stage could perform without remeshing. Each axis is now stretched
+(`SizingField::scale`, each component in (0.5, 1]) so that a whole number of forest-level cells
+tiles its extent - `ceil(extent / cell)` cells, or the ladder's stated count - and the existing
+subtree cut then drops everything outside the box exactly. Cells are boxes, not cubes, wherever an
+extent is not a whole number of cells; the integer predicates are unchanged (a positive per-axis
+scaling preserves every orientation sign). A unit-cube domain gets `scale = (1, 1, 1)` and is
+byte-identical; a ladder may now state any per-axis count (`cells: [20, 20, 10]` on any domain).
+
+**S10.** `partition_tets` flood-fills the tets across every shared face except a sheet's
+(`FaceTagKind = 1`), numbering partitions by their lowest tet; `partition_id` is written on every
+tet (`-1` on other cells) and `[V8]` recomputes it independently.
+
+**S11.** With no S9 yet, the stage-11 document is the cut, written to `output.vtu` (the tets-only
+volume) and `<stem>_contract.vtu`, and viewed as an Abaqus INP (`export.rs`): node `i` is point
+`i-1`, element `c` is tet cell `c-1`, `C3D4`; `ELSET=REGION_<k>` per region key, `PARTITION_<p>` per
+partition, `NSET=COMPONENT_<X>` from each node's `N_ID`, and `*SURFACE, NAME=IFACE_<X>_POS/NEG` on
+the `(elem+, elem-)` sides `FaceTagSideElems` records. Material mapping: without a `materials:`
+block the INP carries sets and no sections; with one, every region key must resolve (a singleton
+through `by_component`, a multi-ID key through `by_region_key` as `"X+Y"`) or the run fails naming
+the keys, unless `unmapped: elset-only`. `mesh-verify` cross-checks the INP (`inp:`) as `[V10]`.
 
 ## G2-1 through G2-3 arrangement
 

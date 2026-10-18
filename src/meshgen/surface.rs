@@ -934,3 +934,83 @@ fn compute_components(faces: &[([usize; 3], i64)]) -> (Vec<i64>, usize) {
 
     (comp_id, n_components)
 }
+
+// AI-FUNC-SUMMARY:
+// Purpose: Split one input's faces into the bodies it holds (plan M-4.0a, MG-04): shells connected
+//   through shared vertices, then shells whose bounding boxes overlap merged into one body.
+// Inputs: the faces (vertex-index triples) of ONE input, and the vertex table.
+// Returns: per face, its body index - bodies numbered by their lowest face.
+// Side effects: None.
+// Notes: The overlap rule is what keeps a strut lattice one body (its struts are separate shells
+//   that interpenetrate) and a cavity inside a solid part of that solid, while two disjoint cubes,
+//   or a cube beside an open quad, become two. A body's kind is then decided on its own faces, so
+//   a closed shell and an open one in one file are a solid and a sheet, not one sheet. Boxes that
+//   overlap without the shells touching (interlocked rings) merge too - stated, not hidden.
+pub fn input_bodies(faces: &[[usize; 3]], vertices: &[Vec3]) -> Vec<usize> {
+    let n = faces.len();
+    let mut parent: Vec<usize> = (0..n).collect();
+    fn find(parent: &mut [usize], mut x: usize) -> usize {
+        while parent[x] != x {
+            parent[x] = parent[parent[x]];
+            x = parent[x];
+        }
+        x
+    }
+    let union = |parent: &mut Vec<usize>, a: usize, b: usize| {
+        let (ra, rb) = (find(parent, a), find(parent, b));
+        if ra != rb {
+            parent[ra.max(rb)] = ra.min(rb);
+        }
+    };
+    let mut by_vertex: BTreeMap<usize, usize> = BTreeMap::new();
+    for (at, face) in faces.iter().enumerate() {
+        for v in face {
+            match by_vertex.get(v) {
+                Some(other) => union(&mut parent, at, *other),
+                None => {
+                    by_vertex.insert(*v, at);
+                }
+            }
+        }
+    }
+    // Shell boxes, then merge overlapping ones until nothing changes (a chain of overlaps is one body).
+    loop {
+        let mut boxes: BTreeMap<usize, (Vec3, Vec3)> = BTreeMap::new();
+        for (at, face) in faces.iter().enumerate() {
+            let root = find(&mut parent, at);
+            let entry = boxes.entry(root).or_insert((
+                Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY),
+                Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY),
+            ));
+            for v in face {
+                let p = vertices[*v];
+                entry.0 = Vec3::new(entry.0.x.min(p.x), entry.0.y.min(p.y), entry.0.z.min(p.z));
+                entry.1 = Vec3::new(entry.1.x.max(p.x), entry.1.y.max(p.y), entry.1.z.max(p.z));
+            }
+        }
+        let roots: Vec<(usize, (Vec3, Vec3))> = boxes.into_iter().collect();
+        let mut merged = false;
+        for i in 0..roots.len() {
+            for j in i + 1..roots.len() {
+                let (a, b) = (roots[i].1, roots[j].1);
+                let overlap = a.0.x <= b.1.x && b.0.x <= a.1.x && a.0.y <= b.1.y && b.0.y <= a.1.y
+                    && a.0.z <= b.1.z && b.0.z <= a.1.z;
+                if overlap && find(&mut parent, roots[i].0) != find(&mut parent, roots[j].0) {
+                    union(&mut parent, roots[i].0, roots[j].0);
+                    merged = true;
+                }
+            }
+        }
+        if !merged {
+            break;
+        }
+    }
+    let mut label: BTreeMap<usize, usize> = BTreeMap::new();
+    (0..n)
+        .map(|at| {
+            let root = find(&mut parent, at);
+            let next = label.len();
+            *label.entry(root).or_insert(next)
+        })
+        .collect()
+}
