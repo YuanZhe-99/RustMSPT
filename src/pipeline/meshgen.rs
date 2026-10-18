@@ -14,7 +14,7 @@ use crate::meshgen::sizing::{
     SizingLookup, SizingOptions, SizingSource,
 };
 use crate::meshgen::classify::{Side, 
-    classified_to_doc, classify_lattice_with, ClassifyOptions, PointClassifier,
+    classified_to_doc, classify_lattice_memo, ClassifyOptions, PointClassifier,
 };
 use crate::meshgen::snap::{snap_lattice, snapped_to_doc, SnapOptions};
 use crate::meshgen::cut::{cut_lattice, cut_to_doc, CutOptions};
@@ -912,6 +912,19 @@ impl Pipeline for MeshGenPipeline {
         // clause. The cap bounds cost, not correctness.
         let mut k1_extra: Vec<SizingSource> = Vec::new();
         let mut k1_passes = 0usize;
+        // S6's ray-parity classifier is a function of the surface alone: built once for every K1
+        // pass. The cut's classifier (restricted to active faces, coplanar facets merged) is
+        // built on the first pass and kept in `final_classifier`.
+        let base_classifier = PointClassifier::build(
+            &clipped,
+            &topo,
+            &ClassifyOptions {
+                domain_min,
+                domain_max,
+            },
+        );
+        let mut final_classifier: Option<(Vec<bool>, PointClassifier)> = None;
+        let mut vertex_memo = crate::meshgen::classify::VertexMemo::default();
         let (sizing_lookup, sizing_field, balanced, lattice, point_classifier, classification, snapped) = loop {
             let mut pass_sources = sources.clone();
             pass_sources.extend(k1_extra.iter().cloned());
@@ -925,55 +938,66 @@ impl Pipeline for MeshGenPipeline {
                 build_lattice_with_splits(&balanced, &LatticeOptions::default(), balance_splits)?;
             clock = stage_time("S5-lattice", clock);
 
-            let mut point_classifier = PointClassifier::build(
-                &clipped,
-                &topo,
-                &ClassifyOptions {
-                    domain_min,
-                    domain_max,
-                },
-            );
-            let classification = classify_lattice_with(
+            let classification = classify_lattice_memo(
                 &lattice,
-                &point_classifier,
+                &base_classifier,
                 &clipped,
                 &ClassifyOptions {
                     domain_min,
                     domain_max,
                 },
+                &mut vertex_memo,
             );
             // S8 cuts along the faces that bound material, not the ones S6 found buried in a
             // component's own union (`restrict_to_active`); the inside test keeps every face.
-            point_classifier.restrict_to_active(&classification.active_face);
-            // A flat face is one facet, not the input file's triangles of it: coplanar neighbours
-            // within the weld quantum (Invariant M1's 0.1 eps) merge into convex polygons, so an
-            // STL rectangle's diagonal is no longer an edge the mesh has to carry.
-            let mut curve_edges: Vec<[Vec3; 2]> = clipped
-                .curves
-                .iter()
-                .flat_map(|c| c.nodes.windows(2).map(|w| [clipped.vertices[w[0]], clipped.vertices[w[1]]]))
-                .collect();
-            // A triangle touching an intersection curve keeps the input's own edges: at a
-            // transversal junction (the surfaces meet at 45-57 deg) whose component-1 wedge inside
-            // one cell is 1 % of eps thick, a merged facet left a curve node with no tet of one body
-            // (reference case 2, `[V9]`). One-component sharp edges do not pin anything.
-            let junction_nodes: std::collections::BTreeSet<usize> = clipped
-                .curves
-                .iter()
-                .filter(|c| c.components.len() > 1)
-                .flat_map(|c| c.nodes.iter().copied())
-                .collect();
-            for face in &clipped.faces {
-                if face.nodes.iter().any(|n| junction_nodes.contains(n)) {
-                    for k in 0..3 {
-                        curve_edges.push([
-                            clipped.vertices[face.nodes[k]],
-                            clipped.vertices[face.nodes[(k + 1) % 3]],
-                        ]);
+            // Everything below depends on the surface alone (`active_face` is a property of the
+            // arranged faces, not of the lattice), so it is built on the first K1 pass and reused;
+            // a pass that reports a different `active_face` rebuilds it.
+            if final_classifier
+                .as_ref()
+                .is_none_or(|(active, _)| *active != classification.active_face)
+            {
+                let mut point_classifier = PointClassifier::build(
+                    &clipped,
+                    &topo,
+                    &ClassifyOptions {
+                        domain_min,
+                        domain_max,
+                    },
+                );
+                point_classifier.restrict_to_active(&classification.active_face);
+                // A flat face is one facet, not the input file's triangles of it: coplanar neighbours
+                // within the weld quantum (Invariant M1's 0.1 eps) merge into convex polygons, so an
+                // STL rectangle's diagonal is no longer an edge the mesh has to carry.
+                let mut curve_edges: Vec<[Vec3; 2]> = clipped
+                    .curves
+                    .iter()
+                    .flat_map(|c| c.nodes.windows(2).map(|w| [clipped.vertices[w[0]], clipped.vertices[w[1]]]))
+                    .collect();
+                // A triangle touching an intersection curve keeps the input's own edges: at a
+                // transversal junction (the surfaces meet at 45-57 deg) whose component-1 wedge inside
+                // one cell is 1 % of eps thick, a merged facet left a curve node with no tet of one body
+                // (reference case 2, `[V9]`). One-component sharp edges do not pin anything.
+                let junction_nodes: std::collections::BTreeSet<usize> = clipped
+                    .curves
+                    .iter()
+                    .filter(|c| c.components.len() > 1)
+                    .flat_map(|c| c.nodes.iter().copied())
+                    .collect();
+                for face in &clipped.faces {
+                    if face.nodes.iter().any(|n| junction_nodes.contains(n)) {
+                        for k in 0..3 {
+                            curve_edges.push([
+                                clipped.vertices[face.nodes[k]],
+                                clipped.vertices[face.nodes[(k + 1) % 3]],
+                            ]);
+                        }
                     }
                 }
+                point_classifier.merge_coplanar(0.1 * eps, &curve_edges);
+                final_classifier = Some((classification.active_face.clone(), point_classifier));
             }
-            point_classifier.merge_coplanar(0.1 * eps, &curve_edges);
+            let point_classifier = &final_classifier.as_ref().expect("built above").1;
             clock = stage_time("S6", clock);
 
             let snapped = snap_lattice(
@@ -1179,7 +1203,7 @@ impl Pipeline for MeshGenPipeline {
                 sizing_field,
                 balanced,
                 lattice,
-                point_classifier,
+                final_classifier.take().expect("built on the first pass").1,
                 classification,
                 snapped,
             );

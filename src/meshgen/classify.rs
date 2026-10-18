@@ -929,6 +929,37 @@ pub fn classify_lattice_with(
     surface: &ArrangedSurface,
     options: &ClassifyOptions,
 ) -> Classification {
+    classify_lattice_memo(lattice, classifier, surface, options, &mut VertexMemo::default())
+}
+
+/// Per-vertex S6 answers keyed by the vertex's exact coordinates: the inside bit per solid slot
+/// and the vertex's own diagnostic counts, so a reused answer reproduces the same statistics.
+pub type VertexMemo = std::collections::HashMap<[u64; 3], (SmallVec<[bool; 4]>, [usize; 5])>;
+
+// AI-FUNC-SUMMARY:
+// Purpose: `classify_lattice_with`, reusing per-vertex answers from earlier calls on the same
+//   classifier and surface.
+// Inputs: as `classify_lattice_with`, plus the memo (empty on the first call).
+// Returns: Classification - identical to `classify_lattice_with`'s.
+// Side effects: adds this lattice's new vertices to the memo.
+// Notes: A vertex's answer is a pure function of its position, the classifier and the ray
+//   sequence, so a lattice vertex the K1 loop did not move is not re-shot. The memo is only valid
+//   for one classifier; never share it across surfaces. It is looked up, never iterated.
+pub fn classify_lattice_memo(
+    lattice: &Lattice,
+    classifier: &PointClassifier,
+    surface: &ArrangedSurface,
+    options: &ClassifyOptions,
+    memo: &mut VertexMemo,
+) -> Classification {
+    let s6_timing = std::env::var_os("RUSTMSPT_TIME_STAGES").is_some();
+    let mut s6_clock = std::time::Instant::now();
+    let mut s6_lap = |label: &str| {
+        if s6_timing {
+            println!("[S6-TIME] {} {:?}", label, s6_clock.elapsed());
+        }
+        s6_clock = std::time::Instant::now();
+    };
     let priority_of: BTreeMap<i32, u32> = surface
         .components
         .iter()
@@ -959,6 +990,11 @@ pub fn classify_lattice_with(
             .par_chunks_mut(slots)
             .zip(lattice.nodes.par_iter())
             .map(|(row, point)| {
+                let key = [point.x.to_bits(), point.y.to_bits(), point.z.to_bits()];
+                if let Some((bits, counts)) = memo.get(&key) {
+                    row.copy_from_slice(bits);
+                    return (counts[0], counts[1], counts[2], counts[3], counts[4]);
+                }
                 let mut first = 0usize;
                 let mut reshoots = 0usize;
                 let mut defective = 0usize;
@@ -1004,7 +1040,24 @@ pub fn classify_lattice_with(
             })
             .collect()
     };
+    if slots > 0 {
+        for ((point, row), counts) in lattice
+            .nodes
+            .iter()
+            .zip(vertex_inside.chunks(slots))
+            .zip(per_vertex.iter())
+        {
+            let key = [point.x.to_bits(), point.y.to_bits(), point.z.to_bits()];
+            memo.entry(key).or_insert_with(|| {
+                (
+                    row.iter().copied().collect(),
+                    [counts.0, counts.1, counts.2, counts.3, counts.4],
+                )
+            });
+        }
+    }
 
+    s6_lap("vertex parity");
     let mut stats = ClassifyStats {
         n_vertices: lattice.nodes.len(),
         n_solid_components: slots,
@@ -1089,6 +1142,7 @@ pub fn classify_lattice_with(
         .collect();
     let region_key: Vec<i32> = keys.iter().map(|key| index_of[key]).collect();
 
+    s6_lap("records");
     // Active-patch filter (PLAN §5.2): a face strictly inside a strictly
     // higher-priority solid has the same resolved label on both sides, so it
     // separates nothing and is skipped by refinement, snap and cut. A sheet is
@@ -1208,6 +1262,7 @@ pub fn classify_lattice_with(
             true
         })
         .collect();
+    s6_lap("active faces");
     stats.n_inactive_faces = active_face.iter().filter(|active| !**active).count();
 
     Classification {
