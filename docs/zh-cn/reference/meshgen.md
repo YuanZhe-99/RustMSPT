@@ -154,6 +154,7 @@ meshgen:
 | `materials.unmapped` / `snapshots` | - | `error` / `key` |
 | `acceleration` | - | `AccelerationConfig::default()`（`mode: auto`） |
 | `verify` | - | `VerifyGateParams::default()`（全部门限取契约默认） |
+| `Mesh::bad_list` | `src/meshgen/improve.rs` | 未达标的存活四面体及其 AR，按下标升序。每个四面体槽缓存其 AR 与门槛判定；对槽节点或节点位置的每次写入都会把受影响的四面体标为过期，只重算过期的槽（并行计算、按下标收集），所以列表与全量扫描相同。a8 的 S9 10.2 -> 6.5 s。`RUSTMSPT_TIME_STAGES` 还会打印 `[S9-TIME] move <kind>` 的耗时、尝试与成功次数。 |
 | `curve_pierce_points_grouped` | `src/meshgen/cut.rs` | 对所有锁定曲线只遍历一次晶格的 `curve_pierce_points`；每个命中带曲线下标，排序、共边重复剔除和先到先得映射按曲线分别执行，所以每张表与单曲线调用相同。取代了逐曲线遍历晶格（a8：972 条曲线，S8 中 68 s -> 0.15 s）。 |
 | `region_records` | `src/meshgen/cut.rs` | §7.4 网格化单元的 §7.5：每个子区域一条归属记录，在其最大四面体处采样（并列取下标小者）。是单元的纯函数，所以 S8 在串行组装前并行计算所有网格化单元的记录（a8 组装 16 -> 5.8 s）。 |
 | `AsmLap` | `src/meshgen/cut.rs` | 析构守卫：把耗时累加到组装循环某一分支的总计，在 `RUSTMSPT_TIME_STAGES` 下打印为 `[S8-TIME] assembly by arm`。 |

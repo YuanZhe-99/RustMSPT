@@ -169,6 +169,11 @@ struct Mesh {
     refusals: std::cell::RefCell<BTreeMap<usize, usize>>,
     /// `ImproveOptions::weld`, at least `tol`: the coplanarity bound of `try_unfold`.
     weld: f64,
+    /// Per tet slot: its aspect ratio and whether it misses the gate, valid where `fresh` is set.
+    /// Every write to a slot's nodes or to a node's position clears `fresh` for the tets it
+    /// touches, so `bad_list` recomputes only what changed and returns what a full scan would.
+    quality: Vec<(f64, bool)>,
+    fresh: Vec<bool>,
 }
 
 const BOX_BASE: u32 = u32::MAX - 16;
@@ -283,6 +288,55 @@ impl Mesh {
 
     fn tet_points(&self, t: [u32; 4]) -> [Vec3; 4] {
         t.map(|n| self.points[n as usize])
+    }
+
+    // AI-FUNC-SUMMARY: Mark one tet slot's cached quality stale; returns nothing; side effects: clears `fresh[slot]`.
+    fn stale(&mut self, slot: u32) {
+        if let Some(f) = self.fresh.get_mut(slot as usize) {
+            *f = false;
+        }
+    }
+
+    // AI-FUNC-SUMMARY:
+    // Purpose: The alive tets missing the gate, recomputing only the slots a move has touched since
+    //   the last call.
+    // Inputs: the gate.
+    // Returns: (aspect ratio, tet) for every alive tet missing the gate, ascending by tet - exactly
+    //   what a full scan of every alive tet returns.
+    // Side effects: refreshes `quality`/`fresh`.
+    // Notes: The stale slots are evaluated in parallel (`aspect_ratio`, `min_dihedral_deg`).
+    fn bad_list(&mut self, opts: &ImproveOptions) -> Vec<(f64, u32)> {
+        let n = self.tets.len();
+        self.quality.resize(n, (0.0, false));
+        self.fresh.resize(n, false);
+        let stale: Vec<u32> = (0..n as u32)
+            .filter(|i| self.alive[*i as usize] && !self.fresh[*i as usize])
+            .collect();
+        let (points, tets) = (&self.points, &self.tets);
+        let computed: Vec<(f64, bool)> = stale
+            .par_iter()
+            .map(|i| {
+                let p = tets[*i as usize].map(|x| points[x as usize]);
+                let ar = aspect_ratio(p);
+                (ar, ar >= opts.ar_target || min_dihedral_deg(p) < opts.min_dihedral_deg)
+            })
+            .collect();
+        for (i, q) in stale.iter().zip(computed) {
+            self.quality[*i as usize] = q;
+            self.fresh[*i as usize] = true;
+        }
+        (0..n)
+            .filter(|i| self.alive[*i] && self.quality[*i].1)
+            .map(|i| (self.quality[i].0, i as u32))
+            .collect()
+    }
+
+    // AI-FUNC-SUMMARY: The worst aspect ratio over alive tets from the cache `bad_list` keeps fresh; returns f64 (0 when empty); side effects: none.
+    fn worst_ar(&self) -> f64 {
+        (0..self.tets.len())
+            .filter(|i| self.alive[*i])
+            .map(|i| self.quality[i].0)
+            .fold(0.0f64, f64::max)
     }
 
     fn bad(&self, t: [u32; 4], opts: &ImproveOptions) -> bool {
@@ -583,6 +637,11 @@ impl Mesh {
         match best {
             Some((_, q)) => {
                 self.points[u as usize] = q;
+                for t in &self.node_tets[u as usize] {
+                    if let Some(f) = self.fresh.get_mut(*t as usize) {
+                        *f = false;
+                    }
+                }
                 true
             }
             None => false,
@@ -662,6 +721,7 @@ impl Mesh {
             };
             self.tets[slot as usize] = *t;
             self.alive[slot as usize] = true;
+            self.stale(slot);
             for x in t {
                 self.node_tets[*x as usize].push(slot);
             }
@@ -815,6 +875,7 @@ impl Mesh {
                 self.node_tets[x as usize].retain(|y| *y != slot);
             }
             self.tets[slot as usize] = n;
+            self.stale(slot);
             for x in n {
                 self.node_tets[x as usize].push(slot);
             }
@@ -1009,6 +1070,7 @@ impl Mesh {
         }
         for (t, n) in keep.iter().zip(new_tets.iter()) {
             self.tets[*t as usize] = *n;
+            self.stale(*t);
             self.node_tets[v as usize].push(*t);
         }
         self.node_tets[u as usize].clear();
@@ -1076,20 +1138,6 @@ pub struct ApproximateInputs<'a> {
 }
 
 
-// AI-FUNC-SUMMARY: The alive tets that miss the gate (AR at or above target, or a dihedral below it), each with its aspect ratio, ascending by index; parallel, collected in index order (R-P1); returns Vec<(aspect ratio, tet)>; side effects: none.
-fn bad_tets(points: &[Vec3], tets: &[[u32; 4]], alive: &[bool], opts: &ImproveOptions) -> Vec<(f64, u32)> {
-    tets.par_iter()
-        .enumerate()
-        .filter_map(|(i, t)| {
-            if !alive[i] {
-                return None;
-            }
-            let p = t.map(|n| points[n as usize]);
-            let ar = aspect_ratio(p);
-            (ar >= opts.ar_target || min_dihedral_deg(p) < opts.min_dihedral_deg).then_some((ar, i as u32))
-        })
-        .collect()
-}
 // AI-FUNC-SUMMARY:
 // Purpose: `improve_doc`, optionally in approximate mode (plan M-4.5b): smooth surface nodes may
 //   also move, each face they touch held within the tolerance of the input surface.
@@ -1143,6 +1191,8 @@ pub fn improve_doc_with(doc: &mut VtuDoc, opts: &ImproveOptions, approximate: Op
         weld: opts.weld.max(1.0e-9 * diag),
         refusals: std::cell::RefCell::new(BTreeMap::new()),
         approx: None,
+        quality: Vec::new(),
+        fresh: Vec::new(),
     };
     let mut tet_cell: Vec<usize> = Vec::new();
     let mut face_cell: Vec<usize> = Vec::new();
@@ -1282,24 +1332,28 @@ pub fn improve_doc_with(doc: &mut VtuDoc, opts: &ImproveOptions, approximate: Op
             by_surface,
         });
     }
-    let count_bad = |mesh: &Mesh| -> (usize, f64) {
-        let bad = bad_tets(&mesh.points, &mesh.tets, &mesh.alive, opts).len();
-        // A maximum is an element of the input, so the parallel reduction is order-free.
-        let points = &mesh.points;
-        let worst = mesh
-            .tets
-            .par_iter()
-            .zip(mesh.alive.par_iter())
-            .filter(|(_, alive)| **alive)
-            .map(|(t, _)| aspect_ratio(t.map(|n| points[n as usize])))
-            .reduce(|| 0.0f64, f64::max);
-        (bad, worst)
+    // A maximum is an element of the input, so it does not depend on the order it is taken in.
+    let count_bad = |mesh: &mut Mesh| -> (usize, f64) {
+        let bad = mesh.bad_list(opts).len();
+        (bad, mesh.worst_ar())
     };
     stats.tets_before = mesh.tets.len();
-    (stats.bad_before, stats.worst_ar_before) = count_bad(&mesh);
+    (stats.bad_before, stats.worst_ar_before) = count_bad(&mut mesh);
     lap("setup");
+    let mut move_time = [std::time::Duration::ZERO; 5];
+    let mut move_count = [[0usize; 2]; 5];
+    macro_rules! timed {
+        ($slot:expr, $call:expr) => {{
+            let started = std::time::Instant::now();
+            let ok = $call;
+            move_time[$slot] += started.elapsed();
+            move_count[$slot][0] += 1;
+            move_count[$slot][1] += usize::from(ok);
+            ok
+        }};
+    }
     for _ in 0..opts.max_passes {
-        let mut order: Vec<(f64, u32)> = bad_tets(&mesh.points, &mesh.tets, &mesh.alive, opts);
+        let mut order: Vec<(f64, u32)> = mesh.bad_list(opts);
         order.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
         let mut done = 0usize;
         for (_, t) in order {
@@ -1321,7 +1375,7 @@ pub fn improve_doc_with(doc: &mut VtuDoc, opts: &ImproveOptions, approximate: Op
             edges.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
             'edge: for (_, x, y) in edges.into_iter().take(3) {
                 for (u, v) in [(x, y), (y, x)] {
-                    if mesh.try_collapse(u, v) {
+                    if timed!(0, mesh.try_collapse(u, v)) {
                         done += 1;
                         break 'edge;
                     }
@@ -1331,7 +1385,7 @@ pub fn improve_doc_with(doc: &mut VtuDoc, opts: &ImproveOptions, approximate: Op
         // Then flip around what is still bad: 3-2 on its edges, 2-3 on its faces.
         let mut flipped = 0usize;
         let bad_now: Vec<u32> =
-            bad_tets(&mesh.points, &mesh.tets, &mesh.alive, opts).into_iter().map(|(_, t)| t).collect();
+            mesh.bad_list(opts).into_iter().map(|(_, t)| t).collect();
         for t in bad_now {
             if !mesh.alive[t as usize] {
                 continue;
@@ -1340,19 +1394,19 @@ pub fn improve_doc_with(doc: &mut VtuDoc, opts: &ImproveOptions, approximate: Op
             if !mesh.bad(tet, opts) {
                 continue;
             }
-            let mut done_here = mesh.try_unfold(t, mesh.tol);
+            let mut done_here = timed!(1, mesh.try_unfold(t, mesh.tol));
             for (i, j) in [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)] {
                 if done_here {
                     break;
                 }
-                if mesh.try_flip32(tet[i], tet[j]) {
+                if timed!(2, mesh.try_flip32(tet[i], tet[j])) {
                     done_here = true;
                     break;
                 }
             }
             if !done_here {
                 for slots in TET_FACES {
-                    if mesh.try_flip23([tet[slots[0]], tet[slots[1]], tet[slots[2]]]) {
+                    if timed!(3, mesh.try_flip23([tet[slots[0]], tet[slots[1]], tet[slots[2]]])) {
                         done_here = true;
                         break;
                     }
@@ -1364,12 +1418,12 @@ pub fn improve_doc_with(doc: &mut VtuDoc, opts: &ImproveOptions, approximate: Op
         lap("collapse+flip");
         // Then smooth the nodes of whatever is still bad, in node order.
         let mut nodes: BTreeSet<u32> = BTreeSet::new();
-        for (_, t) in bad_tets(&mesh.points, &mesh.tets, &mesh.alive, opts) {
+        for (_, t) in mesh.bad_list(opts) {
             nodes.extend(mesh.tets[t as usize].iter().copied());
         }
         let mut moved = 0usize;
         for u in nodes {
-            moved += usize::from(mesh.try_smooth(u));
+            moved += usize::from(timed!(4, mesh.try_smooth(u)));
         }
         lap("smooth");
         stats.passes += 1;
@@ -1379,7 +1433,15 @@ pub fn improve_doc_with(doc: &mut VtuDoc, opts: &ImproveOptions, approximate: Op
             break;
         }
     }
-    (stats.bad_after, stats.worst_ar_after) = count_bad(&mesh);
+    if timing {
+        for (name, (time, count)) in ["collapse", "unfold", "flip32", "flip23", "smooth"]
+            .iter()
+            .zip(move_time.iter().zip(move_count.iter()))
+        {
+            println!("[S9-TIME] move {name}: {time:?} over {} attempt(s), {} taken", count[0], count[1]);
+        }
+    }
+    (stats.bad_after, stats.worst_ar_after) = count_bad(&mut mesh);
     if std::env::var_os("RUSTMSPT_S9_DIAG").is_some() {
         if let Some(approx) = &mesh.approx {
             let smooth = (0..mesh.points.len() as u32)
@@ -1401,12 +1463,12 @@ pub fn improve_doc_with(doc: &mut VtuDoc, opts: &ImproveOptions, approximate: Op
     // every later move (p1: 165 more bad tets when this ran in the passes).
     if mesh.weld > mesh.tol {
         let weld = mesh.weld;
-        for (_, t) in bad_tets(&mesh.points, &mesh.tets, &mesh.alive, opts) {
+        for (_, t) in mesh.bad_list(opts) {
             if mesh.alive[t as usize] && mesh.try_unfold(t, weld) {
                 stats.flips += 1;
             }
         }
-        (stats.bad_after, stats.worst_ar_after) = count_bad(&mesh);
+        (stats.bad_after, stats.worst_ar_after) = count_bad(&mut mesh);
     }
     stats.tets_after = mesh.alive.iter().filter(|a| **a).count();
     lap("count");
