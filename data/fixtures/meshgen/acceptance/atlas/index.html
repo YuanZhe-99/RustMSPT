@@ -128,7 +128,7 @@ header p { margin: 0; color: var(--muted); max-width: 70ch; line-height: 1.6; }
     ["原有九例", ["a1", "a2", "a3", "a4", "a6a", "a6b", "a7a", "a7b", "a8"]],
     ["旋转 23° 版本", ["a6a_r", "a6b_r", "a7a_r", "a7b_r", "a8_r"]],
     ["真实样件", ["p1"]],
-    ["P1 新算例（M-4.4）", ["a3r", "a4b", "a5", "a9", "a11", "a12", "a13", "a14a", "a14b", "a15", "a16"]],
+    ["P1 新算例（M-4.4）", ["a3r", "a4b", "a5", "a9", "a11", "a12", "a13", "a13p", "a14a", "a14b", "a15", "a16"]],
     ["参考数据集", ["TestCaseIntersect1", "TestCaseIntersect2", "TestCaseIntersect3"]],
   ];
   const DESC = {
@@ -137,7 +137,7 @@ header p { margin: 0; color: var(--muted); max-width: 70ch; line-height: 1.6; }
     a7b: "两块板，间隙（band 区）", a8: "支杆格子（自相交）", a6a_r: "a6a 旋转 23°", a6b_r: "a6b 旋转 23°",
     a7a_r: "a7a 旋转 23°", a7b_r: "a7b 旋转 23°", a8_r: "a8 旋转 23°", p1: "金属体与十个气孔（mm）",
     a3r: "a3 有序优先级：立方体胜出", a4b: "a4 有序优先级", a5: "立方体内含球体", a9: "格子贯穿球体",
-    a11: "开口片体贯穿域盒", a12: "a3 置于非立方域 1×1×0.6", a13: "含缺陷的球（重复/翻转三角形、裂缝）",
+    a11: "开口片体贯穿域盒", a12: "a3 置于非立方域 1×1×0.6", a13: "含缺陷的球（conservative 修复，按设计拒绝）", a13p: "含缺陷的球（permissive 修复）",
     a14a: "一个文件内两个分离立方体", a14b: "一个文件：立方体 + 开口四边形", a15: "缺一面的立方体 + 独立盖子",
     a16: "同一立方体输入两次",
     TestCaseIntersect1: "参考算例 1", TestCaseIntersect2: "参考算例 2", TestCaseIntersect3: "参考算例 3",

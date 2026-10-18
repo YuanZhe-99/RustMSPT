@@ -123,8 +123,10 @@ P1_CASES = [
     ("a11", ["a11_sheet.stl"], {}),
     # A-12: A-3 in a non-cubic box - the sphere and cube cross its top face.
     ("a12", ["a3_cube.stl", "a3_sphere.stl"], {"domain": ((0.0, 0.0, 0.0), (1.0, 1.0, 0.6))}),
-    # A-13: a defective sphere through the default (conservative) repair.
+    # A-13: a defective sphere. `conservative` (the default) refuses the orientation repair by
+    # design and names it; `permissive` applies it - both runs are the fixture.
     ("a13", ["a13_sphere_defective.stl"], {}),
+    ("a13p", ["a13_sphere_defective.stl"], {"repair": "permissive"}),
     # A-14a/b: two shells in one file.
     ("a14a", ["a14a_two_cubes.stl"], {}),
     ("a14b", ["a14b_cube_and_quad.stl"], {}),
@@ -158,7 +160,7 @@ CONFIG = """meshgen:
   envelope:
     eps_frac: 1.0e-4
   repair:
-    level: conservative
+    level: {repair}
   coincidence: merge
   fem_profile: implicit
   thin:
@@ -204,6 +206,7 @@ def write_config(case, stls, overrides):
         dmax=", ".join(repr(float(x)) for x in dmax),
         h_max_frac=overrides.get("h_max_frac", 0.05),
         h_min_frac=overrides.get("h_min_frac", 0.012),
+        repair=overrides.get("repair", "conservative"),
         out=os.path.join(WORK, case + ".vtu"),
     )
     path = os.path.join(WORK, case + ".yaml")

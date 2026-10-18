@@ -2427,6 +2427,16 @@ interior.
   gives it a trigger — G4-3 fails only if the transition cells, not the cut, are what breaks `[V4]`.
   *Acceptance:* the table; the top three producers of below-10° tets named per case; G4-3's verdict
   recorded with its number. *Tier T2. Multimodal: no.*
+  **Census landed 2026-10-17 (`data/output/acceptance_z24`, the `[PLC] dihedral by path` lines).**
+  Share of tets below 10 degrees, by the arm that emitted them, and how many of those inherit a needle
+  face: §6's table 0.05-1.8 % (a8 0.05, a4 0.05, a3 0.10, p1 0.27, a7a 0.83, a6a 1.80), 80-100 % needle;
+  §7.4-meshed **9.8-23.6 %** (a8 9.8, p1 13.1, a4 13.8, a3 15.1, a6a 18.7, a7a 22.9, a1 23.6), 88-97 %
+  needle; the facet-split fan **25-69 %** (a4 25, p1 26, a8 29, a6a 36, a3 37, a1 50, a7a 69), 79-98 %
+  needle; the residual whole-cell fans 16-24 %. So the top producer on every case is §7.4's kernel cells
+  by count and the facet-split fan by rate, and the bad element is two-dimensional first almost
+  everywhere - the face triangulation (M-5.2) and the near-edge trace points that make its needles
+  (M-5.3) are the levers, an interior pass (M-5.4) is not. G4-3 (post-snap transition quality) still
+  unmeasured: s07 is emitted only under `snapshots: all`.
 - **M-5.2. Quality face triangulation inside the J1 cache.** The `FaceTriCache` computes a face's
   triangulation once from the face's keys and constraints; a bounded quality refinement of that
   triangulation (Steiner points on the face computed as exact averages of face points, welded within
@@ -2720,13 +2730,13 @@ without the stated fallback.
 | M-4.0b | Closure per component, no borrowed faces (MG-05) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ◐ 2026-10-17: closure per X over the whole member set (every tag), edges counted over X's own faces - a16 keeps the second cube (`[V9]` PASS, `[V5]` FAIL -> WARN); a15 `[V1]` fixed, its opening still meshed off the lid (`[V13]` 83 %); D-41 items open |
 | M-4.2 | T-junction loop: retire or trace upstream | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ |
 | M-4.3 | Thin fixtures exercise S8b; `[V7]` non-vacuous | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — limb and gap cross-sections | ○ |
-| M-4.4 | P1 campaign: A-3-ranked, A-4b, A-5, A-9, A-11 open sheet, A-12 non-cubic domain, A-13 defective input, real datasets, placement sweep | T2 (T1 runs) | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — one render per new fixture | ◐ 2026-10-17: A-3r, A-4b, A-5, A-9, A-11, A-12, A-13, A-14a/b, A-15, A-16 built (`generate_p1_cases.py`) and in the matrix; all `[V1]`-`[V3]` PASS; A-11 meets its gate (2 partitions, sheet path wired into §7.4); A-13 needs the permissive level; open: a12 `[V6]`, a9 `[V6]`/`[V9]`, a3r P3 99.31 %, real datasets |
+| M-4.4 | P1 campaign: A-3-ranked, A-4b, A-5, A-9, A-11 open sheet, A-12 non-cubic domain, A-13 defective input, real datasets, placement sweep | T2 (T1 runs) | GLM 5.2 Max / GPT 5.6 Sol Medium | **yes** — one render per new fixture | ◐ 2026-10-17: A-3r, A-4b, A-5, A-9, A-11, A-12, A-13, A-14a/b, A-15, A-16 built (`generate_p1_cases.py`) and in the matrix; all `[V1]`-`[V3]` PASS; A-11 meets its gate (2 partitions, sheet path wired into §7.4); A-13 conservative refuses by design, A-13p (permissive) passes every check with each repair logged; open: a12 `[V6]`, a9 `[V6]`/`[V9]`, a3r P3 99.31 %, real datasets |
 | M-4.5 | Input decimation as S0 conditioning (D-1) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ |
 | M-4.6 | Resolution derived: the three `auto` combinations; D-10's options `thin_material`, `thin_gap`, `far_field`, every value; `curve_cells` re-measured; the fractions retired (G1, R-E4, R-E6) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ |
 | M-4.7 | A-10 forging fixture and the G4 gate: band, sheet and marked contact in one mesh | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — cross-section through the contact centre | ○ |
 | M-4.8 | `FaceTagOrientation` per member; one geometric side per contact face (MG-07) | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ◐ `FaceTagOrientation` per member landed (`3198276`); one geometric side per contact face open |
 | M-4.9 | The thin family A-17..A-20: tilted, irregular and non-uniform thin plates and gaps, orientation invariance (R-B3) | T2 / T3 | GLM 5.2 Max / GPT 5.6 Sol Medium; Kimi K3 Max / GPT 5.6 Sol Xhigh | **yes** — cross-sections of every fixture, A-17's five orientations side by side | ○ |
-| M-5.1 | Quality census by arm and dimension; G4-3 post-snap | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ○ — inherits D-11's cost (move (d): +1–8 % tets, a7a/a7b +28 %, more slivers) and D-12/D-13's sub-`eps` misattributed slivers (a4 5, a8 26 cells) |
+| M-5.1 | Quality census by arm and dimension; G4-3 post-snap | T2 | GLM 5.2 Max / GPT 5.6 Sol Medium | no | ◐ 2026-10-17: census by arm and needle/sliver on the matrix (§M-5.1); G4-3 open |
 | M-5.2 | Quality face triangulation in the J1 cache — gate | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ |
 | M-5.3 | Near-edge trace points, constrained to exact surface points (MG-11) | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ |
 | M-5.4 | S9 interior improvement under P3 | T3 | Kimi K3 Max / GPT 5.6 Sol Xhigh | no | ○ |
