@@ -228,7 +228,7 @@ PLAN §6.3 的拒绝在代码中强制执行，而非假设。出现以下任一
 
 **S10。** `partition_tets` 跨越除片体面（`FaceTagKind = 1`）之外的所有共享面对四面体做泛洪填充，按各分区最小四面体编号；`partition_id` 写在每个四面体上（其余单元为 `-1`），`[V8]` 独立重算。
 
-**S11。** 由于 S9 尚未实现，第 11 阶段文档即切割结果，写入 `output.vtu`（纯四面体体网格）与 `<stem>_contract.vtu`，并以 Abaqus INP 视图导出（`export.rs`）：节点 `i` 即点 `i-1`，单元 `c` 即四面体单元 `c-1`，类型 `C3D4`；每个区域键一个 `ELSET=REGION_<k>`，每个分区一个 `PARTITION_<p>`，按各节点 `N_ID` 生成 `NSET=COMPONENT_<X>`，并在 `FaceTagSideElems` 记录的 `(elem+, elem-)` 两侧生成 `*SURFACE, NAME=IFACE_<X>_POS/NEG`。材料映射：没有 `materials:` 块时 INP 只含集合、不含截面；有该块时每个区域键都必须可解析（单组分键经 `by_component`，多组分键经 `by_region_key` 以 `"X+Y"` 形式），否则运行失败并列出这些键，除非设置 `unmapped: elset-only`。`mesh-verify` 通过 `inp:` 将 INP 交叉检查为 `[V10]`。
+**S11。** 由于 S9 尚未实现，第 11 阶段文档即切割结果，写入 `output.vtu`（纯四面体体网格）与 `<stem>_contract.vtu`，并以 Abaqus INP 视图导出（`export.rs`）：节点 `i` 即点 `i-1`，单元 `c` 即四面体单元 `c-1`，类型 `C3D4`；每个区域键一个 `ELSET=REGION_<k>`，每个分区一个 `PARTITION_<p>`，按各节点 `N_ID` 生成 `NSET=COMPONENT_<X>`，并在每个组分的内侧与外侧生成 `*SURFACE, NAME=IFACE_<X>_IN/OUT`（`FaceTagSideElems` 是几何约定的 `(elem+, elem-)` 对，各成员的 `FaceTagOrientation` 指明其内侧：+1 为 elem+，−1 为 elem−）。材料映射：没有 `materials:` 块时 INP 只含集合、不含截面；有该块时每个区域键都必须可解析（单组分键经 `by_component`，多组分键经 `by_region_key` 以 `"X+Y"` 形式），否则运行失败并列出这些键，除非设置 `unmapped: elset-only`。`mesh-verify` 通过 `inp:` 将 INP 交叉检查为 `[V10]`。
 
 ## G2-1 至 G2-3 排布
 

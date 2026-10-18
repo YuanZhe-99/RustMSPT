@@ -734,7 +734,7 @@
 | `PointClassifier::restrict_to_active` | 网格生成 | `src/meshgen/classify.rs:679` | S6 之后让 `triangles_of` 只返回界定材料的面（S6 的 `active_face`），内外判定仍使用全部面。S8 的面迹与碎片裁剪不再沿自相交组分内部被埋没的面切割：门控 a8 贴面比例 98.455 → 98.796 %，四面体数 −5.8 %，链接多边形拒绝 733 → 263。 |
 | `refresh_split_interfaces` | 网格生成 | `src/meshgen/cut.rs:6975` | 悬挂节点修复之后，把不再被任何四面体承载的界面面替换为它在边上新节点处分出的两半，并重新计算两侧单元；修复会拆分一条边周围的所有四面体，包括该边上另一个带标签的面（a3：4 个 `[V12]` side_elems 失败）。 |
 | `compact_unreferenced_nodes` | 网格生成 | `src/meshgen/cut.rs:5778` | S8 结尾：删除没有任何四面体引用的节点，并按原顺序重编号其余节点；a6a_r 曾带有一个被 S7 重复吸附、无单元使用的点阵节点（计划 M-2.6）。 |
-| `write_inp` | 网格生成 | `src/meshgen/export.rs:83` | S11：把第 11 阶段契约文档写为 Abaqus INP——按 VTU 顺序的 C3D4、REGION/PARTITION 单元集、由 N_ID 生成的 COMPONENT 节点集、由 FaceTagSideElems 生成的 IFACE_X_POS/NEG 面，按 `materials:` 写截面（未映射键报错，除非 `elset-only`）。 |
+| `write_inp` | 网格生成 | `src/meshgen/export.rs:83` | S11：把第 11 阶段契约文档写为 Abaqus INP——按 VTU 顺序的 C3D4、REGION/PARTITION 单元集、由 N_ID 生成的 COMPONENT 节点集、由几何 FaceTagSideElems 对与 X 的 FaceTagOrientation 生成的 IFACE_X_IN/OUT 面（X 的内侧与外侧），按 `materials:` 写截面（未映射键报错，除非 `elset-only`）。 |
 | `parse_inp` | 网格生成 | `src/meshgen/export.rs:274` | 解析 S11 写出的 INP 子集（节点、单元、ELSET/NSET、单元面、实体截面），供 `[V10]` 使用。 |
 | `c3d4_face_of` | 网格生成 | `src/meshgen/export.rs:64` | 给定三节点面在四面体中对应的 C3D4 面号（S1..S4）。 |
 | `partition_tets` | 网格生成 | `src/meshgen/cut.rs:7694` | S10：跨越除片体面外的所有共享面对四面体做并查集泛洪，分区按最小四面体编号。 |

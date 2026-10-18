@@ -61,7 +61,7 @@ or the producing stage — a report never silently omits a check.
 | [V7] Sheets & thin | **partial** | sheet-face weldedness runs on volume stages; s00-s03 report SKIPPED because they contain no tets; one-layer band, mid-surface and rim conformance land with G7-1 |
 | [V8] Partitions | **full on volume stages** | sheet-blocked flood fill recomputed and compared with `partition_id` (up to renumbering), pinhole-leak heuristic, `expected_partitions` gate; s00-s03 report SKIPPED |
 | [V9] Junctions | skipped | lands with G6-4 |
-| [V10] Export completeness | **full when `inp:` is set** | the companion INP against the contract document by identity: node `i` = point `i-1` bit for bit, element `c` = tet cell `c-1`, every `REGION_k`/`PARTITION_p` ELSET, `COMPONENT_X` NSET and `IFACE_X_POS/NEG` surface recomputed from the document's arrays; unmapped regions INFO without sections, FAIL with them. SKIPPED without `inp:` |
+| [V10] Export completeness | **full when `inp:` is set** | the companion INP against the contract document by identity: node `i` = point `i-1` bit for bit, element `c` = tet cell `c-1`, every `REGION_k`/`PARTITION_p` ELSET, `COMPONENT_X` NSET and `IFACE_X_IN/OUT` surface recomputed from the document's arrays; unmapped regions INFO without sections, FAIL with them. SKIPPED without `inp:` |
 | [V11] Compare mode | **`--compare A B [--mode strict\|topology]`** | two files of one run: strict = cells, every array and the coordinates bit-identical; topology = cells and integer arrays equal, coordinates within `1e-6 * diag`, float arrays within 1 %. `ConfigHash` (names the config file) is never compared; the mode defaults to B's `DeterminismMode`. SKIPPED in a single-file run |
 | [V12] Provenance & stats | **full** | **contract validation** (contracts §4.2, plan MG-08) at the strength the metadata selects — every violated rule a `V12.contract` FAIL, the strength reported as INFO `V12.contract_strength` and metric `contract_strength` (0 geometry-only, 1 primary volume, 2 mixed contract); counts, metadata echo, `Counts`-vs-mesh agreement, `SchemaVersion` check, `StageIndex` range + filename cross-check (T-C6), and the **element-count attribution** the plan's P2 is steered on: per-`provenance` tet counts, and — when `parent_cell` is present under `RUSTMSPT_CUT_DIAG` — the S5 cells behind them and the emission rate per cell. The S5 cell is a lattice **tet**, so an untouched one emits exactly 1 and `tets_per_cell_*` reads directly as what that path costs over leaving the cell alone. |
 | [V13] Interface fidelity | **full when `surfaces:` is set** | the plan's P3, measured as **containment** (plan M-1.5): every material-boundary face must lie inside the union of input facets coplanar with it (`contained_area_frac`, `V13.not_contained`), and every input facet no higher-precedence body hides and not on the domain box must be covered by the mesh's boundary or tagged faces (`input_covered_area_frac`, `V13.boundary_missing`). The corner test below is the necessary half and stays. `V13.off_surface` is a **FAIL** whenever any material-boundary area is off the surface (contracts rev 1.3; plan M-1.0), one finding per offending face. See below — it is not a variant of [V5]. |
@@ -119,6 +119,12 @@ Design points worth knowing:
   holds the point (R-A4). p1's ten cavities outrank the metal around them and every cavity cell
   read as missing metal - 249,772 cells whose volume summed to the cavities' own - until the
   check masked by priority (plan M-2.6; p1 now 349).
+- **[V6] checks each tag's orientation** (plan M-4.8). `FaceTagSideElems` is the geometric
+  `(elem+, elem-)` pair (elem+ on the positive side of the face as emitted) and each member's
+  `FaceTagOrientation` names its inside (+1 elem+, -1 elem-). Where exactly one of the two tets carries
+  the component, the orientation must name that one (`V6.tag_orientation`, metrics
+  `tag_orientations_checked` / `tag_orientation_mismatches`). A document writing +1 for every member
+  fails on every face two bodies share - a6a's pre-fix contract: 893 of 32,180.
 - **[V5] switches denominators on self-intersecting input.** The divergence-theorem
   volume of a surface is exact only if the surface does not intersect itself. A body
   exported as a *union of overlapping parts* — a strut lattice, a bolted assembly —

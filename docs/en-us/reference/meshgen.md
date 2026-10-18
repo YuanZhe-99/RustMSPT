@@ -175,7 +175,7 @@ the shape. `s08_cut` is the first snapshot that fits the input.
 | `PointClassifier::restrict_to_active` | `src/meshgen/classify.rs:679` | After S6, makes `triangles_of` return only faces that bound material (S6's `active_face`), while the inside test keeps every face. S8's face traces and fragment clips no longer cut along faces buried in a self-intersecting component's own union: gated a8 on-surface 98.455 -> 98.796 %, tets -5.8 %, link-polygon refusals 733 -> 263. |
 | `refresh_split_interfaces` | `src/meshgen/cut.rs:6975` | After the hanging-node repair, replaces an interface face no tet carries any more by its two halves at the node now on one of its edges, side elements recomputed; the repair splits every tet around an edge, including another tagged face on it (a3: 4 `[V12]` side_elems failures). |
 | `compact_unreferenced_nodes` | `src/meshgen/cut.rs:5778` | End of S8: drops every node no tet references and renumbers the rest in order (tets, interfaces, rim and curve edges, constraint arrays, `n_lattice_nodes`); a6a_r carried an S7-duplicated lattice node no cell used (plan M-2.6). |
-| `write_inp` | `src/meshgen/export.rs:83` | S11: the stage-11 contract document as an Abaqus INP - C3D4 in VTU order, REGION/PARTITION ELSETs, COMPONENT NSETs from N_ID, IFACE_X_POS/NEG surfaces from FaceTagSideElems, sections from `materials:` (unmapped key is an error unless `elset-only`). |
+| `write_inp` | `src/meshgen/export.rs:83` | S11: the stage-11 contract document as an Abaqus INP - C3D4 in VTU order, REGION/PARTITION ELSETs, COMPONENT NSETs from N_ID, IFACE_X_IN/OUT surfaces (X's inside and outside, from the geometric FaceTagSideElems pair and X's FaceTagOrientation), sections from `materials:` (unmapped key is an error unless `elset-only`). |
 | `parse_inp` | `src/meshgen/export.rs:274` | Parse the INP subset S11 writes (nodes, elements, ELSET/NSET, element surfaces, solid sections) for `[V10]`. |
 | `c3d4_face_of` | `src/meshgen/export.rs:64` | The C3D4 face number (S1..S4) of a tet whose three nodes are a given face. |
 | `partition_tets` | `src/meshgen/cut.rs:7694` | S10: union-find flood fill of the tets across every shared face except a sheet's, partitions numbered by their lowest tet. |
@@ -403,8 +403,10 @@ tet (`-1` on other cells) and `[V8]` recomputes it independently.
 **S11.** With no S9 yet, the stage-11 document is the cut, written to `output.vtu` (the tets-only
 volume) and `<stem>_contract.vtu`, and viewed as an Abaqus INP (`export.rs`): node `i` is point
 `i-1`, element `c` is tet cell `c-1`, `C3D4`; `ELSET=REGION_<k>` per region key, `PARTITION_<p>` per
-partition, `NSET=COMPONENT_<X>` from each node's `N_ID`, and `*SURFACE, NAME=IFACE_<X>_POS/NEG` on
-the `(elem+, elem-)` sides `FaceTagSideElems` records. Material mapping: without a `materials:`
+partition, `NSET=COMPONENT_<X>` from each node's `N_ID`, and `*SURFACE, NAME=IFACE_<X>_IN/OUT` on
+X's inside and outside: `FaceTagSideElems` is the geometric `(elem+, elem-)` pair (elem+ on the
+positive side of the face as emitted) and each member's `FaceTagOrientation` names its inside (+1
+elem+, -1 elem-), so two bodies in contact carry opposite orientations (plan M-4.8). Material mapping: without a `materials:`
 block the INP carries sets and no sections; with one, every region key must resolve (a singleton
 through `by_component`, a multi-ID key through `by_region_key` as `"X+Y"`) or the run fails naming
 the keys, unless `unmapped: elset-only`. `mesh-verify` cross-checks the INP (`inp:`) as `[V10]`.

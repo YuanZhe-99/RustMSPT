@@ -1817,8 +1817,8 @@ fn face_area(points: &[Vec3], fk: &[i64; 3]) -> f64 {
 // Notes: Independent of the writer: every expectation is recomputed from the document's own arrays.
 //   Node `i` must be point `i-1` bit for bit, element `c` tet cell `c-1` node for node; each
 //   `REGION_k` / `PARTITION_p` set exactly the tets carrying `k` / `p`; each `COMPONENT_X` exactly the
-//   nodes whose N_ID holds X; each `IFACE_X_POS/NEG` entry a face of its element that is a tagged face
-//   carrying X on that side, and every such side present. The unmapped audit reports regions with no
+//   nodes whose N_ID holds X; each `IFACE_X_IN/OUT` entry a face of its element that is a tagged face
+//   carrying X on that side (X's inside read through its orientation), and every such side present. The unmapped audit reports regions with no
 //   section - INFO when the INP has no sections at all (no `materials:` block), FAIL otherwise.
 fn check_v10(doc: &VtuDoc, inp: Option<&str>, cap: usize) -> VerifySection {
     let Some(text) = inp else {
@@ -1947,6 +1947,7 @@ fn check_v10(doc: &VtuDoc, inp: Option<&str>, cap: usize) -> VerifySection {
     let tag_offsets = field_i64(doc, "FaceTagOffsets");
     let tag_members = field_i64(doc, "FaceTagComponents");
     let side = field_i64(doc, "FaceTagSideElems");
+    let orientation = field_i64(doc, "FaceTagOrientation");
     let mut expected_faces: BTreeMap<String, BTreeSet<(usize, usize)>> = BTreeMap::new();
     for c in 0..doc.types.len() {
         if doc.types[c] != VTK_TRIANGLE {
@@ -1960,8 +1961,10 @@ fn check_v10(doc: &VtuDoc, inp: Option<&str>, cap: usize) -> VerifySection {
         let n = doc.cell(c);
         let start = if k == 0 { 0 } else { tag_offsets.get(k - 1).copied().unwrap_or(0) as usize };
         let end = tag_offsets.get(k).copied().unwrap_or(0) as usize;
-        for x in tag_members.get(start.min(tag_members.len())..end.min(tag_members.len())).into_iter().flatten() {
-            for (slot, suffix) in [(0usize, "POS"), (1, "NEG")] {
+        for (m, x) in tag_members.get(start.min(tag_members.len())..end.min(tag_members.len())).into_iter().flatten().enumerate() {
+            let o = orientation.get(start + m).copied().unwrap_or(1);
+            for (slot, suffix) in [(0usize, "IN"), (1, "OUT")] {
+                let slot = if o < 0 { 1 - slot } else { slot };
                 let elem = side.get(2 * k + slot).copied().unwrap_or(-1);
                 if elem < 0 || elem as usize >= tets.len() {
                     continue;
@@ -2308,6 +2311,75 @@ fn check_v6(
     s.metric("region_sets", sets.len() as f64);
     s.metric("illegal_region_keys", illegal as f64);
     s.metric("priority_mismatches", mismatches as f64);
+    // **Each tag's orientation names its own inside** (plan M-4.8): `FaceTagSideElems` is the
+    // geometric (elem+, elem-) pair and a member's `FaceTagOrientation` (+1 elem+, -1 elem-) says
+    // which of the two is the component's inside. Where exactly one of the two tets carries the
+    // component, that one must be the side the orientation names - which is what a document
+    // writing +1 for every member gets wrong on every face two bodies share.
+    {
+        let tag_key = cell_i64(view.doc, "face_tag_key");
+        let offsets = field_i64(view.doc, "FaceTagOffsets");
+        let members = field_i64(view.doc, "FaceTagComponents");
+        let orientation = field_i64(view.doc, "FaceTagOrientation");
+        let kinds = field_i64(view.doc, "FaceTagKind");
+        let side = field_i64(view.doc, "FaceTagSideElems");
+        let region = cell_i64(view.doc, "region_key");
+        let set_offsets = field_i64(view.doc, "RegionSetOffsets");
+        let set_members = field_i64(view.doc, "RegionSetComponents");
+        let carries = |cell: i64, x: i64| -> bool {
+            let Some(region) = region.as_ref() else { return false };
+            let k = region.get(cell as usize).copied().unwrap_or(-1);
+            if k < 0 {
+                return false;
+            }
+            let k = k as usize;
+            let start = if k == 0 { 0 } else { set_offsets.get(k - 1).copied().unwrap_or(0) as usize };
+            let end = set_offsets.get(k).copied().unwrap_or(0) as usize;
+            set_members.get(start.min(set_members.len())..end.min(set_members.len())).is_some_and(|m| m.contains(&x))
+        };
+        let (mut checked, mut wrong) = (0usize, 0usize);
+        if let Some(tag_key) = &tag_key {
+            for &c in &view.faces {
+                let key = tag_key.get(c).copied().unwrap_or(-1);
+                if key < 0 || kinds.get(key as usize).copied() != Some(0) || orientation.len() != members.len() {
+                    continue;
+                }
+                let k = key as usize;
+                let (plus, minus) = (side.get(2 * k).copied().unwrap_or(-1), side.get(2 * k + 1).copied().unwrap_or(-1));
+                if plus < 0 || minus < 0 {
+                    continue;
+                }
+                let start = if k == 0 { 0 } else { offsets.get(k - 1).copied().unwrap_or(0) as usize };
+                let end = offsets.get(k).copied().unwrap_or(0) as usize;
+                for m in start..end.min(members.len()) {
+                    let x = members[m];
+                    let (in_plus, in_minus) = (carries(plus, x), carries(minus, x));
+                    if in_plus == in_minus {
+                        continue;
+                    }
+                    checked += 1;
+                    let named_plus = orientation[m] > 0;
+                    if named_plus != in_plus {
+                        wrong += 1;
+                        let mut item = VerifyItem::bare(
+                            Severity::Fail,
+                            "V6.tag_orientation",
+                            format!(
+                                "face cell {c}: component {x}'s orientation {} names elem{} as its inside, but the tet carrying {x} is elem{}",
+                                orientation[m],
+                                if named_plus { "+" } else { "-" },
+                                if in_plus { "+" } else { "-" }
+                            ),
+                        );
+                        item.cell_ids.push(c as i64);
+                        s.push(item, cap);
+                    }
+                }
+            }
+        }
+        s.metric("tag_orientations_checked", checked as f64);
+        s.metric("tag_orientation_mismatches", wrong as f64);
+    }
     s.metric("undeclared_boundary_faces", undeclared_faces as f64);
     s.metric("undeclared_boundary_area", undeclared_area);
     s.metric(

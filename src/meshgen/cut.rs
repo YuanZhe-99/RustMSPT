@@ -8033,19 +8033,45 @@ pub fn cut_to_doc(mesh: &CutMesh, components: &[ArrangeComponent]) -> VtuDoc {
     let mut tag_orientation: Vec<i32> = Vec::with_capacity(faces);
     let mut tag_kind: Vec<u8> = Vec::with_capacity(faces);
     let mut tag_side_elems: Vec<i32> = Vec::with_capacity(faces * 2);
-    for (_, tags) in &tagged {
+    for (nodes, tags) in &tagged {
+        // **One geometric side per face, one orientation per member** (plan M-4.8, MG-07).
+        // `(elem+, elem-)` is the pair of tets across the face, elem+ on the positive side of the
+        // face as emitted (`orient3d(face, apex) > 0`), so it is a property of the face alone -
+        // the same whichever component's tag is listed first. Each member's orientation says
+        // which of the two is that component's inside: +1 elem+, -1 elem-. Two solids in contact
+        // therefore carry opposite orientations on their shared face, and a solver reading the
+        // pair knows which body is which.
+        let first = &mesh.interfaces[tags[0]];
+        let [p0, p1, p2] = nodes.map(|n| mesh.nodes[n as usize]);
+        let side_of_elem = |elem: i32| -> f64 {
+            if elem < 0 {
+                return 0.0;
+            }
+            let tet = mesh.tets[elem as usize];
+            match tet.iter().find(|n| !nodes.contains(n)) {
+                Some(apex) => orient3d(p0, p1, p2, mesh.nodes[*apex as usize]),
+                None => 0.0,
+            }
+        };
+        let pair = first.side_elems;
+        let (plus, minus) = if side_of_elem(pair[0]) > 0.0 || side_of_elem(pair[1]) < 0.0 {
+            (pair[0], pair[1])
+        } else {
+            (pair[1], pair[0])
+        };
         // One orientation per MEMBER, not per face (contracts §4.2 `orientation_length`): a face
         // two components share carries two tags, and writing one entry for it shifted every
         // later face's orientation onto the wrong member.
         for index in tags {
-            tag_components.push(mesh.interfaces[*index].component);
-            tag_orientation.push(1);
+            let face = &mesh.interfaces[*index];
+            tag_components.push(face.component);
+            let inside = face.side_elems[0];
+            tag_orientation.push(if inside >= 0 && inside == minus { -1 } else { 1 });
         }
         tag_offsets.push(tag_components.len() as i64);
-        let first = &mesh.interfaces[tags[0]];
         tag_kind.push(first.kind);
-        tag_side_elems.push(first.side_elems[0]);
-        tag_side_elems.push(first.side_elems[1]);
+        tag_side_elems.push(plus);
+        tag_side_elems.push(minus);
     }
     push_field(&mut doc, "FaceTagOffsets", 1, ArrayData::I64(tag_offsets));
     push_field(

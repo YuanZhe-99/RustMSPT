@@ -7,9 +7,10 @@
 //! - `ELSET=REGION_<k>` per region key `k` (the `RegionSet*` tables name its components),
 //! - `ELSET=PARTITION_<p>` per S10 partition,
 //! - `NSET=COMPONENT_<X>` per component, from each node's `N_ID` set,
-//! - `*SURFACE, NAME=IFACE_<X>_POS / _NEG` per tagged component, element-based faces on the
-//!   `(elem+, elem-)` sides `FaceTagSideElems` records - the adjacency a solver needs to insert a
-//!   cohesive or contact treatment without re-deriving it (B.6).
+//! - `*SURFACE, NAME=IFACE_<X>_IN / _OUT` per tagged component: the element faces on X's inside and
+//!   outside of each of its tagged faces, read from the geometric `(elem+, elem-)` pair and X's
+//!   `FaceTagOrientation` - the adjacency a solver needs to insert a cohesive or contact treatment
+//!   without re-deriving it (B.6).
 //!
 //! Material mapping (B.7): with no `materials:` block the INP carries sets and no sections, which
 //! is a complete mesh for a user who assigns sections downstream. With one, every region key must
@@ -105,6 +106,8 @@ pub fn write_inp(doc: &VtuDoc, materials: &MeshGenMaterials) -> Result<InpExport
         &ints(doc.field_array("FaceTagComponents")).unwrap_or_default(),
     );
     let side_elems = ints(doc.field_array("FaceTagSideElems")).unwrap_or_default();
+    let orientation = ints(doc.field_array("FaceTagOrientation")).unwrap_or_default();
+    let tag_offsets = ints(doc.field_array("FaceTagOffsets")).unwrap_or_default();
 
     let out = &mut export.text;
     let _ = writeln!(out, "*HEADING");
@@ -173,8 +176,12 @@ pub fn write_inp(doc: &VtuDoc, materials: &MeshGenMaterials) -> Result<InpExport
             side_elems.get(2 * key as usize).copied().unwrap_or(-1),
             side_elems.get(2 * key as usize + 1).copied().unwrap_or(-1),
         ];
-        for x in tag_sets.get(key as usize).into_iter().flatten() {
-            for (side, elem) in [(true, pair[0]), (false, pair[1])] {
+        let first_member = if key == 0 { 0 } else { tag_offsets.get(key as usize - 1).copied().unwrap_or(0) as usize };
+        for (m, x) in tag_sets.get(key as usize).into_iter().flatten().enumerate() {
+            // The member's own inside, read through its orientation (+1: elem+, -1: elem-).
+            let o = orientation.get(first_member + m).copied().unwrap_or(1);
+            let (inside, outside) = if o < 0 { (pair[1], pair[0]) } else { (pair[0], pair[1]) };
+            for (side, elem) in [(true, inside), (false, outside)] {
                 if elem < 0 || (elem as usize) >= tets.len() {
                     continue;
                 }
@@ -188,7 +195,7 @@ pub fn write_inp(doc: &VtuDoc, materials: &MeshGenMaterials) -> Result<InpExport
         let _ = writeln!(
             out,
             "*SURFACE, TYPE=ELEMENT, NAME=IFACE_{x}_{}",
-            if *positive { "POS" } else { "NEG" }
+            if *positive { "IN" } else { "OUT" }
         );
         for (elem, k) in faces {
             let _ = writeln!(out, "{elem}, S{k}");

@@ -912,3 +912,26 @@ fn v11_strict_sees_one_ulp_topology_sees_connectivity() {
     assert_eq!(status(&report), CheckStatus::Fail);
     assert!(report.fired_codes().iter().any(|c| c == "V11.connectivity"));
 }
+
+// AI-FUNC-SUMMARY: [V6] tag orientation (plan M-4.8): with every member's orientation written +1 and then -1, the check examines members and exactly one of the two fails (R8: it is not vacuous); returns nothing; side effects: none.
+#[test]
+fn v6_fails_a_tag_orientation_that_names_the_wrong_inside() {
+    let doc = load_vtu(&fixture("good_cube")).unwrap();
+    let members = doc
+        .field_data
+        .iter()
+        .find(|a| a.name == "FaceTagComponents")
+        .map(|a| a.data.len())
+        .unwrap();
+    let with = |o: i32| {
+        let mut d = doc.clone();
+        d.field_data.retain(|a| a.name != "FaceTagOrientation");
+        d.field_data.push(DataArray::scalar("FaceTagOrientation", ArrayData::I32(vec![o; members])));
+        let r = verify(&d, &VerifyGates::default());
+        (metric(&r, "V6", "tag_orientations_checked"), metric(&r, "V6", "tag_orientation_mismatches"))
+    };
+    let (checked_plus, wrong_plus) = with(1);
+    let (checked_minus, wrong_minus) = with(-1);
+    assert!(checked_plus > 0.0 && checked_minus > 0.0, "the check must examine the fixture's tags");
+    assert!((wrong_plus == 0.0) != (wrong_minus == 0.0), "exactly one orientation is right: +1 {wrong_plus}, -1 {wrong_minus}");
+}
