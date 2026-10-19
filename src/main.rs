@@ -2,8 +2,9 @@ use clap::{Parser, Subcommand};
 use rustmspt::config::{
     load_pack_document, load_yaml, CropConfig, ForgingConfig,
     MeasurementConfig, MeshGenConfig, MeshRenderConfig, MeshVerifyConfig, OptimizationConfig,
-    PackDocument, RenderConfig, ScaleConfig, SplitFilterConfig, StateMapConfig,
+    ClosestConfig, PackDocument, RenderConfig, ScaleConfig, SplitFilterConfig, StateMapConfig, TetRepairConfig,
 };
+use rustmspt::pipeline::closest::ClosestPipeline;
 use rustmspt::pipeline::crop::CropPipeline;
 use rustmspt::pipeline::forge::ForgePipeline;
 use rustmspt::pipeline::measure::MeasurePipeline;
@@ -17,6 +18,7 @@ use rustmspt::pipeline::render::RenderPipeline;
 use rustmspt::pipeline::scale::ScalePipeline;
 use rustmspt::pipeline::split_filter::SplitFilterPipeline;
 use rustmspt::pipeline::state_map::StateMapPipeline;
+use rustmspt::pipeline::tet_repair::TetRepairPipeline;
 use rustmspt::pipeline::Pipeline;
 use rustmspt::version::{build_identity, identity_json};
 use std::path::{Path, PathBuf};
@@ -133,6 +135,22 @@ enum Commands {
         /// `strict` (bit-identical) or `topology`; defaults to the second file's `DeterminismMode`.
         #[arg(long)]
         mode: Option<String>,
+    },
+    /// The nearest point on a set of triangles or segments for every query point.
+    Closest {
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Replace `closest.output_dir`.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    /// Repair inverted cells and cells over an aspect-ratio limit in a tetrahedral mesh (flips and node moves).
+    TetRepair {
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Replace `tet_repair.output_dir`.
+        #[arg(long)]
+        output: Option<PathBuf>,
     },
     Scale {
         #[arg(long)]
@@ -438,6 +456,22 @@ fn run_cli() -> anyhow::Result<()> {
                 conf.mesh_verify.annotate = Some(annotate.to_string_lossy().to_string());
             }
             MeshVerifyPipeline { config: conf }.run()?;
+        }
+        Commands::Closest { config, output } => {
+            let path = pick_config_path(config, "closest_config.yaml");
+            let mut conf: ClosestConfig = load_yaml(&path)?;
+            if let Some(output) = output {
+                conf.closest.output_dir = output.to_string_lossy().to_string();
+            }
+            ClosestPipeline { config: conf }.run()?;
+        }
+        Commands::TetRepair { config, output } => {
+            let path = pick_config_path(config, "tet_repair_config.yaml");
+            let mut conf: TetRepairConfig = load_yaml(&path)?;
+            if let Some(output) = output {
+                conf.tet_repair.output_dir = output.to_string_lossy().to_string();
+            }
+            TetRepairPipeline { config: conf }.run()?;
         }
         Commands::Scale {
             config,

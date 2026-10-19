@@ -16,7 +16,7 @@ subcommand (`src/pipeline/mesh_render.rs`, `src/config/mesh_render.rs`).
 | `VtuDoc` | `src/io/vtu.rs:138` | In-memory contract VTU: shared points, mixed cells (VTK end-offsets), point/cell/field data; `cell`, `cell_array`, `point_array`, `field_array`, `num_cells` accessors. |
 | `VtuDoc::validate` | `src/io/vtu.rs:181` | Structural validation: monotone offsets, index ranges, per-type node counts, array lengths. |
 | `VtuEncoding` | `src/io/vtu.rs:255` | `Ascii` (exact round-trip via shortest-form floats) or `AppendedRaw` (LittleEndian, UInt64 headers). |
-| `save_vtu` | `src/io/vtu.rs:273` | Write a validated `VtuDoc` as VTK XML UnstructuredGrid; creates parent dirs. |
+| `save_vtu` | `src/io/vtu.rs:273` | Write a validated `VtuDoc` as VTK XML UnstructuredGrid; creates parent dirs. Arrays are borrowed, not copied; ascii arrays are formatted in parallel chunks of 16,384 values joined in order, and appended payloads are encoded once and streamed through a buffered writer, so the bytes are those of the serial writer (a 1.2 M-tet ascii file: ~1.05 s -> ~0.4 s). |
 | `load_vtu` | `src/io/vtu.rs:479` | Read the contract subset (ascii + appended-raw, UInt32/UInt64 headers); rejects compressed/base64 files with a named error. |
 | `SetKind` | `src/geometry/render_scene.rs:8` | Render-set membership (`Volume` boundary faces vs tagged `Face` cells); Face wins coincident-hit dedup. |
 | `SceneTri`/`SceneSegment`/`SceneMarker` | `src/geometry/render_scene.rs:15` | World-space primitives with color/opacity emitted by extraction. |

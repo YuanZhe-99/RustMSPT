@@ -73,6 +73,8 @@ Documentation lives in three tiers, each answering a different question:
 | Mesh generation geometry/topology (S2 registry/CDT/overlay, lattice, cut, band k-templates; later labels) | `SPEC_meshgen_geometry.md` — **normative frozen spec**, read before touching `src/meshgen/`; it supersedes `PLAN_mesh_generation.md` prose where they differ | `reference/meshgen.md` for implemented G2-1..G2-3 |
 | Mesh generation numerics (exact predicates, C1/C2 DD escalation, later GPU certificates) | `SPEC_meshgen_numerics.md` — **normative frozen spec**, companion to the geometry spec; lists the predicate and arithmetic class of every decision site | `reference/meshgen.md`, `reference/mesh-verify.md` |
 | Mesh generation data contracts (VTU schema v1, snapshot naming, verifier check catalog + JSON schema, accuracy gates) | `SPEC_meshgen_contracts.md` — **normative frozen spec**; fixture VTUs at `data/fixtures/vtu/` (regenerate with `uv run data/fixtures/vtu/generate_fixtures.py data/fixtures/vtu`) | `reference/mesh-render-and-vtu.md` |
+| Closest point on triangles or segments (`closest`: nearest primitive, point and distance for many queries; BVH, rayon, GPU seed pass) | `algorithms/closest-point.md` | `reference/pipeline-closest.md` |
+| Tetrahedral mesh repair (`tet-repair`: inverted and over-limit cells by flips and node moves; simHelper's flip_repair natively) | `algorithms/tet-repair.md` | `reference/pipeline-tet-repair.md` |
 | Seeded, recorded, void-aware placement (`pack` with a `placement:` block) | `algorithms/void-aware-placement.md` | `reference/pipeline-placement.md`, `reference/config.md` (`placement.rs`) |
 | Placement recovery, completed extension and bounded geometry caching | `algorithms/placement-checkpoints-and-memory.md` | `reference/pipeline-placement-state.md` |
 | Build identity (`version`, `--version`, the `tool` block in placement outputs) | — | `reference/core-and-compute.md` |
@@ -144,7 +146,7 @@ cargo run --release -- <subcommand> [--config <path>] [--input <path>] [--output
 ./target/release/rustmspt <subcommand> --config data/input/<subcommand>_config.yaml
 ```
 
-Available subcommands: `split-filter`, `pack`, `optimize`, `measure`, `forge`, `scale`, `crop`, `render`, `mesh-render`, `mesh-verify`, `mesh`, `state-map`, `version`
+Available subcommands: `split-filter`, `pack`, `optimize`, `measure`, `forge`, `scale`, `crop`, `render`, `mesh-render`, `mesh-verify`, `mesh`, `state-map`, `closest`, `tet-repair`, `version`
 
 `pack` selects an engine from the config it is given: a top-level `placement:` block runs the seeded, recorded, void-aware engine; a `packing:` block runs the original one, unchanged. Exactly one must be present. `--seed` and `--threads` apply to the placement engine only, and passing either with a `packing:` config is an error rather than a silent no-op -- ignoring a determinism flag would report a run as reproducible when it is not.
 
@@ -226,6 +228,8 @@ src/
     scale.rs           ScaleConfig, ScalingParams
     split_filter.rs    SplitFilterConfig, SplitFilterOutput, SplitFilterRules
     state_map.rs       StateMapConfig, StateMapParams for state-map
+    closest.rs         ClosestConfig, ClosestParams for closest
+    tet_repair.rs      TetRepairConfig, TetRepairParams for tet-repair
 
   compute/             Compute backend abstraction (always compiled)
     mod.rs             Re-exports, unit tests for backend selection
@@ -241,6 +245,7 @@ src/
     volume_transform.rs GpuVolumeTransformPipeline: wgpu compute pipeline for volume rotate-and-crop
     render.rs           GpuRenderPipeline: offscreen triangle rasterization and RGBA readback
     tet_candidates.rs   GpuTetCandidatePipeline: state-map's BVH walk proposing candidate tets per point (outward-rounded f32, a superset)
+    closest_candidates.rs GpuClosestSeedPipeline: closest's BVH walk proposing one seed primitive per point (f32; only bounds the exact host search)
     shaders/
       s2_monte_carlo.wgsl  WGSL compute shader for MC S2 (ray-casting point containment)
       voxelize.wgsl        WGSL compute shader for voxelization (ray-casting per voxel)
@@ -248,9 +253,12 @@ src/
       volume_transform.wgsl WGSL compute shader for volume rotate-and-crop transform
       render.wgsl           WGSL vertex/fragment shader for STL rendering
       tet_candidates.wgsl   WGSL compute shader for state-map's candidate tets
+      closest_candidates.wgsl WGSL compute shader for closest's seed primitives
 
   geometry/            Geometry and computation kernels
     mod.rs             Re-exports public API
+    closest.rs         Primitives (triangles or segments), PrimBvh, closest_on_triangle/segment, nearest_all: the closest rule (least exact distance, 1e-12 relative tie to the lowest index)
+    tet_repair.rs      aspect_ratio (YAFEQ's), nelder_mead (scipy's), repair: padding flats, flips inside one density, node moves along walls/layers, the joint pass
     bbox.rs            Bounding box ops: mesh_bbox, bbox_overlaps, bbox_distance, check_boundary_constraints_mode
     collision.rs       Collision/distance: to_parry_trimesh, trimesh_contains_point, mesh_surfaces_intersect_prepared, mesh_solids_nested_prepared, mesh_collision_exact_prepared (= surfaces cross OR one solid nested), mesh_distance_exact_prepared, generate_periodic_ghosts
     forging.rs         FFD forging simulation: simulate_forging_ffd, simulate_forging_ffd_with_tracking
@@ -307,6 +315,8 @@ src/
     mesh_verify.rs     MeshVerifyPipeline: standalone mesh-verify catalog runner (mesh-verify subcommand)
     state_map.rs       StateMapPipeline: locate sampling points in a tet mesh, write donors/distances/report (state-map subcommand)
     meshgen.rs         MeshGenPipeline: S0..S8, S9 quality (`improve_doc`), S10 partitions and S11 export orchestration; writes the delivered VTU, `_contract.vtu` and the INP, exits Ok
+    tet_repair.rs      TetRepairPipeline: repair a tet mesh, write points/tets/density/report (tet-repair subcommand)
+    closest.rs         ClosestPipeline: nearest primitive, point and distance per query, write primitive/closest/distance/report (closest subcommand)
     optimize.rs        OptimizePipeline: simulated annealing with bounded island batches and coherent migration
     optimize_execution.rs  Fixed S2 method/backend selection, one optional shared GPU MC instance, and bounded Rayon island scheduling
     pack.rs            PackPipeline: sequential particle placement with optional target diameter distribution and mean-sphericity steering
@@ -446,6 +456,8 @@ When inspecting code:
 - wgpu's `enumerate_adapters()` returns a `Vec`, not an iterator — do not call `.collect()` on it.
 - `wgpu::Limits::max_storage_buffer_binding_size` is `u32`; cast to `u64` when comparing with `BackendCaps`.
 - `state-map`'s GPU pass must stay a **superset** filter: boxes rounded outward (`round_down`/`round_up`), points to nearest, and every decision taken in f64 on the host. Moving the barycentric test into WGSL (f32) would make GPU and CPU answers differ; `gpu_location_equals_cpu` fails if they do. Its rule (nearest centroid among containing tets; else, within the bound, the lowest index among tets within `DISTANCE_TIE` = 1e-12 relative of the nearest distance) is simHelper's `transfer/state_mapper.py` and must change only together with it, with `METHOD_VERSION` bumped. The tie band is load-bearing: without it, points equally far from two tets (a shared edge or corner) were assigned by the last bit of each implementation's distance arithmetic, and 4 of 1,015,356 elements of a real mapping differed between the two.
+- `closest`'s GPU pass proposes a **seed**, never an answer: the host recomputes the seed's distance in f64 and uses it only as the first pass's bound, then picks the least exact distance with the `DISTANCE_TIE` (1e-12 relative) band to the lowest index. Taking the GPU's f32 choice as the answer would make GPU and CPU differ on near-ties; `gpu_seeded_nearest_equals_cpu` fails if they do. A query nearest a shared edge or vertex ties between triangles routinely (about a third of a mesh's cell centres against the surface it was cut to), so the band is load-bearing; VTK's `find_closest_cell` has no stated rule there and picks a different triangle while agreeing on the distance. The rule changes only with simHelper's `meshing/nearest.py`, with `METHOD_VERSION` bumped.
+- `tet-repair` is simHelper's `meshing/tet_repair.flip_repair` and must change only together with it, `METHOD_VERSION` bumped. Its flips and Nelder-Mead moves reproduce the Python's exactly on a real closure mesh; two things are allowed to differ and nothing else: the order among cells of equal ratio (index here, Python set order there) and the joint pass's random draws (seeded ChaCha8 here, numpy there). `nelder_mead` is scipy's non-adaptive algorithm step for step (5 % initial simplex, 0.00025 for a zero coordinate; reflection 1, expansion 2, contraction/shrink 0.5) -- "improving" it changes which repair is found.
 - When `gpu` feature is disabled, `ComputeBackend::Gpu` variant does not exist — use `#[cfg(feature = "gpu")]` guards in match arms and `is_gpu()` instead of `matches!`.
 - The `acceleration` config field uses `#[serde(default)]` so existing YAML configs without it continue to work. Tests constructing config structs manually must include `acceleration: Default::default()`.
 - `Volume3D` uses z-major indexing: `idx = z * width * height + y * width + x`. GPU shaders must match this layout, not x-major.
@@ -476,6 +488,7 @@ When inspecting code:
 - wgpu texture readback rows must be padded to `COPY_BYTES_PER_ROW_ALIGNMENT` (256 bytes) and unpadded before PNG encoding.
 - CPU/GPU render tests must use tolerance at triangle edges; parry3d uses f64 QBVH ray casting while wgpu rasterization uses f32.
 - `io/vtu.rs` appended-raw arrays must be collected in EMISSION order (FieldData, Points, Cells, PointData, CellData) — appended offsets are assigned by a running index during tag emission; any order mismatch corrupts every offset after the first out-of-order array.
+- `save_vtu`'s ascii arrays are formatted in parallel chunks joined in order and its appended payloads streamed through a `BufWriter`; any change to the writer must keep the bytes identical to the serial form (byte-compare a large written file before and after - a 1.2 M-tet ascii file spent ~0.7 s of ~1 s formatting values).
 - The contract `cell_kind` cell array (0 tet / 1 face / 2 curve / 3 voxel) is distinct from VTK cell type codes (10/5/4/11); `SceneFilter::CellKind` filters on the semantic array, falling back to mapping VTK types only when the array is absent.
 - `build_scene` frames the camera from the FULL document bbox, not the filtered subset — deliberate, so all views/filters of one input frame identically.
 - `mesh-render` uses the CPU path as the transparency reference (exact all-hits compositing); the GPU preview path (PLAN GA-3c, done) is opaque-only and selected via `backend: gpu | auto`. Scene transparency needs all-hits enumeration (`RayIntersectionsVisitor` over `TriMesh::qbvh()`); `cast_local_ray_and_get_normal` returns only the nearest hit.

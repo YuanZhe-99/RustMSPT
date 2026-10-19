@@ -1,4 +1,5 @@
 pub mod acceleration;
+pub mod closest;
 pub mod crop;
 pub mod deserialize;
 pub mod forging;
@@ -13,6 +14,7 @@ pub mod render;
 pub mod scale;
 pub mod split_filter;
 pub mod state_map;
+pub mod tet_repair;
 
 use crate::error::{Result, RustMsptError};
 use serde::Deserialize;
@@ -96,5 +98,7 @@ pub use placement::{
 };
 pub use render::{RenderConfig, RenderParams};
 pub use scale::{ScaleConfig, ScalingParams};
+pub use closest::{ClosestConfig, ClosestParams};
 pub use state_map::{StateMapConfig, StateMapParams};
+pub use tet_repair::{TetRepairConfig, TetRepairParams};
 pub use split_filter::{SplitFilterConfig, SplitFilterOutput, SplitFilterRules, SplitFilterVolume};
