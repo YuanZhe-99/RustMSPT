@@ -506,45 +506,54 @@ pub trait ParityAccelerator: Sync {
 //   answer for the same direction; None when any test was uncertain, which sends the vertex to the
 //   CPU path (re-shoots and the symbolic perturbation stay there).
 // Side effects: None.
-// Notes: The CPU reference the shader is held to. `reach` need not be the CPU's: any far endpoint
-//   on the same ray beyond the domain box gives the same exact signs (scaling q - p by a positive
-//   factor scales each determinant, and a plane the ray crosses beyond the box is a miss either
-//   way), and a shorter ray tightens the endpoint's bound - its f32 value is within
-//   5·u32·(|p| + |reach·dir|) per coordinate of the exact point. Pass at least the box diagonal.
+// Notes: The CPU reference the shader is held to. No far endpoint is formed: orient3d(p, q, x, y)
+//   with q = p + reach·dir is reach·det[p - y, dir, x - y], and the far side of a triangle's plane is
+//   the sign of det[dir, b - a, c - a] - so the only operand errors are the conversions and the
+//   subtractions, never a reach-scaled endpoint. A plane the ray crosses only beyond the box (where
+//   the CPU's finite ray would see no crossing) is a miss either way, because the triangle lies in
+//   the box. `_reach` is kept for the signature the shader's host shares.
 pub(crate) fn parity_f32_certified(
     point: Vec3,
     direction: Vec3,
-    reach: f64,
+    _reach: f64,
     triangles: &[[Vec3; 3]],
     candidates: &[u32],
 ) -> Option<bool> {
     use crate::meshgen::predicates::{orient3d_f32_certified_inputs, UNIT_ROUNDOFF_F32 as U};
     let f = |v: Vec3| [v.x as f32, v.y as f32, v.z as f32];
     let conv = |v: [f32; 3]| v.map(|x| U * (x as f64).abs() / (1.0 - U));
+    // A difference of two operands with their bounds: the f32 result, and its distance from the
+    // true difference (both operands' bounds plus the subtraction's own rounding).
+    let sub = |x: [f32; 3], ex: [f64; 3], y: [f32; 3], ey: [f64; 3]| {
+        let d = [x[0] - y[0], x[1] - y[1], x[2] - y[2]];
+        let e = [0, 1, 2].map(|k| ex[k] + ey[k] + U * (d[k] as f64).abs() / (1.0 - U));
+        (d, e)
+    };
+    let zero = [0.0f32; 3];
+    let exact = [0.0f64; 3];
+    // sign of det[x, y, z] as `orient3d(x, y, z, 0)` reports it.
+    let det3 = |x: ([f32; 3], [f64; 3]), y: ([f32; 3], [f64; 3]), z: ([f32; 3], [f64; 3])| {
+        orient3d_f32_certified_inputs([x.0, y.0, z.0, zero], [x.1, y.1, z.1, exact])
+    };
     let p = f(point);
-    let dir = f(direction);
-    let reach32 = reach as f32;
-    let q = [
-        p[0] + reach32 * dir[0],
-        p[1] + reach32 * dir[1],
-        p[2] + reach32 * dir[2],
-    ];
     let ep = conv(p);
-    let eq = [0usize, 1, 2]
-        .map(|k| 5.0 * U * ((p[k] as f64).abs() + (reach32 as f64 * dir[k] as f64).abs()) * (1.0 + 1e-6));
+    let dir = (f(direction), conv(f(direction)));
     let mut crossings = 0usize;
     for index in candidates {
         let t = triangles[*index as usize];
         let (a, b, c) = (f(t[0]), f(t[1]), f(t[2]));
         let (ea, eb, ec) = (conv(a), conv(b), conv(c));
+        // Which side of the plane the point is on, and which side the ray ends on beyond the box:
+        // orient3d(a, b, c, p + t·dir) tends to t·det[dir, b - a, c - a].
         let side_p = orient3d_f32_certified_inputs([a, b, c, p], [ea, eb, ec, ep])?;
-        let side_q = orient3d_f32_certified_inputs([a, b, c, q], [ea, eb, ec, eq])?;
-        if side_p == side_q {
+        let side_far = det3(dir, sub(b, eb, a, ea), sub(c, ec, a, ea))?;
+        if side_p == side_far {
             continue;
         }
-        let s0 = orient3d_f32_certified_inputs([p, q, a, b], [ep, eq, ea, eb])?;
-        let s1 = orient3d_f32_certified_inputs([p, q, b, c], [ep, eq, eb, ec])?;
-        let s2 = orient3d_f32_certified_inputs([p, q, c, a], [ep, eq, ec, ea])?;
+        // orient3d(p, q, x, y) = reach·det[p - y, dir, x - y]: the line tests need no far point.
+        let s0 = det3(sub(p, ep, b, eb), dir, sub(a, ea, b, eb))?;
+        let s1 = det3(sub(p, ep, c, ec), dir, sub(b, eb, c, ec))?;
+        let s2 = det3(sub(p, ep, a, ea), dir, sub(c, ec, a, ea))?;
         if s0 == s1 && s1 == s2 {
             crossings += 1;
         }
@@ -1097,6 +1106,7 @@ pub fn classify_lattice_memo(
     // GK-1: the first ray's parity for every vertex the memo does not hold, on the accelerator; a
     // certified code is the CPU's answer for that ray, an uncertain one (2) leaves the vertex to the
     // CPU below. A device error falls back to the CPU for the whole solid.
+    let asked = std::sync::atomic::AtomicUsize::new(0);
     let accelerated: Vec<Option<Vec<u32>>> = solids
         .iter()
         .map(|solid| {
@@ -1136,6 +1146,7 @@ pub fn classify_lattice_memo(
                 })
                 .collect();
             let buckets: Vec<u32> = misses.iter().map(|i| grid.bucket_of(lattice.nodes[*i])).collect();
+            asked.fetch_add(misses.len(), std::sync::atomic::Ordering::Relaxed);
             match accelerator.codes(&geometry, &points, &buckets) {
                 Ok(codes) => {
                     let mut all = vec![2u32; lattice.nodes.len()];
@@ -1152,10 +1163,8 @@ pub fn classify_lattice_memo(
         })
         .collect();
     if let Some(accelerator) = accelerator {
-        let (done, asked): (usize, usize) = accelerated
-            .iter()
-            .flatten()
-            .fold((0, 0), |(d, a), codes| (d + codes.iter().filter(|c| **c < 2).count(), a + codes.len()));
+        let done: usize = accelerated.iter().flatten().map(|codes| codes.iter().filter(|c| **c < 2).count()).sum();
+        let asked = asked.load(std::sync::atomic::Ordering::Relaxed);
         println!("[S6/GK-1] {}: {done} of {asked} vertex-solid first rays certified on the device", accelerator.describe());
     }
 
@@ -1798,6 +1807,7 @@ mod tests {
             }
         }
         // Points well off the surface are nearly all certified on the f32 path.
+        eprintln!("[GK-1 ref] {certified} of {total} certified, {far_certified} of {far_total} far points");
         assert!(far_certified * 100 >= far_total * 95, "{far_certified} of {far_total} far points certified");
         assert!(certified > 0, "{certified} of {total}");
     }

@@ -10,7 +10,7 @@ struct Params {
     row_stride: u32,
     pad0: u32,
     pad1: u32,
-    // The ray: direction and far-endpoint distance (any point beyond the domain box).
+    // The ray: its direction; w is unused (the kernel forms no far endpoint).
     dir: vec4<f32>,
 };
 
@@ -75,6 +75,11 @@ fn tri_point(t: u32, k: u32) -> vec3<f32> {
     return vec3<f32>(tris[base], tris[base + 1u], tris[base + 2u]);
 }
 
+// A difference of two operands and its distance from the true difference.
+fn sub_err(ex: vec3<f32>, ey: vec3<f32>, d: vec3<f32>) -> vec3<f32> {
+    return (ex + ey + abs(d) * (U / (1.0 - U))) * SLACK;
+}
+
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let i = gid.x + gid.y * params.row_stride;
@@ -83,10 +88,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     let p = vec3<f32>(points[i * 3u], points[i * 3u + 1u], points[i * 3u + 2u]);
     let dir = params.dir.xyz;
-    let reach = params.dir.w;
-    let q = p + dir * reach;
     let ep = conv(p);
-    let eq = 5.0 * U * (abs(p) + abs(dir * reach)) * SLACK * SLACK;
+    let edir = conv(dir);
+    let zero = vec3<f32>(0.0, 0.0, 0.0);
     let bucket = point_bucket[i];
     let first = bucket_start[bucket];
     let last = bucket_start[bucket + 1u];
@@ -99,18 +103,28 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let ea = conv(a);
         let eb = conv(b);
         let ec = conv(c);
+        // The point's side of the plane, and the side the ray ends on beyond the box:
+        // orient3d(a, b, c, p + t*dir) tends to t*det[dir, b - a, c - a].
         let side_p = orient(a, b, c, p, ea, eb, ec, ep);
-        let side_q = orient(a, b, c, q, ea, eb, ec, eq);
-        if (side_p == 0 || side_q == 0) {
+        let ba = b - a;
+        let ca = c - a;
+        let side_far = orient(dir, ba, ca, zero, edir, sub_err(eb, ea, ba), sub_err(ec, ea, ca), zero);
+        if (side_p == 0 || side_far == 0) {
             result[i] = 2u;
             return;
         }
-        if (side_p == side_q) {
+        if (side_p == side_far) {
             continue;
         }
-        let s0 = orient(p, q, a, b, ep, eq, ea, eb);
-        let s1 = orient(p, q, b, c, ep, eq, eb, ec);
-        let s2 = orient(p, q, c, a, ep, eq, ec, ea);
+        // orient3d(p, q, x, y) = reach*det[p - y, dir, x - y]: no far endpoint is formed.
+        let pb = p - b;
+        let ab = a - b;
+        let pc = p - c;
+        let bc = b - c;
+        let pa = p - a;
+        let s0 = orient(pb, dir, ab, zero, sub_err(ep, eb, pb), edir, sub_err(ea, eb, ab), zero);
+        let s1 = orient(pc, dir, bc, zero, sub_err(ep, ec, pc), edir, sub_err(eb, ec, bc), zero);
+        let s2 = orient(pa, dir, ca, zero, sub_err(ep, ea, pa), edir, sub_err(ec, ea, ca), zero);
         if (s0 == 0 || s1 == 0 || s2 == 0) {
             result[i] = 2u;
             return;
