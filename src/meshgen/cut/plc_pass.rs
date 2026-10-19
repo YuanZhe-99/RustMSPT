@@ -52,12 +52,18 @@ pub(super) fn plc_pass(
     // on it. Both are functions of the face alone - which is what lets the two cells sharing it
     // derive the same triangulation without communicating (invariant J1).
     let mut chords_of: BTreeMap<[u32; 3], SmallVec<[[Vec3; 2]; 4]>> = BTreeMap::new();
+    // The component each chord of `chords_of` belongs to, in the same order.
+    let mut chord_components: BTreeMap<[u32; 3], SmallVec<[i32; 4]>> = BTreeMap::new();
+    // Every node a trace endpoint landed on, new or welded, with its component: a point of
+    // that surface, whatever the classifier would say of it.
+    let mut trace_on_surface: BTreeSet<(u32, i32)> = BTreeSet::new();
     let mut face_nodes: BTreeMap<[u32; 3], SmallVec<[u32; 4]>> = BTreeMap::new();
     let mut owners: BTreeMap<[u32; 3], SmallVec<[u32; 2]>> = BTreeMap::new();
     let mut edge_nodes: BTreeMap<[u32; 2], SmallVec<[u32; 6]>> = BTreeMap::new();
     s8_lap("plc-setup");
     scan_faces(
         &mut chords_of,
+        &mut chord_components,
         &mut face_nodes,
         &mut owners,
         &mut edge_nodes,
@@ -133,6 +139,8 @@ pub(super) fn plc_pass(
     s8_lap("plc-global");
     intern_trace_points(
         &chords_of,
+        &chord_components,
+        &mut trace_on_surface,
         &face_nodes,
         &edge_nodes,
         &mut global,
@@ -433,6 +441,7 @@ pub(super) fn plc_pass(
     // crossing node, and every parent node S7 snapped onto it (invariant K2's promotions).
     // `plc_attempt` adopts these where a facet's rim meets a cell edge (plan M-2.2).
     let mut on_surface: BTreeSet<(u32, i32)> = on_cut.keys().copied().collect();
+    on_surface.extend(trace_on_surface.iter().copied());
     for map in [&cut_index, &second_index] {
         for ((_, component), node) in map.iter() {
             on_surface.insert((*node, *component));
@@ -524,6 +533,7 @@ pub(super) fn plc_pass(
 #[allow(clippy::too_many_arguments)]
 fn scan_faces(
     chords_of: &mut BTreeMap<[u32; 3], SmallVec<[[Vec3; 2]; 4]>>,
+    chord_components: &mut BTreeMap<[u32; 3], SmallVec<[i32; 4]>>,
     face_nodes: &mut BTreeMap<[u32; 3], SmallVec<[u32; 4]>>,
     owners: &mut BTreeMap<[u32; 3], SmallVec<[u32; 2]>>,
     edge_nodes: &mut BTreeMap<[u32; 2], SmallVec<[u32; 6]>>,
@@ -564,7 +574,7 @@ fn scan_faces(
     }
     // Sparse: only the faces the surface actually crosses, as (face slot, chords) in slot
     // order. One inline chord list per lattice face cost a9 ~400 MB of peak memory.
-    let face_chords: Vec<(usize, SmallVec<[[Vec3; 2]; 4]>)> = unique_faces
+    let face_chords: Vec<(usize, SmallVec<[[Vec3; 2]; 4]>, SmallVec<[i32; 4]>)> = unique_faces
         .par_iter()
         .enumerate()
         .filter_map(|(slot, (_, raw))| {
@@ -585,6 +595,7 @@ fn scan_faces(
                 })
                 .fold(f64::INFINITY, f64::min);
             let mut chords: SmallVec<[[Vec3; 2]; 4]> = SmallVec::new();
+            let mut comps: SmallVec<[i32; 4]> = SmallVec::new();
             for component in all_components {
                 // A sheet's trace too (A-11): it owns no volume but the cut runs along it.
                 let (lo, hi) = polygon_query_box(&geometry, shortest * 1.0e-9);
@@ -598,16 +609,19 @@ fn scan_faces(
                     shortest * 1.0e-9,
                 ) {
                     chords.push(chord);
+                    comps.push(*component);
                 }
             }
-            (!chords.is_empty()).then_some((slot, chords))
+            (!chords.is_empty()).then_some((slot, chords, comps))
         })
         .collect();
     let mut face_chords = face_chords.into_iter().peekable();
     for (slot, (face, raw)) in unique_faces.into_iter().enumerate() {
-        let chords: SmallVec<[[Vec3; 2]; 4]> = match face_chords.peek() {
-            Some((at, _)) if *at == slot => face_chords.next().map(|(_, c)| c).unwrap_or_default(),
-            _ => SmallVec::new(),
+        let (chords, comps): (SmallVec<[[Vec3; 2]; 4]>, SmallVec<[i32; 4]>) = match face_chords.peek() {
+            Some((at, _, _)) if *at == slot => {
+                face_chords.next().map(|(_, c, k)| (c, k)).unwrap_or_default()
+            }
+            _ => (SmallVec::new(), SmallVec::new()),
         };
         {
             let geometry = [
@@ -686,6 +700,7 @@ fn scan_faces(
             }
             if !chords.is_empty() {
                 chords_of.insert(face, chords);
+                chord_components.insert(face, comps);
             }
             if !on_face.is_empty() {
                 face_nodes.insert(face, on_face);
@@ -706,6 +721,8 @@ fn scan_faces(
 #[allow(clippy::too_many_arguments)]
 fn intern_trace_points(
     chords_of: &BTreeMap<[u32; 3], SmallVec<[[Vec3; 2]; 4]>>,
+    chord_components: &BTreeMap<[u32; 3], SmallVec<[i32; 4]>>,
+    trace_on_surface: &mut BTreeSet<(u32, i32)>,
     face_nodes: &BTreeMap<[u32; 3], SmallVec<[u32; 4]>>,
     edge_nodes: &BTreeMap<[u32; 2], SmallVec<[u32; 6]>>,
     global: &mut BTreeMap<NodeKey, u32>,
@@ -733,7 +750,9 @@ fn intern_trace_points(
             mesh.nodes[face[2] as usize],
         ];
         let corner = |slot: usize| corners[slot];
-        for chord in chords {
+        let comps = chord_components.get(face);
+        for (chord_slot, chord) in chords.iter().enumerate() {
+            let chord_component = comps.and_then(|c| c.get(chord_slot)).copied();
             for point in chord {
                 // **Which of the face's three edges it lies on, and if it does, it is put
                 // exactly there.** A trace endpoint is a clipped chord and lands within
@@ -869,6 +888,9 @@ fn intern_trace_points(
                     }),
                 };
                 chord_id.insert(node_key(*point, order_quantum), id);
+                if let Some(component) = chord_component {
+                    trace_on_surface.insert((id, component));
+                }
                 trace_faces.entry(id).or_default().insert(*face);
                 {
                     let mut nearest = f64::INFINITY;

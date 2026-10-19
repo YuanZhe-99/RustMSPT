@@ -89,7 +89,8 @@ The facet-split fan and §7.4's labelling ask, per component, which side of the 
 on. Three rules keep that from being a coin toss:
 
 * A node the cut **recorded** as on a component's surface (a crossing, an on-cut corner, a trace
-  point on its facet or its face trace) has no side of it.
+  point on its facet or its face trace, or any node a trace endpoint of that component landed on -
+  new or welded onto an existing node) has no side of it.
 * A node inside a solid of **strictly higher precedence** than the component has no side of it:
   S6 deactivated that part of the surface, so no trace exists there to split by
   (`PointClassifier::hidden_by_precedence`; a3r's 74 whole-cell fans, 2026-10-18).
