@@ -99,6 +99,9 @@ thread_local! {
     /// could not recover some of the piece's edges, all of them inside the cell (not edges of the
     /// cell's boundary): the caller may split those edges at their midpoints in every cap and retry
     /// (plan M-2.1). Empty otherwise.
+    /// Set by `plc_attempt` for its last-resort retry only: remove tets whose four vertices are one
+    /// facet's at that facet's planarity band (see `constrained_tets_detailed`).
+    pub static BAND_FLAT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     pub static SPLIT_REQUEST: std::cell::RefCell<Vec<[u32; 2]>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
@@ -5420,6 +5423,35 @@ fn constrained_tets_detailed(
         if flat_in(&flattened) < flat_in(&tets) {
             let after = hull_of(&faces_of(&flattened));
             if after == outer {
+                tets = flattened;
+                carried = faces_of(&tets);
+            }
+        }
+        // **A tet whose four vertices are one facet's is flat at THAT facet's band, not at `tol`.**
+        // A facet is planar only to its own trace snap (`facet_plane`'s band, up to ~1e7 `tol` on
+        // a9), so the slab between the two triangulations of a bent quad is too thick for the test
+        // above and still covers the facet twice - `covered/want` 2.000 with `flat 0`, a9's
+        // largest §7.4 refusal. The same removal at the band, accepted only if it lowers the count
+        // of such tets with the hull kept, picks one diagonal for both sides. Only on the retry
+        // `plc_attempt` makes when the facet-split fan has also refused (`BAND_FLAT`): such a slab
+        // is ~1 % of an edge thick, not flat, and can be the only tet of its body at a curve node,
+        // so the caller checks every on-surface node still has its body before it keeps the result.
+        let facet_bands: Vec<(std::collections::BTreeSet<u32>, f64)> = facets
+            .iter()
+            .filter(|f| f.len() >= 4)
+            .filter_map(|f| facet_plane(f, points, tol).map(|(_, _, band)| (f.iter().copied().collect(), band)))
+            .filter(|(_, band)| *band > tol)
+            .collect();
+        let on_one_facet = |set: &[[u32; 4]]| {
+            set.iter()
+                .filter(|t| facet_bands.iter().any(|(nodes, _)| t.iter().all(|v| nodes.contains(v))))
+                .count()
+        };
+        let before = if BAND_FLAT.with(|c| c.get()) { on_one_facet(&tets) } else { 0 };
+        if before > 0 {
+            let band = facet_bands.iter().map(|(_, b)| *b).fold(tol, f64::max);
+            let flattened = remove_flat_quad_tets(&tets, points, band, &protected);
+            if on_one_facet(&flattened) < before && hull_of(&faces_of(&flattened)) == outer {
                 tets = flattened;
                 carried = faces_of(&tets);
             }

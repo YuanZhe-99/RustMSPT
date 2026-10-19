@@ -75,8 +75,11 @@ three corners, the cut nodes and trace points on it, and the chords that must be
    facet's cap, closes the pieces and fills each one: from its centroid if it is star-shaped, from a
    point of its kernel found by a small search, by hull carving if the kernel is empty, or by
    tetrahedralising the piece itself. It keeps every boundary triangle, so it is conforming and
-   keeps the surface as the shared face. Only if that is refused too does the cell take the
-   **whole-cell fan** (cone the boundary to its centroid, label each tet by a sample). The
+   keeps the surface as the shared face. If that is refused too, §7.4 runs once more allowed to
+   remove the slab between a bent facet's two triangulations (a facet is planar only to its own
+   trace snap), and keeps the result only if every node on a component's surface - recorded or a
+   facet vertex - still has a tet of that component (`rescue_keeps_bodies`). Only then does the cell
+   take the **whole-cell fan** (cone the boundary to its centroid, label each tet by a sample). The
    whole-cell fan abandons conformity to the interface by construction and is slated for deletion
    (plan M-2.3) once nothing reaches it.
 

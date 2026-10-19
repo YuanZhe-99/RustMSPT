@@ -5772,6 +5772,7 @@ fn plc_attempt(
                 }
             }
             let split_why = Some(crate::meshgen::cdt::LAST_SPLIT.with(|c| c.get()));
+            let mut rescued: Option<(Vec<[u32; 4]>, Vec<u32>)> = None;
             match split {
                 Some((tets, regions)) => {
                     if std::env::var_os("RUSTMSPT_SPLIT_DIAG").is_some()
@@ -5784,6 +5785,41 @@ fn plc_attempt(
                         );
                     }
                     (tets, regions, Some(reason))
+                }
+                None if {
+                    // **Last resort before the whole-cell fan:** §7.4 once more, now allowed to remove
+                    // the slab between a bent facet's two triangulations (`BAND_FLAT`). Kept only if
+                    // every node the cut recorded on a component's surface still has a tet of that
+                    // component around it, judged region by region at the largest tet's centroid as
+                    // §7.5 will judge it - the slab can be the only material a body has at a curve
+                    // node, and a rescue that loses it fails `[V9]` (a6a_r, a6b_r, a8_r).
+                    crate::meshgen::cdt::BAND_FLAT.with(|c| c.set(true));
+                    let retry = crate::meshgen::cdt::constrained_tets_with_steiner(
+                        &mut arena,
+                        &boundary_local,
+                        &mut facets,
+                        tol,
+                        &planes,
+                        edge * 1.0e-6,
+                        3,
+                    );
+                    crate::meshgen::cdt::BAND_FLAT.with(|c| c.set(false));
+                    if let Ok(tets) = retry {
+                        let regions =
+                            crate::meshgen::cdt::regions_by_constraint(&tets, &facets, &arena.points, tol);
+                        if rescue_keeps_bodies(&tets, &regions, &arena.points, &seed, on_surface, &facets, &facet_of, classifier) {
+                            rescued = Some((tets, regions));
+                        }
+                    }
+                    rescued.is_some()
+                } =>
+                {
+                    crate::meshgen::cdt::note_split_public("rescued by the band-flat retry");
+                    if std::env::var_os("RUSTMSPT_SPLIT_DIAG").is_some() {
+                        eprintln!("[RESCUED] cell {} new nodes {}", HULL_CELL.with(|c| c.get()), arena.points.len() - seed.len());
+                    }
+                    let (tets, regions) = rescued.take().unwrap_or_default();
+                    (tets, regions, None)
                 }
                 None => {
                     crate::meshgen::cdt::note_split_public(if dropped == 0 {
@@ -7988,4 +8024,66 @@ fn face_trace_census(
         }
     }
     FaceTraceCounts { cells_interior_escalated, cells_interior_table, cells_interior_uncut, cells_with_a_trace, escalated_fully_surrounded, escalated_with_traces, face_all_clean, face_all_escalated, face_has_table, face_mixed, face_trace_faces, face_trace_interior, face_trace_nodes, face_trace_reaching, subcell_cells, subcell_clean, subcell_ready }
+}
+// AI-FUNC-SUMMARY:
+// Purpose: Accept a §7.4 rescue only if every node on a component's surface keeps a tet of that component.
+// Inputs: the rescued tets and their region ids, the cell's points, the local-to-global seed map, the on-surface
+//   record (global node, component), the cell's facets with their components, and the classifier.
+// Returns: true when, for every recorded node and every facet vertex on component c's surface, some incident tet's region samples inside c
+//   at its largest tet's centroid (the point §7.5's `region_records` samples).
+// Side effects: None.
+// Notes: `[V9]`'s question asked before committing. Stricter than the final labels where S6's record already says
+//   Inside, which is the safe direction for a rescue.
+fn rescue_keeps_bodies(
+    tets: &[[u32; 4]],
+    regions: &[u32],
+    points: &[Vec3],
+    seed: &[u32],
+    on_surface: &BTreeSet<(u32, i32)>,
+    facets: &[Vec<u32>],
+    facet_of: &[i32],
+    classifier: &PointClassifier,
+) -> bool {
+    let mut largest: BTreeMap<u32, (f64, usize)> = BTreeMap::new();
+    for (at, (t, r)) in tets.iter().zip(regions).enumerate() {
+        let p = t.map(|id| points[id as usize]);
+        let v = p[1].sub(p[0]).cross(p[2].sub(p[0])).dot(p[3].sub(p[0])).abs();
+        let e = largest.entry(*r).or_insert((v, at));
+        if v > e.0 {
+            *e = (v, at);
+        }
+    }
+    // Every node on a component's surface: those the cut recorded, and every vertex of one of
+    // that component's facets in this cell - interned trace points included, which no record names.
+    let mut wanted: BTreeSet<(u32, i32)> = BTreeSet::new();
+    for (local, global) in seed.iter().enumerate() {
+        for (_, component) in on_surface.range((*global, i32::MIN)..=(*global, i32::MAX)) {
+            wanted.insert((local as u32, *component));
+        }
+    }
+    for (facet, component) in facets.iter().zip(facet_of) {
+        for v in facet {
+            wanted.insert((*v, *component));
+        }
+    }
+    let mut verdict: BTreeMap<(u32, i32), bool> = BTreeMap::new();
+    let mut uncertain = 0usize;
+    for (node, component) in &wanted {
+        let Some(slot) = classifier.slot_of(*component) else { continue };
+        let found = tets.iter().zip(regions).any(|(t, r)| {
+            t.contains(node)
+                && *verdict.entry((*r, *component)).or_insert_with(|| {
+                    let at = largest[r].1;
+                    let c = tets[at]
+                        .iter()
+                        .fold(Vec3::new(0.0, 0.0, 0.0), |acc, id| acc.add(points[*id as usize]))
+                        .scale(0.25);
+                    classifier.inside(c, slot, &mut uncertain)
+                })
+        });
+        if !found {
+            return false;
+        }
+    }
+    true
 }
