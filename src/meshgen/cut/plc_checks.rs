@@ -39,12 +39,184 @@ pub(super) fn plc_checks(
     // Print-only censuses: they build maps over every face and edge of the mesh (~400 MB on
     // a4), so they run under `RUSTMSPT_PLC_DIAG` only. Nothing below reads their results.
     let plc_diag = std::env::var_os("RUSTMSPT_PLC_DIAG").is_some();
+    let census = if plc_diag {
+        Some(census_by_path(
+            mesh,
+            classifier,
+            all_components,
+            path_of,
+            plc_face_tris,
+            plc_face_owners_n,
+            plc_boundary,
+            plc_edge_points,
+            plc_decline,
+            pending_interfaces,
+            cut_index,
+            second_index,
+            s8_lap,
+        ))
+    } else {
+        None
+    };
+    s8_lap("t-flat");
+    // **Detect and repair, to a fixed point.** One pass is not enough: a node hangs on several
+    // faces, and repairing one changes the ring the next is judged against - so the pass is run
+    // again until it stops finding anything. Exclusion only ever removes hanging nodes here, so
+    // the loop is decreasing and the budget bounds it rather than guessing at it.
+    // **Which two arms computed the same point?** Print-only. `[V2]` names the duplicates and
+    // `[V3]` reports one of each pair hanging on the other's faces; what neither says is where
+    // they came from, and that is what decides where the identity rule belongs. Measured on a3:
+    // 368 pairs within `eps`, of which 312 are trace-endpoint against trace-endpoint - one arm
+    // computing one intersection twice, and the pairs are 2.98e-8 apart, one float32 ULP at 0.5
+    // (PLAN §6.60).
+    if std::env::var_os("RUSTMSPT_PLC_DIAG").is_some() {
+        origin.resize(mesh.nodes.len(), "unknown");
+        let coarse = quantum.max(f64::MIN_POSITIVE);
+        let cell = |p: Vec3| {
+            (
+                (p.x / coarse).floor() as i64,
+                (p.y / coarse).floor() as i64,
+                (p.z / coarse).floor() as i64,
+            )
+        };
+        let mut grid: BTreeMap<(i64, i64, i64), Vec<u32>> = BTreeMap::new();
+        for (id, point) in mesh.nodes.iter().enumerate() {
+            grid.entry(cell(*point)).or_default().push(id as u32);
+        }
+        let mut by_arms: BTreeMap<(&'static str, &'static str), usize> = BTreeMap::new();
+        let mut by_relation: BTreeMap<&'static str, usize> = BTreeMap::new();
+        let mut closest: Vec<(u64, u32, u32)> = Vec::new();
+        for (id, point) in mesh.nodes.iter().enumerate() {
+            let home = cell(*point);
+            for dx in -1..=1 {
+                for dy in -1..=1 {
+                    for dz in -1..=1 {
+                        let key = (home.0 + dx, home.1 + dy, home.2 + dz);
+                        for other in grid.get(&key).into_iter().flatten() {
+                            if *other as usize <= id {
+                                continue;
+                            }
+                            let d = mesh.nodes[*other as usize].sub(*point);
+                            let d = d.dot(d).sqrt();
+                            if d > coarse {
+                                continue;
+                            }
+                            let (a, b) = (origin[id], origin[*other as usize]);
+                            let pair = if a <= b { (a, b) } else { (b, a) };
+                            *by_arms.entry(pair).or_insert(0) += 1;
+                            closest.push((d.to_bits(), id as u32, *other));
+                            // **What do the two faces share?** The strongest relation any pair
+                            // of their faces has: the same face, an edge, a corner, or nothing.
+                            let (here, there) = (
+                                trace_faces.get(&(id as u32)),
+                                trace_faces.get(other),
+                            );
+                            if let (Some(here), Some(there)) = (here, there) {
+                                let mut best = 0usize;
+                                for f in here {
+                                    for g in there {
+                                        let shared =
+                                            f.iter().filter(|c| g.contains(c)).count();
+                                        best = best.max(shared);
+                                    }
+                                }
+                                let label = match best {
+                                    3 => "same face",
+                                    2 => "faces share an edge",
+                                    1 => "faces share a corner",
+                                    _ => "faces share nothing",
+                                };
+                                *by_relation.entry(label).or_insert(0) += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        closest.sort_unstable();
+        let total: usize = by_arms.values().sum();
+        mesh.warnings.push(format!(
+            "[PLC] coincident node pairs within eps ({coarse:.3e}): {total}, by the arms that \
+             interned them: {by_arms:?}; and for the trace-endpoint pairs, by what their faces \
+             share: {by_relation:?}"
+        ));
+        for (bits, a, b) in closest.iter().take(6) {
+            mesh.warnings.push(format!(
+                "[PLC]   pair {a} ({}) / {b} ({}) at {:.4e}; faces {:?} vs {:?}; at {:?} and {:?}",
+                origin[*a as usize],
+                origin[*b as usize],
+                f64::from_bits(*bits),
+                trace_faces.get(a).map(|f| f.iter().copied().collect::<Vec<_>>()),
+                trace_faces.get(b).map(|f| f.iter().copied().collect::<Vec<_>>()),
+                mesh.nodes[*a as usize],
+                mesh.nodes[*b as usize],
+            ));
+        }
+    }
+    s8_lap("t-plcdiag");
+    // **A repaired state the pass has already seen means the repair is undoing itself.** The
+    // measured case is a pair of node chains between the same two endpoints, 1.85e-7 apart:
+    // splitting an edge of one puts the other chain's node on the face that split just made,
+    // and splitting that one puts the first back. No split can separate two spellings of one
+    // point, so the pass stops on the repeat rather than spending its budget oscillating - and
+    // on the BEST phase of the cycle, not whichever one it was caught in, so the result is the
+    // same every run instead of depending on where the round budget happened to fall.
+    let mut seen: BTreeSet<(Vec<u32>, usize, usize)> = BTreeSet::new();
+    let mut fewest = usize::MAX;
+    for _round in 0..12 {
+        if repair_round(_round, mesh, origin, pending_interfaces, lattice, n_parent_nodes, &mut seen, &mut fewest) {
+            break;
+        }
+    }
+    s8_lap("t-repair");
+    if let Some(census) = census.as_ref() {
+        census_bad(
+            mesh,
+            path_of,
+            census,
+        );
+    }
+}
+
+
+/// Counters the first census computes and the bad-element census reads.
+#[derive(Clone, Copy)]
+struct PathCensus {
+    unmatched: usize,
+    unmatched_augmented: usize,
+    flat_by_path: [usize; 5],
+    inverted_by_path: [usize; 5],
+    worst_flat: f64,
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: The print-only censuses after S8's assembly: promised-vs-carried faces, leaks, T-junctions,
+//   duplicates, `[V6]` steps, off-surface area and degenerate elements, each charged to the arm that emitted it.
+// Inputs: the mesh and the §7.4 promises, the per-cell path, the classifier, components and cut maps.
+// Returns: the counters the bad-element census reads.
+// Side effects: Pushes `[PLC]` warnings.
+// Notes: Split out of `plc_checks` unchanged (plan M-3.3); runs under `RUSTMSPT_PLC_DIAG` only.
+#[allow(clippy::too_many_arguments)]
+fn census_by_path(
+    mesh: &mut CutMesh,
+    classifier: &PointClassifier,
+    all_components: &[i32],
+    path_of: &[u8],
+    plc_face_tris: &BTreeMap<[u32; 3], Vec<[u32; 3]>>,
+    plc_face_owners_n: &BTreeMap<[u32; 3], usize>,
+    plc_boundary: &[Option<Vec<[u32; 3]>>],
+    plc_edge_points: &BTreeMap<[u32; 2], Vec<u32>>,
+    plc_decline: &[Option<&'static str>],
+    pending_interfaces: &[(usize, [u32; 3], i32)],
+    cut_index: &BTreeMap<([u32; 2], i32), u32>,
+    second_index: &BTreeMap<([u32; 2], i32), u32>,
+    s8_lap: &mut dyn FnMut(&str),
+) -> PathCensus {
     let mut unmatched = 0usize;
     let mut unmatched_augmented = 0usize;
     let mut flat_by_path = [0usize; 5];
     let mut inverted_by_path = [0usize; 5];
     let mut worst_flat = f64::INFINITY;
-    if plc_diag {
     // **Did the mesh actually take the faces the faces promised?** Every triangle of an
     // augmented face should be carried by exactly as many tets as the face has owners - two
     // inside the lattice, one on the domain boundary. A triangle carried by fewer is a leak
@@ -578,113 +750,182 @@ pub(super) fn plc_checks(
             worst_flat = worst_flat.min(shape);
         }
     }
-    }
-    s8_lap("t-flat");
-    // **Detect and repair, to a fixed point.** One pass is not enough: a node hangs on several
-    // faces, and repairing one changes the ring the next is judged against - so the pass is run
-    // again until it stops finding anything. Exclusion only ever removes hanging nodes here, so
-    // the loop is decreasing and the budget bounds it rather than guessing at it.
-    // **Which two arms computed the same point?** Print-only. `[V2]` names the duplicates and
-    // `[V3]` reports one of each pair hanging on the other's faces; what neither says is where
-    // they came from, and that is what decides where the identity rule belongs. Measured on a3:
-    // 368 pairs within `eps`, of which 312 are trace-endpoint against trace-endpoint - one arm
-    // computing one intersection twice, and the pairs are 2.98e-8 apart, one float32 ULP at 0.5
-    // (PLAN §6.60).
-    if std::env::var_os("RUSTMSPT_PLC_DIAG").is_some() {
-        origin.resize(mesh.nodes.len(), "unknown");
-        let coarse = quantum.max(f64::MIN_POSITIVE);
-        let cell = |p: Vec3| {
-            (
-                (p.x / coarse).floor() as i64,
-                (p.y / coarse).floor() as i64,
-                (p.z / coarse).floor() as i64,
-            )
-        };
-        let mut grid: BTreeMap<(i64, i64, i64), Vec<u32>> = BTreeMap::new();
-        for (id, point) in mesh.nodes.iter().enumerate() {
-            grid.entry(cell(*point)).or_default().push(id as u32);
-        }
-        let mut by_arms: BTreeMap<(&'static str, &'static str), usize> = BTreeMap::new();
-        let mut by_relation: BTreeMap<&'static str, usize> = BTreeMap::new();
-        let mut closest: Vec<(u64, u32, u32)> = Vec::new();
-        for (id, point) in mesh.nodes.iter().enumerate() {
-            let home = cell(*point);
-            for dx in -1..=1 {
-                for dy in -1..=1 {
-                    for dz in -1..=1 {
-                        let key = (home.0 + dx, home.1 + dy, home.2 + dz);
-                        for other in grid.get(&key).into_iter().flatten() {
-                            if *other as usize <= id {
-                                continue;
-                            }
-                            let d = mesh.nodes[*other as usize].sub(*point);
-                            let d = d.dot(d).sqrt();
-                            if d > coarse {
-                                continue;
-                            }
-                            let (a, b) = (origin[id], origin[*other as usize]);
-                            let pair = if a <= b { (a, b) } else { (b, a) };
-                            *by_arms.entry(pair).or_insert(0) += 1;
-                            closest.push((d.to_bits(), id as u32, *other));
-                            // **What do the two faces share?** The strongest relation any pair
-                            // of their faces has: the same face, an edge, a corner, or nothing.
-                            let (here, there) = (
-                                trace_faces.get(&(id as u32)),
-                                trace_faces.get(other),
-                            );
-                            if let (Some(here), Some(there)) = (here, there) {
-                                let mut best = 0usize;
-                                for f in here {
-                                    for g in there {
-                                        let shared =
-                                            f.iter().filter(|c| g.contains(c)).count();
-                                        best = best.max(shared);
-                                    }
-                                }
-                                let label = match best {
-                                    3 => "same face",
-                                    2 => "faces share an edge",
-                                    1 => "faces share a corner",
-                                    _ => "faces share nothing",
-                                };
-                                *by_relation.entry(label).or_insert(0) += 1;
-                            }
-                        }
+    PathCensus { unmatched, unmatched_augmented, flat_by_path, inverted_by_path, worst_flat }
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: The print-only census of bad elements (`[V4]`'s measure) charged to the arm that emitted them.
+// Inputs: the mesh, the per-cell path, and the first census's counters.
+// Returns: None.
+// Side effects: Pushes `[PLC]` warnings.
+// Notes: Split out of `plc_checks` unchanged (plan M-3.3); runs under `RUSTMSPT_PLC_DIAG` only.
+#[allow(clippy::too_many_arguments)]
+fn census_bad(
+    mesh: &mut CutMesh,
+    path_of: &[u8],
+    census: &PathCensus,
+) {
+    let PathCensus { unmatched, unmatched_augmented, flat_by_path, inverted_by_path, worst_flat } = *census;
+    // **Charge each BAD element to the arm that emitted it**, on the measure `[V4]` actually
+    // reports: the smallest dihedral angle. The goal names three properties and this is the
+    // third - *no bad elements* - and it is the only one the gated path still loses on. The
+    // technique is the one that found every previous cause; the buckets are `[V4]`'s own floor
+    // (5°) and its share gate (10°) so the row can be read against the verifier without
+    // translation.
+    {
+        let mut band = [[0usize; 4]; 5];
+        let mut worst = [180.0f64; 5];
+        let mut inherited = [0usize; 5];
+        let mut genuine = [0usize; 5];
+        for (at, tet) in mesh.tets.iter().enumerate() {
+            let p = [
+                mesh.nodes[tet[0] as usize],
+                mesh.nodes[tet[1] as usize],
+                mesh.nodes[tet[2] as usize],
+                mesh.nodes[tet[3] as usize],
+            ];
+            // The dihedral on edge (a, b) is the angle between the two faces meeting there,
+            // read off their outward normals.
+            let mut least = 180.0f64;
+            for (a, b, c, d) in [
+                (0, 1, 2, 3),
+                (0, 2, 1, 3),
+                (0, 3, 1, 2),
+                (1, 2, 0, 3),
+                (1, 3, 0, 2),
+                (2, 3, 0, 1),
+            ] {
+                let axis = p[b].sub(p[a]);
+                let length = axis.dot(axis).sqrt();
+                if length <= 0.0 {
+                    continue;
+                }
+                let axis = axis.scale(1.0 / length);
+                let drop = |q: Vec3| {
+                    let rel = q.sub(p[a]);
+                    rel.sub(axis.scale(rel.dot(axis)))
+                };
+                let (u, v) = (drop(p[c]), drop(p[d]));
+                let (nu, nv) = (u.dot(u).sqrt(), v.dot(v).sqrt());
+                if nu <= 0.0 || nv <= 0.0 {
+                    continue;
+                }
+                let cosine = (u.dot(v) / (nu * nv)).clamp(-1.0, 1.0);
+                least = least.min(cosine.acos().to_degrees());
+            }
+            // **Is the badness created in 3D, or inherited from a thin triangle already on a
+            // face?** A tet whose worst dihedral is small AND one of whose faces is already a
+            // needle in 2D cannot be fixed by any three-dimensional operation - the face is
+            // shared with a neighbour and frozen by J1, so the cure would have to be at the face
+            // level. A tet with four well-shaped faces and a small dihedral is a true sliver,
+            // which is the case Steiner points and exudation are for. The two want opposite
+            // work, so they are counted apart.
+            let mut face_least = 180.0f64;
+            for tri in [[0usize, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]] {
+                let q = [p[tri[0]], p[tri[1]], p[tri[2]]];
+                for corner in 0..3 {
+                    let u = q[(corner + 1) % 3].sub(q[corner]);
+                    let v = q[(corner + 2) % 3].sub(q[corner]);
+                    let (nu, nv) = (u.dot(u).sqrt(), v.dot(v).sqrt());
+                    if nu <= 0.0 || nv <= 0.0 {
+                        face_least = 0.0;
+                        continue;
                     }
+                    face_least = face_least
+                        .min((u.dot(v) / (nu * nv)).clamp(-1.0, 1.0).acos().to_degrees());
                 }
             }
+            let parent = mesh.parent_of.get(at).copied().unwrap_or(0) as usize;
+            let path = path_of.get(parent).copied().unwrap_or(4).min(4) as usize;
+            if least < 10.0 {
+                if face_least < 10.0 {
+                    inherited[path] += 1;
+                } else {
+                    genuine[path] += 1;
+                }
+            }
+            let slot = if least < 1.0 {
+                0
+            } else if least < 5.0 {
+                1
+            } else if least < 10.0 {
+                2
+            } else {
+                3
+            };
+            band[path][slot] += 1;
+            worst[path] = worst[path].min(least);
         }
-        closest.sort_unstable();
-        let total: usize = by_arms.values().sum();
-        mesh.warnings.push(format!(
-            "[PLC] coincident node pairs within eps ({coarse:.3e}): {total}, by the arms that \
-             interned them: {by_arms:?}; and for the trace-endpoint pairs, by what their faces \
-             share: {by_relation:?}"
-        ));
-        for (bits, a, b) in closest.iter().take(6) {
+        let name = [
+            "§6's table",
+            "§7.4-meshed",
+            "§7.4-fanned (whole cell)",
+            "escalated",
+            "§7.4-fanned (facet-split)",
+        ];
+        for path in 0..5 {
+            let total: usize = band[path].iter().sum();
+            if total == 0 {
+                continue;
+            }
+            let bad = band[path][0] + band[path][1] + band[path][2];
             mesh.warnings.push(format!(
-                "[PLC]   pair {a} ({}) / {b} ({}) at {:.4e}; faces {:?} vs {:?}; at {:?} and {:?}",
-                origin[*a as usize],
-                origin[*b as usize],
-                f64::from_bits(*bits),
-                trace_faces.get(a).map(|f| f.iter().copied().collect::<Vec<_>>()),
-                trace_faces.get(b).map(|f| f.iter().copied().collect::<Vec<_>>()),
-                mesh.nodes[*a as usize],
-                mesh.nodes[*b as usize],
+                "[PLC] dihedral by path: {} has {total} tet(s), {bad} below 10° ({:.2} %) - \
+                 {} under 1°, {} in 1-5°, {} in 5-10°; worst {:.4}°. Of the bad ones {} \
+                 INHERIT a needle face ({:.1} %) and {} are true slivers with four good faces",
+                name[path],
+                100.0 * bad as f64 / total as f64,
+                band[path][0],
+                band[path][1],
+                band[path][2],
+                worst[path],
+                inherited[path],
+                100.0 * inherited[path] as f64 / bad.max(1) as f64,
+                genuine[path]
             ));
         }
     }
-    s8_lap("t-plcdiag");
-    // **A repaired state the pass has already seen means the repair is undoing itself.** The
-    // measured case is a pair of node chains between the same two endpoints, 1.85e-7 apart:
-    // splitting an edge of one puts the other chain's node on the face that split just made,
-    // and splitting that one puts the first back. No split can separate two spellings of one
-    // point, so the pass stops on the repeat rather than spending its budget oscillating - and
-    // on the BEST phase of the cycle, not whichever one it was caught in, so the result is the
-    // same every run instead of depending on where the round budget happened to fall.
-    let mut seen: BTreeSet<(Vec<u32>, usize, usize)> = BTreeSet::new();
-    let mut fewest = usize::MAX;
-    for _round in 0..12 {
+    mesh.warnings.push(format!(
+        "[PLC] tets with volume/longest-edge^3 at or below zero: {} §6's table, {} \
+         §7.4-meshed, {} §7.4-fanned, {} escalated, {} other; and merely flat (< 1e-9): {} / \
+         {} / {} / {} / {}, worst {worst_flat:.3e}",
+        inverted_by_path[0],
+        inverted_by_path[1],
+        inverted_by_path[2],
+        inverted_by_path[3],
+        inverted_by_path[4],
+        flat_by_path[0],
+        flat_by_path[1],
+        flat_by_path[2],
+        flat_by_path[3],
+        flat_by_path[4]
+    ));
+    mesh.warnings.push(format!(
+        "[PLC] of the boundaries §7.4 cells were handed: {unmatched} triangle(s) are carried by \
+         fewer tets than the cells that promised them, {unmatched_augmented} of those on an \
+         augmented face - so the rest are faces §7.4 left to §5.2"
+    ));
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: One round of S8's T-junction repair: find nodes lying on a face they are not a vertex of
+//   (`[V3]`'s own test) and replace each flat sliver and its neighbour by three tets.
+// Inputs: the round number, the mesh, origins, pending interfaces, the lattice, parent-node count,
+//   and the seen-state set and best incidence count that stop an oscillation.
+// Returns: true when the fixed point is reached (nothing absorbed, or a repeated state).
+// Side effects: Rewrites tets in the mesh; pushes `[PLC]` warnings.
+// Notes: Split out of `plc_checks` unchanged (plan M-3.3).
+#[allow(clippy::too_many_arguments)]
+fn repair_round(
+    _round: usize,
+    mesh: &mut CutMesh,
+    origin: &mut Vec<&'static str>,
+    pending_interfaces: &[(usize, [u32; 3], i32)],
+    lattice: &Lattice,
+    n_parent_nodes: u32,
+    seen: &mut BTreeSet<(Vec<u32>, usize, usize)>,
+    fewest: &mut usize,
+) -> bool {
         let mut absorbed = 0usize;
     // **Find the T-junctions the way `[V3]` reports them**, with `[V3]`'s own test: a node
         // within `1e-9 x diagonal` of a face it is not a vertex of. Every attempt to prevent these
@@ -880,8 +1121,8 @@ pub(super) fn plc_checks(
             }
             let repeated =
                 !seen.insert((hanging.iter().copied().collect(), incidences, on_rim));
-            fewest = fewest.min(incidences);
-            if repeated && incidences <= fewest {
+            *fewest = (*fewest).min(incidences);
+            if repeated && incidences <= *fewest {
                 mesh.warnings.push(format!(
                     "[PLC] T-junction repair: STOPPED on a state already seen - {} node(s) over \
                      {incidences} incidence(s) came back after being repaired. A node that \
@@ -889,7 +1130,7 @@ pub(super) fn plc_checks(
                      split cannot separate two spellings",
                     hanging.len()
                 ));
-                break;
+                return true;
             }
 
             // **The repair: replace the flat sliver AND its neighbour together.**
@@ -1199,149 +1440,7 @@ pub(super) fn plc_checks(
         }
 
         if absorbed == 0 {
-            break;
+            return true;
         }
-    }
-    s8_lap("t-repair");
-    if plc_diag {
-    // **Charge each BAD element to the arm that emitted it**, on the measure `[V4]` actually
-    // reports: the smallest dihedral angle. The goal names three properties and this is the
-    // third - *no bad elements* - and it is the only one the gated path still loses on. The
-    // technique is the one that found every previous cause; the buckets are `[V4]`'s own floor
-    // (5°) and its share gate (10°) so the row can be read against the verifier without
-    // translation.
-    {
-        let mut band = [[0usize; 4]; 5];
-        let mut worst = [180.0f64; 5];
-        let mut inherited = [0usize; 5];
-        let mut genuine = [0usize; 5];
-        for (at, tet) in mesh.tets.iter().enumerate() {
-            let p = [
-                mesh.nodes[tet[0] as usize],
-                mesh.nodes[tet[1] as usize],
-                mesh.nodes[tet[2] as usize],
-                mesh.nodes[tet[3] as usize],
-            ];
-            // The dihedral on edge (a, b) is the angle between the two faces meeting there,
-            // read off their outward normals.
-            let mut least = 180.0f64;
-            for (a, b, c, d) in [
-                (0, 1, 2, 3),
-                (0, 2, 1, 3),
-                (0, 3, 1, 2),
-                (1, 2, 0, 3),
-                (1, 3, 0, 2),
-                (2, 3, 0, 1),
-            ] {
-                let axis = p[b].sub(p[a]);
-                let length = axis.dot(axis).sqrt();
-                if length <= 0.0 {
-                    continue;
-                }
-                let axis = axis.scale(1.0 / length);
-                let drop = |q: Vec3| {
-                    let rel = q.sub(p[a]);
-                    rel.sub(axis.scale(rel.dot(axis)))
-                };
-                let (u, v) = (drop(p[c]), drop(p[d]));
-                let (nu, nv) = (u.dot(u).sqrt(), v.dot(v).sqrt());
-                if nu <= 0.0 || nv <= 0.0 {
-                    continue;
-                }
-                let cosine = (u.dot(v) / (nu * nv)).clamp(-1.0, 1.0);
-                least = least.min(cosine.acos().to_degrees());
-            }
-            // **Is the badness created in 3D, or inherited from a thin triangle already on a
-            // face?** A tet whose worst dihedral is small AND one of whose faces is already a
-            // needle in 2D cannot be fixed by any three-dimensional operation - the face is
-            // shared with a neighbour and frozen by J1, so the cure would have to be at the face
-            // level. A tet with four well-shaped faces and a small dihedral is a true sliver,
-            // which is the case Steiner points and exudation are for. The two want opposite
-            // work, so they are counted apart.
-            let mut face_least = 180.0f64;
-            for tri in [[0usize, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]] {
-                let q = [p[tri[0]], p[tri[1]], p[tri[2]]];
-                for corner in 0..3 {
-                    let u = q[(corner + 1) % 3].sub(q[corner]);
-                    let v = q[(corner + 2) % 3].sub(q[corner]);
-                    let (nu, nv) = (u.dot(u).sqrt(), v.dot(v).sqrt());
-                    if nu <= 0.0 || nv <= 0.0 {
-                        face_least = 0.0;
-                        continue;
-                    }
-                    face_least = face_least
-                        .min((u.dot(v) / (nu * nv)).clamp(-1.0, 1.0).acos().to_degrees());
-                }
-            }
-            let parent = mesh.parent_of.get(at).copied().unwrap_or(0) as usize;
-            let path = path_of.get(parent).copied().unwrap_or(4).min(4) as usize;
-            if least < 10.0 {
-                if face_least < 10.0 {
-                    inherited[path] += 1;
-                } else {
-                    genuine[path] += 1;
-                }
-            }
-            let slot = if least < 1.0 {
-                0
-            } else if least < 5.0 {
-                1
-            } else if least < 10.0 {
-                2
-            } else {
-                3
-            };
-            band[path][slot] += 1;
-            worst[path] = worst[path].min(least);
-        }
-        let name = [
-            "§6's table",
-            "§7.4-meshed",
-            "§7.4-fanned (whole cell)",
-            "escalated",
-            "§7.4-fanned (facet-split)",
-        ];
-        for path in 0..5 {
-            let total: usize = band[path].iter().sum();
-            if total == 0 {
-                continue;
-            }
-            let bad = band[path][0] + band[path][1] + band[path][2];
-            mesh.warnings.push(format!(
-                "[PLC] dihedral by path: {} has {total} tet(s), {bad} below 10° ({:.2} %) - \
-                 {} under 1°, {} in 1-5°, {} in 5-10°; worst {:.4}°. Of the bad ones {} \
-                 INHERIT a needle face ({:.1} %) and {} are true slivers with four good faces",
-                name[path],
-                100.0 * bad as f64 / total as f64,
-                band[path][0],
-                band[path][1],
-                band[path][2],
-                worst[path],
-                inherited[path],
-                100.0 * inherited[path] as f64 / bad.max(1) as f64,
-                genuine[path]
-            ));
-        }
-    }
-    mesh.warnings.push(format!(
-        "[PLC] tets with volume/longest-edge^3 at or below zero: {} §6's table, {} \
-         §7.4-meshed, {} §7.4-fanned, {} escalated, {} other; and merely flat (< 1e-9): {} / \
-         {} / {} / {} / {}, worst {worst_flat:.3e}",
-        inverted_by_path[0],
-        inverted_by_path[1],
-        inverted_by_path[2],
-        inverted_by_path[3],
-        inverted_by_path[4],
-        flat_by_path[0],
-        flat_by_path[1],
-        flat_by_path[2],
-        flat_by_path[3],
-        flat_by_path[4]
-    ));
-    mesh.warnings.push(format!(
-        "[PLC] of the boundaries §7.4 cells were handed: {unmatched} triangle(s) are carried by \
-         fewer tets than the cells that promised them, {unmatched_augmented} of those on an \
-         augmented face - so the rest are faces §7.4 left to §5.2"
-    ));
-    }
+    false
 }

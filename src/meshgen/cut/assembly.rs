@@ -309,6 +309,208 @@ for (index, cell) in per_cell.into_iter().enumerate() {
     }
     if let Some(reason) = cell.escalation {
         let _asm = AsmLap(&mut asm_time[1], asm_clock);
+        assemble_escalated(
+            index,
+            reason,
+            mesh,
+            keys,
+            origin,
+            face_steiner,
+            pending_interfaces,
+            &mut face_cache,
+            &mut face_cache_conflicts,
+            &mut crease_faces,
+            &mut crease_faces_expressible,
+            &mut crease_faces_both_escalated,
+            &mut crease_faces_fanned,
+            &mut seed_uncertain,
+            &mut seeded_pieces,
+            &mut spoke_probe,
+            &mut path_of,
+            lattice,
+            snapped,
+            classification,
+            classifier,
+            options,
+            all_components,
+            cut_index,
+            second_index,
+            on_cut,
+            curve_pierce,
+            pierced_owners,
+            pierce_components,
+            plc_face_owners,
+            region_of_cut,
+            component_of_cut,
+            curve_nodes,
+            n_parent_nodes,
+            quantum,
+            order_quantum,
+            probing_spokes,
+        );
+        continue;
+    }
+    let _asm = AsmLap(&mut asm_time[2], asm_clock);
+    if cell.tets.len() == 1 && cell.case == 0 {
+        mesh.stats.n_uncut_cells += 1;
+    } else {
+        mesh.stats.n_cut_cells += 1;
+        match cell.case {
+            b'A' => mesh.stats.n_case_a += 1,
+            b'B' | b'b' => mesh.stats.n_case_b += 1,
+            b'C' | b'c' => mesh.stats.n_case_c += 1,
+            b'D' => mesh.stats.n_case_d += 1,
+            b'i' => mesh.stats.n_interior_sampled_cells += 1,
+            _ => {}
+        }
+        if cell.welded {
+            mesh.stats.n_welded_sheet_cells += 1;
+        }
+        mesh.stats.min_dihedral_deg = mesh.stats.min_dihedral_deg.min(cell.min_dihedral);
+        mesh.stats.worst_volume_error = mesh.stats.worst_volume_error.max(cell.volume_error);
+    }
+    let parent_record = &classification.records[index];
+    // The §6 table decides the **driving** component's side exactly and `cut_record`
+    // inherits every other component's entry verbatim - including an `Outside` S6 read
+    // off vertices that were all snapped *onto* that other body's surface. At an edge or
+    // a corner that is the ordinary case, and the child then carries background where it
+    // holds material: A-6a's 321 and A-7b's 90 remaining misattributed cells, all
+    // `provenance = 1`, after the same defect was closed on the §7.6 path.
+    //
+    // Scoped by `on_cut`, which is the signal that the other body's surface runs through
+    // this cell's vertices at all. Without it this would sample every component on every
+    // cut tet - millions of classifier queries on A-4 - to change a few hundred.
+    let hidden: SmallVec<[i32; 2]> = all_components
+        .iter()
+        .filter(|component| {
+            **component != cell.component
+                && Some(**component) != cell.welded_with
+                && !parent_record
+                    .entries
+                    .iter()
+                    .any(|(x, side)| x == *component && *side == Side::Inside)
+                && lattice.tets[index]
+                    .iter()
+                    .any(|node| on_cut.contains_key(&(*node, **component)))
+        })
+        .copied()
+        .collect();
+    for (tet, inside) in cell.tets.iter().zip(cell.inside.iter()) {
+        let mut record = cut_record(
+            parent_record,
+            cell.component,
+            cell.welded_with,
+            *inside,
+            if cell.welded { 0 } else { cell.case },
+        );
+        if !hidden.is_empty() {
+            let centroid = tet
+                .iter()
+                .fold(Vec3::new(0.0, 0.0, 0.0), |acc, node| {
+                    acc.add(mesh.nodes[*node as usize])
+                })
+                .scale(0.25);
+            for component in &hidden {
+                let Some(slot) = classifier.slot_of(*component) else {
+                    continue;
+                };
+                if !classifier.inside(centroid, slot, &mut seed_uncertain) {
+                    continue;
+                }
+                match record.entries.iter_mut().find(|(x, _)| x == component) {
+                    Some(entry) => entry.1 = Side::Inside,
+                    None => record.entries.push((*component, Side::Inside)),
+                }
+                hidden_recovered += 1;
+            }
+            record.entries.sort_by_key(|(x, _)| *x);
+        }
+        mesh.records.push(record);
+        mesh.tets.push(*tet);
+        mesh.parent_of.push(index as u32);
+        mesh.regime.push(REGIME_NORMAL);
+        mesh.band_region.push(-1);
+    }
+    for triangle in &cell.interface {
+        pending_interfaces.push((mesh.tets.len(), *triangle, cell.component));
+    }
+}
+mesh.plc_path = path_of.clone();
+mesh.stats.n_tets = mesh.tets.len();
+if s8_timing {
+    println!("[S8-TIME] assembly by arm: plc {:?} escalated {:?} table {:?}", asm_time[0], asm_time[1], asm_time[2]);
+}
+    Assembly {
+        face_cache,
+        face_cache_conflicts,
+        crease_faces,
+        crease_faces_expressible,
+        crease_faces_both_escalated,
+        crease_faces_fanned,
+        plc_meshed,
+        plc_fanned,
+        plc_split_fanned,
+        plc_meshed_tets,
+        plc_split_fanned_tets,
+        plc_fanned_tets,
+        fan_repeated,
+        path_of,
+        seed_uncertain,
+        seeded_pieces,
+        hidden_recovered,
+        spoke_probe,
+    }
+}
+
+
+// AI-FUNC-SUMMARY:
+// Purpose: Assemble one escalated cell: its faces through the face cache (crease hubs, crossed faces,
+//   loop fans), then §7.4's plan, the facet-split fan, or the whole-cell fan, with §7.5 labels.
+// Inputs: the cell index and escalation reason, the cut state and maps; the counters and caches it updates.
+// Returns: None.
+// Side effects: Appends tets, nodes, keys and interfaces to the mesh; updates the face cache,
+//   face Steiner points, crease sets and counters.
+// Notes: Split out of `assemble` unchanged (plan M-3.3).
+#[allow(clippy::too_many_arguments)]
+fn assemble_escalated(
+    index: usize,
+    reason: Escalation,
+    mesh: &mut CutMesh,
+    keys: &mut Vec<NodeKey>,
+    origin: &mut Vec<&'static str>,
+    face_steiner: &mut BTreeMap<[u32; 3], u32>,
+    pending_interfaces: &mut Vec<(usize, [u32; 3], i32)>,
+    mut face_cache: &mut crate::meshgen::facecache::FaceTriCache,
+    mut face_cache_conflicts: &mut (usize, Option<String>),
+    crease_faces: &mut BTreeSet<[u32; 3]>,
+    crease_faces_expressible: &mut BTreeSet<[u32; 3]>,
+    crease_faces_both_escalated: &mut BTreeSet<[u32; 3]>,
+    crease_faces_fanned: &mut BTreeSet<[u32; 3]>,
+    mut seed_uncertain: &mut usize,
+    seeded_pieces: &mut usize,
+    mut spoke_probe: &mut SpokeProbe,
+    path_of: &mut [u8],
+    lattice: &Lattice,
+    snapped: &Snapped,
+    classification: &Classification,
+    classifier: &PointClassifier,
+    options: &CutOptions,
+    all_components: &[i32],
+    cut_index: &BTreeMap<([u32; 2], i32), u32>,
+    second_index: &BTreeMap<([u32; 2], i32), u32>,
+    on_cut: &BTreeMap<(u32, i32), ()>,
+    curve_pierce: &BTreeMap<[u32; 3], Vec3>,
+    pierced_owners: &BTreeMap<[u32; 3], (u8, u8)>,
+    pierce_components: &BTreeMap<[u32; 3], SmallVec<[i32; 2]>>,
+    plc_face_owners: &BTreeMap<[u32; 3], (u16, u16)>,
+    region_of_cut: &BTreeMap<u32, i32>,
+    component_of_cut: &BTreeMap<u32, i32>,
+    curve_nodes: &BTreeSet<u32>,
+    n_parent_nodes: u32,
+    quantum: f64,
+    order_quantum: f64,
+    probing_spokes: bool,
+) {
         path_of[index] = 3;
         mesh.escalated.push((index as u32, reason));
         *mesh.stats.n_escalated.entry(reason).or_insert(0) += 1;
@@ -897,7 +1099,7 @@ for (index, cell) in per_cell.into_iter().enumerate() {
                             classifier,
                             &mut seed_uncertain,
                         ));
-                        seeded_pieces += 1;
+                        *seeded_pieces += 1;
                         mesh.parent_of.push(index as u32);
                         mesh.regime.push(meshed.template.regime_code());
                         mesh.band_region.push(band_region_id);
@@ -923,7 +1125,7 @@ for (index, cell) in per_cell.into_iter().enumerate() {
                             classifier,
                             &mut seed_uncertain,
                         ));
-                        seeded_pieces += 1;
+                        *seeded_pieces += 1;
                         mesh.parent_of.push(index as u32);
                         mesh.regime.push(REGIME_NORMAL);
                         mesh.band_region.push(-1);
@@ -959,7 +1161,7 @@ for (index, cell) in per_cell.into_iter().enumerate() {
                     classifier,
                     &mut seed_uncertain,
                 ));
-                seeded_pieces += 1;
+                *seeded_pieces += 1;
                 mesh.parent_of.push(index as u32);
                 mesh.regime
                     .push(if pairs.is_some() { 2 } else { REGIME_NORMAL });
@@ -968,116 +1170,4 @@ for (index, cell) in per_cell.into_iter().enumerate() {
             }
         }
         mesh.stats.n_uncut_cells += 1;
-        continue;
-    }
-    let _asm = AsmLap(&mut asm_time[2], asm_clock);
-    if cell.tets.len() == 1 && cell.case == 0 {
-        mesh.stats.n_uncut_cells += 1;
-    } else {
-        mesh.stats.n_cut_cells += 1;
-        match cell.case {
-            b'A' => mesh.stats.n_case_a += 1,
-            b'B' | b'b' => mesh.stats.n_case_b += 1,
-            b'C' | b'c' => mesh.stats.n_case_c += 1,
-            b'D' => mesh.stats.n_case_d += 1,
-            b'i' => mesh.stats.n_interior_sampled_cells += 1,
-            _ => {}
-        }
-        if cell.welded {
-            mesh.stats.n_welded_sheet_cells += 1;
-        }
-        mesh.stats.min_dihedral_deg = mesh.stats.min_dihedral_deg.min(cell.min_dihedral);
-        mesh.stats.worst_volume_error = mesh.stats.worst_volume_error.max(cell.volume_error);
-    }
-    let parent_record = &classification.records[index];
-    // The §6 table decides the **driving** component's side exactly and `cut_record`
-    // inherits every other component's entry verbatim - including an `Outside` S6 read
-    // off vertices that were all snapped *onto* that other body's surface. At an edge or
-    // a corner that is the ordinary case, and the child then carries background where it
-    // holds material: A-6a's 321 and A-7b's 90 remaining misattributed cells, all
-    // `provenance = 1`, after the same defect was closed on the §7.6 path.
-    //
-    // Scoped by `on_cut`, which is the signal that the other body's surface runs through
-    // this cell's vertices at all. Without it this would sample every component on every
-    // cut tet - millions of classifier queries on A-4 - to change a few hundred.
-    let hidden: SmallVec<[i32; 2]> = all_components
-        .iter()
-        .filter(|component| {
-            **component != cell.component
-                && Some(**component) != cell.welded_with
-                && !parent_record
-                    .entries
-                    .iter()
-                    .any(|(x, side)| x == *component && *side == Side::Inside)
-                && lattice.tets[index]
-                    .iter()
-                    .any(|node| on_cut.contains_key(&(*node, **component)))
-        })
-        .copied()
-        .collect();
-    for (tet, inside) in cell.tets.iter().zip(cell.inside.iter()) {
-        let mut record = cut_record(
-            parent_record,
-            cell.component,
-            cell.welded_with,
-            *inside,
-            if cell.welded { 0 } else { cell.case },
-        );
-        if !hidden.is_empty() {
-            let centroid = tet
-                .iter()
-                .fold(Vec3::new(0.0, 0.0, 0.0), |acc, node| {
-                    acc.add(mesh.nodes[*node as usize])
-                })
-                .scale(0.25);
-            for component in &hidden {
-                let Some(slot) = classifier.slot_of(*component) else {
-                    continue;
-                };
-                if !classifier.inside(centroid, slot, &mut seed_uncertain) {
-                    continue;
-                }
-                match record.entries.iter_mut().find(|(x, _)| x == component) {
-                    Some(entry) => entry.1 = Side::Inside,
-                    None => record.entries.push((*component, Side::Inside)),
-                }
-                hidden_recovered += 1;
-            }
-            record.entries.sort_by_key(|(x, _)| *x);
-        }
-        mesh.records.push(record);
-        mesh.tets.push(*tet);
-        mesh.parent_of.push(index as u32);
-        mesh.regime.push(REGIME_NORMAL);
-        mesh.band_region.push(-1);
-    }
-    for triangle in &cell.interface {
-        pending_interfaces.push((mesh.tets.len(), *triangle, cell.component));
-    }
-}
-mesh.plc_path = path_of.clone();
-mesh.stats.n_tets = mesh.tets.len();
-if s8_timing {
-    println!("[S8-TIME] assembly by arm: plc {:?} escalated {:?} table {:?}", asm_time[0], asm_time[1], asm_time[2]);
-}
-    Assembly {
-        face_cache,
-        face_cache_conflicts,
-        crease_faces,
-        crease_faces_expressible,
-        crease_faces_both_escalated,
-        crease_faces_fanned,
-        plc_meshed,
-        plc_fanned,
-        plc_split_fanned,
-        plc_meshed_tets,
-        plc_split_fanned_tets,
-        plc_fanned_tets,
-        fan_repeated,
-        path_of,
-        seed_uncertain,
-        seeded_pieces,
-        hidden_recovered,
-        spoke_probe,
-    }
 }

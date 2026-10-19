@@ -742,6 +742,14 @@
 | `parity_f32_certified / orient3d_f32_certified_inputs` | 网格生成 | `src/meshgen/classify.rs / src/meshgen/predicates.rs` | GK-1 的 CPU 参照：S6 沿一个方向的奇偶判定，所有 orient3d 都按证书 G1 rev 1.4 在 f32 中求值，操作数各自的误差界显式给出（远端点在 f32 中计算，可以位于比 CPU 更短的射线上——区域盒以外的任何点给出相同的精确符号）。只有所有测试都被证实时才返回 Some(inside)，且此时等于 `parity_along` 的结果；None 则把该顶点交给 CPU。在多面体球上测试：没有不一致，远离曲面的点 >= 95 % 被证实。 |
 | `plc_pass / assemble / plc_checks` | 网格生成 | `src/meshgen/cut/{plc_pass,assembly,plc_checks}.rs` | M-3.3：把 `cut_lattice` 最大的三块拆为 `cut` 子模块中的阶段函数（可见其私有项）：§7.1/§7.4 处理（迹点内化、增强面、排除不动点、逐单元 PLC 尝试）、按单元顺序的串行组装（返回 `Assembly`：计数、统计集合、面缓存），以及组装后的统计和 T 形节点修复。原样搬移——网格与 `[PLC]`/`[JCT]`/`[S8]` 日志逐字节不变；`cut_lattice` 4,897 -> 1,167 行。 |
 | `trace_point_on_edge` | 网格生成 | `src/meshgen/cut/plc_pass.rs` | S8 对迹线端点的“在边上”规则：它所在的第一条面边（在该边长度的 1e-9 以内或在其直线的重合界以内，且在边的范围内）以及投影到该边上的点；是点与边的函数，所以共享该边的两个面判定一致。有单元测试（`a_rim_endpoint_is_placed_on_its_edge_the_same_from_both_faces`、`the_coincidence_bound_catches_near_rim_endpoints_and_nothing_else`）。 |
+| `scan_faces` | 网格生成 | `src/meshgen/cut/plc_pass.rs` | 曲面穿过的每个格子面：其迹线弦、其上已有的交点节点、其所属单元、每条格子边上的节点（只是面的函数，J1）。 |
+| `intern_trace_points` | 网格生成 | `src/meshgen/cut/plc_pass.rs` | 每个迹线弦端点只内化一次：在其所在的面边上（`trace_point_on_edge`）或面内部，并记录每个面的弦编号。 |
+| `triangulate_faces` | 网格生成 | `src/meshgen/cut/plc_pass.rs` | 按点集和弦对迹线改变的每个面三角剖分；记录失败及原因。 |
+| `commit_attempts` | 网格生成 | `src/meshgen/cut/plc_pass.rs` | `[PLC-PASS]` 统计，并提交每个单元的 §7.4 结果（计划、边界、面三角剖分、拒绝原因）。 |
+| `assemble_escalated` | 网格生成 | `src/meshgen/cut/assembly.rs` | 组装一个升级单元：经面缓存处理各面，再走 §7.4 计划、面片切分扇或整胞扇，并按 §7.5 标记。 |
+| `census_by_path` | 网格生成 | `src/meshgen/cut/plc_checks.rs` | 只打印（`RUSTMSPT_PLC_DIAG`）：承诺与实际承载的面、泄漏、T 形节点、重复、`[V6]` 跳变、离曲面面积和退化单元，按发出路径计。 |
+| `census_bad` | 网格生成 | `src/meshgen/cut/plc_checks.rs` | 只打印：坏单元（`[V4]` 的度量）按发出路径计。 |
+| `repair_round` | 网格生成 | `src/meshgen/cut/plc_checks.rs` | T 形节点修复的一轮；到达不动点（未吸收任何节点或状态重复）时返回 true。 |
 | `ParityAccelerator / ParityGeometry / GpuParityPipeline` | 网格生成 | `src/meshgen/classify.rs / src/gpu/s6_parity.rs / src/gpu/shaders/s6_parity.wgsl` | GK-1（计划 M-7）：S6 第一条射线的奇偶判定在 GPU 上进行（`--features gpu`，加速模式 `auto`/`gpu`，晶格节点至少 10 万）。每个调用沿主机以 f64 算出的桶射出一条射线，所有 orient3d 都按 G1 rev 1.4 证实，写出 0/1，或写 2 交给 CPU；被证实的结果就是 CPU 的结果，所以网格逐字节不变（a4、a9）。不构造远端点（直线测试为 reach·det[p - y, dir, x - y]，远端平面侧为 det[dir, b - a, c - a]），所以操作数误差只有转换和减法。在 Iris Plus 655 上：a4 第一条射线 99.96 % 被证实，a9 99.6 %（S6 奇偶判定 13.4 -> 10.2 s，集成显卡）。 |
 | `curve_pierce_points_grouped` | 网格生成 | `src/meshgen/cut.rs` | 对所有锁定曲线只遍历一次晶格的 `curve_pierce_points`；每个命中带曲线下标，排序、共边重复剔除和先到先得映射按曲线分别执行，所以每张表与单曲线调用相同。取代了逐曲线遍历晶格（a8：972 条曲线，S8 中 68 s -> 0.15 s）。 |
 | `region_records` | 网格生成 | `src/meshgen/cut.rs` | §7.4 网格化单元的 §7.5：每个子区域一条归属记录，在其最大四面体处采样（并列取下标小者）。是单元的纯函数，所以 S8 在串行组装前并行计算所有网格化单元的记录（a8 组装 16 -> 5.8 s）。 |

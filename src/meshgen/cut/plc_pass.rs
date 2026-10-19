@@ -56,6 +56,487 @@ pub(super) fn plc_pass(
     let mut owners: BTreeMap<[u32; 3], SmallVec<[u32; 2]>> = BTreeMap::new();
     let mut edge_nodes: BTreeMap<[u32; 2], SmallVec<[u32; 6]>> = BTreeMap::new();
     s8_lap("plc-setup");
+    scan_faces(
+        &mut chords_of,
+        &mut face_nodes,
+        &mut owners,
+        &mut edge_nodes,
+        mesh,
+        keys,
+        lattice,
+        snapped,
+        classifier,
+        all_components,
+        cut_index,
+        second_index,
+        on_cut,
+    );
+    s8_lap("plc-face-scan");
+    let mut global: BTreeMap<NodeKey, u32> = BTreeMap::new();
+    for (id, key) in keys.iter().enumerate() {
+        global.entry(*key).or_insert(id as u32);
+    }
+
+    // **A trace point on a lattice EDGE belongs to six cells, not two.** Delivering a face's
+    // trace to that face's two owners is right for a point strictly inside it and wrong for one
+    // on its boundary: the edge is shared by every cell around it, and the four that never see
+    // this face keep the edge whole, leaving the node sitting on their faces with nothing
+    // referencing it. That is 1,437 boundary leaks and 7,025 hanging nodes on a6a, and the
+    // count was invariant under every other bisection precisely because it depends on the
+    // augmented FACE SET rather than on how any cell is meshed (PLAN §6.32).
+    //
+    // So an edge point is interned per EDGE, exactly as `cut_index` interns a crossing, and
+    // every face carrying that edge takes it - including faces the surface never touches.
+    let mut chord_id: BTreeMap<NodeKey, u32> = BTreeMap::new();
+    let mut rim_decade = [0usize; 16];
+    // Print-only: for every trace endpoint the snap did NOT reuse, how far the nearest
+    // candidate actually was. A bar at 1e-8 means the bound refused a node it could see; a bar
+    // at 1e-2 means the candidate set never held one.
+    let mut nearest_decade = [0usize; 16];
+    let mut probe_decade = [0usize; 16];
+    let second_stage = 0usize;
+    let mut edge_points: BTreeMap<[u32; 2], SmallVec<[u32; 4]>> = BTreeMap::new();
+    let mut face_interior: BTreeMap<[u32; 3], SmallVec<[u32; 4]>> = BTreeMap::new();
+    // **The candidate set the snap was missing, and it is a publication and not a bound.**
+    // Measured (PLAN §6.62): for every trace endpoint the snap declines to reuse, the nearest
+    // candidate it can see is 1e-1 to 1e-3 away and never closer - so the rule was never
+    // refusing a node, it was never offered one. 296 of a3's 312 trace/trace duplicate pairs
+    // are two faces meeting at a lattice edge, each cutting the input's feature edge with its
+    // own plane and landing one float32 ULP apart; both endpoints are strictly INSIDE their own
+    // face, so each goes into its own `face_interior` and neither is published anywhere the
+    // other can look.
+    //
+    // Each interior point is published against the ONE edge of its face it is nearest to. That
+    // is a total function of the point and the face - no threshold decides it - and it is what
+    // keeps this from repeating the failure of publishing everything within `quantum` of an
+    // edge, which put thousands of legitimately distinct points in one bucket and took a3's
+    // traced cells from 16,883 to 190.
+    // **And these candidates are judged at `[V2]`'s bound, not at `eps`.** That is the whole
+    // difference between this and §6.63: publishing and then snapping at `quantum` takes a3's
+    // traced cells from 16,883 to 190, because `eps` is the width of a whole feature here.
+    // `1e-6 x diagonal` is the tolerance the contract itself calls coincident and the config's
+    // `coincidence: merge` already names - a hundred times tighter - and the measured near-edge
+    // distances put 290 points inside it against some 24,000 inside `eps`.
+    let coincident = {
+        let (mut lo, mut hi) = (
+            Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY),
+            Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY),
+        );
+        for p in &mesh.nodes {
+            lo = Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z));
+            hi = Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
+        }
+        let span = hi.sub(lo);
+        1.0e-6 * span.dot(span).sqrt()
+    };
+    let mut near_edge: BTreeMap<[u32; 2], SmallVec<[u32; 4]>> = BTreeMap::new();
+    s8_lap("plc-global");
+    intern_trace_points(
+        &chords_of,
+        &face_nodes,
+        &edge_nodes,
+        &mut global,
+        &mut chord_id,
+        &mut edge_points,
+        &mut face_interior,
+        &mut near_edge,
+        &mut rim_decade,
+        &mut nearest_decade,
+        &mut probe_decade,
+        mesh,
+        keys,
+        origin,
+        trace_faces,
+        second_stage,
+        coincident,
+        quantum,
+        order_quantum,
+    );
+    s8_lap("plc-edge-points");
+    let mut face_ids: BTreeMap<[u32; 3], Vec<u32>> = BTreeMap::new();
+    for face in owners.keys() {
+        let mut ids: Vec<u32> = face.to_vec();
+        for id in face_nodes.get(face).into_iter().flatten() {
+            if !ids.contains(id) {
+                ids.push(*id);
+            }
+        }
+        for id in face_interior.get(face).into_iter().flatten() {
+            if !ids.contains(id) {
+                ids.push(*id);
+            }
+        }
+        for slot in 0..3 {
+            let (x, y) = (face[slot], face[(slot + 1) % 3]);
+            let edge = if x <= y { [x, y] } else { [y, x] };
+            for id in edge_points.get(&edge).into_iter().flatten() {
+                if !ids.contains(id) {
+                    ids.push(*id);
+                }
+            }
+        }
+        if ids.len() > 3 || chords_of.contains_key(face) {
+            face_ids.insert(*face, ids);
+        }
+    }
+
+    // **Augmented only where it actually differs from §5.2.** Marking a face on the mere
+    // presence of a trace forced every cell the surface grazes onto the fan - 44,324 of a8's
+    // declines were "no facet in this cell", a cell with nothing for §7.4 to constrain and
+    // every reason to keep taking §6's table.
+    // Print-only: `RUSTMSPT_FACE_PROBE=a,b,c` (three lattice corner ids) prints that face's
+    // point set, its edges' recorded points and, below, its triangulation.
+    let face_probe: Option<BTreeSet<u32>> = std::env::var("RUSTMSPT_FACE_PROBE")
+        .ok()
+        .map(|v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect());
+    if let Some(probe) = &face_probe {
+        for (face, ids) in &face_ids {
+            if face.iter().copied().collect::<BTreeSet<u32>>() == *probe {
+                eprintln!("[FACE-PROBE] face {face:?} ids {ids:?} chords {:?}", chords_of.get(face));
+                for slot in 0..3 {
+                    let (x, y) = (face[slot], face[(slot + 1) % 3]);
+                    let edge = if x <= y { [x, y] } else { [y, x] };
+                    eprintln!("[FACE-PROBE]   edge {edge:?} points {:?} nodes {:?}", edge_points.get(&edge), edge_nodes.get(&edge));
+                }
+            }
+        }
+    }
+    let mut face_why: BTreeMap<&'static str, usize> = BTreeMap::new();
+    let mut failed_faces: BTreeSet<[u32; 3]> = BTreeSet::new();
+    let mut face_outside_worst = 0.0f64;
+    let mut face_tris: BTreeMap<[u32; 3], Vec<[u32; 3]>> = BTreeMap::new();
+    let mut trace: BTreeMap<[u32; 3], SmallVec<[[Vec3; 2]; 4]>> = BTreeMap::new();
+    s8_lap("plc-face-ids");
+    triangulate_faces(
+        &face_ids,
+        &chords_of,
+        &chord_id,
+        &face_interior,
+        &face_probe,
+        &mut face_tris,
+        &mut trace,
+        &mut failed_faces,
+        &mut face_why,
+        &mut face_outside_worst,
+        mesh,
+        keys,
+        options,
+        all_components,
+        cut_index,
+        second_index,
+        on_cut,
+        order_quantum,
+    );
+    s8_lap("plc-face-tris");
+    let unusable = failed_faces.len();
+    if unusable > 0 {
+        println!(
+            "[PLC-PASS] {unusable} face(s) of {} carry points §5.2 has not got and could not \
+             be triangulated - their owners read §5.2 for them and miss those points, which is \
+             a hanging node each",
+            face_ids.len()
+        );
+        for (reason, count) in &face_why {
+            println!("[PLC-PASS]   face declined {count}: {reason}");
+        }
+        println!(
+            "[PLC-PASS]   worst point-outside-face, in barycentric units: {face_outside_worst:.3e}"
+        );
+    }
+
+    // Pass A, in parallel: each cell answered from its own geometry and the shared faces.
+    let has_augmented_face = |tet: &[u32; 4]| -> bool {
+        TET_FACES.iter().any(|slots| {
+            let mut face = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+            face.sort_by_key(|node| keys[*node as usize]);
+            face_tris.contains_key(&face)
+        })
+    };
+    // **An escalated cell is offered §7.4 whether or not a trace augmented one of its faces**
+    // (§7.1 rev 1.5: every cell the surface crosses is offered §7.2 first). Gating on an
+    // augmented face made the offer depend on accidents of the input file: an STL rectangle's
+    // diagonal pierced a lattice face and pulled its cells in, and merging coplanar facets
+    // (M-5.2) took that away and sent 15 of a3's cells back to §7.6, 11 of them to its fan.
+    let escalates = |index: usize| per_cell[index].escalation.is_some();
+    let offered = |index: usize, tet: &[u32; 4]| has_augmented_face(tet) || escalates(index);
+    let cell_boundary = |tet: &[u32; 4], force: bool| -> Option<Vec<[u32; 3]>> {
+        // **The un-augmented faces come from `face_states`, the very function §6 and §7.6 use.**
+        // Not augmented does not mean bare: §5.2 splits a face wherever its edges carry
+        // crossings, and handing this cell the whole triangle presents a face its neighbour has
+        // split in two - 75,797 boundary leaks on the first emitting run, every one of them on
+        // a face §7.4 left alone. Reconstructing §5.2 by hand got most of the way and still
+        // differed on second crossings and rims, so the pipeline's own function does it.
+        let states = face_states(
+            *tet,
+            &cut_index,
+            &second_index,
+            &on_cut,
+            &all_components,
+            &keys,
+            &mesh.nodes,
+            &curve_pierce,
+        );
+        let mut out: Vec<[u32; 3]> = Vec::new();
+        let mut any = false;
+        for (slot, slots) in TET_FACES.iter().enumerate() {
+            let mut face = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+            face.sort_by_key(|node| keys[*node as usize]);
+            if let Some(tris) = face_tris.get(&face) {
+                any = true;
+                out.extend(tris.iter().copied());
+                continue;
+            }
+            let (state, _, _) = &states[slot];
+            let Some(state) = state.as_ref() else {
+                // A face the frozen table does not express, and not one the trace changed
+                // either - this cell is not one §7.4 can be handed.
+                return None;
+            };
+            let Some(tris) = face_split(state, &keys) else {
+                return None;
+            };
+            out.extend(tris.iter().copied());
+        }
+        (any || force).then_some(out)
+    };
+    // **The 117 faces that could not be triangulated poison their owners, and the poison
+    // spreads exactly one way.** A cell that cannot build a boundary takes §6's table, whose
+    // faces are §5.2's - so any neighbour of it across an AUGMENTED face would be presenting a
+    // triangulation that cell does not have. The neighbour therefore cannot take §7.4 either,
+    // and so on. Iterated to a fixed point, which is affordable here precisely because the seed
+    // is 117 faces rather than the whole traced shell (contrast §6.30, where seeding the same
+    // iteration with 12 % of cells erased all of them).
+    //
+    // **And a cell that will still ESCALATE is not a neighbour §7.4 can share a face with.**
+    // The escalated path does not use §5.2's chord on every face: P-3.3's crease fan
+    // triangulates a curve-pierced face from the pierce point instead, and the FaceTriCache
+    // makes that authoritative for both its owners. A §7.4 cell next door, reading §5.2 for
+    // the same face, would present a different split - which is a crack, and was 1,437
+    // boundary leaks on a6a. A cell that would have escalated but carries an augmented face is
+    // not in this set: it takes §7.4 instead of escalating, so there is nothing to disagree
+    // with.
+    // **Where the exclusions come from**, because the three clauses want different work and a8
+    // has 46,596 of them against zero on every other case.
+    s8_lap("plc-boundary-fns");
+    let seed_no_boundary = std::sync::atomic::AtomicUsize::new(0);
+    let seed_failed_face = std::sync::atomic::AtomicUsize::new(0);
+    let seed_curve_pierce = std::sync::atomic::AtomicUsize::new(0);
+    let mut excluded: Vec<bool> = lattice
+        .tets
+        .par_iter()
+        .enumerate()
+        .map(|(index, tet)| {
+            if !offered(index, tet) {
+                return false;
+            }
+            if cell_boundary(tet, escalates(index)).is_none() {
+                seed_no_boundary.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                return true;
+            }
+            // **A face that could not be triangulated leaves this cell's boundary OPEN.** It
+            // carries points §5.2 has not got, so the cell reads §5.2 for it and keeps an edge
+            // whole that the neighbouring face has split - and a boundary whose edges are not
+            // each shared by two triangles is not a closed surface. `constrained_tets` catches
+            // that and declines, which sends the cell to the fan, and the fan cones an open
+            // surface into a cell with holes in it: every one of a6a's 464 leaks came from the
+            // fanned arm and none from any other (PLAN §6.33).
+            if TET_FACES.iter().any(|slots| {
+                let mut face = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+                face.sort_by_key(|node| keys[*node as usize]);
+                failed_faces.contains(&face)
+            }) {
+                seed_failed_face.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                return true;
+            }
+            // **Kept, and measured inert.** Removing this clause and nothing else left a8
+            // bit-identical - 85,537 traced cells, 8,930 T-junctions, 2,268 leaks - so it is not
+            // where a8's exclusions come from; those are the untriangulable-face seed above and
+            // its propagation. It guards a real disagreement (P-3.3's crease fan triangulates a
+            // curve-pierced face from the pierce point, not by §5.2's chord) and costs nothing
+            // measured, so it stays.
+            TET_FACES.iter().any(|slots| {
+                let mut face = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+                face.sort_by_key(|node| keys[*node as usize]);
+                if !curve_pierce.contains_key(&face) {
+                    return false;
+                }
+                owners
+                    .get(&face)
+                    .map(|list| {
+                        list.iter().any(|other| {
+                            *other as usize != index
+                                && per_cell[*other as usize].escalation.is_some()
+                                && !offered(*other as usize, &lattice.tets[*other as usize])
+                        })
+                    })
+                    .unwrap_or(false)
+            })
+        })
+        .inspect(|hit| {
+            if *hit {
+                seed_curve_pierce.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        })
+        .collect();
+    s8_lap("plc-excluded");
+    for _round in 0..64 {
+        let mut spread = 0usize;
+        for (index, tet) in lattice.tets.iter().enumerate() {
+            if excluded[index] || !offered(index, tet) {
+                continue;
+            }
+            let poisoned = TET_FACES.iter().any(|slots| {
+                let mut face = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+                face.sort_by_key(|node| keys[*node as usize]);
+                if !face_tris.contains_key(&face) {
+                    return false;
+                }
+                owners
+                    .get(&face)
+                    .map(|list| list.iter().any(|other| excluded[*other as usize]))
+                    .unwrap_or(false)
+            });
+            if poisoned {
+                excluded[index] = true;
+                spread += 1;
+            }
+        }
+        if spread == 0 {
+            break;
+        }
+    }
+    let poisoned = excluded.iter().filter(|e| **e).count();
+    if poisoned > 0 {
+        use std::sync::atomic::Ordering::Relaxed;
+        let no_boundary = seed_no_boundary.load(Relaxed);
+        let failed_face = seed_failed_face.load(Relaxed);
+        let pierced = seed_curve_pierce.load(Relaxed).saturating_sub(failed_face + no_boundary);
+        println!(
+            "[PLC-PASS] {poisoned} cell(s) excluded, of which the seed is {no_boundary} with no \
+             boundary at all, {failed_face} owning a face that would not triangulate, \
+             {pierced} next to an escalating cell across a curve-pierced face - and the rest \
+             are the spread"
+        );
+    }
+
+    // The boundary first, so a declined cell still has one: it is fanned over exactly the same
+    // augmented faces, and that is what keeps it conforming with a neighbour that took §7.4.
+    s8_lap("plc-exclusion-spread");
+    let mut boundaries: Vec<Option<Vec<[u32; 3]>>> = lattice
+        .tets
+        .par_iter()
+        .zip(excluded.par_iter())
+        .enumerate()
+        .map(|(index, (tet, out))| (!out).then(|| cell_boundary(tet, escalates(index))).flatten())
+        .collect();
+    // Which (node, component) pairs the cut already puts ON that component's surface: every
+    // crossing node, and every parent node S7 snapped onto it (invariant K2's promotions).
+    // `plc_attempt` adopts these where a facet's rim meets a cell edge (plan M-2.2).
+    let mut on_surface: BTreeSet<(u32, i32)> = on_cut.keys().copied().collect();
+    for map in [&cut_index, &second_index] {
+        for ((_, component), node) in map.iter() {
+            on_surface.insert((*node, *component));
+        }
+    }
+    // Print-only: `RUSTMSPT_PLC_CELL=<lattice index>[,<index>...]` turns the cdt diagnostics
+    // on for those cells.
+    // The lattice hull is the domain box (each axis is stretched to whole cells, plan M-6.2).
+    let lattice_hull = lattice.nodes.iter().fold(
+        (
+            Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY),
+            Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY),
+        ),
+        |(lo, hi), p| {
+            (
+                Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z)),
+                Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z)),
+            )
+        },
+    );
+    let focus_cells: BTreeSet<usize> = std::env::var("RUSTMSPT_PLC_CELL")
+        .map(|v| v.split(',').filter_map(|s| s.trim().parse().ok()).collect())
+        .unwrap_or_default();
+    s8_lap("plc-boundaries");
+    let attempt: Vec<Option<Result<PlcCell, &'static str>>> = lattice
+        .tets
+        .par_iter()
+        .zip(boundaries.par_iter())
+        .enumerate()
+        .map(|(index, (tet, boundary))| {
+            boundary.as_ref().map(|boundary| {
+                let focus = focus_cells.contains(&index);
+                crate::meshgen::cdt::DIAG_CELL.with(|c| c.set(focus));
+                HULL_CELL.with(|c| c.set(index));
+                if focus {
+                    eprintln!("[PLC-CELL] {index}: corners {:?}", tet);
+                }
+                let outcome = plc_attempt(
+                    *tet,
+                    boundary,
+                    &mesh.nodes,
+                    &all_components,
+                    classifier,
+                    tol,
+                    options.eps,
+                    &on_surface,
+                    lattice_hull,
+                );
+                crate::meshgen::cdt::DIAG_CELL.with(|c| c.set(false));
+                outcome
+            })
+        })
+        .collect();
+
+    s8_lap("plc-attempt");
+    commit_attempts(
+        attempt,
+        &mut boundaries,
+        &owners,
+        &mut face_tris,
+        &mut global,
+        &face_interior,
+        &edge_points,
+        mesh,
+        keys,
+        origin,
+        plc,
+        plc_face_tris,
+        plc_face_owners_n,
+        plc_boundary,
+        plc_edge_points,
+        plc_decline,
+        lattice,
+        classifier,
+        all_components,
+        curve_pierce,
+        order_quantum,
+    );
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Find every lattice face a component's surface crosses: its trace chords, the crossing nodes
+//   already on it, its owning cells, and the nodes on each lattice edge.
+// Inputs: the lattice, the cut mesh and keys, the snap result, the classifier, components and cut maps.
+// Returns: None.
+// Side effects: Fills `chords_of`, `face_nodes`, `owners` and `edge_nodes`; prints `[TRACE-PROBE]`
+//   lines when `RUSTMSPT_TRACE_PROBE` is set.
+// Notes: Split out of `plc_pass` unchanged (plan M-3.3); every entry is a function of the face alone (J1).
+#[allow(clippy::too_many_arguments)]
+fn scan_faces(
+    chords_of: &mut BTreeMap<[u32; 3], SmallVec<[[Vec3; 2]; 4]>>,
+    face_nodes: &mut BTreeMap<[u32; 3], SmallVec<[u32; 4]>>,
+    owners: &mut BTreeMap<[u32; 3], SmallVec<[u32; 2]>>,
+    edge_nodes: &mut BTreeMap<[u32; 2], SmallVec<[u32; 6]>>,
+    mesh: &CutMesh,
+    keys: &[NodeKey],
+    lattice: &Lattice,
+    snapped: &Snapped,
+    classifier: &PointClassifier,
+    all_components: &[i32],
+    cut_index: &BTreeMap<([u32; 2], i32), u32>,
+    second_index: &BTreeMap<([u32; 2], i32), u32>,
+    on_cut: &BTreeMap<(u32, i32), ()>,
+) {
     let trace_probe: Option<Vec3> = std::env::var("RUSTMSPT_TRACE_PROBE").ok().and_then(|v| {
         let c: Vec<f64> = v.split(',').filter_map(|x| x.parse().ok()).collect();
         (c.len() == 3).then(|| Vec3::new(c[0], c[1], c[2]))
@@ -212,67 +693,39 @@ pub(super) fn plc_pass(
         }
     }
 
-    s8_lap("plc-face-scan");
-    let mut global: BTreeMap<NodeKey, u32> = BTreeMap::new();
-    for (id, key) in keys.iter().enumerate() {
-        global.entry(*key).or_insert(id as u32);
-    }
+}
 
-    // **A trace point on a lattice EDGE belongs to six cells, not two.** Delivering a face's
-    // trace to that face's two owners is right for a point strictly inside it and wrong for one
-    // on its boundary: the edge is shared by every cell around it, and the four that never see
-    // this face keep the edge whole, leaving the node sitting on their faces with nothing
-    // referencing it. That is 1,437 boundary leaks and 7,025 hanging nodes on a6a, and the
-    // count was invariant under every other bisection precisely because it depends on the
-    // augmented FACE SET rather than on how any cell is meshed (PLAN §6.32).
-    //
-    // So an edge point is interned per EDGE, exactly as `cut_index` interns a crossing, and
-    // every face carrying that edge takes it - including faces the surface never touches.
-    let mut chord_id: BTreeMap<NodeKey, u32> = BTreeMap::new();
-    let mut rim_decade = [0usize; 16];
-    // Print-only: for every trace endpoint the snap did NOT reuse, how far the nearest
-    // candidate actually was. A bar at 1e-8 means the bound refused a node it could see; a bar
-    // at 1e-2 means the candidate set never held one.
-    let mut nearest_decade = [0usize; 16];
-    let mut probe_decade = [0usize; 16];
-    let mut second_stage = 0usize;
-    let mut edge_points: BTreeMap<[u32; 2], SmallVec<[u32; 4]>> = BTreeMap::new();
-    let mut face_interior: BTreeMap<[u32; 3], SmallVec<[u32; 4]>> = BTreeMap::new();
-    // **The candidate set the snap was missing, and it is a publication and not a bound.**
-    // Measured (PLAN §6.62): for every trace endpoint the snap declines to reuse, the nearest
-    // candidate it can see is 1e-1 to 1e-3 away and never closer - so the rule was never
-    // refusing a node, it was never offered one. 296 of a3's 312 trace/trace duplicate pairs
-    // are two faces meeting at a lattice edge, each cutting the input's feature edge with its
-    // own plane and landing one float32 ULP apart; both endpoints are strictly INSIDE their own
-    // face, so each goes into its own `face_interior` and neither is published anywhere the
-    // other can look.
-    //
-    // Each interior point is published against the ONE edge of its face it is nearest to. That
-    // is a total function of the point and the face - no threshold decides it - and it is what
-    // keeps this from repeating the failure of publishing everything within `quantum` of an
-    // edge, which put thousands of legitimately distinct points in one bucket and took a3's
-    // traced cells from 16,883 to 190.
-    // **And these candidates are judged at `[V2]`'s bound, not at `eps`.** That is the whole
-    // difference between this and §6.63: publishing and then snapping at `quantum` takes a3's
-    // traced cells from 16,883 to 190, because `eps` is the width of a whole feature here.
-    // `1e-6 x diagonal` is the tolerance the contract itself calls coincident and the config's
-    // `coincidence: merge` already names - a hundred times tighter - and the measured near-edge
-    // distances put 290 points inside it against some 24,000 inside `eps`.
-    let coincident = {
-        let (mut lo, mut hi) = (
-            Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY),
-            Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY),
-        );
-        for p in &mesh.nodes {
-            lo = Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z));
-            hi = Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
-        }
-        let span = hi.sub(lo);
-        1.0e-6 * span.dot(span).sqrt()
-    };
-    let mut near_edge: BTreeMap<[u32; 2], SmallVec<[u32; 4]>> = BTreeMap::new();
-    s8_lap("plc-global");
-    for (face, chords) in &chords_of {
+// AI-FUNC-SUMMARY:
+// Purpose: Intern every trace chord endpoint, globally: on the face edge it lies on (`trace_point_on_edge`)
+//   as a function of that edge, or in the face's interior; and record the chord ids each face must carry.
+// Inputs: the chords per face, the face/edge nodes already present, the mesh, keys and quanta.
+// Returns: None.
+// Side effects: Interns nodes into the mesh; fills `global`, `chord_id`, `edge_points`, `face_interior`,
+//   `near_edge`, the rim/nearest/probe histograms and `trace_faces`.
+// Notes: Split out of `plc_pass` unchanged (plan M-3.3).
+#[allow(clippy::too_many_arguments)]
+fn intern_trace_points(
+    chords_of: &BTreeMap<[u32; 3], SmallVec<[[Vec3; 2]; 4]>>,
+    face_nodes: &BTreeMap<[u32; 3], SmallVec<[u32; 4]>>,
+    edge_nodes: &BTreeMap<[u32; 2], SmallVec<[u32; 6]>>,
+    global: &mut BTreeMap<NodeKey, u32>,
+    chord_id: &mut BTreeMap<NodeKey, u32>,
+    edge_points: &mut BTreeMap<[u32; 2], SmallVec<[u32; 4]>>,
+    face_interior: &mut BTreeMap<[u32; 3], SmallVec<[u32; 4]>>,
+    near_edge: &mut BTreeMap<[u32; 2], SmallVec<[u32; 4]>>,
+    rim_decade: &mut [usize; 16],
+    nearest_decade: &mut [usize; 16],
+    probe_decade: &mut [usize; 16],
+    mesh: &mut CutMesh,
+    keys: &mut Vec<NodeKey>,
+    origin: &mut Vec<&'static str>,
+    trace_faces: &mut BTreeMap<u32, BTreeSet<[u32; 3]>>,
+    second_stage: usize,
+    coincident: f64,
+    quantum: f64,
+    order_quantum: f64,
+) {
+    for (face, chords) in chords_of {
         // Copied out before the loop: interning below takes `mesh.nodes` mutably.
         let corners = [
             mesh.nodes[face[0] as usize],
@@ -582,62 +1035,39 @@ pub(super) fn plc_pass(
     // A note on what makes a face's point set hard: points that are distinct but nearly
     // collinear triangulate into slivers, and a sliver on the boundary forces a flat TET on
     // whichever cell owns it. The census after `face_tris` measures exactly that.
-    s8_lap("plc-edge-points");
-    let mut face_ids: BTreeMap<[u32; 3], Vec<u32>> = BTreeMap::new();
-    for face in owners.keys() {
-        let mut ids: Vec<u32> = face.to_vec();
-        for id in face_nodes.get(face).into_iter().flatten() {
-            if !ids.contains(id) {
-                ids.push(*id);
-            }
-        }
-        for id in face_interior.get(face).into_iter().flatten() {
-            if !ids.contains(id) {
-                ids.push(*id);
-            }
-        }
-        for slot in 0..3 {
-            let (x, y) = (face[slot], face[(slot + 1) % 3]);
-            let edge = if x <= y { [x, y] } else { [y, x] };
-            for id in edge_points.get(&edge).into_iter().flatten() {
-                if !ids.contains(id) {
-                    ids.push(*id);
-                }
-            }
-        }
-        if ids.len() > 3 || chords_of.contains_key(face) {
-            face_ids.insert(*face, ids);
-        }
-    }
+}
 
-    // **Augmented only where it actually differs from §5.2.** Marking a face on the mere
-    // presence of a trace forced every cell the surface grazes onto the fan - 44,324 of a8's
-    // declines were "no facet in this cell", a cell with nothing for §7.4 to constrain and
-    // every reason to keep taking §6's table.
-    // Print-only: `RUSTMSPT_FACE_PROBE=a,b,c` (three lattice corner ids) prints that face's
-    // point set, its edges' recorded points and, below, its triangulation.
-    let face_probe: Option<BTreeSet<u32>> = std::env::var("RUSTMSPT_FACE_PROBE")
-        .ok()
-        .map(|v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect());
-    if let Some(probe) = &face_probe {
-        for (face, ids) in &face_ids {
-            if face.iter().copied().collect::<BTreeSet<u32>>() == *probe {
-                eprintln!("[FACE-PROBE] face {face:?} ids {ids:?} chords {:?}", chords_of.get(face));
-                for slot in 0..3 {
-                    let (x, y) = (face[slot], face[(slot + 1) % 3]);
-                    let edge = if x <= y { [x, y] } else { [y, x] };
-                    eprintln!("[FACE-PROBE]   edge {edge:?} points {:?} nodes {:?}", edge_points.get(&edge), edge_nodes.get(&edge));
-                }
-            }
-        }
-    }
-    let mut face_why: BTreeMap<&'static str, usize> = BTreeMap::new();
-    let mut failed_faces: BTreeSet<[u32; 3]> = BTreeSet::new();
-    let mut face_outside_worst = 0.0f64;
-    let mut face_tris: BTreeMap<[u32; 3], Vec<[u32; 3]>> = BTreeMap::new();
-    let mut trace: BTreeMap<[u32; 3], SmallVec<[[Vec3; 2]; 4]>> = BTreeMap::new();
-    s8_lap("plc-face-ids");
-    for (face, ids) in &face_ids {
+// AI-FUNC-SUMMARY:
+// Purpose: Triangulate every lattice face the trace changed, from its point set and chords - the
+//   frozen boundary both owning cells will use (invariant J1).
+// Inputs: each face's point ids and chords, the chord-endpoint map, the face-interior points, the
+//   cut maps, on-cut set and components, the mesh nodes and keys, the options and the probe face.
+// Returns: None.
+// Side effects: Fills `face_tris` (only faces whose triangulation differs from §5.2's), `trace`,
+//   `failed_faces`, `face_why` and `face_outside_worst`; prints `[FACE-PROBE]` lines when asked.
+// Notes: Split out of `plc_pass` unchanged (plan M-3.3).
+#[allow(clippy::too_many_arguments)]
+fn triangulate_faces(
+    face_ids: &BTreeMap<[u32; 3], Vec<u32>>,
+    chords_of: &BTreeMap<[u32; 3], SmallVec<[[Vec3; 2]; 4]>>,
+    chord_id: &BTreeMap<NodeKey, u32>,
+    face_interior: &BTreeMap<[u32; 3], SmallVec<[u32; 4]>>,
+    face_probe: &Option<BTreeSet<u32>>,
+    face_tris: &mut BTreeMap<[u32; 3], Vec<[u32; 3]>>,
+    trace: &mut BTreeMap<[u32; 3], SmallVec<[[Vec3; 2]; 4]>>,
+    failed_faces: &mut BTreeSet<[u32; 3]>,
+    face_why: &mut BTreeMap<&'static str, usize>,
+    face_outside_worst: &mut f64,
+    mesh: &CutMesh,
+    keys: &[NodeKey],
+    options: &CutOptions,
+    all_components: &[i32],
+    cut_index: &BTreeMap<([u32; 2], i32), u32>,
+    second_index: &BTreeMap<([u32; 2], i32), u32>,
+    on_cut: &BTreeMap<(u32, i32), ()>,
+    order_quantum: f64,
+) {
+    for (face, ids) in face_ids {
         let raw = *face;
         let geometry = [
             mesh.nodes[raw[0] as usize],
@@ -715,7 +1145,7 @@ pub(super) fn plc_pass(
                             worst = worst.min(side / outward).min(0.0);
                         }
                     }
-                    face_outside_worst = face_outside_worst.min(worst);
+                    *face_outside_worst = face_outside_worst.min(worst);
                 }
                 continue;
             }
@@ -812,7 +1242,7 @@ pub(super) fn plc_pass(
         let mut worst_off = 0.0f64;
         let mut off_decades = [0usize; 8];
         let mut total = 0usize;
-        for (face, ids) in &face_interior {
+        for (face, ids) in face_interior {
             let corners = [
                 mesh.nodes[face[0] as usize],
                 mesh.nodes[face[1] as usize],
@@ -858,7 +1288,7 @@ pub(super) fn plc_pass(
     // reverse.
     {
         let (mut broken, mut worst_edges) = (0usize, 0usize);
-        for (face, tris) in &face_tris {
+        for (face, tris) in face_tris.iter() {
             let mut edges: BTreeMap<[u32; 2], usize> = BTreeMap::new();
             for triangle in tris {
                 for slot in 0..3 {
@@ -945,267 +1375,43 @@ pub(super) fn plc_pass(
     // whose triangulation came out equal to §5.2's is deliberately left out of `face_tris`, and
     // counting those as unusable reported 8,868 broken faces on a6a in a run where every face
     // triangulated. A measured row that says the opposite of the truth is worse than no row.
-    s8_lap("plc-face-tris");
-    let unusable = failed_faces.len();
-    if unusable > 0 {
-        println!(
-            "[PLC-PASS] {unusable} face(s) of {} carry points §5.2 has not got and could not \
-             be triangulated - their owners read §5.2 for them and miss those points, which is \
-             a hanging node each",
-            face_ids.len()
-        );
-        for (reason, count) in &face_why {
-            println!("[PLC-PASS]   face declined {count}: {reason}");
-        }
-        println!(
-            "[PLC-PASS]   worst point-outside-face, in barycentric units: {face_outside_worst:.3e}"
-        );
-    }
+}
 
-    // Pass A, in parallel: each cell answered from its own geometry and the shared faces.
-    let has_augmented_face = |tet: &[u32; 4]| -> bool {
-        TET_FACES.iter().any(|slots| {
-            let mut face = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
-            face.sort_by_key(|node| keys[*node as usize]);
-            face_tris.contains_key(&face)
-        })
-    };
-    // **An escalated cell is offered §7.4 whether or not a trace augmented one of its faces**
-    // (§7.1 rev 1.5: every cell the surface crosses is offered §7.2 first). Gating on an
-    // augmented face made the offer depend on accidents of the input file: an STL rectangle's
-    // diagonal pierced a lattice face and pulled its cells in, and merging coplanar facets
-    // (M-5.2) took that away and sent 15 of a3's cells back to §7.6, 11 of them to its fan.
-    let escalates = |index: usize| per_cell[index].escalation.is_some();
-    let offered = |index: usize, tet: &[u32; 4]| has_augmented_face(tet) || escalates(index);
-    let cell_boundary = |tet: &[u32; 4], force: bool| -> Option<Vec<[u32; 3]>> {
-        // **The un-augmented faces come from `face_states`, the very function §6 and §7.6 use.**
-        // Not augmented does not mean bare: §5.2 splits a face wherever its edges carry
-        // crossings, and handing this cell the whole triangle presents a face its neighbour has
-        // split in two - 75,797 boundary leaks on the first emitting run, every one of them on
-        // a face §7.4 left alone. Reconstructing §5.2 by hand got most of the way and still
-        // differed on second crossings and rims, so the pipeline's own function does it.
-        let states = face_states(
-            *tet,
-            &cut_index,
-            &second_index,
-            &on_cut,
-            &all_components,
-            &keys,
-            &mesh.nodes,
-            &curve_pierce,
-        );
-        let mut out: Vec<[u32; 3]> = Vec::new();
-        let mut any = false;
-        for (slot, slots) in TET_FACES.iter().enumerate() {
-            let mut face = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
-            face.sort_by_key(|node| keys[*node as usize]);
-            if let Some(tris) = face_tris.get(&face) {
-                any = true;
-                out.extend(tris.iter().copied());
-                continue;
-            }
-            let (state, _, _) = &states[slot];
-            let Some(state) = state.as_ref() else {
-                // A face the frozen table does not express, and not one the trace changed
-                // either - this cell is not one §7.4 can be handed.
-                return None;
-            };
-            let Some(tris) = face_split(state, &keys) else {
-                return None;
-            };
-            out.extend(tris.iter().copied());
-        }
-        (any || force).then_some(out)
-    };
-    // **The 117 faces that could not be triangulated poison their owners, and the poison
-    // spreads exactly one way.** A cell that cannot build a boundary takes §6's table, whose
-    // faces are §5.2's - so any neighbour of it across an AUGMENTED face would be presenting a
-    // triangulation that cell does not have. The neighbour therefore cannot take §7.4 either,
-    // and so on. Iterated to a fixed point, which is affordable here precisely because the seed
-    // is 117 faces rather than the whole traced shell (contrast §6.30, where seeding the same
-    // iteration with 12 % of cells erased all of them).
-    //
-    // **And a cell that will still ESCALATE is not a neighbour §7.4 can share a face with.**
-    // The escalated path does not use §5.2's chord on every face: P-3.3's crease fan
-    // triangulates a curve-pierced face from the pierce point instead, and the FaceTriCache
-    // makes that authoritative for both its owners. A §7.4 cell next door, reading §5.2 for
-    // the same face, would present a different split - which is a crack, and was 1,437
-    // boundary leaks on a6a. A cell that would have escalated but carries an augmented face is
-    // not in this set: it takes §7.4 instead of escalating, so there is nothing to disagree
-    // with.
-    // **Where the exclusions come from**, because the three clauses want different work and a8
-    // has 46,596 of them against zero on every other case.
-    s8_lap("plc-boundary-fns");
-    let seed_no_boundary = std::sync::atomic::AtomicUsize::new(0);
-    let seed_failed_face = std::sync::atomic::AtomicUsize::new(0);
-    let seed_curve_pierce = std::sync::atomic::AtomicUsize::new(0);
-    let mut excluded: Vec<bool> = lattice
-        .tets
-        .par_iter()
-        .enumerate()
-        .map(|(index, tet)| {
-            if !offered(index, tet) {
-                return false;
-            }
-            if cell_boundary(tet, escalates(index)).is_none() {
-                seed_no_boundary.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                return true;
-            }
-            // **A face that could not be triangulated leaves this cell's boundary OPEN.** It
-            // carries points §5.2 has not got, so the cell reads §5.2 for it and keeps an edge
-            // whole that the neighbouring face has split - and a boundary whose edges are not
-            // each shared by two triangles is not a closed surface. `constrained_tets` catches
-            // that and declines, which sends the cell to the fan, and the fan cones an open
-            // surface into a cell with holes in it: every one of a6a's 464 leaks came from the
-            // fanned arm and none from any other (PLAN §6.33).
-            if TET_FACES.iter().any(|slots| {
-                let mut face = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
-                face.sort_by_key(|node| keys[*node as usize]);
-                failed_faces.contains(&face)
-            }) {
-                seed_failed_face.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                return true;
-            }
-            // **Kept, and measured inert.** Removing this clause and nothing else left a8
-            // bit-identical - 85,537 traced cells, 8,930 T-junctions, 2,268 leaks - so it is not
-            // where a8's exclusions come from; those are the untriangulable-face seed above and
-            // its propagation. It guards a real disagreement (P-3.3's crease fan triangulates a
-            // curve-pierced face from the pierce point, not by §5.2's chord) and costs nothing
-            // measured, so it stays.
-            TET_FACES.iter().any(|slots| {
-                let mut face = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
-                face.sort_by_key(|node| keys[*node as usize]);
-                if !curve_pierce.contains_key(&face) {
-                    return false;
-                }
-                owners
-                    .get(&face)
-                    .map(|list| {
-                        list.iter().any(|other| {
-                            *other as usize != index
-                                && per_cell[*other as usize].escalation.is_some()
-                                && !offered(*other as usize, &lattice.tets[*other as usize])
-                        })
-                    })
-                    .unwrap_or(false)
-            })
-        })
-        .inspect(|hit| {
-            if *hit {
-                seed_curve_pierce.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            }
-        })
-        .collect();
-    s8_lap("plc-excluded");
-    for _round in 0..64 {
-        let mut spread = 0usize;
-        for (index, tet) in lattice.tets.iter().enumerate() {
-            if excluded[index] || !offered(index, tet) {
-                continue;
-            }
-            let poisoned = TET_FACES.iter().any(|slots| {
-                let mut face = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
-                face.sort_by_key(|node| keys[*node as usize]);
-                if !face_tris.contains_key(&face) {
-                    return false;
-                }
-                owners
-                    .get(&face)
-                    .map(|list| list.iter().any(|other| excluded[*other as usize]))
-                    .unwrap_or(false)
-            });
-            if poisoned {
-                excluded[index] = true;
-                spread += 1;
-            }
-        }
-        if spread == 0 {
-            break;
-        }
-    }
-    let poisoned = excluded.iter().filter(|e| **e).count();
-    if poisoned > 0 {
-        use std::sync::atomic::Ordering::Relaxed;
-        let no_boundary = seed_no_boundary.load(Relaxed);
-        let failed_face = seed_failed_face.load(Relaxed);
-        let pierced = seed_curve_pierce.load(Relaxed).saturating_sub(failed_face + no_boundary);
-        println!(
-            "[PLC-PASS] {poisoned} cell(s) excluded, of which the seed is {no_boundary} with no \
-             boundary at all, {failed_face} owning a face that would not triangulate, \
-             {pierced} next to an escalating cell across a curve-pierced face - and the rest \
-             are the spread"
-        );
-    }
-
-    // The boundary first, so a declined cell still has one: it is fanned over exactly the same
-    // augmented faces, and that is what keeps it conforming with a neighbour that took §7.4.
-    s8_lap("plc-exclusion-spread");
-    let boundaries: Vec<Option<Vec<[u32; 3]>>> = lattice
-        .tets
-        .par_iter()
-        .zip(excluded.par_iter())
-        .enumerate()
-        .map(|(index, (tet, out))| (!out).then(|| cell_boundary(tet, escalates(index))).flatten())
-        .collect();
-    // Which (node, component) pairs the cut already puts ON that component's surface: every
-    // crossing node, and every parent node S7 snapped onto it (invariant K2's promotions).
-    // `plc_attempt` adopts these where a facet's rim meets a cell edge (plan M-2.2).
-    let mut on_surface: BTreeSet<(u32, i32)> = on_cut.keys().copied().collect();
-    for map in [&cut_index, &second_index] {
-        for ((_, component), node) in map.iter() {
-            on_surface.insert((*node, *component));
-        }
-    }
-    // Print-only: `RUSTMSPT_PLC_CELL=<lattice index>[,<index>...]` turns the cdt diagnostics
-    // on for those cells.
-    // The lattice hull is the domain box (each axis is stretched to whole cells, plan M-6.2).
-    let lattice_hull = lattice.nodes.iter().fold(
-        (
-            Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY),
-            Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY),
-        ),
-        |(lo, hi), p| {
-            (
-                Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z)),
-                Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z)),
-            )
-        },
-    );
-    let focus_cells: BTreeSet<usize> = std::env::var("RUSTMSPT_PLC_CELL")
-        .map(|v| v.split(',').filter_map(|s| s.trim().parse().ok()).collect())
-        .unwrap_or_default();
-    s8_lap("plc-boundaries");
-    let attempt: Vec<Option<Result<PlcCell, &'static str>>> = lattice
-        .tets
-        .par_iter()
-        .zip(boundaries.par_iter())
-        .enumerate()
-        .map(|(index, (tet, boundary))| {
-            boundary.as_ref().map(|boundary| {
-                let focus = focus_cells.contains(&index);
-                crate::meshgen::cdt::DIAG_CELL.with(|c| c.set(focus));
-                HULL_CELL.with(|c| c.set(index));
-                if focus {
-                    eprintln!("[PLC-CELL] {index}: corners {:?}", tet);
-                }
-                let outcome = plc_attempt(
-                    *tet,
-                    boundary,
-                    &mesh.nodes,
-                    &all_components,
-                    classifier,
-                    tol,
-                    options.eps,
-                    &on_surface,
-                    lattice_hull,
-                );
-                crate::meshgen::cdt::DIAG_CELL.with(|c| c.set(false));
-                outcome
-            })
-        })
-        .collect();
-
-    s8_lap("plc-attempt");
+// AI-FUNC-SUMMARY:
+// Purpose: The second half of S8's PLC pass: the attempt census (print-only `[PLC-PASS]` lines),
+//   and the commit of every cell's outcome into `plc` with the boundaries and face triangulations it
+//   was promised.
+// Inputs: the per-cell attempts (consumed) and boundaries, the face owners and triangulations, the
+//   interning maps (for the census), the cut mesh, keys and origins, the lattice, classifier,
+//   components and curve pierce points.
+// Returns: None.
+// Side effects: Fills `plc`, `plc_face_tris`, `plc_face_owners_n`, `plc_boundary`,
+//   `plc_edge_points` and `plc_decline`; prints the census; may intern fan centroids.
+// Notes: Split out of `plc_pass` unchanged (plan M-3.3).
+#[allow(clippy::too_many_arguments)]
+fn commit_attempts(
+    attempt: Vec<Option<Result<PlcCell, &'static str>>>,
+    boundaries: &mut Vec<Option<Vec<[u32; 3]>>>,
+    owners: &BTreeMap<[u32; 3], SmallVec<[u32; 2]>>,
+    face_tris: &mut BTreeMap<[u32; 3], Vec<[u32; 3]>>,
+    global: &mut BTreeMap<NodeKey, u32>,
+    face_interior: &BTreeMap<[u32; 3], SmallVec<[u32; 4]>>,
+    edge_points: &BTreeMap<[u32; 2], SmallVec<[u32; 4]>>,
+    mesh: &mut CutMesh,
+    keys: &mut Vec<NodeKey>,
+    origin: &mut Vec<&'static str>,
+    plc: &mut [Option<PlcPlan>],
+    plc_face_tris: &mut BTreeMap<[u32; 3], Vec<[u32; 3]>>,
+    plc_face_owners_n: &mut BTreeMap<[u32; 3], usize>,
+    plc_boundary: &mut Vec<Option<Vec<[u32; 3]>>>,
+    plc_edge_points: &mut BTreeMap<[u32; 2], Vec<u32>>,
+    plc_decline: &mut [Option<&'static str>],
+    lattice: &Lattice,
+    classifier: &PointClassifier,
+    all_components: &[i32],
+    curve_pierce: &BTreeMap<[u32; 3], Vec3>,
+    order_quantum: f64,
+) {
     let attempted = attempt.iter().filter(|a| a.is_some()).count();
     let taken = attempt.iter().filter(|a| matches!(a, Some(Ok(_)))).count();
     let tets: usize = attempt
@@ -1461,10 +1667,10 @@ pub(super) fn plc_pass(
         }
     }
     *plc_boundary = boundaries.clone();
-    for (edge, ids) in &edge_points {
+    for (edge, ids) in edge_points {
         plc_edge_points.insert(*edge, ids.to_vec());
     }
-    for (face, tris) in &face_tris {
+    for (face, tris) in face_tris.iter() {
         plc_face_tris.insert(*face, tris.clone());
         plc_face_owners_n.insert(*face, owners.get(face).map(|o| o.len()).unwrap_or(0));
     }
