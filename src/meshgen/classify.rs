@@ -311,8 +311,26 @@ impl ProjectionGrid {
 
     // AI-FUNC-SUMMARY: Candidate triangle indices whose footprint covers the ray from `point`; returns a slice; side effects: none.
     fn candidates(&self, point: Vec3) -> &[u32] {
+        &self.buckets[self.bucket_of(point) as usize]
+    }
+
+    // AI-FUNC-SUMMARY: Index of the bucket `candidates` reads for `point`, computed in f64; returns u32; side effects: none.
+    fn bucket_of(&self, point: Vec3) -> u32 {
         let (u, v) = self.cell_of([point.dot(self.axis_u), point.dot(self.axis_v)]);
-        &self.buckets[(v * self.dims[0] + u) as usize]
+        (v * self.dims[0] + u) as u32
+    }
+
+    // AI-FUNC-SUMMARY: The buckets as CSR (offsets, items) for upload to the GPU; returns the two arrays; side effects: none.
+    #[allow(dead_code)]
+    fn csr(&self) -> (Vec<u32>, Vec<u32>) {
+        let mut start = Vec::with_capacity(self.buckets.len() + 1);
+        let mut items = Vec::new();
+        start.push(0u32);
+        for bucket in &self.buckets {
+            items.extend_from_slice(bucket);
+            start.push(items.len() as u32);
+        }
+        (start, items)
     }
 }
 
@@ -455,6 +473,29 @@ fn parity_along(
         }
     }
     Some(crossings % 2 == 1)
+}
+
+/// One solid's geometry for S6's accelerated parity pass (plan M-7, GK-1): triangles and the first
+/// ray direction's projection-grid buckets, flattened for upload.
+pub struct ParityGeometry<'a> {
+    /// Triangles as nine f32 each (a, b, c).
+    pub triangles: &'a [f32],
+    /// CSR offsets into `items`, one more than the bucket count.
+    pub bucket_start: &'a [u32],
+    /// Triangle indices per bucket.
+    pub items: &'a [u32],
+    /// The ray direction and the far-endpoint distance (at least the domain diagonal).
+    pub direction: [f32; 3],
+    pub reach: f32,
+}
+
+/// A device that answers S6's first-ray parity for many points at once, certified: code 0 outside,
+/// 1 inside, 2 uncertain. Uncertain points are decided by the CPU, so the result is the CPU's.
+pub trait ParityAccelerator: Sync {
+    // AI-FUNC-SUMMARY: Certified parity codes for the points (each with its f64-computed bucket); returns codes or an error; side effects: device work.
+    fn codes(&self, geometry: &ParityGeometry, points: &[f32], buckets: &[u32]) -> Result<Vec<u32>, String>;
+    // AI-FUNC-SUMMARY: A one-line name of the device for the stage log; returns String; side effects: none.
+    fn describe(&self) -> String;
 }
 
 // AI-FUNC-SUMMARY:
@@ -1000,7 +1041,7 @@ pub fn classify_lattice_with(
     surface: &ArrangedSurface,
     options: &ClassifyOptions,
 ) -> Classification {
-    classify_lattice_memo(lattice, classifier, surface, options, &mut VertexMemo::default())
+    classify_lattice_memo(lattice, classifier, surface, options, &mut VertexMemo::default(), None)
 }
 
 /// Per-vertex S6 answers keyed by the vertex's exact coordinates: the inside bit per solid slot
@@ -1022,6 +1063,7 @@ pub fn classify_lattice_memo(
     surface: &ArrangedSurface,
     options: &ClassifyOptions,
     memo: &mut VertexMemo,
+    accelerator: Option<&dyn ParityAccelerator>,
 ) -> Classification {
     let s6_timing = std::env::var_os("RUSTMSPT_TIME_STAGES").is_some();
     let mut s6_clock = std::time::Instant::now();
@@ -1052,6 +1094,71 @@ pub fn classify_lattice_memo(
     let slots = solids.len();
     let mut vertex_inside = vec![false; lattice.nodes.len() * slots.max(1)];
 
+    // GK-1: the first ray's parity for every vertex the memo does not hold, on the accelerator; a
+    // certified code is the CPU's answer for that ray, an uncertain one (2) leaves the vertex to the
+    // CPU below. A device error falls back to the CPU for the whole solid.
+    let accelerated: Vec<Option<Vec<u32>>> = solids
+        .iter()
+        .map(|solid| {
+            let accelerator = accelerator?;
+            if solid.defective {
+                return None;
+            }
+            let misses: Vec<usize> = (0..lattice.nodes.len())
+                .filter(|i| {
+                    let p = lattice.nodes[*i];
+                    !memo.contains_key(&[p.x.to_bits(), p.y.to_bits(), p.z.to_bits()])
+                })
+                .collect();
+            if misses.is_empty() {
+                return None;
+            }
+            let grid = &solid.grids[0];
+            let (bucket_start, items) = grid.csr();
+            let flat: Vec<f32> = solid
+                .triangles
+                .iter()
+                .flat_map(|t| t.iter().flat_map(|p| [p.x as f32, p.y as f32, p.z as f32]))
+                .collect();
+            let direction = RAY_DIRECTIONS[0];
+            let geometry = ParityGeometry {
+                triangles: &flat,
+                bucket_start: &bucket_start,
+                items: &items,
+                direction: [direction[0] as f32, direction[1] as f32, direction[2] as f32],
+                reach: (1.25 * extent.dot(extent).sqrt()) as f32,
+            };
+            let points: Vec<f32> = misses
+                .iter()
+                .flat_map(|i| {
+                    let p = lattice.nodes[*i];
+                    [p.x as f32, p.y as f32, p.z as f32]
+                })
+                .collect();
+            let buckets: Vec<u32> = misses.iter().map(|i| grid.bucket_of(lattice.nodes[*i])).collect();
+            match accelerator.codes(&geometry, &points, &buckets) {
+                Ok(codes) => {
+                    let mut all = vec![2u32; lattice.nodes.len()];
+                    for (i, code) in misses.iter().zip(codes) {
+                        all[*i] = code;
+                    }
+                    Some(all)
+                }
+                Err(error) => {
+                    eprintln!("[S6/GK-1] {} failed, the CPU decides: {error}", accelerator.describe());
+                    None
+                }
+            }
+        })
+        .collect();
+    if let Some(accelerator) = accelerator {
+        let (done, asked): (usize, usize) = accelerated
+            .iter()
+            .flatten()
+            .fold((0, 0), |(d, a), codes| (d + codes.iter().filter(|c| **c < 2).count(), a + codes.len()));
+        println!("[S6/GK-1] {}: {done} of {asked} vertex-solid first rays certified on the device", accelerator.describe());
+    }
+
     // Per-vertex work into disjoint slots; the diagnostics come back as an
     // indexed buffer and are folded serially.
     let per_vertex: Vec<(usize, usize, usize, usize, usize)> = if slots == 0 {
@@ -1060,7 +1167,8 @@ pub fn classify_lattice_memo(
         vertex_inside
             .par_chunks_mut(slots)
             .zip(lattice.nodes.par_iter())
-            .map(|(row, point)| {
+            .enumerate()
+            .map(|(vertex, (row, point))| {
                 let key = [point.x.to_bits(), point.y.to_bits(), point.z.to_bits()];
                 if let Some((bits, counts)) = memo.get(&key) {
                     row.copy_from_slice(bits);
@@ -1072,6 +1180,13 @@ pub fn classify_lattice_memo(
                 let mut fallbacks = 0usize;
                 let mut uncertain = 0usize;
                 for (slot, solid) in solids.iter().enumerate() {
+                    if let Some(code) = accelerated[slot].as_ref().map(|codes| codes[vertex]) {
+                        if code < 2 {
+                            row[slot] = code == 1;
+                            first += 1;
+                            continue;
+                        }
+                    }
                     if solid.defective {
                         // S2b could not certify this component's closure, so parity
                         // is not defined for it; the winding number is (§10.4).
@@ -1521,6 +1636,101 @@ fn push_field(doc: &mut VtuDoc, name: &str, components: usize, data: ArrayData) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// GK-1: the WGSL kernel on whatever adapter wgpu finds (llvmpipe on the development host) agrees
+    /// with the CPU wherever it certifies. Skips when no adapter is available.
+    #[cfg(feature = "gpu")]
+    #[test]
+    fn the_s6_parity_shader_agrees_with_the_cpu_wherever_it_certifies() {
+        let gpu = match crate::gpu::GpuParityPipeline::new() {
+            Ok(gpu) => gpu,
+            Err(error) => {
+                eprintln!("SKIP: GPU unavailable: {error}");
+                return;
+            }
+        };
+        let (tris, c) = test_sphere();
+        let direction = Vec3::new(RAY_DIRECTIONS[0][0], RAY_DIRECTIONS[0][1], RAY_DIRECTIONS[0][2]);
+        let grid = ProjectionGrid::build(&tris, direction);
+        let (start, items) = grid.csr();
+        let flat: Vec<f32> = tris.iter().flat_map(|t| t.iter().flat_map(|p| [p.x as f32, p.y as f32, p.z as f32])).collect();
+        let reach = 4.0 * 3f64.sqrt();
+        let geometry = crate::gpu::ParityGeometry {
+            triangles: &flat,
+            bucket_start: &start,
+            items: &items,
+            direction: [direction.x as f32, direction.y as f32, direction.z as f32],
+            reach: (1.25 * 3f64.sqrt()) as f32,
+        };
+        let points = test_points(c, 4000);
+        let p32: Vec<f32> = points.iter().flat_map(|p| [p.x as f32, p.y as f32, p.z as f32]).collect();
+        let buckets: Vec<u32> = points.iter().map(|p| grid.bucket_of(*p)).collect();
+        let codes = gpu.classify(&geometry, &p32, &buckets).expect("dispatch");
+        let mut certified = 0usize;
+        for (k, (p, code)) in points.iter().zip(&codes).enumerate() {
+            if *code == 2 {
+                continue;
+            }
+            certified += 1;
+            let mut uncertain = 0usize;
+            let cpu = parity_along(*p, direction, reach, &tris, &grid, &mut uncertain);
+            assert_eq!(Some(*code == 1), cpu, "point {k}: {p:?} on {}", gpu.adapter());
+        }
+        eprintln!("[GK-1] {certified} of {} points certified on {}", points.len(), gpu.adapter());
+        assert!(certified * 2 >= points.len(), "{certified} of {} certified on {}", points.len(), gpu.adapter());
+    }
+
+    fn test_sphere() -> (Vec<[Vec3; 3]>, Vec3) {
+        let c = Vec3::new(0.5, 0.5, 0.5);
+        let corners = [
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(-1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, -1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(0.0, 0.0, -1.0),
+        ];
+        let faces = [[0, 2, 4], [2, 1, 4], [1, 3, 4], [3, 0, 4], [2, 0, 5], [1, 2, 5], [3, 1, 5], [0, 3, 5]];
+        let unit = |v: Vec3| v.scale(1.0 / v.dot(v).sqrt());
+        let mut level: Vec<[Vec3; 3]> =
+            faces.iter().map(|f| [corners[f[0]], corners[f[1]], corners[f[2]]]).collect();
+        for _ in 0..3 {
+            let mut next = Vec::new();
+            for [a, b, d] in level {
+                let (ab, bd, da) = (unit(a.add(b)), unit(b.add(d)), unit(d.add(a)));
+                next.extend([[a, ab, da], [ab, b, bd], [da, bd, d], [ab, bd, da]]);
+            }
+            level = next;
+        }
+        let tris = level
+            .into_iter()
+            .map(|[a, b, d]| [c.add(a.scale(0.3)), c.add(b.scale(0.3)), c.add(d.scale(0.3))])
+            .collect();
+        (tris, c)
+    }
+
+    // Uniform points in the unit box; every other one pulled to within 1e-7..1e-12 of the sphere.
+    fn test_points(c: Vec3, n: usize) -> Vec<Vec3> {
+        let mut state = 0x2545f4914f6cdd1du64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        (0..n)
+            .map(|k| {
+                let p = Vec3::new(next(), next(), next());
+                if k % 2 == 0 {
+                    let r = p.sub(c);
+                    let off = 10f64.powf(-7.0 - 5.0 * next()) * if next() < 0.5 { -1.0 } else { 1.0 };
+                    c.add(r.scale((0.3 + off) / r.dot(r).sqrt()))
+                } else {
+                    p
+                }
+            })
+            .collect()
+    }
 
     /// GK-1's reference: wherever the f32 kernel certifies a vertex, it agrees with the CPU parity
     /// for the same direction - on points spread through a faceted sphere's box and points pulled

@@ -759,3 +759,7 @@ Design and bound derivation: `algorithms/s2-two-point-correlation.md`, section "
 ### SA partial triangle upload (PERF-10)
 
 See `GpuS2Pipeline::update_mesh` above. `changed_face_runs(resident, next)` compares f32 bit patterns face by face, merges changed faces separated by at most `COALESCE_FACES = 8` unchanged faces into one run, and returns `None` (full write) above `MAX_UPLOAD_RUNS = 64` runs or when more than half the faces would be written. `GpuUploadStats { full_uploads, partial_uploads, unchanged_updates, total_bytes, last_bytes }` is available through `upload_stats()`. The triangle buffer now also carries `COPY_SRC` so tests can read it back.
+
+## S6 vertex parity (GK-1)
+
+`GpuParityPipeline` (`src/gpu/s6_parity.rs`, `shaders/s6_parity.wgsl`) answers S6's first-ray parity for many lattice vertices against one solid: triangles and the projection grid's buckets as CSR are uploaded once, each point comes with its bucket index computed by the host in f64 (so the candidate set is exactly the CPU's), and every orient3d is certified under numerics §6.1 G1 rev 1.4 with the f32 operands' own error bounds. Code 0/1 is the CPU's answer for that ray; code 2 sends the vertex to the CPU. It implements `meshgen::classify::ParityAccelerator`, which `classify_lattice_memo` takes as an option; the pipeline selects it through the shared acceleration policy (100,000 lattice nodes minimum under `auto`). The reference it is tested against is `classify::parity_f32_certified`.

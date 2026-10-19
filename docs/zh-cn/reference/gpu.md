@@ -748,3 +748,7 @@ wgpu 24 中一个 `Adapter` 只能创建一个逻辑设备，因此缓存位于�
 ### SA 局部三角形上传（PERF-10）
 
 `GpuS2Pipeline::update_mesh` 在主机上构建完整三角形缓冲，与驻留内容的主机影子副本（`changed_face_runs`）逐位比较，仅用 `queue.write_buffer` 子区间写入变化的面区间（间隔不超过 8 个面时合并）。三角形数变化、缓冲扩容、超过 `MAX_UPLOAD_RUNS = 64` 段或变化面超过一半时回退为整体写入。由于比较对象是实际驻留内容而非调用者上一候选，拒绝恢复、迁移及多岛交替使用共享实例时均正确。`upload_stats()`/`GpuUploadStats` 记录整体/局部/未变化次数与字节。`partial_triangle_upload_matches_full_upload` 在每一步回读 GPU 缓冲逐字比较，并与新建实例的固定种子 MC 计数比较。主机端比较仍为 O(面数)，仅减少传输字节。
+
+## S6 顶点奇偶判定（GK-1）
+
+`GpuParityPipeline`（`src/gpu/s6_parity.rs`、`shaders/s6_parity.wgsl`）针对一个实体回答大量格点的 S6 第一条射线奇偶：三角形和投影网格的桶（CSR）只上传一次，每个点附带主机以 f64 算出的桶下标（所以候选集与 CPU 完全相同），每个 orient3d 都按数值规范 §6.1 G1 rev 1.4 证实，并计入 f32 操作数各自的误差界。代码 0/1 就是 CPU 对该射线的结果；代码 2 把该顶点交给 CPU。它实现 `meshgen::classify::ParityAccelerator`，`classify_lattice_memo` 把它作为可选参数；流水线通过共用的加速策略选用它（`auto` 下至少 10 万个格点）。测试所对照的参照实现是 `classify::parity_f32_certified`。

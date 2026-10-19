@@ -935,6 +935,9 @@ impl Pipeline for MeshGenPipeline {
         );
         let mut final_classifier: Option<(Vec<bool>, PointClassifier)> = None;
         let mut vertex_memo = crate::meshgen::classify::VertexMemo::default();
+        // GK-1: S6's first-ray parity on the GPU when the acceleration policy selects it (decided
+        // once, on the first pass). Certified answers are the CPU's, so the mesh does not change.
+        let mut gpu_parity: Option<ParityBackend> = None;
         let (sizing_lookup, sizing_field, balanced, lattice, point_classifier, classification, snapped) = loop {
             let mut pass_sources = sources.clone();
             pass_sources.extend(k1_extra.iter().cloned());
@@ -957,6 +960,7 @@ impl Pipeline for MeshGenPipeline {
                     domain_max,
                 },
                 &mut vertex_memo,
+                parity_accelerator(&mut gpu_parity, &p.acceleration, lattice.nodes.len())?,
             );
             // S8 cuts along the faces that bound material, not the ones S6 found buried in a
             // component's own union (`restrict_to_active`); the inside test keeps every face.
@@ -1859,4 +1863,65 @@ fn contact_patches(
         ));
     }
     out
+}
+
+/// S6's parity backend once the acceleration policy has decided: none (the CPU) or a GPU pipeline.
+enum ParityBackend {
+    Cpu,
+    #[cfg(feature = "gpu")]
+    Gpu(crate::gpu::GpuParityPipeline),
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: S6's parity accelerator for this run (plan M-7, GK-1), decided once by the shared
+//   acceleration policy with the lattice's node count as the workload.
+// Inputs: the cached decision, the meshgen acceleration config, the node count.
+// Returns: the accelerator to pass to `classify_lattice_memo`, or None for the CPU; an error when
+//   the GPU was required and cannot be used.
+// Side effects: May initialise the GPU device; prints the decision once.
+fn parity_accelerator<'a>(
+    cached: &'a mut Option<ParityBackend>,
+    config: &crate::config::AccelerationConfig,
+    workload: usize,
+) -> Result<Option<&'a dyn crate::meshgen::classify::ParityAccelerator>> {
+    const GPU_MIN_NODES: usize = 100_000;
+    if cached.is_none() {
+        let mode = crate::compute::policy::configured_mode(config)?;
+        let selection = crate::compute::policy::resolve_execution(
+            config,
+            mode,
+            workload,
+            GPU_MIN_NODES,
+            cfg!(feature = "gpu"),
+            None,
+        )?;
+        let backend = if selection.backend.is_gpu() {
+            #[cfg(feature = "gpu")]
+            {
+                match crate::gpu::GpuParityPipeline::new() {
+                    Ok(pipeline) => {
+                        println!("[S6/GK-1] parity on {}", pipeline.adapter());
+                        ParityBackend::Gpu(pipeline)
+                    }
+                    Err(error) if config.cpu_fallback => {
+                        println!("[S6/GK-1] GPU unavailable, parity on the CPU: {error}");
+                        ParityBackend::Cpu
+                    }
+                    Err(error) => return Err(RustMsptError::Gpu(error)),
+                }
+            }
+            #[cfg(not(feature = "gpu"))]
+            {
+                ParityBackend::Cpu
+            }
+        } else {
+            ParityBackend::Cpu
+        };
+        *cached = Some(backend);
+    }
+    Ok(match cached.as_ref() {
+        #[cfg(feature = "gpu")]
+        Some(ParityBackend::Gpu(pipeline)) => Some(pipeline as &dyn crate::meshgen::classify::ParityAccelerator),
+        _ => None,
+    })
 }
