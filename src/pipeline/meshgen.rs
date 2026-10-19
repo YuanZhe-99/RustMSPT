@@ -48,6 +48,16 @@ fn stage_time(name: &str, started: Instant) -> Instant {
         if let Some(bytes) = crate::pipeline::timing::peak_rss_bytes() {
             eprintln!("[STAGE-RSS] {name} {bytes}");
         }
+        // The current resident set too: the peak says a stage raised the high-water mark, the
+        // current value says how much it is still holding when it ends.
+        if let Some(kb) = std::fs::read_to_string("/proc/self/status").ok().and_then(|status| {
+            status
+                .lines()
+                .find(|l| l.starts_with("VmRSS:"))
+                .and_then(|l| l.split_whitespace().nth(1)?.parse::<u64>().ok())
+        }) {
+            eprintln!("[STAGE-CUR] {name} {}", kb * 1024);
+        }
     }
     Instant::now()
 }
@@ -1550,6 +1560,8 @@ impl Pipeline for MeshGenPipeline {
         // One document for s08 and s11: S9 (quality) does not exist yet, so the final mesh IS the
         // cut, relabelled as stage 11 and written to the delivered path (plan M-6.2).
         let mut doc = cut_to_doc(&cut, &clipped.components);
+        // The document carries everything later stages read from the cut.
+        drop(cut);
         for point in &mut doc.points {
             *point = output_domain_min.add(point.scale(domain_diag));
         }
@@ -1586,6 +1598,16 @@ impl Pipeline for MeshGenPipeline {
             } else {
                 Vec::new()
             };
+        // Nothing after this point reads the lattice, the classification, the snap or the cut:
+        // the document carries everything S9-S11 need. Holding them kept a4 at 900 MB going into
+        // S9, which then raised the process peak by its own working set on top (plan M-6.5).
+        drop(snapped);
+        drop(classification);
+        drop(lattice);
+        drop(point_classifier);
+        drop(balanced);
+        drop(sizing_field);
+        drop(sizing_lookup);
         let improved = crate::meshgen::improve::improve_doc_with(
             &mut doc,
             &crate::meshgen::improve::ImproveOptions {

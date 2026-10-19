@@ -1,6 +1,6 @@
 # SPEC — Mesh generation: numerical robustness freeze (subtask G0-2)
 
-**Status:** frozen (rev 1.3.1, 2026-10-17 — recorded, not yet the M-0.2 rev 1.4: S2's near-coplanar rule (D-27) and the rounding-collinear constraint split (D-28). rev 1.3, 2026-09-23 — audited against the code at `891badc`; §1.3 names every as-built constant outside the ladder; §1.5 freezes the four roles of a coordinate — identity key, ordering key, geometric coordinate, error metric; §6.1's certificate G1 is qualified for converted inputs (D-13); §10 gains the audit record; §11's open items are re-stated. rev 1.2; G2-3 boundary/default/C3 dual-ratio record added 2026-07-28). Normative for all `src/meshgen/` and
+**Status:** frozen (rev 1.3.1, 2026-10-17; §6.1's G1 repair for converted inputs landed as the first piece of rev 1.4, 2026-10-19 — recorded, not yet the M-0.2 rev 1.4: S2's near-coplanar rule (D-27) and the rounding-collinear constraint split (D-28). rev 1.3, 2026-09-23 — audited against the code at `891badc`; §1.3 names every as-built constant outside the ladder; §1.5 freezes the four roles of a coordinate — identity key, ordering key, geometric coordinate, error metric; §6.1's certificate G1 is qualified for converted inputs (D-13); §10 gains the audit record; §11's open items are re-stated. rev 1.2; G2-3 boundary/default/C3 dual-ratio record added 2026-07-28). Normative for all `src/meshgen/` and
 `src/gpu/meshgen_*` work.
 **Date:** 2026-07-24 (rev 1.3: 2026-09-23)
 **Subtask:** G0-2 (Phase G0, tier T3) of [`PLAN_mesh_generation.md`](PLAN_mesh_generation.md); the rev 1.3 audit is that plan's M-0.1.
@@ -536,6 +536,20 @@ the fixed direction sequence, then arbitrate (ARB-9).
 > G3 must likewise separate conversion, per-triangle solid-angle and reduction error. Parity tests
 > compare against the **original** f64 geometry, never against a reference itself rounded to f32.
 > No meshgen GPU kernel exists at rev 1.3, so nothing shipped depends on the unqualified claim.
+>
+> **Repaired (rev 1.4, 2026-10-19), option (a).** For f64 coordinates converted to f32 the
+> certificate is `|det₃₂| > c_flt₃₂·perm₃₂ + C`, where `det₃₂` and `perm₃₂` are formed in f32 in the
+> expansion order above and the conversion term is
+> `C = Σ (m_x+e_x)(m_y+e_y)(m_z+e_z) − m_x·m_y·m_z` over the six products of the permanent, with
+> `e = u₃₂·(|p| + |d|)` per difference component (the two conversions it is formed from) and
+> `m = |fl(x)|/(1 − u₃₂)` (the f32 difference widened by its own rounding). `C` bounds
+> `|det(original) − det(converted)|` because each product's change under perturbations of at most
+> `e` is at most `Π(|x'|+e) − Π|x'|`, which is increasing in `|x'|`. The bound is evaluated with a
+> `1e-6` relative slack (on the GPU it must be evaluated in f32 with its own rounding bounded the same
+> way). Reference: `predicates::orient3d_f32_certified`; MG-09's configuration is uncertain under it,
+> and over 200,000 configurations within 1e-6..1e-12 of coplanar it certifies no wrong sign of the
+> original f64 points while still certifying >= 95 % of generic ones
+> (`g1_with_the_conversion_term_*`). G3's separation of conversion error remains open with its kernel.
 
 ### 6.2 Broad phase — conservative inflation (S2)
 
@@ -865,7 +879,7 @@ Open items handed on (re-stated at rev 1.3):
 - **The identity rule for two constructed points one float32 ULP apart** (plan M-1.6) is chosen by
   measurement under §1.5's constraints and frozen at rev 1.4. "Quantise the input to `q`" is not a
   candidate (D-14).
-- **Certificate G1 for converted inputs** (D-13) is repaired at rev 1.4, before GK-1.
+- **Certificate G1 for converted inputs** (D-13) is repaired at rev 1.4, before GK-1 - **done 2026-10-19** (§6.1, `orient3d_f32_certified`).
 - **The GWN certificate's wiring** (`gwn_margin_band`, `u₃₂`, `S`), the T-N lint scope and the
   S6 plane-filter bound (D-23..D-26) → plan M-3.3 for the CPU items, M-7 for the kernel.
 - **In-situ DD/fallback rates beyond the G2-3 corpus** remain reporting metrics,

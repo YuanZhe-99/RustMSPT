@@ -303,6 +303,69 @@ pub fn orient3d_value_permanent(a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> (f64, f64
     (-raw, permanent)
 }
 
+/// f32 unit roundoff, `2^-24`.
+pub const UNIT_ROUNDOFF_F32: f64 = 5.960464477539063e-8;
+
+// AI-FUNC-SUMMARY:
+// Purpose: Numerics §6.1 certificate G1 as a GPU kernel would evaluate it (orient3d in f32 on
+//   coordinates converted from f64), with the rev 1.4 conversion term: the reference the GPU
+//   kernels (plan M-7) are tested against.
+// Inputs: the four points in f64.
+// Returns: Some(sign) in the project convention when the sign is certified for the ORIGINAL f64
+//   points, None when the test is uncertain and must be decided on the CPU exact path.
+// Side effects: None.
+// Notes: The f32 determinant and permanent are formed in G1's own expansion order, in f32. Each
+//   converted coordinate moves by at most u32·|x|, so each difference by at most
+//   e = u32·(|p| + |d|); the exact determinant of the original points then differs from that of
+//   the converted ones by at most Σ over the six permanent products of Π(|x'|+e) − Π|x'| with
+//   |x'| bounded by the f32 difference widened by its own rounding. Certified when
+//   |det32| > c_flt32·perm32 + that conversion term (plus a 1e-6 relative slack for evaluating the
+//   bound itself in f64). Without the conversion term the filter accepted MG-09's configuration
+//   with the wrong sign (D-13).
+pub fn orient3d_f32_certified(a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> Option<i8> {
+    let u = UNIT_ROUNDOFF_F32;
+    let f = |v: Vec3| [v.x as f32, v.y as f32, v.z as f32];
+    let (a32, b32, c32, d32) = (f(a), f(b), f(c), f(d));
+    let diff = |p: [f32; 3], q: [f32; 3]| [p[0] - q[0], p[1] - q[1], p[2] - q[2]];
+    let (ad, bd, cd) = (diff(a32, d32), diff(b32, d32), diff(c32, d32));
+    let (adx, ady, adz) = (ad[0], ad[1], ad[2]);
+    let (bdx, bdy, bdz) = (bd[0], bd[1], bd[2]);
+    let (cdx, cdy, cdz) = (cd[0], cd[1], cd[2]);
+    let raw: f32 = adz * (bdx * cdy - cdx * bdy) + bdz * (cdx * ady - adx * cdy) + cdz * (adx * bdy - bdx * ady);
+    let perm: f32 = ((bdx * cdy).abs() + (cdx * bdy).abs()) * adz.abs()
+        + ((cdx * ady).abs() + (adx * cdy).abs()) * bdz.abs()
+        + ((adx * bdy).abs() + (bdx * ady).abs()) * cdz.abs();
+    let c_flt32 = (7.0 + 56.0 * u) * u;
+    // Conversion half-widths per difference component, from the original coordinates.
+    let span = |p: Vec3, q: Vec3| {
+        [
+            u * (p.x.abs() + q.x.abs()),
+            u * (p.y.abs() + q.y.abs()),
+            u * (p.z.abs() + q.z.abs()),
+        ]
+    };
+    let (ea, eb, ec) = (span(a, d), span(b, d), span(c, d));
+    // |x'| <= |fl(x')| / (1 - u): the f32 difference widened by its own rounding.
+    let m = |x: f32| (x as f64).abs() / (1.0 - u);
+    let term = |x: f32, ex: f64, y: f32, ey: f64, z: f32, ez: f64| {
+        let (mx, my, mz) = (m(x), m(y), m(z));
+        (mx + ex) * (my + ey) * (mz + ez) - mx * my * mz
+    };
+    let conversion = term(bdx, eb[0], cdy, ec[1], adz, ea[2])
+        + term(cdx, ec[0], bdy, eb[1], adz, ea[2])
+        + term(cdx, ec[0], ady, ea[1], bdz, eb[2])
+        + term(adx, ea[0], cdy, ec[1], bdz, eb[2])
+        + term(adx, ea[0], bdy, eb[1], cdz, ec[2])
+        + term(bdx, eb[0], ady, ea[1], cdz, ec[2]);
+    let bound = (c_flt32 * perm as f64 + conversion) * (1.0 + 1.0e-6);
+    let det = raw as f64;
+    if det.abs() > bound {
+        Some(if det > 0.0 { -1 } else { 1 })
+    } else {
+        None
+    }
+}
+
 // AI-FUNC-SUMMARY: Certified orient3d sign using the frozen static filter then exact robust fallback; returns (sign, filter_passed, f64_det, permanent); side effects: none.
 pub fn orient3d_filtered(a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> (i8, bool, f64, f64) {
     let (det, permanent) = orient3d_value_permanent(a, b, c, d);
@@ -1017,6 +1080,63 @@ pub fn node_key(p: Vec3, q: f64) -> (i64, i64, i64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// MG-09 (numerics §6.1, D-13): the review's counterexample is certified with the WRONG sign by
+    /// G1 without the conversion term, and is uncertain with it.
+    #[test]
+    fn g1_with_the_conversion_term_refuses_mg09() {
+        let a = Vec3::new(0.1, 0.1, 0.5 - 2e-8);
+        let b = Vec3::new(0.5, 0.1, 0.5 + 2e-8);
+        let c = Vec3::new(0.1, 0.5, 0.5 + 2e-8);
+        let p = Vec3::new(0.15, 0.15, 0.5 - 1.1e-8);
+        let exact = sign_i8(orient3d(a, b, c, p));
+        // The frozen G1, arithmetic only, on the converted operands: accepts, and disagrees.
+        let f = |v: Vec3| Vec3::new(v.x as f32 as f64, v.y as f32 as f64, v.z as f32 as f64);
+        let converted = sign_i8(orient3d(f(a), f(b), f(c), f(p)));
+        assert_ne!(converted, exact, "the counterexample must still be one");
+        assert_eq!(orient3d_f32_certified(a, b, c, p), None);
+    }
+
+    /// Whatever the certified filter answers, it answers the sign of the ORIGINAL f64 points:
+    /// 200,000 configurations, most of them within 1e-6..1e-12 of coplanar.
+    #[test]
+    fn g1_with_the_conversion_term_never_certifies_a_wrong_sign() {
+        let mut state = 0x9e3779b97f4a7c15u64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let (mut certified, mut generic_certified, mut generic) = (0usize, 0usize, 0usize);
+        for k in 0..200_000 {
+            let mut point = || Vec3::new(next(), next(), next());
+            let (a, b, c) = (point(), point(), point());
+            let mut d = point();
+            if k % 10 != 0 {
+                // Pull d onto the plane of abc, then off it by a tiny amount.
+                let n = b.sub(a).cross(c.sub(a));
+                let len = n.dot(n).sqrt();
+                if len > 1e-3 {
+                    let n = n.scale(1.0 / len);
+                    let off = 10f64.powf(-6.0 - 6.0 * next()) * if next() < 0.5 { -1.0 } else { 1.0 };
+                    d = d.sub(n.scale(n.dot(d.sub(a)) - off));
+                }
+            } else {
+                generic += 1;
+            }
+            if let Some(sign) = orient3d_f32_certified(a, b, c, d) {
+                certified += 1;
+                if k % 10 == 0 {
+                    generic_certified += 1;
+                }
+                assert_eq!(sign, sign_i8(orient3d(a, b, c, d)), "case {k}: {a:?} {b:?} {c:?} {d:?}");
+            }
+        }
+        // Generic configurations are almost all certified; near-coplanar ones go to the CPU.
+        assert!(generic_certified * 100 >= generic * 95, "{generic_certified} of {generic} generic");
+        assert!(certified > 0);
+    }
 
     // The tet the rest of these use: the unit corner tet, positively oriented in the usual
     // right-handed sense. Its circumcentre is (0.5, 0.5, 0.5) and its circumradius sqrt(3)/2.
