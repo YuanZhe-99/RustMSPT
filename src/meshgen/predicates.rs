@@ -325,7 +325,23 @@ pub const UNIT_ROUNDOFF_F32: f64 = 5.960464477539063e-8;
 pub fn orient3d_f32_certified(a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> Option<i8> {
     let u = UNIT_ROUNDOFF_F32;
     let f = |v: Vec3| [v.x as f32, v.y as f32, v.z as f32];
-    let (a32, b32, c32, d32) = (f(a), f(b), f(c), f(d));
+    let e = |v: Vec3| [u * v.x.abs(), u * v.y.abs(), u * v.z.abs()];
+    orient3d_f32_certified_inputs([f(a), f(b), f(c), f(d)], [e(a), e(b), e(c), e(d)])
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: Certificate G1 (rev 1.4) on f32 operands that stand for f64 points within given bounds.
+// Inputs: the four f32 operands and, per operand and coordinate, an absolute bound on how far it
+//   may be from the true point (u32·|x| for a plain conversion; larger for an operand the kernel
+//   computed, such as a ray's far endpoint).
+// Returns: Some(sign) of the TRUE points in the project convention, or None (uncertain).
+// Side effects: None.
+// Notes: The determinant and permanent are formed in f32 in G1's expansion order; the operand term
+//   is Σ over the permanent's six products of Π(m+e) − Π m with e the two operands' bounds summed
+//   and m the f32 difference widened by its rounding.
+pub fn orient3d_f32_certified_inputs(points: [[f32; 3]; 4], err: [[f64; 3]; 4]) -> Option<i8> {
+    let u = UNIT_ROUNDOFF_F32;
+    let [a32, b32, c32, d32] = points;
     let diff = |p: [f32; 3], q: [f32; 3]| [p[0] - q[0], p[1] - q[1], p[2] - q[2]];
     let (ad, bd, cd) = (diff(a32, d32), diff(b32, d32), diff(c32, d32));
     let (adx, ady, adz) = (ad[0], ad[1], ad[2]);
@@ -336,28 +352,21 @@ pub fn orient3d_f32_certified(a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> Option<i8> 
         + ((cdx * ady).abs() + (adx * cdy).abs()) * bdz.abs()
         + ((adx * bdy).abs() + (bdx * ady).abs()) * cdz.abs();
     let c_flt32 = (7.0 + 56.0 * u) * u;
-    // Conversion half-widths per difference component, from the original coordinates.
-    let span = |p: Vec3, q: Vec3| {
-        [
-            u * (p.x.abs() + q.x.abs()),
-            u * (p.y.abs() + q.y.abs()),
-            u * (p.z.abs() + q.z.abs()),
-        ]
-    };
-    let (ea, eb, ec) = (span(a, d), span(b, d), span(c, d));
+    let span = |p: usize| [err[p][0] + err[3][0], err[p][1] + err[3][1], err[p][2] + err[3][2]];
+    let (ea, eb, ec) = (span(0), span(1), span(2));
     // |x'| <= |fl(x')| / (1 - u): the f32 difference widened by its own rounding.
     let m = |x: f32| (x as f64).abs() / (1.0 - u);
     let term = |x: f32, ex: f64, y: f32, ey: f64, z: f32, ez: f64| {
         let (mx, my, mz) = (m(x), m(y), m(z));
         (mx + ex) * (my + ey) * (mz + ez) - mx * my * mz
     };
-    let conversion = term(bdx, eb[0], cdy, ec[1], adz, ea[2])
+    let operands = term(bdx, eb[0], cdy, ec[1], adz, ea[2])
         + term(cdx, ec[0], bdy, eb[1], adz, ea[2])
         + term(cdx, ec[0], ady, ea[1], bdz, eb[2])
         + term(adx, ea[0], cdy, ec[1], bdz, eb[2])
         + term(adx, ea[0], bdy, eb[1], cdz, ec[2])
         + term(bdx, eb[0], ady, ea[1], cdz, ec[2]);
-    let bound = (c_flt32 * perm as f64 + conversion) * (1.0 + 1.0e-6);
+    let bound = (c_flt32 * perm as f64 + operands) * (1.0 + 1.0e-6);
     let det = raw as f64;
     if det.abs() > bound {
         Some(if det > 0.0 { -1 } else { 1 })

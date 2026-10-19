@@ -457,6 +457,60 @@ fn parity_along(
     Some(crossings % 2 == 1)
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: `parity_along` as the S6 GPU kernel (plan M-7, GK-1) evaluates it: the same candidates,
+//   every orient3d in f32 under certificate G1 rev 1.4, the far endpoint computed in f32.
+// Inputs: the point, the direction, the reach, the component's triangles and the grid's candidates.
+// Returns: Some(inside) only when every test was certified - then it equals `parity_along`'s
+//   answer for the same direction; None when any test was uncertain, which sends the vertex to the
+//   CPU path (re-shoots and the symbolic perturbation stay there).
+// Side effects: None.
+// Notes: The CPU reference the shader is held to. `reach` need not be the CPU's: any far endpoint
+//   on the same ray beyond the domain box gives the same exact signs (scaling q - p by a positive
+//   factor scales each determinant, and a plane the ray crosses beyond the box is a miss either
+//   way), and a shorter ray tightens the endpoint's bound - its f32 value is within
+//   5·u32·(|p| + |reach·dir|) per coordinate of the exact point. Pass at least the box diagonal.
+pub(crate) fn parity_f32_certified(
+    point: Vec3,
+    direction: Vec3,
+    reach: f64,
+    triangles: &[[Vec3; 3]],
+    candidates: &[u32],
+) -> Option<bool> {
+    use crate::meshgen::predicates::{orient3d_f32_certified_inputs, UNIT_ROUNDOFF_F32 as U};
+    let f = |v: Vec3| [v.x as f32, v.y as f32, v.z as f32];
+    let conv = |v: [f32; 3]| v.map(|x| U * (x as f64).abs() / (1.0 - U));
+    let p = f(point);
+    let dir = f(direction);
+    let reach32 = reach as f32;
+    let q = [
+        p[0] + reach32 * dir[0],
+        p[1] + reach32 * dir[1],
+        p[2] + reach32 * dir[2],
+    ];
+    let ep = conv(p);
+    let eq = [0usize, 1, 2]
+        .map(|k| 5.0 * U * ((p[k] as f64).abs() + (reach32 as f64 * dir[k] as f64).abs()) * (1.0 + 1e-6));
+    let mut crossings = 0usize;
+    for index in candidates {
+        let t = triangles[*index as usize];
+        let (a, b, c) = (f(t[0]), f(t[1]), f(t[2]));
+        let (ea, eb, ec) = (conv(a), conv(b), conv(c));
+        let side_p = orient3d_f32_certified_inputs([a, b, c, p], [ea, eb, ec, ep])?;
+        let side_q = orient3d_f32_certified_inputs([a, b, c, q], [ea, eb, ec, eq])?;
+        if side_p == side_q {
+            continue;
+        }
+        let s0 = orient3d_f32_certified_inputs([p, q, a, b], [ep, eq, ea, eb])?;
+        let s1 = orient3d_f32_certified_inputs([p, q, b, c], [ep, eq, eb, ec])?;
+        let s2 = orient3d_f32_certified_inputs([p, q, c, a], [ep, eq, ec, ea])?;
+        if s0 == s1 && s1 == s2 {
+            crossings += 1;
+        }
+    }
+    Some(crossings % 2 == 1)
+}
+
 // ---------------------------------------------------------------------------
 // The stage
 // ---------------------------------------------------------------------------
@@ -1462,4 +1516,79 @@ fn push_field(doc: &mut VtuDoc, name: &str, components: usize, data: ArrayData) 
         components,
         data,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// GK-1's reference: wherever the f32 kernel certifies a vertex, it agrees with the CPU parity
+    /// for the same direction - on points spread through a faceted sphere's box and points pulled
+    /// to within 1e-7..1e-12 of its surface.
+    #[test]
+    fn the_f32_parity_kernel_agrees_with_the_cpu_wherever_it_certifies() {
+        let c = Vec3::new(0.5, 0.5, 0.5);
+        let corners = [
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(-1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, -1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(0.0, 0.0, -1.0),
+        ];
+        let faces = [[0, 2, 4], [2, 1, 4], [1, 3, 4], [3, 0, 4], [2, 0, 5], [1, 2, 5], [3, 1, 5], [0, 3, 5]];
+        let unit = |v: Vec3| v.scale(1.0 / v.dot(v).sqrt());
+        let mut level: Vec<[Vec3; 3]> =
+            faces.iter().map(|f| [corners[f[0]], corners[f[1]], corners[f[2]]]).collect();
+        for _ in 0..3 {
+            let mut next = Vec::new();
+            for [a, b, d] in level {
+                let (ab, bd, da) = (unit(a.add(b)), unit(b.add(d)), unit(d.add(a)));
+                next.extend([[a, ab, da], [ab, b, bd], [da, bd, d], [ab, bd, da]]);
+            }
+            level = next;
+        }
+        let tris: Vec<[Vec3; 3]> = level
+            .into_iter()
+            .map(|[a, b, d]| [c.add(a.scale(0.3)), c.add(b.scale(0.3)), c.add(d.scale(0.3))])
+            .collect();
+        let direction = Vec3::new(RAY_DIRECTIONS[0][0], RAY_DIRECTIONS[0][1], RAY_DIRECTIONS[0][2]);
+        let grid = ProjectionGrid::build(&tris, direction);
+        let reach = 4.0 * 3f64.sqrt();
+        let short = 1.25 * 3f64.sqrt();
+        let mut state = 0x2545f4914f6cdd1du64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let (mut certified, mut total, mut far_certified, mut far_total) = (0usize, 0usize, 0usize, 0usize);
+        for k in 0..20_000 {
+            let mut p = Vec3::new(next(), next(), next());
+            let near = k % 2 == 0;
+            if near {
+                let r = p.sub(c);
+                let off = 10f64.powf(-7.0 - 5.0 * next()) * if next() < 0.5 { -1.0 } else { 1.0 };
+                p = c.add(r.scale((0.3 + off) / r.dot(r).sqrt()));
+            }
+            total += 1;
+            let mut uncertain = 0usize;
+            let cpu = parity_along(p, direction, reach, &tris, &grid, &mut uncertain);
+            let gpu = parity_f32_certified(p, direction, short, &tris, grid.candidates(p));
+            if !near {
+                far_total += 1;
+            }
+            if let Some(gpu) = gpu {
+                certified += 1;
+                if !near {
+                    far_certified += 1;
+                }
+                assert_eq!(Some(gpu), cpu, "point {k}: {p:?}");
+            }
+        }
+        // Points well off the surface are nearly all certified on the f32 path.
+        assert!(far_certified * 100 >= far_total * 95, "{far_certified} of {far_total} far points certified");
+        assert!(certified > 0, "{certified} of {total}");
+    }
 }
