@@ -19,7 +19,10 @@ volume is not positive or its ratio is over `limit`.
 ## The rule
 
 1. **Padding.** With `padding` given, a bad cell of no volume (`|V| <= 1e-9 L³`, `L`
-   its longest edge) with a face on a padding cell is given to the padding.
+   its longest edge) with a face on a padding cell and every corner on a padding cell
+   is given to the padding. A flat cell with a corner inside the body stays: given
+   away, it would leave a slit of no thickness in the body's outer surface, down to
+   that corner.
 2. **Flips**, worst watched cell first, in sweeps (at most `sweeps`): 2-3 through a
    face shared with one cell of the same density, 3-2 round an edge of three cells,
    4-4 round an edge of four (both diagonals tried). A flip is taken when every new

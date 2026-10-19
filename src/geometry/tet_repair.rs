@@ -758,7 +758,10 @@ pub fn repair(points: &[f64], tets: &[u32], density: &[i64], fixed: &[bool], lay
                 .flat_map(|f| st.holding(f))
                 .filter(|&j| j != i)
                 .any(|j| st.dens[j as usize] == pad);
-            if touching {
+            // every corner on the padding too: a flat cell reaching into the body by a corner
+            // would leave, once given away, a slit of no thickness in the body's outer surface
+            let on_padding = c.iter().all(|&v| st.by_node[v as usize].iter().any(|&j| st.dens[j as usize] == pad));
+            if touching && on_padding {
                 let at = std::array::from_fn(|d| (0..4).map(|k| st.p[c[k] as usize][d]).sum::<f64>() / 4.0);
                 to_padding.push(ToPadding { cell: i, from: st.dens[i as usize], at });
                 st.dens[i as usize] = pad;
@@ -921,6 +924,25 @@ mod tests {
         assert_eq!(interface(&cells, &density), interface(&a.tets, &a.density));
         assert_eq!(a.density.iter().filter(|&&d| d == 1).count() + a.density.iter().filter(|&&d| d == 1001).count(), a.tets.len());
         assert!(m > 0);
+    }
+
+    // AI-FUNC-SUMMARY: Verify a flat cell with a face and every corner on the padding is given to it, and one reaching into the body by a corner is not (simHelper's tests of the same rule).
+    #[test]
+    fn a_flat_cell_goes_to_the_padding_only_with_every_corner_on_it() {
+        let prm = RepairParams { limit: 10.0, sweeps: 20, wall_tol: 0.0, padding: Some(1000), joint_tol: None, seed: 0 };
+        let pts = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 0.5, 0.5, 1.0, 0.5, 0.5, -1.0];
+        let tets = [0, 1, 2, 3, 0, 1, 2, 4, 1, 3, 2, 4, 0, 2, 3, 5, 0, 3, 1, 5];
+        let r = repair(&pts, &tets, &[1001, 1000, 1000, 1001, 1001], &[false; 6], &[], &prm).unwrap();
+        assert_eq!(r.report.to_padding.len(), 1);
+        assert_eq!(r.report.to_padding[0].from, 1001);
+        // corner 6 lies in the plane of the flat cell, under the body only
+        let pts = [
+            0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 0.5, 0.5, 1.0, 0.5, 0.5, -1.0, -1.0, -1.0, 0.0,
+        ];
+        let tets = [6, 1, 2, 3, 1, 3, 2, 4, 6, 2, 3, 5, 6, 3, 1, 5, 0, 6, 1, 5];
+        let r = repair(&pts, &tets, &[1001, 1000, 1001, 1001, 1001], &[false; 7], &[], &prm).unwrap();
+        assert!(r.report.to_padding.is_empty());
+        assert_eq!(r.density.iter().filter(|&&d| d == 1000).count(), 1);
     }
 
     // AI-FUNC-SUMMARY: Verify ragged inputs and out-of-range indices are refused.
