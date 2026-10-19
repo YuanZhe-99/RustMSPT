@@ -5918,7 +5918,7 @@ fn coplanar(face: [Vec3; 3], facet: [Vec3; 3], tol: f64) -> bool {
 // Inputs: the view, [V13]'s boundary faces, the tagged face cells (they carry sheets and declared interfaces), the input surfaces and their indexes, and the "on" tolerance as a fraction of a face's longest edge.
 // Returns: a Containment.
 // Side effects: None.
-// Notes: A facet counts for a face only if all three of the face's corners are within the tolerance of the facet's plane, so a face across a crease - even a shallow one on a faceted sphere - is not contained: the plan's position is that carrying the crease makes the face exact. Coverage is sampled (a 28-point barycentric grid per triangle), so an uncovered sliver finer than a sixth of an edge can be missed; the answer is a function of the geometry alone and does not depend on evaluation order. Input facets whose centroid lies outside the domain box, or inside a closed body of strictly higher precedence (lower priority number, R-A4), are not expected to appear and are counted as hidden.
+// Notes: A facet counts for a face only if all three of the face's corners are within the tolerance of the facet's plane, so a face across a crease - even a shallow one on a faceted sphere - is not contained: the plan's position is that carrying the crease makes the face exact. Coverage is sampled (a 28-point barycentric grid per triangle), so an uncovered sliver finer than a sixth of an edge can be missed; the answer is a function of the geometry alone and does not depend on evaluation order. Input facets whose centroid lies outside the domain box are not expected; parts of facets inside a closed body of strictly higher precedence (lower priority number, R-A4) are not expected either, judged per sample point, and a facet hidden at every sample is counted as hidden.
 fn containment(
     view: &MeshView,
     boundary: &[BoundaryFace],
@@ -6024,13 +6024,18 @@ fn containment(
                     return Err(0);
                 }
             }
-            let hidden = surfaces.iter().enumerate().any(|(y, c)| {
-                y != *x
-                    && c.closed
-                    && c.priority < surfaces[*x].priority
-                    && per_component[y].contains(centroid)
-            });
-            if hidden {
+            // Hidden by a closed body of higher precedence (R-A4), judged per sample like the
+            // burial below: a facet straddling that body's surface is expected only where it is
+            // outside it (a3r's sphere facets crossing the cube's faces read 4-50 % "missing" when
+            // this was decided at the centroid).
+            let hidden_at = |p: Vec3| {
+                surfaces.iter().enumerate().any(|(y, c)| {
+                    y != *x && c.closed && c.priority < surfaces[*x].priority && per_component[y].contains(p)
+                })
+            };
+            let all_samples = tri_samples(*t, 6);
+            let unhidden: Vec<Vec3> = all_samples.iter().copied().filter(|p| !hidden_at(*p)).collect();
+            if unhidden.is_empty() {
                 return Err(1);
             }
             // Material on both sides, by the component's own winding number, means the point is
@@ -6040,7 +6045,7 @@ fn containment(
             let normal = t[1].sub(t[0]).cross(t[2].sub(t[0]));
             let length = normal.dot(normal).sqrt();
             let step = if length > 0.0 { normal.scale(1.0e-6 * diag / length) } else { Vec3::new(0.0, 0.0, 0.0) };
-            let samples: Vec<Vec3> = tri_samples(*t, 6)
+            let samples: Vec<Vec3> = unhidden
                 .into_iter()
                 .filter(|p| {
                     length <= 0.0
@@ -6551,6 +6556,40 @@ mod tests {
         .unwrap();
         assert_eq!(metric(&s, "input_triangles_uncovered"), 0.0, "items: {:?}", s.items);
         assert_eq!(metric(&s, "input_triangles_hidden_by_priority"), 12.0);
+    }
+
+    /// A lower-precedence facet that straddles a higher-precedence body is hidden only where it is
+    /// inside that body: judged per sample, not at the centroid. The box below reaches from the
+    /// middle of the slab to above it, so its bottom (2 triangles) is hidden and every side
+    /// triangle is expected outside the slab - at the centroid, the four side triangles whose
+    /// centroid falls inside the slab were hidden whole.
+    #[test]
+    fn a_facet_straddling_a_higher_precedence_body_is_hidden_only_inside_it() {
+        let doc = fidelity_block(|_, layer| layer == 0);
+        let c = |x: f64, y: f64, z: f64| Vec3::new(x, y, z);
+        let quad = |a: Vec3, b: Vec3, d: Vec3, e: Vec3| vec![[a, b, d], [a, d, e]];
+        let (l, h, b, t) = (0.45, 0.55, ZS[1] * 0.5, ZS[1] * 1.5);
+        let mut tris = Vec::new();
+        tris.extend(quad(c(l, l, b), c(l, h, b), c(h, h, b), c(h, l, b)));
+        tris.extend(quad(c(l, l, t), c(h, l, t), c(h, h, t), c(l, h, t)));
+        tris.extend(quad(c(l, l, b), c(h, l, b), c(h, l, t), c(l, l, t)));
+        tris.extend(quad(c(h, l, b), c(h, h, b), c(h, h, t), c(h, l, t)));
+        tris.extend(quad(c(h, h, b), c(l, h, b), c(l, h, t), c(h, h, t)));
+        tris.extend(quad(c(l, h, b), c(l, l, b), c(l, l, t), c(l, h, t)));
+        let straddling = SurfaceComponent { priority: 5, closed: true, tris };
+        let s = verify_with_options(
+            &doc,
+            &VerifyGates::default(),
+            VerifyOptions {
+                expected_stage: None,
+                delivered: false, inp: None,
+                surfaces: vec![slab(ZS[1]), straddling],
+            },
+        )
+        .section("V13")
+        .cloned()
+        .unwrap();
+        assert_eq!(metric(&s, "input_triangles_hidden_by_priority"), 2.0, "items: {:?}", s.items);
     }
 
     /// [V5] measures the *declared* interface and this measures the material boundary the
