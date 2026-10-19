@@ -15,7 +15,7 @@ VTU 读写器（`src/io/vtu.rs`）、场景抽取层（`src/geometry/render_scen
 | `VtuDoc` | `src/io/vtu.rs:138` | 内存中的契约 VTU：共享点数组、混合单元（VTK 结尾偏移量）、点/单元/字段数据；提供 `cell`、`cell_array`、`point_array`、`field_array`、`num_cells` 访问器。 |
 | `VtuDoc::validate` | `src/io/vtu.rs:181` | 结构校验：偏移量单调性、索引范围、按类型的节点数、数组长度一致性。 |
 | `VtuEncoding` | `src/io/vtu.rs:255` | `Ascii`（经最短形式浮点数实现精确回环）或 `AppendedRaw`（小端序，UInt64 头）。 |
-| `save_vtu` | `src/io/vtu.rs:273` | 将已校验的 `VtuDoc` 写为 VTK XML UnstructuredGrid；自动创建父目录。 |
+| `save_vtu` | `src/io/vtu.rs:273` | 将已校验的 `VtuDoc` 写为 VTK XML UnstructuredGrid；自动创建父目录。数组按引用读取而不复制；ascii 数组按每块 16,384 个值并行格式化后按序拼接，appended 负载只编码一次并经缓冲写入器流式写出，所以字节与串行写出完全相同（120 万四面体的 ascii 文件约 1.05 s -> 约 0.4 s）。 |
 | `load_vtu` | `src/io/vtu.rs:479` | 读取契约子集（ascii + appended-raw，UInt32/UInt64 头）；对压缩或 base64 文件返回明确命名的错误。 |
 | `SetKind` | `src/geometry/render_scene.rs:8` | 渲染集合归属（`Volume` 边界面 vs 带标签的 `Face` 单元）；重合命中去重时 Face 优先。 |
 | `SceneTri`/`SceneSegment`/`SceneMarker` | `src/geometry/render_scene.rs:15` | 抽取阶段产出的世界坐标图元，携带颜色/不透明度。 |

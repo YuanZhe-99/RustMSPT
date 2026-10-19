@@ -1,5 +1,6 @@
 use crate::error::{Result, RustMsptError};
 use crate::types::Vec3;
+use rayon::prelude::*;
 use std::io::Write;
 use std::path::Path;
 
@@ -38,6 +39,15 @@ impl ArrayData {
     // AI-FUNC-SUMMARY: True when the array holds no values; returns bool; side effects: none.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    // AI-FUNC-SUMMARY: Bytes per value of the payload's type; returns usize; side effects: none.
+    fn byte_width(&self) -> usize {
+        match self {
+            ArrayData::U8(_) => 1,
+            ArrayData::I32(_) | ArrayData::U32(_) | ArrayData::F32(_) => 4,
+            ArrayData::I64(_) | ArrayData::U64(_) | ArrayData::F64(_) => 8,
+        }
     }
 
     // AI-FUNC-SUMMARY: VTK type attribute string for this variant; returns &'static str; side effects: none.
@@ -91,25 +101,50 @@ impl ArrayData {
         }
     }
 
+    // AI-FUNC-SUMMARY: The payload's little-endian bytes in one preallocated buffer; returns Vec<u8>; side effects: none.
     fn to_le_bytes(&self) -> Vec<u8> {
+        fn pack<T: Copy, const N: usize>(v: &[T], f: fn(T) -> [u8; N]) -> Vec<u8> {
+            let mut out = Vec::with_capacity(v.len() * N);
+            for x in v {
+                out.extend_from_slice(&f(*x));
+            }
+            out
+        }
         match self {
             ArrayData::U8(v) => v.clone(),
-            ArrayData::I32(v) => v.iter().flat_map(|x| x.to_le_bytes()).collect(),
-            ArrayData::I64(v) => v.iter().flat_map(|x| x.to_le_bytes()).collect(),
-            ArrayData::U32(v) => v.iter().flat_map(|x| x.to_le_bytes()).collect(),
-            ArrayData::U64(v) => v.iter().flat_map(|x| x.to_le_bytes()).collect(),
-            ArrayData::F32(v) => v.iter().flat_map(|x| x.to_le_bytes()).collect(),
-            ArrayData::F64(v) => v.iter().flat_map(|x| x.to_le_bytes()).collect(),
+            ArrayData::I32(v) => pack(v, i32::to_le_bytes),
+            ArrayData::I64(v) => pack(v, i64::to_le_bytes),
+            ArrayData::U32(v) => pack(v, u32::to_le_bytes),
+            ArrayData::U64(v) => pack(v, u64::to_le_bytes),
+            ArrayData::F32(v) => pack(v, f32::to_le_bytes),
+            ArrayData::F64(v) => pack(v, f64::to_le_bytes),
         }
     }
 }
 
-fn write_ascii_items<T: std::fmt::Display>(out: &mut Vec<u8>, items: &[T]) {
-    for (i, x) in items.iter().enumerate() {
+// AI-FUNC-SUMMARY: Space-separated Display text of the items, formatted in parallel chunks and joined in order (identical bytes to a serial loop); returns nothing; side effects: appends to `out`.
+fn write_ascii_items<T: std::fmt::Display + Sync>(out: &mut Vec<u8>, items: &[T]) {
+    const CHUNK: usize = 1 << 14;
+    let format = |chunk: &[T]| {
+        let mut text: Vec<u8> = Vec::with_capacity(chunk.len() * 8);
+        for (i, x) in chunk.iter().enumerate() {
+            if i > 0 {
+                text.push(b' ');
+            }
+            let _ = write!(text, "{x}");
+        }
+        text
+    };
+    if items.len() <= CHUNK {
+        out.extend_from_slice(&format(items));
+        return;
+    }
+    let parts: Vec<Vec<u8>> = items.par_chunks(CHUNK).map(format).collect();
+    for (i, part) in parts.iter().enumerate() {
         if i > 0 {
             out.push(b' ');
         }
-        let _ = write!(out, "{x}");
+        out.extend_from_slice(part);
     }
 }
 
@@ -260,7 +295,7 @@ pub enum VtuEncoding {
 struct ArrayRef<'a> {
     name: &'a str,
     components: usize,
-    data: ArrayData,
+    data: std::borrow::Cow<'a, ArrayData>,
     tuples: Option<usize>,
 }
 
@@ -292,49 +327,49 @@ pub fn save_vtu(path: &Path, doc: &VtuDoc, encoding: VtuEncoding) -> Result<()> 
         arrays.push(ArrayRef {
             name: &a.name,
             components: a.components,
-            data: a.data.clone(),
+            data: std::borrow::Cow::Borrowed(&a.data),
             tuples: Some(a.data.len() / a.components.max(1)),
         });
     }
     arrays.push(ArrayRef {
         name: "Points",
         components: 3,
-        data: ArrayData::F64(flat_points),
+        data: std::borrow::Cow::Owned(ArrayData::F64(flat_points)),
         tuples: None,
     });
     arrays.push(ArrayRef {
         name: "connectivity",
         components: 1,
-        data: ArrayData::I64(doc.connectivity.clone()),
+        data: std::borrow::Cow::Owned(ArrayData::I64(doc.connectivity.clone())),
         tuples: None,
     });
     arrays.push(ArrayRef {
         name: "offsets",
         components: 1,
-        data: ArrayData::I64(doc.offsets.clone()),
+        data: std::borrow::Cow::Owned(ArrayData::I64(doc.offsets.clone())),
         tuples: None,
     });
     arrays.push(ArrayRef {
         name: "types",
         components: 1,
-        data: ArrayData::U8(doc.types.clone()),
+        data: std::borrow::Cow::Owned(ArrayData::U8(doc.types.clone())),
         tuples: None,
     });
     for a in &doc.point_data {
-        arrays.push(ArrayRef { name: &a.name, components: a.components, data: a.data.clone(), tuples: None });
+        arrays.push(ArrayRef { name: &a.name, components: a.components, data: std::borrow::Cow::Borrowed(&a.data), tuples: None });
     }
     for a in &doc.cell_data {
-        arrays.push(ArrayRef { name: &a.name, components: a.components, data: a.data.clone(), tuples: None });
+        arrays.push(ArrayRef { name: &a.name, components: a.components, data: std::borrow::Cow::Borrowed(&a.data), tuples: None });
     }
 
+    // Each appended block is an 8-byte length header and the payload, so the offsets follow from
+    // the payload sizes alone; the payloads are encoded once, as the file is written.
     let mut offsets_bytes: Vec<usize> = Vec::with_capacity(arrays.len());
-    let mut appended: Vec<u8> = Vec::new();
     if encoding == VtuEncoding::AppendedRaw {
+        let mut at = 0usize;
         for a in &arrays {
-            offsets_bytes.push(appended.len());
-            let bytes = a.data.to_le_bytes();
-            appended.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
-            appended.extend_from_slice(&bytes);
+            offsets_bytes.push(at);
+            at += 8 + a.data.len() * a.data.byte_width();
         }
     }
 
@@ -424,14 +459,21 @@ pub fn save_vtu(path: &Path, doc: &VtuDoc, encoding: VtuEncoding) -> Result<()> 
     let _ = writeln!(out, "      </CellData>");
     let _ = writeln!(out, "    </Piece>");
     let _ = writeln!(out, "  </UnstructuredGrid>");
+    let mut file = std::io::BufWriter::with_capacity(1 << 20, std::fs::File::create(path)?);
     if encoding == VtuEncoding::AppendedRaw {
         let _ = write!(out, "  <AppendedData encoding=\"raw\">\n_");
-        out.extend_from_slice(&appended);
+        file.write_all(&out)?;
+        for a in &arrays {
+            let bytes = a.data.to_le_bytes();
+            file.write_all(&(bytes.len() as u64).to_le_bytes())?;
+            file.write_all(&bytes)?;
+        }
+        out.clear();
         let _ = write!(out, "\n  </AppendedData>\n");
     }
     let _ = writeln!(out, "</VTKFile>");
-
-    std::fs::write(path, out)?;
+    file.write_all(&out)?;
+    file.flush()?;
     Ok(())
 }
 
