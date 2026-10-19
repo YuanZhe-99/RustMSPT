@@ -296,6 +296,9 @@ src/
     improve.rs         S9 (M-5.4): classified edge collapse, interior 3-2/2-3 flips and constrained smoothing to the owner's FEM gate (AR < 10, dihedral >= 10 deg) without moving geometry
     export.rs          S11 (M-6.2): the stage-11 contract document as an Abaqus INP (C3D4, REGION/PARTITION ELSETs, COMPONENT NSETs, IFACE surfaces), and the INP parser `[V10]` reads
     cut.rs             S8 (G6-2/G6-3/G6-5): SNK + prism table, §5.2 face-split table, §6 tet case table, guarded dry-run, cut-time ownership, derived interface index, welded sheet cuts, s08 writer
+    cut/plc_pass.rs    S8's §7.1/§7.4 pass: trace interning on every crossed lattice face (`trace_point_on_edge`), augmented face triangulations, the exclusion fixed point, the per-cell PLC attempt
+    cut/assembly.rs    S8's serial assembly in cell order (`assemble` -> `Assembly`): plans, escalated splits, table children, face cache, §7.5 labels
+    cut/plc_checks.rs  S8's post-assembly censuses (print-only, `RUSTMSPT_PLC_DIAG`) and the T-junction repair
     junction.rs        S8 escalated cells (G6-0/G6-4): conforming face triangulation + centroid fan
     lattice.rs         S5 (G4-2): strong 2:1 balance, Freudenthal 6-tet table, centroid-fan transition templates, node dedup, s05 writer
     sizing.rs          S4: the G3-2 coupling driver (update rule, hysteresis, locking, oscillation/cap guards, G-8 assertion) plus G4-1's sizing sources, graded (Lipschitz) field, background octree, C(R), and s04 writer
@@ -361,6 +364,7 @@ tests/
   meshgen_lattice_tests.rs G4-2 strong balance, Freudenthal/fan templates, Theorem T1 via [V3] on randomized fields, s05, determinism
   meshgen_classify_tests.rs G5-1 resolve() truth table, volume-checked parity, degeneracy handling, sheet guard, active patches, s06, determinism
   meshgen_snap_tests.rs   G6-1 no inversion, motion cap, target priority, box constraints, the re-check band, K1 counting, crossing consistency, s07, determinism
+  meshgen_junction_tests.rs  junction.rs: loop/polygon fans, soup closure and components, the chord meeting point, the whole-cell fan
   meshgen_cut_tests.rs    G6-2..G6-5 SNK/T2, prism + face-split + tet case tables, the §6<->§5.2 conformity claim, dry-run, end-to-end conformity, welded sheets, s08, determinism
   meshgen_quality_gate_tests.rs  G6-6 post-snap/post-cut quality by cell template, against the corrected 35.264 deg baseline
 
