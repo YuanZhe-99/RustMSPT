@@ -160,6 +160,7 @@ meshgen:
 | `parity_f32_certified / orient3d_f32_certified_inputs` | `src/meshgen/classify.rs / src/meshgen/predicates.rs` | GK-1 的 CPU 参照：S6 沿一个方向的奇偶判定，所有 orient3d 都按证书 G1 rev 1.4 在 f32 中求值，操作数各自的误差界显式给出（远端点在 f32 中计算，可以位于比 CPU 更短的射线上——区域盒以外的任何点给出相同的精确符号）。只有所有测试都被证实时才返回 Some(inside)，且此时等于 `parity_along` 的结果；None 则把该顶点交给 CPU。在多面体球上测试：没有不一致，远离曲面的点 >= 95 % 被证实。 |
 | `plc_pass / assemble / plc_checks` | `src/meshgen/cut/{plc_pass,assembly,plc_checks}.rs` | M-3.3：把 `cut_lattice` 最大的三块拆为 `cut` 子模块中的阶段函数（可见其私有项）：§7.1/§7.4 处理（迹点内化、增强面、排除不动点、逐单元 PLC 尝试）、按单元顺序的串行组装（返回 `Assembly`：计数、统计集合、面缓存），以及组装后的统计和 T 形节点修复。原样搬移——网格与 `[PLC]`/`[JCT]`/`[S8]` 日志逐字节不变；`cut_lattice` 4,897 -> 1,167 行。 |
 | `trace_point_on_edge` | `src/meshgen/cut/plc_pass.rs` | S8 对迹线端点的“在边上”规则：它所在的第一条面边（在该边长度的 1e-9 以内或在其直线的重合界以内，且在边的范围内）以及投影到该边上的点；是点与边的函数，所以共享该边的两个面判定一致。有单元测试（`a_rim_endpoint_is_placed_on_its_edge_the_same_from_both_faces`、`the_coincidence_bound_catches_near_rim_endpoints_and_nothing_else`）。 |
+| `face_trace_census` | `src/meshgen/cut.rs` | 只打印（`RUSTMSPT_FACE_TRACE`）：P-3.13 第 1–2 步的面迹线统计；返回 `FaceTraceCounts` 供 `cut_lattice` 的报告使用（未设置时全为零）。原样从 `cut_lattice` 拆出（M-3.3，1,167 -> 887 行）。 |
 | `scan_faces` | `src/meshgen/cut/plc_pass.rs` | 曲面穿过的每个格子面：其迹线弦、其上已有的交点节点、其所属单元、每条格子边上的节点（只是面的函数，J1）。 |
 | `intern_trace_points` | `src/meshgen/cut/plc_pass.rs` | 每个迹线弦端点只内化一次：在其所在的面边上（`trace_point_on_edge`）或面内部，并记录每个面的弦编号。 |
 | `triangulate_faces` | `src/meshgen/cut/plc_pass.rs` | 按点集和弦对迹线改变的每个面三角剖分；记录失败及原因。 |

@@ -4028,6 +4028,16 @@ pub fn facet_split_fan(
                             }
                         }
                     }
+                    if DIAG_CELL.with(|c| c.get()) {
+                        let mut ids: Vec<u32> = piece.iter().flatten().copied().collect();
+                        ids.sort_unstable();
+                        ids.dedup();
+                        eprintln!(
+                            "[NONSTAR-PIECE] tris {:?} points {:?}",
+                            piece,
+                            ids.iter().map(|i| (*i, points[*i as usize])).collect::<Vec<_>>()
+                        );
+                    }
                     note_split("a piece is not star-shaped from its centre - its fan would fold");
                     return None;
                 }

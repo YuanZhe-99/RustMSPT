@@ -1698,98 +1698,6 @@ pub fn cut_lattice(
     // meshes rather than argued from the signature. Nothing consumes its triangles yet: this run
     // must be a no-op, and `face_cache_conflicts` is the number that says whether the switch is
     // safe to make.
-    // **P-3.13 step 1 (`RUSTMSPT_FACE_TRACE=1`): intern the surface's trace on each lattice face.**
-    // §7.2's mesher needs the fragment; conformity needs the *face* to own the nodes the fragment
-    // puts on it. `trace_on_face` is a pure function of the face and the surface (cdt.rs), so both
-    // cells derive the same segments - this map turns them into interned nodes once, keyed by the
-    // face's three corners exactly as `face_steiner` and `curve_pierce` are. Nothing consumes it
-    // yet: this step must be a **no-op**, and the numbers it reports are what say the population is
-    // real and the keying is sound before anything is wired to it.
-    // Stored as POINTS, not node ids. Interning a node the mesh does not yet reference leaves it
-    // sitting on a lattice face with nothing using it, and `[V3]` rightly calls that a hanging
-    // node - measured: a8 fails `[V3]` outright with 561,929 such orphans. The interning happens
-    // when a consumer takes the trace, not when it is computed.
-    let face_trace_on = std::env::var_os("RUSTMSPT_FACE_TRACE").is_some();
-    let mut face_trace: BTreeMap<[u32; 3], SmallVec<[Vec3; 4]>> = BTreeMap::new();
-    let mut face_trace_inside: BTreeSet<[u32; 3]> = BTreeSet::new();
-    let mut face_trace_faces = 0usize;
-    let mut face_trace_reaching = 0usize;
-    let mut face_trace_interior = 0usize;
-    let mut face_trace_nodes = 0usize;
-    if face_trace_on {
-        let mut seen: BTreeSet<[u32; 3]> = BTreeSet::new();
-        for tet in lattice.tets.iter() {
-            for slots in TET_FACES {
-                let mut corners = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
-                corners.sort_by_key(|node| keys[*node as usize]);
-                if !seen.insert(corners) {
-                    continue;
-                }
-                let face = [
-                    mesh.nodes[corners[0] as usize],
-                    mesh.nodes[corners[1] as usize],
-                    mesh.nodes[corners[2] as usize],
-                ];
-                let mut ids: SmallVec<[Vec3; 4]> = SmallVec::new();
-                let mut seen_keys: SmallVec<[NodeKey; 4]> = SmallVec::new();
-                for component in &all_components {
-                    let (lo, hi) = polygon_query_box(&face, options.eps);
-                    let tris = classifier.polygons_near(*component, lo, hi);
-                    if tris.is_empty() {
-                        continue;
-                    }
-                    for segment in crate::meshgen::cdt::trace_on_face(face, &tris, options.eps) {
-                        for point in segment {
-                            // Deduplicated per face by node key, so the two cells sharing it get
-                            // the same point set whatever order their triangles arrive in.
-                            let key = node_key(point, order_quantum);
-                            if !seen_keys.contains(&key) {
-                                seen_keys.push(key);
-                                ids.push(point);
-                            }
-                        }
-                    }
-                }
-                if !ids.is_empty() {
-                    // **Which traces need new machinery, and which are already expressible.** A
-                    // trace that reaches the face's boundary terminates on a lattice edge, so that
-                    // edge carries a crossing and §5.2's table already has the chord as an edge -
-                    // those faces are handled and re-triangulating them would rework most of the
-                    // mesh for nothing. A trace that stays strictly INSIDE the face is the
-                    // sub-cell body seen from the face (PLAN §6.17): no edge is crossed, so no
-                    // table row expresses it, and this is the population §7.2's mesher exists for.
-                    let on_boundary = |p: Vec3| -> bool {
-                        let normal = face[1].sub(face[0]).cross(face[2].sub(face[0]));
-                        let scale = normal.dot(normal).sqrt();
-                        (0..3).any(|k| {
-                            let (u, v) = (face[k], face[(k + 1) % 3]);
-                            let along = v.sub(u);
-                            let len2 = along.dot(along);
-                            if len2 <= 0.0 {
-                                return false;
-                            }
-                            let rel = p.sub(u);
-                            let t = rel.dot(along) / len2;
-                            if !(-0.001..=1.001).contains(&t) {
-                                return false;
-                            }
-                            let off = rel.sub(along.scale(t));
-                            off.dot(off) <= 1.0e-12 * scale
-                        })
-                    };
-                    if ids.iter().any(|p| on_boundary(*p)) {
-                        face_trace_reaching += 1;
-                    } else {
-                        face_trace_interior += 1;
-                        face_trace_inside.insert(corners);
-                    }
-                    face_trace_nodes += ids.len();
-                    face_trace_faces += 1;
-                    face_trace.insert(corners, ids);
-                }
-            }
-        }
-    }
     // P-3.3: for each face a locked curve pierces, how many of its (at most two) owning cells
     // escalated. Only a face escalated on *both* sides can have its triangulation changed by the
     // junction path alone - the other side would keep §5.2's straight chord and the two would stop
@@ -1813,196 +1721,8 @@ pub fn cut_lattice(
         }
     }
 
-    // **P-3.13 step 2, the census that decides whether the face-side wiring can be conforming.**
-    // A face carrying an interior-only loop may only be re-triangulated if *every* cell owning it
-    // derives the same triangulation - the condition P-3.3 proved for the crease fan and the one
-    // P-3.12 violated, which is why it cracked `[V3]` on two of three cases. The sufficient version
-    // of it here is that both owners are in the population the new path will claim: a cell with no
-    // crossed edge that nevertheless carries a trace on one of its faces. Such a cell has nothing
-    // for §5.2's table to cut, so it is emitted whole today and is free to be re-triangulated; a
-    // cell *with* a crossed edge takes the table and would keep the face's plain triangle.
-    // Print-only. The number that matters is `both`, because the difference between it and
-    // `interior` is the part of the population the guard has to decline.
-    let mut subcell_cells = 0usize;
-    let mut subcell_clean = 0usize;
-    let mut subcell_ready = 0usize;
-    // Every interior face classified by what owns it, exhaustively - the four buckets sum to the
-    // interior count, so nothing is inferred by subtraction.
-    let mut face_all_clean = 0usize;
-    let mut face_all_escalated = 0usize;
-    let mut face_mixed = 0usize;
-    let mut face_has_table = 0usize;
-    let mut cells_with_a_trace = 0usize;
-    let mut escalated_with_traces = 0usize;
-    let mut escalated_fully_surrounded = 0usize;
-    let mut cells_interior_escalated = 0usize;
-    let mut cells_interior_uncut = 0usize;
-    let mut cells_interior_table = 0usize;
-    if face_trace_on {
-        let traced_faces = |tet: &[u32; 4]| -> SmallVec<[[u32; 3]; 4]> {
-            TET_FACES
-                .iter()
-                .filter_map(|slots| {
-                    let mut corners = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
-                    corners.sort_by_key(|node| keys[*node as usize]);
-                    face_trace.contains_key(&corners).then_some(corners)
-                })
-                .collect()
-        };
-        let uncut_cell = |tet: &[u32; 4]| -> bool {
-            (0..4).all(|a| {
-                ((a + 1)..4).all(|b| {
-                    let (x, y) = (tet[a], tet[b]);
-                    let edge = if x <= y { [x, y] } else { [y, x] };
-                    !all_components
-                        .iter()
-                        .any(|component| cut_index.contains_key(&(edge, *component)))
-                })
-            })
-        };
-        let mut clean: Vec<bool> = vec![false; lattice.tets.len()];
-        for (index, tet) in lattice.tets.iter().enumerate() {
-            let faces = traced_faces(tet);
-            if !faces.is_empty() {
-                // Every cell the surface passes through - the population §7.1's triage would have
-                // to cover for §7.4's face triangulation to be deliverable everywhere it differs.
-                cells_with_a_trace += 1;
-            }
-            if faces.is_empty() || !uncut_cell(tet) {
-                continue;
-            }
-            subcell_cells += 1;
-            // A cell all of whose traced faces stay interior is one the new path can take whole.
-            // One face reaching the boundary means the surface leaves through a lattice edge that
-            // carries no crossing - which happens when S7 snapped the crossing onto a vertex, so
-            // the cell is handled by the on-cut path and keeps its faces plain. Mixing the two on
-            // one cell is what would leave a loop unrepresented on the face it exits through.
-            if faces.iter().all(|face| face_trace_inside.contains(face)) {
-                clean[index] = true;
-                subcell_clean += 1;
-            }
-        }
-        // **Every interior face, by what owns it.** Two owner conditions can deliver a shared
-        // triangulation: both owners clean (nothing cut, so the new path controls both), or both
-        // escalated (P-3.3's proven condition, already served by §7.3's face cache). Anything else
-        // has an owner that takes §5.2's table, which reads the face's *edge crossings* - and an
-        // interior loop crosses no edge, so that owner keeps the plain triangle whatever the other
-        // one does. Counted exhaustively rather than by subtraction, because the interesting
-        // possibility is the fourth bucket being the large one.
-        let mut owners: BTreeMap<[u32; 3], (u8, u8, u8)> = BTreeMap::new();
-        for (index, tet) in lattice.tets.iter().enumerate() {
-            let escalated = per_cell[index].escalation.is_some();
-            for slots in TET_FACES {
-                let mut corners = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
-                corners.sort_by_key(|node| keys[*node as usize]);
-                if !face_trace_inside.contains(&corners) {
-                    continue;
-                }
-                let entry = owners.entry(corners).or_insert((0, 0, 0));
-                entry.0 += 1;
-                entry.1 += u8::from(escalated);
-                entry.2 += u8::from(clean[index] && !escalated);
-            }
-        }
-        for (all, escalated, clean_owners) in owners.values() {
-            if clean_owners == all {
-                face_all_clean += 1;
-            } else if escalated == all {
-                face_all_escalated += 1;
-            } else if escalated + clean_owners == *all {
-                face_mixed += 1;
-            } else {
-                face_has_table += 1;
-            }
-        }
-        // **Can §7.4's face triangulation ever be delivered, given who owns the faces?** An
-        // augmented face - one carrying the surface's trace as edges - may only be used where
-        // EVERY owner will use the same one. A face carrying a trace is traced from both sides by
-        // construction, so the condition reduces to "both owners take the new path". Counted here
-        // against the population that takes it today, the escalated cells, because if almost none
-        // of them are surrounded by escalated cells then restricting §7.4 to escalation is dead and
-        // the path has to be offered to every cell the surface passes through instead.
-        //
-        // Indexed once rather than scanned per face: the obvious nested loop is quadratic in the
-        // lattice and would not finish on a8's 924,636 cells.
-        let mut traced_owners: BTreeMap<[u32; 3], (u16, u16)> = BTreeMap::new();
-        for (index, tet) in lattice.tets.iter().enumerate() {
-            let escalated = per_cell[index].escalation.is_some();
-            for slots in TET_FACES {
-                let mut corners = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
-                corners.sort_by_key(|node| keys[*node as usize]);
-                if !face_trace.contains_key(&corners) {
-                    continue;
-                }
-                let entry = traced_owners.entry(corners).or_insert((0, 0));
-                entry.0 += 1;
-                entry.1 += u16::from(escalated);
-            }
-        }
-        for (index, tet) in lattice.tets.iter().enumerate() {
-            if per_cell[index].escalation.is_none() {
-                continue;
-            }
-            let mut traced = 0usize;
-            let mut all_escalated = true;
-            for slots in TET_FACES {
-                let mut corners = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
-                corners.sort_by_key(|node| keys[*node as usize]);
-                let Some((owners, escalated)) = traced_owners.get(&corners) else { continue };
-                traced += 1;
-                if owners != escalated {
-                    all_escalated = false;
-                }
-            }
-            if traced == 0 {
-                continue;
-            }
-            escalated_with_traces += 1;
-            if all_escalated {
-                escalated_fully_surrounded += 1;
-            }
-        }
-
-        // **The cells behind the fourth bucket, and the rule that would reach them.** A cell that
-        // takes §5.2's table has a crossed edge - so a component crossing its edges is cut - while
-        // a *different* component passes through one of its faces without crossing any edge of the
-        // cell at all. `crossing_components` sees only the first, so no junction is declared and
-        // the table represents the second nowhere. That is computable from the cell alone: a
-        // component whose surface enters the cell but crosses none of its six edges cannot be
-        // expressed by any row of the table. Counted here as the size of that escalation trigger.
-        for (index, tet) in lattice.tets.iter().enumerate() {
-            let interior = TET_FACES.iter().any(|slots| {
-                let mut corners = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
-                corners.sort_by_key(|node| keys[*node as usize]);
-                face_trace_inside.contains(&corners)
-            });
-            if !interior {
-                continue;
-            }
-            if per_cell[index].escalation.is_some() {
-                cells_interior_escalated += 1;
-            } else if uncut_cell(tet) {
-                cells_interior_uncut += 1;
-            } else {
-                cells_interior_table += 1;
-            }
-        }
-        // **The set the wiring can actually claim.** A clean cell may still be unreachable: if one
-        // of its faces is shared with a cell that keeps the plain triangle, the loop on that face
-        // cannot become an edge, and a piece boundary crossing it is exactly the hanging node
-        // P-3.12 produced. So the claimable cell is one that is clean *and* every one of its
-        // traced faces has clean owners on both sides. This is the honest size of the step.
-        for (index, tet) in lattice.tets.iter().enumerate() {
-            if !clean[index] {
-                continue;
-            }
-            if traced_faces(tet).iter().all(|face| {
-                owners.get(face).map(|(all, _, mine)| mine == all).unwrap_or(false)
-            }) {
-                subcell_ready += 1;
-            }
-        }
-    }
+    let FaceTraceCounts { cells_interior_escalated, cells_interior_table, cells_interior_uncut, cells_with_a_trace, escalated_fully_surrounded, escalated_with_traces, face_all_clean, face_all_escalated, face_has_table, face_mixed, face_trace_faces, face_trace_interior, face_trace_nodes, face_trace_reaching, subcell_cells, subcell_clean, subcell_ready } =
+        face_trace_census(&mut mesh, &keys, lattice, &per_cell, options, &all_components, &cut_index, classifier, order_quantum);
     // For the §7.4 diagnostic only: who owns each lattice face, and how many of them escalated.
     // An augmented face triangulation may only be used where every owner uses the same one, so this
     // is what says whether §7.1's triage can stay as frozen or has to widen.
@@ -7940,4 +7660,332 @@ mod j1_tests {
         assert_eq!(conflicts.0, 0);
         assert_eq!(cache.hits, 1);
     }
+}
+
+
+
+/// The face-trace census's counters, printed by `cut_lattice`'s report.
+#[derive(Default)]
+struct FaceTraceCounts {
+    cells_interior_escalated: usize,
+    cells_interior_table: usize,
+    cells_interior_uncut: usize,
+    cells_with_a_trace: usize,
+    escalated_fully_surrounded: usize,
+    escalated_with_traces: usize,
+    face_all_clean: usize,
+    face_all_escalated: usize,
+    face_has_table: usize,
+    face_mixed: usize,
+    face_trace_faces: usize,
+    face_trace_interior: usize,
+    face_trace_nodes: usize,
+    face_trace_reaching: usize,
+    subcell_cells: usize,
+    subcell_clean: usize,
+    subcell_ready: usize,
+}
+
+// AI-FUNC-SUMMARY:
+// Purpose: The print-only face-trace census of P-3.13 steps 1-2 (`RUSTMSPT_FACE_TRACE`): the surface's trace
+//   on each lattice face, and every interior face classified by what owns it.
+// Inputs: the lattice, the per-cell results, the cut mesh and keys, options, components, cut index and classifier.
+// Returns: the counters `cut_lattice`'s report prints (all zero when the variable is unset).
+// Side effects: None beyond building those counts.
+// Notes: Split out of `cut_lattice` unchanged (plan M-3.3); nothing downstream reads it.
+#[allow(clippy::too_many_arguments)]
+fn face_trace_census(
+    mesh: &mut CutMesh,
+    keys: &[NodeKey],
+    lattice: &Lattice,
+    per_cell: &[CellResult],
+    options: &CutOptions,
+    all_components: &[i32],
+    cut_index: &BTreeMap<([u32; 2], i32), u32>,
+    classifier: &PointClassifier,
+    order_quantum: f64,
+) -> FaceTraceCounts {
+    // **P-3.13 step 1 (`RUSTMSPT_FACE_TRACE=1`): intern the surface's trace on each lattice face.**
+    // §7.2's mesher needs the fragment; conformity needs the *face* to own the nodes the fragment
+    // puts on it. `trace_on_face` is a pure function of the face and the surface (cdt.rs), so both
+    // cells derive the same segments - this map turns them into interned nodes once, keyed by the
+    // face's three corners exactly as `face_steiner` and `curve_pierce` are. Nothing consumes it
+    // yet: this step must be a **no-op**, and the numbers it reports are what say the population is
+    // real and the keying is sound before anything is wired to it.
+    // Stored as POINTS, not node ids. Interning a node the mesh does not yet reference leaves it
+    // sitting on a lattice face with nothing using it, and `[V3]` rightly calls that a hanging
+    // node - measured: a8 fails `[V3]` outright with 561,929 such orphans. The interning happens
+    // when a consumer takes the trace, not when it is computed.
+    let face_trace_on = std::env::var_os("RUSTMSPT_FACE_TRACE").is_some();
+    let mut face_trace: BTreeMap<[u32; 3], SmallVec<[Vec3; 4]>> = BTreeMap::new();
+    let mut face_trace_inside: BTreeSet<[u32; 3]> = BTreeSet::new();
+    let mut face_trace_faces = 0usize;
+    let mut face_trace_reaching = 0usize;
+    let mut face_trace_interior = 0usize;
+    let mut face_trace_nodes = 0usize;
+    if face_trace_on {
+        let mut seen: BTreeSet<[u32; 3]> = BTreeSet::new();
+        for tet in lattice.tets.iter() {
+            for slots in TET_FACES {
+                let mut corners = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+                corners.sort_by_key(|node| keys[*node as usize]);
+                if !seen.insert(corners) {
+                    continue;
+                }
+                let face = [
+                    mesh.nodes[corners[0] as usize],
+                    mesh.nodes[corners[1] as usize],
+                    mesh.nodes[corners[2] as usize],
+                ];
+                let mut ids: SmallVec<[Vec3; 4]> = SmallVec::new();
+                let mut seen_keys: SmallVec<[NodeKey; 4]> = SmallVec::new();
+                for component in all_components {
+                    let (lo, hi) = polygon_query_box(&face, options.eps);
+                    let tris = classifier.polygons_near(*component, lo, hi);
+                    if tris.is_empty() {
+                        continue;
+                    }
+                    for segment in crate::meshgen::cdt::trace_on_face(face, &tris, options.eps) {
+                        for point in segment {
+                            // Deduplicated per face by node key, so the two cells sharing it get
+                            // the same point set whatever order their triangles arrive in.
+                            let key = node_key(point, order_quantum);
+                            if !seen_keys.contains(&key) {
+                                seen_keys.push(key);
+                                ids.push(point);
+                            }
+                        }
+                    }
+                }
+                if !ids.is_empty() {
+                    // **Which traces need new machinery, and which are already expressible.** A
+                    // trace that reaches the face's boundary terminates on a lattice edge, so that
+                    // edge carries a crossing and §5.2's table already has the chord as an edge -
+                    // those faces are handled and re-triangulating them would rework most of the
+                    // mesh for nothing. A trace that stays strictly INSIDE the face is the
+                    // sub-cell body seen from the face (PLAN §6.17): no edge is crossed, so no
+                    // table row expresses it, and this is the population §7.2's mesher exists for.
+                    let on_boundary = |p: Vec3| -> bool {
+                        let normal = face[1].sub(face[0]).cross(face[2].sub(face[0]));
+                        let scale = normal.dot(normal).sqrt();
+                        (0..3).any(|k| {
+                            let (u, v) = (face[k], face[(k + 1) % 3]);
+                            let along = v.sub(u);
+                            let len2 = along.dot(along);
+                            if len2 <= 0.0 {
+                                return false;
+                            }
+                            let rel = p.sub(u);
+                            let t = rel.dot(along) / len2;
+                            if !(-0.001..=1.001).contains(&t) {
+                                return false;
+                            }
+                            let off = rel.sub(along.scale(t));
+                            off.dot(off) <= 1.0e-12 * scale
+                        })
+                    };
+                    if ids.iter().any(|p| on_boundary(*p)) {
+                        face_trace_reaching += 1;
+                    } else {
+                        face_trace_interior += 1;
+                        face_trace_inside.insert(corners);
+                    }
+                    face_trace_nodes += ids.len();
+                    face_trace_faces += 1;
+                    face_trace.insert(corners, ids);
+                }
+            }
+        }
+    }
+    // **P-3.13 step 2, the census that decides whether the face-side wiring can be conforming.**
+    // A face carrying an interior-only loop may only be re-triangulated if *every* cell owning it
+    // derives the same triangulation - the condition P-3.3 proved for the crease fan and the one
+    // P-3.12 violated, which is why it cracked `[V3]` on two of three cases. The sufficient version
+    // of it here is that both owners are in the population the new path will claim: a cell with no
+    // crossed edge that nevertheless carries a trace on one of its faces. Such a cell has nothing
+    // for §5.2's table to cut, so it is emitted whole today and is free to be re-triangulated; a
+    // cell *with* a crossed edge takes the table and would keep the face's plain triangle.
+    // Print-only. The number that matters is `both`, because the difference between it and
+    // `interior` is the part of the population the guard has to decline.
+    let mut subcell_cells = 0usize;
+    let mut subcell_clean = 0usize;
+    let mut subcell_ready = 0usize;
+    // Every interior face classified by what owns it, exhaustively - the four buckets sum to the
+    // interior count, so nothing is inferred by subtraction.
+    let mut face_all_clean = 0usize;
+    let mut face_all_escalated = 0usize;
+    let mut face_mixed = 0usize;
+    let mut face_has_table = 0usize;
+    let mut cells_with_a_trace = 0usize;
+    let mut escalated_with_traces = 0usize;
+    let mut escalated_fully_surrounded = 0usize;
+    let mut cells_interior_escalated = 0usize;
+    let mut cells_interior_uncut = 0usize;
+    let mut cells_interior_table = 0usize;
+    if face_trace_on {
+        let traced_faces = |tet: &[u32; 4]| -> SmallVec<[[u32; 3]; 4]> {
+            TET_FACES
+                .iter()
+                .filter_map(|slots| {
+                    let mut corners = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+                    corners.sort_by_key(|node| keys[*node as usize]);
+                    face_trace.contains_key(&corners).then_some(corners)
+                })
+                .collect()
+        };
+        let uncut_cell = |tet: &[u32; 4]| -> bool {
+            (0..4).all(|a| {
+                ((a + 1)..4).all(|b| {
+                    let (x, y) = (tet[a], tet[b]);
+                    let edge = if x <= y { [x, y] } else { [y, x] };
+                    !all_components
+                        .iter()
+                        .any(|component| cut_index.contains_key(&(edge, *component)))
+                })
+            })
+        };
+        let mut clean: Vec<bool> = vec![false; lattice.tets.len()];
+        for (index, tet) in lattice.tets.iter().enumerate() {
+            let faces = traced_faces(tet);
+            if !faces.is_empty() {
+                // Every cell the surface passes through - the population §7.1's triage would have
+                // to cover for §7.4's face triangulation to be deliverable everywhere it differs.
+                cells_with_a_trace += 1;
+            }
+            if faces.is_empty() || !uncut_cell(tet) {
+                continue;
+            }
+            subcell_cells += 1;
+            // A cell all of whose traced faces stay interior is one the new path can take whole.
+            // One face reaching the boundary means the surface leaves through a lattice edge that
+            // carries no crossing - which happens when S7 snapped the crossing onto a vertex, so
+            // the cell is handled by the on-cut path and keeps its faces plain. Mixing the two on
+            // one cell is what would leave a loop unrepresented on the face it exits through.
+            if faces.iter().all(|face| face_trace_inside.contains(face)) {
+                clean[index] = true;
+                subcell_clean += 1;
+            }
+        }
+        // **Every interior face, by what owns it.** Two owner conditions can deliver a shared
+        // triangulation: both owners clean (nothing cut, so the new path controls both), or both
+        // escalated (P-3.3's proven condition, already served by §7.3's face cache). Anything else
+        // has an owner that takes §5.2's table, which reads the face's *edge crossings* - and an
+        // interior loop crosses no edge, so that owner keeps the plain triangle whatever the other
+        // one does. Counted exhaustively rather than by subtraction, because the interesting
+        // possibility is the fourth bucket being the large one.
+        let mut owners: BTreeMap<[u32; 3], (u8, u8, u8)> = BTreeMap::new();
+        for (index, tet) in lattice.tets.iter().enumerate() {
+            let escalated = per_cell[index].escalation.is_some();
+            for slots in TET_FACES {
+                let mut corners = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+                corners.sort_by_key(|node| keys[*node as usize]);
+                if !face_trace_inside.contains(&corners) {
+                    continue;
+                }
+                let entry = owners.entry(corners).or_insert((0, 0, 0));
+                entry.0 += 1;
+                entry.1 += u8::from(escalated);
+                entry.2 += u8::from(clean[index] && !escalated);
+            }
+        }
+        for (all, escalated, clean_owners) in owners.values() {
+            if clean_owners == all {
+                face_all_clean += 1;
+            } else if escalated == all {
+                face_all_escalated += 1;
+            } else if escalated + clean_owners == *all {
+                face_mixed += 1;
+            } else {
+                face_has_table += 1;
+            }
+        }
+        // **Can §7.4's face triangulation ever be delivered, given who owns the faces?** An
+        // augmented face - one carrying the surface's trace as edges - may only be used where
+        // EVERY owner will use the same one. A face carrying a trace is traced from both sides by
+        // construction, so the condition reduces to "both owners take the new path". Counted here
+        // against the population that takes it today, the escalated cells, because if almost none
+        // of them are surrounded by escalated cells then restricting §7.4 to escalation is dead and
+        // the path has to be offered to every cell the surface passes through instead.
+        //
+        // Indexed once rather than scanned per face: the obvious nested loop is quadratic in the
+        // lattice and would not finish on a8's 924,636 cells.
+        let mut traced_owners: BTreeMap<[u32; 3], (u16, u16)> = BTreeMap::new();
+        for (index, tet) in lattice.tets.iter().enumerate() {
+            let escalated = per_cell[index].escalation.is_some();
+            for slots in TET_FACES {
+                let mut corners = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+                corners.sort_by_key(|node| keys[*node as usize]);
+                if !face_trace.contains_key(&corners) {
+                    continue;
+                }
+                let entry = traced_owners.entry(corners).or_insert((0, 0));
+                entry.0 += 1;
+                entry.1 += u16::from(escalated);
+            }
+        }
+        for (index, tet) in lattice.tets.iter().enumerate() {
+            if per_cell[index].escalation.is_none() {
+                continue;
+            }
+            let mut traced = 0usize;
+            let mut all_escalated = true;
+            for slots in TET_FACES {
+                let mut corners = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+                corners.sort_by_key(|node| keys[*node as usize]);
+                let Some((owners, escalated)) = traced_owners.get(&corners) else { continue };
+                traced += 1;
+                if owners != escalated {
+                    all_escalated = false;
+                }
+            }
+            if traced == 0 {
+                continue;
+            }
+            escalated_with_traces += 1;
+            if all_escalated {
+                escalated_fully_surrounded += 1;
+            }
+        }
+
+        // **The cells behind the fourth bucket, and the rule that would reach them.** A cell that
+        // takes §5.2's table has a crossed edge - so a component crossing its edges is cut - while
+        // a *different* component passes through one of its faces without crossing any edge of the
+        // cell at all. `crossing_components` sees only the first, so no junction is declared and
+        // the table represents the second nowhere. That is computable from the cell alone: a
+        // component whose surface enters the cell but crosses none of its six edges cannot be
+        // expressed by any row of the table. Counted here as the size of that escalation trigger.
+        for (index, tet) in lattice.tets.iter().enumerate() {
+            let interior = TET_FACES.iter().any(|slots| {
+                let mut corners = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
+                corners.sort_by_key(|node| keys[*node as usize]);
+                face_trace_inside.contains(&corners)
+            });
+            if !interior {
+                continue;
+            }
+            if per_cell[index].escalation.is_some() {
+                cells_interior_escalated += 1;
+            } else if uncut_cell(tet) {
+                cells_interior_uncut += 1;
+            } else {
+                cells_interior_table += 1;
+            }
+        }
+        // **The set the wiring can actually claim.** A clean cell may still be unreachable: if one
+        // of its faces is shared with a cell that keeps the plain triangle, the loop on that face
+        // cannot become an edge, and a piece boundary crossing it is exactly the hanging node
+        // P-3.12 produced. So the claimable cell is one that is clean *and* every one of its
+        // traced faces has clean owners on both sides. This is the honest size of the step.
+        for (index, tet) in lattice.tets.iter().enumerate() {
+            if !clean[index] {
+                continue;
+            }
+            if traced_faces(tet).iter().all(|face| {
+                owners.get(face).map(|(all, _, mine)| mine == all).unwrap_or(false)
+            }) {
+                subcell_ready += 1;
+            }
+        }
+    }
+    FaceTraceCounts { cells_interior_escalated, cells_interior_table, cells_interior_uncut, cells_with_a_trace, escalated_fully_surrounded, escalated_with_traces, face_all_clean, face_all_escalated, face_has_table, face_mixed, face_trace_faces, face_trace_interior, face_trace_nodes, face_trace_reaching, subcell_cells, subcell_clean, subcell_ready }
 }
