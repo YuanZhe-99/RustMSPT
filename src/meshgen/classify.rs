@@ -492,6 +492,8 @@ struct ComponentGeometry {
     /// The triangles S8 cuts along once the active mask is known: `triangles` minus faces S6
     /// found buried inside the component's own union (`restrict_to_active`). `None` until then.
     active_triangles: Option<Vec<[Vec3; 3]>>,
+    /// R-A4 precedence: a lower number wins the overlap.
+    priority: u32,
 }
 
 // AI-FUNC-SUMMARY:
@@ -708,6 +710,7 @@ impl PointClassifier {
                 .collect();
             solids.push(ComponentGeometry {
                 x: component.x,
+                priority: component.priority,
                 triangles,
                 faces,
                 face_ids,
@@ -860,6 +863,20 @@ impl PointClassifier {
                 .collect();
             solid.active_triangles = Some(kept);
         }
+    }
+
+    // AI-FUNC-SUMMARY:
+    // Purpose: Whether a point lies inside another solid of strictly higher precedence (lower
+    //   priority number, R-A4) than the one in `slot` - where `slot`'s surface is inactive and its
+    //   side decides nothing.
+    // Inputs: the point, the solid slot, the uncertain-predicate counter.
+    // Returns: bool.
+    // Side effects: adds to `uncertain`.
+    // Notes: Equal priorities preserve the overlap (R-A3), so they never hide each other.
+    pub fn hidden_by_precedence(&self, point: Vec3, slot: usize, uncertain: &mut usize) -> bool {
+        let own = self.solids[slot].priority;
+        (0..self.solids.len())
+            .any(|other| other != slot && self.solids[other].priority < own && self.inside(point, other, uncertain))
     }
 
     pub fn slot_of(&self, component: i32) -> Option<usize> {

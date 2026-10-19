@@ -5918,7 +5918,7 @@ fn coplanar(face: [Vec3; 3], facet: [Vec3; 3], tol: f64) -> bool {
 // Inputs: the view, [V13]'s boundary faces, the tagged face cells (they carry sheets and declared interfaces), the input surfaces and their indexes, and the "on" tolerance as a fraction of a face's longest edge.
 // Returns: a Containment.
 // Side effects: None.
-// Notes: A facet counts for a face only if all three of the face's corners are within the tolerance of the facet's plane, so a face across a crease - even a shallow one on a faceted sphere - is not contained: the plan's position is that carrying the crease makes the face exact. Coverage is sampled (a 28-point barycentric grid per triangle), so an uncovered sliver finer than a sixth of an edge can be missed; the answer is a function of the geometry alone and does not depend on evaluation order. Input facets whose centroid lies outside the domain box are not expected; parts of facets inside a closed body of strictly higher precedence (lower priority number, R-A4) are not expected either, judged per sample point, and a facet hidden at every sample is counted as hidden.
+// Notes: A facet counts for a face only if all three of the face's corners are within the tolerance of the facet's plane, so a face across a crease - even a shallow one on a faceted sphere - is not contained: the plan's position is that carrying the crease makes the face exact. Coverage is sampled (a 28-point barycentric grid per triangle), so an uncovered sliver finer than a sixth of an edge can be missed; the answer is a function of the geometry alone and does not depend on evaluation order. Input facets whose centroid lies outside the domain box are not expected, nor the parts of a facet outside it; parts of facets inside a closed body of strictly higher precedence (lower priority number, R-A4) are not expected either, judged per sample point, and a facet hidden at every sample is counted as hidden.
 fn containment(
     view: &MeshView,
     boundary: &[BoundaryFace],
@@ -6033,7 +6033,25 @@ fn containment(
                     y != *x && c.closed && c.priority < surfaces[*x].priority && per_component[y].contains(p)
                 })
             };
-            let all_samples = tri_samples(*t, 6);
+            // Likewise the domain box: a facet straddling a box plane is clipped there, and only its
+            // part inside the box is expected (a12's sphere crosses z = 0.6 and its facets there
+            // read up to a third "missing" when the box was judged at the centroid).
+            let inside_box = |p: &Vec3| match domain {
+                Some((lo, hi)) => {
+                    let tol = 1e-9 * hi.sub(lo).dot(hi.sub(lo)).sqrt();
+                    p.x >= lo.x - tol
+                        && p.y >= lo.y - tol
+                        && p.z >= lo.z - tol
+                        && p.x <= hi.x + tol
+                        && p.y <= hi.y + tol
+                        && p.z <= hi.z + tol
+                }
+                None => true,
+            };
+            let all_samples: Vec<Vec3> = tri_samples(*t, 6).into_iter().filter(inside_box).collect();
+            if all_samples.is_empty() {
+                return Err(0);
+            }
             let unhidden: Vec<Vec3> = all_samples.iter().copied().filter(|p| !hidden_at(*p)).collect();
             if unhidden.is_empty() {
                 return Err(1);

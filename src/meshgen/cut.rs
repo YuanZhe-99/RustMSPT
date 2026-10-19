@@ -2227,6 +2227,23 @@ pub fn cut_lattice(
         // presence of a trace forced every cell the surface grazes onto the fan - 44,324 of a8's
         // declines were "no facet in this cell", a cell with nothing for §7.4 to constrain and
         // every reason to keep taking §6's table.
+        // Print-only: `RUSTMSPT_FACE_PROBE=a,b,c` (three lattice corner ids) prints that face's
+        // point set, its edges' recorded points and, below, its triangulation.
+        let face_probe: Option<BTreeSet<u32>> = std::env::var("RUSTMSPT_FACE_PROBE")
+            .ok()
+            .map(|v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect());
+        if let Some(probe) = &face_probe {
+            for (face, ids) in &face_ids {
+                if face.iter().copied().collect::<BTreeSet<u32>>() == *probe {
+                    eprintln!("[FACE-PROBE] face {face:?} ids {ids:?} chords {:?}", chords_of.get(face));
+                    for slot in 0..3 {
+                        let (x, y) = (face[slot], face[(slot + 1) % 3]);
+                        let edge = if x <= y { [x, y] } else { [y, x] };
+                        eprintln!("[FACE-PROBE]   edge {edge:?} points {:?} nodes {:?}", edge_points.get(&edge), edge_nodes.get(&edge));
+                    }
+                }
+            }
+        }
         let mut face_why: BTreeMap<&'static str, usize> = BTreeMap::new();
         let mut failed_faces: BTreeSet<[u32; 3]> = BTreeSet::new();
         let mut face_outside_worst = 0.0f64;
@@ -2264,6 +2281,11 @@ pub fn cut_lattice(
             let face_keys: Vec<NodeKey> = ids.iter().map(|id| keys[*id as usize]).collect();
             let at = |id: u32| ids.iter().position(|x| *x == id).unwrap_or(0) as u32;
             let local: Vec<[u32; 2]> = segments.iter().map(|s| [at(s[0]), at(s[1])]).collect();
+            if face_probe.as_ref().is_some_and(|p| face.iter().all(|c| p.contains(c))) {
+                eprintln!("[FACE-INPUT] geometry {:?}", geometry.map(|v| [v.x, v.y, v.z]));
+                eprintln!("[FACE-INPUT] points {:?}", points.iter().map(|v| [v.x, v.y, v.z]).collect::<Vec<_>>());
+                eprintln!("[FACE-INPUT] segments {:?} eps {:e}", local, options.eps);
+            }
             let tris = match crate::meshgen::cdt::constrained_face_triangulation(
                 geometry,
                 &points,
@@ -2271,8 +2293,16 @@ pub fn cut_lattice(
                 &local,
                 options.eps,
             ) {
-                Ok(tris) => tris,
+                Ok(tris) => {
+                    if face_probe.as_ref().is_some_and(|p| face.iter().all(|c| p.contains(c))) {
+                        eprintln!("[FACE-PROBE] face {face:?} triangulated {:?}", tris.iter().map(|t| t.map(|i| ids[i as usize])).collect::<Vec<_>>());
+                    }
+                    tris
+                }
                 Err(reason) => {
+                    if face_probe.as_ref().is_some_and(|p| face.iter().all(|c| p.contains(c))) {
+                        eprintln!("[FACE-PROBE] face {face:?} FAILED: {reason}");
+                    }
                     *face_why.entry(reason).or_insert(0) += 1;
                     failed_faces.insert(raw);
                     if reason == "a point lies outside the face" {
@@ -5272,6 +5302,69 @@ pub fn cut_lattice(
                          - and the rest strictly inside it, a face split",
                         hanging.len()
                     ));
+                }
+                // Print-only: where each hanging node is, the face it hangs on and which cells emit
+                // the tets carrying the node and the face - so a J1 gap can be traced to the two
+                // cells that disagree about one edge.
+                if std::env::var_os("RUSTMSPT_PLC_DIAG").is_some() && _round == 0 {
+                    let mut shown = 0usize;
+                    for (face, here) in faces.iter().zip(&near_face) {
+                        for (id, rim) in here {
+                            if shown >= 12 {
+                                break;
+                            }
+                            shown += 1;
+                            let carriers = |n: u32| -> Vec<u32> {
+                                let mut cells: Vec<u32> = mesh
+                                    .tets
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(_, t)| t.contains(&n))
+                                    .map(|(at, _)| mesh.parent_of[at])
+                                    .collect();
+                                cells.sort_unstable();
+                                cells.dedup();
+                                cells
+                            };
+                            let face_cells: Vec<u32> = {
+                                let mut cells: Vec<u32> = mesh
+                                    .tets
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(_, t)| face.iter().all(|n| t.contains(n)))
+                                    .map(|(at, _)| mesh.parent_of[at])
+                                    .collect();
+                                cells.sort_unstable();
+                                cells
+                            };
+                            if shown == 1 {
+                                for n in face {
+                                    eprintln!(
+                                        "[TJ-NODE]   face node {n} ({}) lattice {} at {:?}",
+                                        origin.get(*n as usize).copied().unwrap_or("?"),
+                                        *n < n_parent_nodes,
+                                        mesh.nodes[*n as usize]
+                                    );
+                                }
+                                for cell in carriers(*id).iter().chain(face_cells.iter()) {
+                                    let corners = lattice.tets[*cell as usize];
+                                    eprintln!(
+                                        "[TJ-NODE]   cell {cell} corners {:?} at {:?}",
+                                        corners,
+                                        corners.map(|c| mesh.nodes[c as usize])
+                                    );
+                                }
+                            }
+                            eprintln!(
+                                "[TJ-NODE] node {id} ({}) at {:?} on face {:?} rim {rim}; node in cells {:?}, face in cells {:?}",
+                                origin.get(*id as usize).copied().unwrap_or("?"),
+                                mesh.nodes[*id as usize],
+                                face,
+                                carriers(*id),
+                                face_cells
+                            );
+                        }
+                    }
                 }
                 let repeated =
                     !seen.insert((hanging.iter().copied().collect(), incidences, on_rim));
@@ -8880,7 +8973,8 @@ fn hull_diag(
 //   triangle) takes no side of it, facet or not. A
 //   facet the rim matching leaves without area, or with fewer than three distinct vertices, is
 //   skipped and the nodes it interned are rolled back. A node on or inside any facet of a component
-//   takes no side of it (`facet_within`).
+//   takes no side of it (`facet_within`), and neither does a node inside a body of higher precedence
+//   than the component (`hidden_by_precedence`), where S6 deactivated that component's surface.
 #[allow(clippy::too_many_arguments)]
 fn plc_attempt(
     tet: [u32; 4],
@@ -9468,6 +9562,14 @@ fn plc_attempt(
                 };
                 let point = at(node)?;
                 let mut here = uncertain.get();
+                // Inside a body of higher precedence this component's surface is inactive (S6
+                // deactivated it, so it left no trace here) and its side decides nothing: a3r's
+                // sphere passes through the cube, and a boundary triangle with one corner in the
+                // cube read "straddles the sphere with no node on it" - 74 whole-cell fans.
+                if classifier.hidden_by_precedence(point, slot, &mut here) {
+                    uncertain.set(here);
+                    return None;
+                }
                 let inside = classifier.inside(point, slot, &mut here);
                 uncertain.set(here);
                 Some(inside)

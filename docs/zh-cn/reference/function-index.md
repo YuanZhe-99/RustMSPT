@@ -737,6 +737,7 @@
 | `ImproveOptions` / `ImproveStats` | 网格生成 | `src/meshgen/improve.rs:26` | S9 的目标（默认为业主的 FEM 门槛：AR < 10、二面角 ≥ 10°，六轮；`weld` 为文档单位下的焊接量子——流水线传入 `0.1 eps`——限定 `try_unfold` 的共面判断）与计数（收缩、翻转、节点移动、前后的四面体数与不达标数、最差 AR）。 |
 | `aspect_ratio` / `min_dihedral_deg` | 网格生成 | `src/meshgen/improve.rs:59` | 门槛使用的度量：最长边除以最短高并归一到正四面体为 1（Abaqus 约定），以及以度为单位的最小二面角。 |
 | `Mesh::bad_list` | 网格生成 | `src/meshgen/improve.rs` | 未达标的存活四面体及其 AR，按下标升序。每个四面体槽缓存其 AR 与门槛判定；对槽节点或节点位置的每次写入都会把受影响的四面体标为过期，只重算过期的槽（并行计算、按下标收集），所以列表与全量扫描相同。a8 的 S9 10.2 -> 6.5 s。`RUSTMSPT_TIME_STAGES` 还会打印 `[S9-TIME] move <kind>` 的耗时、尝试与成功次数。 |
+| `PointClassifier::hidden_by_precedence` | 网格生成 | `src/meshgen/classify.rs` | 点是否位于另一个优先级严格更高（优先级数字更小，R-A4）的实体内部——那里给定实体的曲面不活动，其内外侧不起作用（同优先级互不遮挡，R-A3）。面片切分扇的侧判定在这些点上返回 None：a3r 的球穿过立方体，角点在立方体内的边界三角形曾被判为“跨越曲面但其上没有节点”——这正是 a3r 全部 74 个整胞扇的原因；现在为 0，曲面贴合 99.31 -> 99.9955 %，`[V5]` WARN -> PASS。 |
 | `curve_pierce_points_grouped` | 网格生成 | `src/meshgen/cut.rs` | 对所有锁定曲线只遍历一次晶格的 `curve_pierce_points`；每个命中带曲线下标，排序、共边重复剔除和先到先得映射按曲线分别执行，所以每张表与单曲线调用相同。取代了逐曲线遍历晶格（a8：972 条曲线，S8 中 68 s -> 0.15 s）。 |
 | `region_records` | 网格生成 | `src/meshgen/cut.rs` | §7.4 网格化单元的 §7.5：每个子区域一条归属记录，在其最大四面体处采样（并列取下标小者）。是单元的纯函数，所以 S8 在串行组装前并行计算所有网格化单元的记录（a8 组装 16 -> 5.8 s）。 |
 | `AsmLap` | 网格生成 | `src/meshgen/cut.rs` | 析构守卫：把耗时累加到组装循环某一分支的总计，在 `RUSTMSPT_TIME_STAGES` 下打印为 `[S8-TIME] assembly by arm`。 |
@@ -775,7 +776,7 @@
 | `plc_attempt` | 网格生成 | `src/meshgen/cut.rs:8525` | 按 §7.2/§7.4 对给定冻结边界的门控单元剖分；落在单元棱上的轮廓顶点采用该棱上的表面节点（M-2.2），棱在小面平面内时可采用棱上任一节点；扇形回退的定侧函数读取同一份曲面记录；退化成线的小面被跳过并回滚其节点。 |
 | `hull_diag` | 网格生成 | `src/meshgen/cut.rs:8360` | 仅打印（`RUSTMSPT_HULL_DIAG`）：统计被拒单元在自身面平面上新增的轮廓顶点。 |
 | `split_diag_reason` | 网格生成 | `src/meshgen/cut.rs:8337` | 仅打印（`RUSTMSPT_SPLIT_DIAG`）：把 §7.4 拒绝与回退路径自身的拒绝合在一起。 |
-| `constrained_face_triangulation` | 网格生成 | `src/meshgen/cdt.rs:1131` | 对单个点阵面做三角化，使每条迹线段都是边（§7.4 的面这一半）：以面本身为初始的 Delaunay，边上的点拆分面边，线段通过翻转恢复；返回前把零面积三角形（面内部与某条边共线的点，高度小于最长边的 1e-9）与其长边对面的邻居一起拆分。结果只取决于面本身（J1）。零面积拆分消除了参考算例 3 门控路径上的 `[V9]` 节点。 |
+| `constrained_face_triangulation` | 网格生成 | `src/meshgen/cdt.rs:1131` | 对单个点阵面做三角化，使每条迹线段都是边（§7.4 的面这一半）：以面本身为初始的 Delaunay，边上的点拆分面边，线段通过翻转恢复；返回前把零面积三角形（面内部与某条边共线的点，高度小于最长边的 1e-9）与其长边对面的邻居一起拆分。结果只取决于面本身（J1）。零面积拆分消除了参考算例 3 门控路径上的 `[V9]` 节点。 线段恢复从不翻转出三个角点都在面的同一条边上的三角形（边缘掩码）：a12 有一个面，其一条边位于立方体顶面内，沿该边有 40 个共线的迹点和约束线段；一次因舍入而被判为凸的翻转曾在该边上放下两个零面积三角形，留下两个悬挂节点和一个无法闭合的单元。 |
 | `NodeArena::truncate` | 网格生成 | `src/meshgen/cdt.rs:126` | 丢弃前 `len` 个之后新建的所有节点（点、键与键索引）；Steiner 步骤的回滚。 |
 | `CUT_VOLUME_TOLERANCE` / `CUT_MIN_DIHEDRAL_DEG` | 网格生成 | `src/meshgen/cut.rs:33/36` | 受保护试运行的 1% 体积容差，以及 §4.4 运行期 8 度二面角下限。 |
 | `NodeSide` / `Escalation` | 网格生成 | `src/meshgen/cut.rs:43/54` | 母节点相对面片的位置，以及单元无法走 §6 路径的原因。 |

@@ -1388,7 +1388,7 @@ pub fn constrained_face_triangulation(
             crossing.sort_unstable();
             let Some(flipped) = crossing
                 .iter()
-                .find_map(|edge| flip_edge(&mut tris, *edge, &work, axis).then_some(*edge))
+                .find_map(|edge| flip_edge(&mut tris, *edge, &work, axis, &rim_of).then_some(*edge))
             else {
                 // Nothing crossing the segment can be flipped: every quad is non-convex, which for
                 // a planar straight-line graph means the segment passes through a vertex. That is a
@@ -1534,11 +1534,14 @@ fn crosses(e: [u32; 2], f: [u32; 2], points: &[Vec3], axis: crate::meshgen::pred
 // Side effects: Replaces the two triangles sharing the edge with the two across the other diagonal.
 // Notes: A non-convex quad cannot be flipped without inverting a triangle, so it is left alone and
 //   the caller tries another edge - which is what makes Anglada's loop terminate rather than thrash.
+//   Nor is a flip taken whose new triangle has all three corners on one edge of the face
+//   (`rim_of`, the face's rim mask): that triangle has no area, however the rounding reads it.
 fn flip_edge(
     tris: &mut Vec<[u32; 3]>,
     edge: [u32; 2],
     points: &[Vec3],
     axis: crate::meshgen::predicates::ProjectionAxis,
+    rim_of: &[u8],
 ) -> bool {
     let carrying: Vec<usize> = (0..tris.len())
         .filter(|at| tri_edges(tris[*at]).iter().any(|e| sorted_edge(*e) == edge))
@@ -1561,6 +1564,15 @@ fn flip_edge(
     };
     // Convex exactly when the old diagonal's endpoints straddle the new one.
     if side(e, f, edge[0]) * side(e, f, edge[1]) >= 0.0 {
+        return false;
+    }
+    // **No flip may lay a triangle along one edge of the face.** Points a trace put on a rim are
+    // collinear only to rounding, so a quad with three of them passes the convexity test and the
+    // flip emits a triangle of no area - a12's face (6675, 5888, 6698), whose edge lies in the
+    // cube's top plane and carries 40 trace points, came out with two, and the cell beside it
+    // could not close its boundary. Membership is the rim mask, a function of the edge (J1).
+    let on_one_rim = |p: u32, q: u32, r: u32| (rim_of[p as usize] & rim_of[q as usize] & rim_of[r as usize]) != 0;
+    if on_one_rim(e, f, edge[0]) || on_one_rim(e, f, edge[1]) {
         return false;
     }
     let (first, second) = (carrying[0].max(carrying[1]), carrying[0].min(carrying[1]));
@@ -6717,6 +6729,33 @@ pub fn chain_trace(segments: &[[Vec3; 2]], quantum: f64) -> Option<Vec<Vec<Vec3>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// a12's lattice face (6675, 5888, 6698): one edge lies in the cube's top plane, so the trace
+    /// runs ALONG it as a chain of 40 collinear points and constraint segments. The triangulation
+    /// must keep that edge as a polyline through every point - no triangle of no area on the rim.
+    #[test]
+    fn a_rim_carrying_a_collinear_constraint_chain_has_no_flat_triangle() {
+        let face = [Vec3::new(0.32547227745205964, 0.20342017340753726, 0.39056673294247163), Vec3::new(0.3356432861224365, 0.20342017340753726, 0.3808025646189098), Vec3::new(0.3356432861224365, 0.21359118207791414, 0.39056673294247163)];
+        let points: Vec<Vec3> = vec![Vec3::new(0.32547227745205964, 0.20342017340753726, 0.39056673294247163), Vec3::new(0.3356432861224365, 0.20342017340753726, 0.3808025646189098), Vec3::new(0.3356432861224365, 0.21359118207791414, 0.39056673294247163), Vec3::new(0.3356432861224365, 0.20940886768921838, 0.3865517111293237), Vec3::new(0.3356432861224365, 0.2061140856297298, 0.38338872035221466), Vec3::new(0.33146097173374073, 0.20940886768921835, 0.39056673294247163), Vec3::new(0.3318490603920142, 0.20979695634749182, 0.39056673294247163), Vec3::new(0.3326147627603536, 0.21056265871583124, 0.39056673294247163), Vec3::new(0.33273880481132273, 0.21068670076680035, 0.39056673294247163), Vec3::new(0.3329573707545965, 0.21090526671007415, 0.39056673294247163), Vec3::new(0.33311853767297206, 0.2110664336284497, 0.39056673294247163), Vec3::new(0.3331955563218578, 0.21114345227733547, 0.39056673294247163), Vec3::new(0.33352386874558765, 0.21147176470106527, 0.39056673294247163), Vec3::new(0.3264775801788454, 0.20442547613432302, 0.39056673294247163), Vec3::new(0.32660713172833516, 0.20455502768381278, 0.39056673294247163), Vec3::new(0.3277137772365723, 0.20566167319204995, 0.39056673294247163), Vec3::new(0.3285741208007634, 0.20652201675624107, 0.39056673294247163), Vec3::new(0.3289228503387667, 0.20687074629424435, 0.39056673294247163), Vec3::new(0.3296253145094133, 0.2075732104648909, 0.39056673294247163), Vec3::new(0.3297904898628962, 0.20773838581837384, 0.39056673294247163), Vec3::new(0.3303231613434371, 0.20827105729891474, 0.39056673294247163), Vec3::new(0.33044033370295045, 0.20838822965842807, 0.39056673294247163), Vec3::new(0.33080638231875653, 0.20875427827423415, 0.39056673294247163), Vec3::new(0.3309280580646284, 0.20887595402010603, 0.39056673294247163), Vec3::new(0.33115050882081964, 0.2090984047762973, 0.39056673294247163), Vec3::new(0.3313107076963073, 0.20925860365178495, 0.39056673294247163), Vec3::new(0.33166352286535566, 0.2096114188208333, 0.39056673294247163), Vec3::new(0.3320164533779493, 0.20996434933342695, 0.39056673294247163), Vec3::new(0.3321305199515758, 0.21007841590705342, 0.39056673294247163), Vec3::new(0.332232097336899, 0.21017999329237666, 0.39056673294247163), Vec3::new(0.33233195887932493, 0.21027985483480255, 0.39056673294247163), Vec3::new(0.3324080797902212, 0.2103559757456988, 0.39056673294247163), Vec3::new(0.3325072049919095, 0.21045510094738712, 0.39056673294247163), Vec3::new(0.3328306918904657, 0.21077858784594333, 0.39056673294247163), Vec3::new(0.33335461029466323, 0.21130250625014085, 0.39056673294247163), Vec3::new(0.333622356732361, 0.21157025268783863, 0.39056673294247163), Vec3::new(0.3337179246081215, 0.21166582056359912, 0.39056673294247163), Vec3::new(0.33389866938465645, 0.21184656534013407, 0.39056673294247163), Vec3::new(0.33409298739694065, 0.2120408833524183, 0.39056673294247163), Vec3::new(0.33429551663417717, 0.2122434125896548, 0.39056673294247163), Vec3::new(0.33450171312232213, 0.21244960907779975, 0.39056673294247163), Vec3::new(0.334625931295893, 0.21257382725137067, 0.39056673294247163), Vec3::new(0.33472962305521, 0.2126775190106876, 0.39056673294247163), Vec3::new(0.33500797695753254, 0.21295587291301016, 0.39056673294247163), Vec3::new(0.33533470009153105, 0.21328259604700867, 0.39056673294247163)];
+        let segments: Vec<[u32; 2]> = vec![[5, 3], [5, 6], [6, 7], [7, 8], [8, 9], [9, 10], [10, 11], [11, 12], [12, 2], [13, 14], [13, 4], [14, 15], [15, 16], [16, 17], [17, 18], [18, 19], [19, 20], [20, 21], [21, 22], [22, 23], [23, 24], [24, 25], [25, 5], [5, 26], [26, 6], [6, 27], [27, 28], [28, 29], [29, 30], [30, 31], [31, 32], [32, 7], [7, 8], [8, 33], [33, 9], [9, 10], [10, 11], [11, 34], [34, 12], [12, 35], [35, 36], [36, 37], [37, 38], [38, 39], [39, 40], [40, 41], [41, 42], [42, 43], [43, 44], [44, 2]];
+        let keys: Vec<NodeKey> = points.iter().map(|p| node_key(*p, 1.0e-4 * 1.0e-6)).collect();
+        let tris = constrained_face_triangulation(face, &points, &keys, &segments, 1.0e-4).expect("triangulates");
+        for t in &tris {
+            let [p, q, r] = t.map(|i| points[i as usize]);
+            let n = q.sub(p).cross(r.sub(p));
+            let long = [q.sub(p), r.sub(q), p.sub(r)].iter().map(|d| d.dot(*d)).fold(0.0f64, f64::max);
+            assert!(n.dot(n).sqrt() > 1.0e-9 * long, "flat triangle {t:?}");
+        }
+        let area: f64 = tris
+            .iter()
+            .map(|t| {
+                let [p, q, r] = t.map(|i| points[i as usize]);
+                0.5 * q.sub(p).cross(r.sub(p)).dot(q.sub(p).cross(r.sub(p))).sqrt()
+            })
+            .sum();
+        let whole = 0.5 * face[1].sub(face[0]).cross(face[2].sub(face[0])).dot(face[1].sub(face[0]).cross(face[2].sub(face[0]))).sqrt();
+        assert!((area - whole).abs() <= 1.0e-12 * whole, "area {area} vs {whole}");
+    }
 
     const QUANTUM: f64 = 1.0e-12;
     const TOL: f64 = 1.0e-12;
