@@ -52,6 +52,7 @@ RustMSPT（Rust Microstructure Processing Toolbox，Rust 微结构处理工具�
 | [state-map-location.md](algorithms/state-map-location.md) | 在旧网格中定位重网格化采样点：规则、BVH、rayon，以及为什么 GPU 只提出候选 |
 | [closest-point.md](algorithms/closest-point.md) | 三角形或线段上的最近点：并列规则、BVH，以及为什么 GPU 种子不会改变答案 |
 | [tet-repair.md](algorithms/tet-repair.md) | 用翻转和移动节点修复翻转和形状差的单元，以及与 simHelper Python 版的不同 |
+| [meshgen-cut.md](algorithms/meshgen-cut.md) | 网格生成的切割（S8）：面的三角剖分是面的函数且只做一次、单元的三条路径（§6 表、§7.4 局部 PLC、面片切分扇）、侧与标签规则、声明、确定性 |
 | [stl-rendering.md](algorithms/stl-rendering.md) | 共享相机取景、CPU 光线投射与 GPU 离屏光栅化 |
 
 ## 示例（各流水线走查）

@@ -52,6 +52,7 @@ Higher-level explanations of the non-obvious algorithms behind the reference doc
 | [state-map-location.md](algorithms/state-map-location.md) | Locating a remesh's sampling points in the old mesh: the rule, the BVH, rayon, and why the GPU only proposes candidates |
 | [closest-point.md](algorithms/closest-point.md) | The nearest point on triangles or segments: the tie rule, the BVH, and why a GPU seed cannot change the answer |
 | [tet-repair.md](algorithms/tet-repair.md) | Repairing inverted and badly shaped cells by flips and node moves, and where it differs from simHelper's Python |
+| [meshgen-cut.md](algorithms/meshgen-cut.md) | The mesher's cut (S8): faces triangulated once as a function of the face, the three cell paths (§6 table, §7.4 local PLC, facet-split fan), side and label rules, declarations, determinism |
 | [stl-rendering.md](algorithms/stl-rendering.md) | Shared camera framing, CPU ray casting, and GPU offscreen rasterization |
 
 ## Examples (per-pipeline walkthroughs)

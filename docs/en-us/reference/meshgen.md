@@ -48,7 +48,7 @@ after box clipping and topology rebuild are complete; `s03_gapfield`, `s04_sizin
 lattice that ignores the input entirely; S6 decides which of its cells are inside
 what, which makes the shape visible but staircased to one element; S7 snaps
 vertices onto the surface and **S8 cuts the cells that straddle it**, and only then
-is the boundary exact. A coarse-looking `s05`, `s06` or `s07` is the design, not a
+is the boundary meant to be exact - the design statement, which `[V13]`'s P3 measurements qualify (on-surface 99.92-100 % of the material-boundary area across the matrix, 2026-10-19; see `PLAN_mesh_generation.md` §2). A coarse-looking `s05`, `s06` or `s07` is the design, not a
 defect - S7 moves a few hundred nodes onto features, it does not deform the mesh to
 the shape. `s08_cut` is the first snapshot that fits the input.
 
@@ -65,7 +65,7 @@ the shape. `s08_cut` is the first snapshot that fits the input.
 | `SnapshotMode` | `src/config/meshgen.rs:68` | Contract snapshot emission level: `none` / `key` (default, s02/s05/s08/s11) / `all`. |
 | `MeshGenInput` | `src/config/meshgen.rs:84` | One STL input: `stl` path, optional `priority` (**defaults to 0 for every input**), `kind` (default `auto`). |
 | `MeshGenDomain` | `src/config/meshgen.rs:94` | Axis-aligned generation domain; `min`/`max` must each be 3-component, with `min < max` per axis. |
-| `MeshGenSizing` | `src/config/meshgen.rs:107` | Sizing-field limits as fractions of the domain-box diagonal, plus `grading` (default 2.0, the 2:1 gradation) and `gap_cells` (default 2.0). |
+| `MeshGenSizing` | `src/config/meshgen.rs:107` | Sizing-field limits as fractions of the domain-box diagonal, plus `grading` (default 2.0, the 2:1 gradation) and `gap_cells` (default 4.0; `validate()` rejects anything below 4, plan P-4.2). |
 | `MeshGenGaps` | `src/config/meshgen.rs:128` | Gap-field thickness factors (x local h(x)) and the separation confidence floor. |
 | `MeshGenEnvelope` | `src/config/meshgen.rs:176` | Numerical envelope thickness as a fraction of the domain-box diagonal. |
 | `MeshGenRepair` | `src/config/meshgen.rs:183` | S0 repair configuration (`level`). |
@@ -251,7 +251,7 @@ meshgen:
     chord_error_frac: 0.2
     feature_angle_deg: 45.0
     grading: 2.0            # max size ratio over one element (2:1 gradation)
-    gap_cells: 2.0          # elements across a gap that stays volumetric
+    gap_cells: 4.0          # elements across a gap that stays volumetric (>= 4)
     curve_cells: 2.0        # h_max / this along every locked curve; 1.0 disables
   gaps:
     t_layer_factor: 1.0     # x local h(x)
@@ -280,7 +280,7 @@ meshgen:
 
 | Block | Field | Default |
 |---|---|---|
-| `sizing` | `h_max_frac` / `h_min_frac` / `chord_error_frac` / `feature_angle_deg` / `grading` / `gap_cells` / `curve_cells` | `0.05` / `0.002` / `0.2` / `45.0` / `2.0` / `2.0` / `2.0` |
+| `sizing` | `h_max_frac` / `h_min_frac` / `chord_error_frac` / `feature_angle_deg` / `grading` / `gap_cells` / `curve_cells` | `0.05` / `0.002` / `0.2` / `45.0` / `2.0` / `4.0` / `2.0` |
 | `gaps` | `t_layer_factor` / `t_sheet_factor` / `confidence_min` | `1.0` / `0.2` / `0.9` |
 | `envelope` | `eps_frac` | `1.0e-4` |
 | `repair.level` / `coincidence` / `fem_profile` / `determinism` | - | `conservative` / `merge` / `implicit` / `strict` |
@@ -2495,13 +2495,18 @@ The half of G4-3 that needed S7 and S8. Every element is grouped by the template
 the cell it came from, and the two populations compared at each stage against the
 corrected 35.264 degree baseline (SPEC §3.7 rev 1.2):
 
-| stage | Freudenthal worst / p5 / median | centroid fan worst / p5 / median |
-|---|---|---|
-| pre-snap | 45.000 / 45.000 / 45.000 | **35.264** / 45.000 / 45.000 |
-| post-snap | 45.000 / 45.000 / 45.000 | 35.073 / 44.165 / 45.000 |
-| post-cut | 0.874 / 5.522 / 45.000 | **1.848 / 6.474 / 45.000** |
+Re-measured 2026-10-19 on the current lattice (the 5-tet parity checkerboard of M-1.7, whose
+plain cells have a 54.736 degree minimum) by `transition_fans_survive_the_snap_and_the_cut`
+(`cargo test --test meshgen_quality_gate_tests -- --nocapture`); the earlier Freudenthal table is
+history:
 
-**GO.** After the cut the fan cells are *better* than the Freudenthal cells on both
+| stage | plain checkerboard: n / worst / p5 / median | centroid fan: n / worst / p5 / median |
+|---|---|---|
+| pre-snap | 2,780 / 54.736 / 54.736 / 54.736 | 2,352 / **45.000** / 45.000 / 45.000 |
+| post-snap | 2,780 / 54.736 / 54.736 / 54.736 | 2,352 / 44.165 / 45.000 / 45.000 |
+| post-cut | 14,226 / 0.043 / 1.700 / 20.184 | 10,156 / **0.103 / 1.902 / 26.072** |
+
+**GO.** After the cut the fan cells are *better* than the plain cells on both
 the worst case and the fifth percentile: the slivers come from where the surface
 grazes a cell, which is independent of the template, and the fan's smaller tets give
 the cut less room to graze rather than more. The reference-verbatim SAMR fallback is

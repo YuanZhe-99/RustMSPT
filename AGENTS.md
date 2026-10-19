@@ -75,6 +75,7 @@ Documentation lives in three tiers, each answering a different question:
 | Mesh generation data contracts (VTU schema v1, snapshot naming, verifier check catalog + JSON schema, accuracy gates) | `SPEC_meshgen_contracts.md` — **normative frozen spec**; fixture VTUs at `data/fixtures/vtu/` (regenerate with `uv run data/fixtures/vtu/generate_fixtures.py data/fixtures/vtu`) | `reference/mesh-render-and-vtu.md` |
 | Closest point on triangles or segments (`closest`: nearest primitive, point and distance for many queries; BVH, rayon, GPU seed pass) | `algorithms/closest-point.md` | `reference/pipeline-closest.md` |
 | Tetrahedral mesh repair (`tet-repair`: inverted and over-limit cells by flips and node moves; simHelper's flip_repair natively) | `algorithms/tet-repair.md` | `reference/pipeline-tet-repair.md` |
+| Mesh generation cut (S8: face triangulation once per face, §6 table / §7.4 local PLC / facet-split fan, side and label rules, declarations) | `algorithms/meshgen-cut.md` | `reference/meshgen.md` |
 | Seeded, recorded, void-aware placement (`pack` with a `placement:` block) | `algorithms/void-aware-placement.md` | `reference/pipeline-placement.md`, `reference/config.md` (`placement.rs`) |
 | Placement recovery, completed extension and bounded geometry caching | `algorithms/placement-checkpoints-and-memory.md` | `reference/pipeline-placement-state.md` |
 | Build identity (`version`, `--version`, the `tool` block in placement outputs) | — | `reference/core-and-compute.md` |

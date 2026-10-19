@@ -59,7 +59,7 @@ GA-2）：精确谓词与单元质量原语（`src/meshgen/predicates.rs`）、�
 | [V6] ID 语义 | **部分** | 区域键合法性、同一键单一优先级、区域邻接，以及**未声明的材料边界**（`V6.undeclared_boundary`，自计划 M-1.0 起为 FAIL：进入或离开某分量的面必须携带该分量的标签）。在切割前的 5–7 阶段尚无界面，此 FAIL 被推迟，但计数仍会报告。面按键序遍历，因此保留的条目与 `undeclared_boundary_area` 每次运行都完全相同。分量体积误差与抽样审计需要输入曲面 |
 | [V7] 薄片与薄特征 | **部分** | 体阶段运行薄片面焊接性；s00-s03 因无四面体而报告 SKIPPED；单层带、中面与边缘一致性随 G7-1 落地 |
 | [V8] 分区 | **体阶段完整** | 重算薄片阻断的洪水填充并与 `partition_id` 比对（允许重编号）、针孔泄漏启发式、`expected_partitions` 门限；s00-s03 报告 SKIPPED |
-| [V9] 交汇 | 跳过 | 随 G6-4 落地 |
+| [V9] 交汇 | **完整**（自 2026-08-13 起） | 每条锁定曲线上的网格边：曲线上的节点在其 `N_ID` 中带有该曲线的组分（`V9.curve_node_id`），在两个及以上组分交汇处，交汇边周围的径向片数与布置给出的一致（`V9.radial_patches`），内部曲线边周围的四面体扇闭合（`V9.junction_fan`）；负面夹具 `bad_curve_node_id`、`bad_radial_patches`、`bad_open_junction_fan` |
 | [V10] 导出完整性 | **设置 `inp:` 后完整** | 按身份将配套 INP 与契约文档比对：节点 `i` 逐位等于点 `i-1`，单元 `c` 等于四面体单元 `c-1`，每个 `REGION_k`/`PARTITION_p` 单元集、`COMPONENT_X` 节点集与 `IFACE_X_IN/OUT` 面均由文档数组重新计算；无截面时未映射区域为 INFO，有截面时为 FAIL。未给 `inp:` 时跳过 |
 | [V11] 比较模式 | **`--compare A B [--mode strict\|topology]`** | 同一次运行的两个文件：strict = 单元、所有数组与坐标逐位一致；topology = 单元与整数数组一致，坐标在 `1e-6 * diag` 内，浮点数组在 1 % 内。从不比较 `ConfigHash`（它记录配置文件名）；模式默认取 B 的 `DeterminismMode`。单文件运行时跳过 |
 | [V12] 溯源与统计 | **完整** | **契约校验**（契约 §4.2，计划 MG-08），强度由元数据选定——每条被违反的规则都是一条 `V12.contract` FAIL，强度以 INFO `V12.contract_strength` 与指标 `contract_strength`（0 仅几何、1 主体网格、2 混合契约）报告；计数、元数据回显、`Counts` 与网格实际值一致性、`SchemaVersion` 校验、`StageIndex` 范围与文件名交叉校验（T-C6），以及计划中 P2 所依据的**单元数归因**：按 `provenance` 分类的四面体计数，以及在 `RUSTMSPT_CUT_DIAG` 下存在 `parent_cell` 时，其背后的 S5 单元数与每单元发射率。S5 单元本身就是一个晶格**四面体**，因此未被处理的单元恰好发射 1 个，`tets_per_cell_*` 可直接读作「该路径相对于放着不动多付出的代价」。 |
