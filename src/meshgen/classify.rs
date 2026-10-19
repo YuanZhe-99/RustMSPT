@@ -52,7 +52,7 @@ pub const RAY_DIRECTIONS: [[f64; 3]; 5] = [
 ];
 
 /// Grid cells per axis in the projection plane used to find candidate triangles.
-const PROJECTION_GRID_DIM: i64 = 128;
+const PROJECTION_GRID_DIM: i64 = 512;
 
 /// How far off a face to probe when asking whether it is buried inside its own
 /// self-intersecting component. Scaled by the square root of the triangle's own size, so
