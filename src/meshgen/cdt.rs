@@ -2493,6 +2493,144 @@ fn soup_defect(soup: &[[u32; 3]]) -> &'static str {
     }
 }
 
+// AI-FUNC-SUMMARY:
+// Purpose: `orient_soup` for a closed soup in which a solid touches ITSELF along an edge: four
+//   triangles on one edge, paired radially so each pair bounds the same sector.
+// Inputs: the soup and the point table.
+// Returns: the soup consistently wound, or None when no radial pairing of its 4-valent edges orients it
+//   (or an edge has a use count other than 2 or 4, or there are more than six 4-valent edges).
+// Side effects: None.
+// Notes: Around such an edge the solid and the space outside it alternate, so the two triangles bounding
+//   one solid sector are radially adjacent: of the two adjacent pairings, the one that orients
+//   consistently is the surface. `manifold_components` cannot separate this case - the sectors are
+//   joined elsewhere (p1 cell 851340, edge 9-14) - so the piece stays one, pinched, polyhedron.
+pub(crate) fn orient_soup_pinched(soup: &[[u32; 3]], points: &[Vec3]) -> Option<Vec<[u32; 3]>> {
+    if soup.is_empty() {
+        return None;
+    }
+    let mut by_edge: BTreeMap<[u32; 2], Vec<usize>> = BTreeMap::new();
+    for (at, t) in soup.iter().enumerate() {
+        for slot in 0..3 {
+            let (x, y) = (t[slot], t[(slot + 1) % 3]);
+            by_edge.entry(if x <= y { [x, y] } else { [y, x] }).or_default().push(at);
+        }
+    }
+    if by_edge.values().any(|on| on.len() != 2 && on.len() != 4) {
+        return None;
+    }
+    // Radial order of the four triangles around each 4-valent edge.
+    let mut pinches: Vec<([u32; 2], [usize; 4])> = Vec::new();
+    for (edge, on) in &by_edge {
+        if on.len() != 4 {
+            continue;
+        }
+        let a = points[edge[0] as usize];
+        let axis = points[edge[1] as usize].sub(a);
+        let al = axis.dot(axis).sqrt();
+        if al <= 0.0 {
+            return None;
+        }
+        let axis = axis.scale(1.0 / al);
+        let opposite = |t: usize| -> Vec3 {
+            let tri = soup[t];
+            let c = tri.iter().copied().find(|v| *v != edge[0] && *v != edge[1]).unwrap_or(tri[0]);
+            let d = points[c as usize].sub(a);
+            d.sub(axis.scale(d.dot(axis)))
+        };
+        let reference = opposite(on[0]);
+        let rl = reference.dot(reference).sqrt();
+        if rl <= 0.0 {
+            return None;
+        }
+        let u = reference.scale(1.0 / rl);
+        let w = axis.cross(u);
+        let mut order: Vec<(f64, usize)> = on
+            .iter()
+            .map(|t| {
+                let d = opposite(*t);
+                (d.dot(w).atan2(d.dot(u)), *t)
+            })
+            .collect();
+        order.sort_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)));
+        pinches.push((*edge, [order[0].1, order[1].1, order[2].1, order[3].1]));
+    }
+    if pinches.is_empty() || pinches.len() > 6 {
+        return None;
+    }
+    let walks = |t: [u32; 3], a: u32, b: u32| (0..3).any(|slot| t[slot] == a && t[(slot + 1) % 3] == b);
+    for choice in 0..(1u32 << pinches.len()) {
+        // partner[(triangle, edge)] for the 4-valent edges under this choice of pairings.
+        let mut partner: BTreeMap<(usize, [u32; 2]), usize> = BTreeMap::new();
+        for (k, (edge, r)) in pinches.iter().enumerate() {
+            let pairs = if choice & (1 << k) == 0 { [(r[0], r[1]), (r[2], r[3])] } else { [(r[1], r[2]), (r[3], r[0])] };
+            for (x, y) in pairs {
+                partner.insert((x, *edge), y);
+                partner.insert((y, *edge), x);
+            }
+        }
+        let mut out: Vec<[u32; 3]> = soup.to_vec();
+        let mut fixed = vec![false; soup.len()];
+        let mut queue = vec![0usize];
+        fixed[0] = true;
+        let mut ok = true;
+        'walk: while let Some(at) = queue.pop() {
+            let here = out[at];
+            for slot in 0..3 {
+                let (x, y) = (here[slot], here[(slot + 1) % 3]);
+                let key = if x <= y { [x, y] } else { [y, x] };
+                let on = &by_edge[&key];
+                let other = if on.len() == 2 {
+                    match on.iter().copied().find(|o| *o != at) {
+                        Some(o) => o,
+                        None => {
+                            ok = false;
+                            break 'walk;
+                        }
+                    }
+                } else {
+                    partner[&(at, key)]
+                };
+                if fixed[other] {
+                    if walks(out[other], x, y) == walks(here, x, y) {
+                        ok = false;
+                        break 'walk;
+                    }
+                    continue;
+                }
+                if walks(out[other], x, y) {
+                    out[other].swap(0, 1);
+                }
+                fixed[other] = true;
+                queue.push(other);
+            }
+        }
+        if !(ok && fixed.iter().all(|f| *f)) {
+            continue;
+        }
+        // Outward, then each pair must bound a SOLID sector: the partner's far corner lies behind
+        // the triangle. The pairing of the empty sectors orients just as consistently and fails this.
+        let volume: f64 = out
+            .iter()
+            .map(|t| points[t[0] as usize].cross(points[t[1] as usize]).dot(points[t[2] as usize]))
+            .sum();
+        if volume < 0.0 {
+            for t in out.iter_mut() {
+                t.swap(0, 1);
+            }
+        }
+        let behind = partner.iter().all(|((x, edge), y)| {
+            let t = out[*x];
+            let far = soup[*y].iter().copied().find(|v| *v != edge[0] && *v != edge[1]).unwrap_or(t[0]);
+            let (a, b, c) = (points[t[0] as usize], points[t[1] as usize], points[t[2] as usize]);
+            b.sub(a).cross(c.sub(a)).dot(points[far as usize].sub(a)) < 0.0
+        });
+        if behind {
+            return Some(out);
+        }
+    }
+    None
+}
+
 pub(crate) fn orient_soup(soup: &[[u32; 3]]) -> Option<Vec<[u32; 3]>> {
     if soup.is_empty() {
         return None;
@@ -3665,9 +3803,28 @@ pub fn facet_split_fan(
     for (region, piece) in pieces.iter().enumerate() {
         // Closed and consistently wound, or the cap did not cover the cross-section and the piece
         // is not a body. Both questions are the one walk.
-        let Some(piece) = orient_soup(piece) else {
+        let Some(piece) = orient_soup(piece).or_else(|| orient_soup_pinched(piece, points)) else {
             note_split("a piece's surface does not close - the cut does not span the cell");
             note_split(soup_defect(piece));
+            if DIAG_CELL.with(|c| c.get()) {
+                let mut uses: BTreeMap<[u32; 2], usize> = BTreeMap::new();
+                for t in piece.iter() {
+                    for k in 0..3 {
+                        let (a, b) = (t[k], t[(k + 1) % 3]);
+                        *uses.entry(if a <= b { [a, b] } else { [b, a] }).or_insert(0) += 1;
+                    }
+                }
+                let heavy: Vec<([u32; 2], usize)> = uses.iter().filter(|(_, n)| **n != 2).map(|(e, n)| (*e, *n)).collect();
+                let mut ids: Vec<u32> = piece.iter().flatten().copied().collect();
+                ids.sort_unstable();
+                ids.dedup();
+                eprintln!(
+                    "[BAD-PIECE] edges not twice {:?} tris {:?} points {:?}",
+                    heavy,
+                    piece,
+                    ids.iter().map(|i| (*i, points[*i as usize])).collect::<Vec<_>>()
+                );
+            }
             // **And which side of the join the open edge is on.** An edge the CELL's own
             // triangulation carries and the cap does not is a cut that stops short of the boundary;
             // one only the cap carries is a cut that reaches past it, spelled with different nodes.
