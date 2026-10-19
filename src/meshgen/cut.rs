@@ -2771,6 +2771,19 @@ pub fn cut_lattice(
         }
         // Print-only: `RUSTMSPT_PLC_CELL=<lattice index>[,<index>...]` turns the cdt diagnostics
         // on for those cells.
+        // The lattice hull is the domain box (each axis is stretched to whole cells, plan M-6.2).
+        let lattice_hull = lattice.nodes.iter().fold(
+            (
+                Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY),
+                Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY),
+            ),
+            |(lo, hi), p| {
+                (
+                    Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z)),
+                    Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z)),
+                )
+            },
+        );
         let focus_cells: BTreeSet<usize> = std::env::var("RUSTMSPT_PLC_CELL")
             .map(|v| v.split(',').filter_map(|s| s.trim().parse().ok()).collect())
             .unwrap_or_default();
@@ -2797,6 +2810,7 @@ pub fn cut_lattice(
                         tol,
                         options.eps,
                         &on_surface,
+                        lattice_hull,
                     );
                     crate::meshgen::cdt::DIAG_CELL.with(|c| c.set(false));
                     outcome
@@ -8975,6 +8989,8 @@ fn hull_diag(
 //   skipped and the nodes it interned are rolled back. A node on or inside any facet of a component
 //   takes no side of it (`facet_within`), and neither does a node inside a body of higher precedence
 //   than the component (`hidden_by_precedence`), where S6 deactivated that component's surface.
+//   A facet lying on a domain-box plane (`hull`, the lattice's own box) is not handed to the
+//   kernel: the cell's face there has no neighbour and its triangulation already carries it.
 #[allow(clippy::too_many_arguments)]
 fn plc_attempt(
     tet: [u32; 4],
@@ -8988,6 +9004,7 @@ fn plc_attempt(
     // being used for each other's job, so each is now named for what it is.
     weld: f64,
     on_surface: &BTreeSet<(u32, i32)>,
+    hull: (Vec3, Vec3),
 ) -> Result<PlcCell, &'static str> {
     let corners = [
         nodes[tet[0] as usize],
@@ -9259,6 +9276,22 @@ fn plc_attempt(
             // `[V9]`'s curve-node clause fails on - which is how the first skip, without the
             // rollback, was refuted (a6b node 51389 on the limb's curve 14 with N_ID [0]).
             if crate::meshgen::cdt::facet_plane(&ids, &arena.points, 0.0).is_none() {
+                arena.truncate(interned_before);
+                continue;
+            }
+            // **A facet lying on a domain-box plane constrains nothing inside the cell.** The cell's
+            // face there has no neighbour and its triangulation already carries the trace; asking
+            // §7.4 for the facet as well asks for a facet on the frozen hull. a12's cube, clipped by
+            // the box at z = 0.6, put 13- and 18-gon facets there and the hull could not be
+            // recovered. Not for an interior cell face: dropping such a facet cost a3 a coverage
+            // sample (its caps carry something the face triangulation does not).
+            let on_box = (0..3).any(|axis| {
+                let at = |v: Vec3| [v.x, v.y, v.z][axis];
+                [at(hull.0), at(hull.1)].iter().any(|bound| {
+                    ids.iter().all(|id| (at(arena.points[*id as usize]) - bound).abs() <= edge * 1.0e-6)
+                })
+            });
+            if on_box {
                 arena.truncate(interned_before);
                 continue;
             }
