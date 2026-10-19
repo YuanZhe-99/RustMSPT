@@ -1625,8 +1625,10 @@ impl Pipeline for MeshGenPipeline {
         )
         .with_determinism(p.determinism);
         if should_emit(snapshot_mode, Stage::Final) {
-            let mut snapshot = doc.clone();
-            let path = emit_snapshot(&mut snapshot, output_path, &final_meta, encoding)?;
+            // Written from the document itself: the snapshot carries the same stage-11 metadata
+            // `write_final` stamps below, and stamping is idempotent, so a copy of the whole
+            // document (hundreds of MB on the large cases) bought nothing.
+            let path = emit_snapshot(&mut doc, output_path, &final_meta, encoding)?;
             println!("[mesh] snapshot s11: {}", path.display());
         }
         let delivered = write_final(&mut doc, output_path, &final_meta, encoding)?;

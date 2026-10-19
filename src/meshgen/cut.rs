@@ -1044,6 +1044,10 @@ pub fn orient_positively(tet: [u32; 4], nodes: &[Vec3]) -> Option<[u32; 4]> {
 /// The children one cell's table row produces. Eight is the largest §6 row (case D).
 pub type ChildTets = SmallVec<[[u32; 4]; 8]>;
 
+/// A cell's children as `CellResult` keeps them: room for two inline, because most lattice cells
+/// are not cut and S8 holds one result per cell at once (a ChildTets there was ~240 B a cell).
+type CellTets = SmallVec<[[u32; 4]; 2]>;
+
 pub fn guarded_dry_run(
     parent: [u32; 4],
     children: &[[u32; 4]],
@@ -1097,8 +1101,8 @@ pub fn guarded_dry_run(
 /// What one cell produced, before the results are concatenated in cell order.
 #[derive(Clone, Debug, Default)]
 struct CellResult {
-    tets: ChildTets,
-    inside: SmallVec<[bool; 8]>,
+    tets: CellTets,
+    inside: SmallVec<[bool; 2]>,
     interface: SmallVec<[[u32; 3]; 2]>,
     component: i32,
     case: u8,
@@ -1185,7 +1189,18 @@ pub fn cut_lattice(
     let mut s8_clock = std::time::Instant::now();
     let mut s8_lap = |label: &str| {
         if s8_timing {
-            println!("[S8-TIME] {} {:?}", label, s8_clock.elapsed());
+            // The current resident set beside the lap (VmRSS, not the peak), so a phase that
+            // holds memory shows as a step in this column.
+            let rss_mb = std::fs::read_to_string("/proc/self/status")
+                .ok()
+                .and_then(|status| {
+                    status
+                        .lines()
+                        .find(|l| l.starts_with("VmRSS:"))
+                        .and_then(|l| l.split_whitespace().nth(1)?.parse::<f64>().ok())
+                })
+                .map_or(-1.0, |kb| kb / 1024.0);
+            println!("[S8-TIME] {} {:?} rss {:.0} MB", label, s8_clock.elapsed(), rss_mb);
         }
         s8_clock = std::time::Instant::now();
     };
@@ -1658,7 +1673,6 @@ pub fn cut_lattice(
         let mut face_nodes: BTreeMap<[u32; 3], SmallVec<[u32; 4]>> = BTreeMap::new();
         let mut owners: BTreeMap<[u32; 3], SmallVec<[u32; 2]>> = BTreeMap::new();
         let mut edge_nodes: BTreeMap<[u32; 2], SmallVec<[u32; 6]>> = BTreeMap::new();
-        let mut seen_faces: BTreeSet<[u32; 3]> = BTreeSet::new();
         s8_lap("plc-setup");
         let trace_probe: Option<Vec3> = std::env::var("RUSTMSPT_TRACE_PROBE").ok().and_then(|v| {
             let c: Vec<f64> = v.split(',').filter_map(|x| x.parse().ok()).collect();
@@ -1672,18 +1686,25 @@ pub fn cut_lattice(
                 let raw = [tet[slots[0]], tet[slots[1]], tet[slots[2]]];
                 let mut face = raw;
                 face.sort_by_key(|node| keys[*node as usize]);
-                let entry = owners.entry(face).or_default();
-                if !entry.contains(&(index as u32)) {
-                    entry.push(index as u32);
-                }
-                if seen_faces.insert(face) {
-                    unique_faces.push((face, raw));
+                match owners.entry(face) {
+                    std::collections::btree_map::Entry::Vacant(slot) => {
+                        slot.insert(SmallVec::from_slice(&[index as u32]));
+                        unique_faces.push((face, raw));
+                    }
+                    std::collections::btree_map::Entry::Occupied(mut slot) => {
+                        if !slot.get().contains(&(index as u32)) {
+                            slot.get_mut().push(index as u32);
+                        }
+                    }
                 }
             }
         }
-        let face_chords: Vec<SmallVec<[[Vec3; 2]; 4]>> = unique_faces
+        // Sparse: only the faces the surface actually crosses, as (face slot, chords) in slot
+        // order. One inline chord list per lattice face cost a9 ~400 MB of peak memory.
+        let face_chords: Vec<(usize, SmallVec<[[Vec3; 2]; 4]>)> = unique_faces
             .par_iter()
-            .map(|(_, raw)| {
+            .enumerate()
+            .filter_map(|(slot, (_, raw))| {
                 let geometry = [
                     mesh.nodes[raw[0] as usize],
                     mesh.nodes[raw[1] as usize],
@@ -1716,10 +1737,15 @@ pub fn cut_lattice(
                         chords.push(chord);
                     }
                 }
-                chords
+                (!chords.is_empty()).then_some((slot, chords))
             })
             .collect();
-        for ((face, raw), chords) in unique_faces.into_iter().zip(face_chords) {
+        let mut face_chords = face_chords.into_iter().peekable();
+        for (slot, (face, raw)) in unique_faces.into_iter().enumerate() {
+            let chords: SmallVec<[[Vec3; 2]; 4]> = match face_chords.peek() {
+                Some((at, _)) if *at == slot => face_chords.next().map(|(_, c)| c).unwrap_or_default(),
+                _ => SmallVec::new(),
+            };
             {
                 let geometry = [
                     mesh.nodes[raw[0] as usize],
@@ -1734,22 +1760,33 @@ pub fn cut_lattice(
                     // with one is that node, and the decision has to be a function of the edge
                     // rather than of the face, or the two faces sharing the edge make it
                     // differently.
-                    let entry = edge_nodes.entry(key).or_default();
-                    if !entry.contains(&key[0]) {
-                        entry.push(key[0]);
-                    }
-                    if !entry.contains(&key[1]) {
-                        entry.push(key[1]);
-                    }
+                    // Kept only for edges a cut node splits; an edge without one is its two
+                    // endpoints, which the readers supply (a map entry per lattice edge was
+                    // hundreds of MB on the large cases).
+                    let mut cuts: SmallVec<[u32; 4]> = SmallVec::new();
                     for component in &all_components {
                         for map in [&cut_index, &second_index] {
                             if let Some(node) = map.get(&(key, *component)) {
                                 if !on_face.contains(node) {
                                     on_face.push(*node);
                                 }
-                                if !entry.contains(node) {
-                                    entry.push(*node);
+                                if !cuts.contains(node) {
+                                    cuts.push(*node);
                                 }
+                            }
+                        }
+                    }
+                    if !cuts.is_empty() {
+                        let entry = edge_nodes.entry(key).or_default();
+                        if !entry.contains(&key[0]) {
+                            entry.push(key[0]);
+                        }
+                        if !entry.contains(&key[1]) {
+                            entry.push(key[1]);
+                        }
+                        for node in cuts {
+                            if !entry.contains(&node) {
+                                entry.push(node);
                             }
                         }
                     }
@@ -1977,9 +2014,10 @@ pub fn cut_lattice(
                         let mut candidates: SmallVec<[u32; 16]> = SmallVec::new();
                         match &on_edge {
                             Some(edge) => {
-                                candidates.extend(
-                                    edge_nodes.get(edge).into_iter().flatten().copied(),
-                                );
+                                match edge_nodes.get(edge) {
+                                    Some(nodes) => candidates.extend(nodes.iter().copied()),
+                                    None => candidates.extend(edge.iter().copied()),
+                                }
                                 candidates.extend(
                                     edge_points.get(edge).into_iter().flatten().copied(),
                                 );
@@ -4543,6 +4581,15 @@ pub fn cut_lattice(
     }
     s8_lap("interface");
     if plc_meshed + plc_fanned > 0 {
+        // Print-only censuses: they build maps over every face and edge of the mesh (~400 MB on
+        // a4), so they run under `RUSTMSPT_PLC_DIAG` only. Nothing below reads their results.
+        let plc_diag = std::env::var_os("RUSTMSPT_PLC_DIAG").is_some();
+        let mut unmatched = 0usize;
+        let mut unmatched_augmented = 0usize;
+        let mut flat_by_path = [0usize; 5];
+        let mut inverted_by_path = [0usize; 5];
+        let mut worst_flat = f64::INFINITY;
+        if plc_diag {
         // **Did the mesh actually take the faces the faces promised?** Every triangle of an
         // augmented face should be carried by exactly as many tets as the face has owners - two
         // inside the lattice, one on the domain boundary. A triangle carried by fewer is a leak
@@ -4588,8 +4635,6 @@ pub fn cut_lattice(
                 *lone.entry(key).or_insert(0) += 1;
             }
         }
-        let mut unmatched = 0usize;
-        let mut unmatched_augmented = 0usize;
         for (triangle, promised) in &lone {
             let got = carried.get(triangle).copied().unwrap_or(0);
             if got >= *promised {
@@ -5048,9 +5093,6 @@ pub fn cut_lattice(
         // **And the same charge for the degenerate elements.** `[V1]` reads a signed volume and
         // says nothing about where it came from; normalising by the tet's own longest edge cubed
         // makes "flat" a scale-free statement, and the path histogram says which arm to look in.
-        let mut flat_by_path = [0usize; 5];
-        let mut inverted_by_path = [0usize; 5];
-        let mut worst_flat = f64::INFINITY;
         for (at, tet) in mesh.tets.iter().enumerate() {
             let p = [
                 mesh.nodes[tet[0] as usize],
@@ -5080,6 +5122,7 @@ pub fn cut_lattice(
                 flat_by_path[path] += 1;
                 worst_flat = worst_flat.min(shape);
             }
+        }
         }
         s8_lap("t-flat");
         // **Detect and repair, to a fixed point.** One pass is not enough: a node hangs on several
@@ -5705,6 +5748,7 @@ pub fn cut_lattice(
             }
         }
         s8_lap("t-repair");
+        if plc_diag {
         // **Charge each BAD element to the arm that emitted it**, on the measure `[V4]` actually
         // reports: the smallest dihedral angle. The goal names three properties and this is the
         // third - *no bad elements* - and it is the only one the gated path still loses on. The
@@ -5844,6 +5888,7 @@ pub fn cut_lattice(
              fewer tets than the cells that promised them, {unmatched_augmented} of those on an \
              augmented face - so the rest are faces §7.4 left to §5.2"
         ));
+        }
     }
     s8_lap("t-bad");
     if fan_repeated > 0 {
@@ -6765,7 +6810,7 @@ fn cut_one_cell(
     }
     match guarded_dry_run(tet, &cell.tets, nodes, options) {
         Ok((oriented, min_dihedral, volume_error)) => CellResult {
-            tets: oriented,
+            tets: CellTets::from_slice(&oriented),
             inside: cell.inside.iter().copied().collect(),
             interface: cell.interface,
             component,
@@ -6912,7 +6957,7 @@ fn cut_welded_sheet(
     };
     match guarded_dry_run(tet, &cell.tets, nodes, options) {
         Ok((oriented, min_dihedral, volume_error)) => CellResult {
-            tets: oriented,
+            tets: CellTets::from_slice(&oriented),
             inside: cell.inside.iter().copied().collect(),
             interface: cell.interface,
             component,
